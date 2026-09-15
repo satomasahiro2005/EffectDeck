@@ -49,12 +49,31 @@ upstream が増えればサブモジュールを進めて生成し直すだけ�
 
 ```bash
 git clone --recurse-submodules <このリポジトリ>
-bash Scripts/build.sh          # Mac の GUI セッションの Terminal から
+bash Scripts/build.sh
 ```
 
-SSH から走らせると `codesign` が login keychain に届かず `errSecInternalComponent` になる。
+要るもの:
 
-要るもの: Xcode 27 以降、iOS 27 以降の実機、xcodegen、python3。
+- Xcode 27 以降
+- iOS 27 以降の実機（拡張の entitlement が iOS 27 からなので、シミュレータでは音の経路は動かない）
+- Apple Developer Program の所属（`project.yml` の `DEVELOPMENT_TEAM` を自分のものに変える）
+- `xcodegen`、`python3` 3.10 以降（どちらも Homebrew で入る）
+
+つないである実機を自動で探す。複数あるときは `DEV_ID=<UDID> bash Scripts/build.sh`。
+
+**macOS の GUI セッションの Terminal から走らせること。** SSH 越しに走らせると
+`codesign` が login keychain に届かず `errSecInternalComponent` で落ちる。
+
+### 自分の Apple ID で建てるときに要る登録
+
+`ai.nemut.*` のままでは通らないので、bundle ID を自分のものに変えたうえで、
+Apple Developer のポータルで次を作る。
+
+1. **Media Device Sharing Extension** の identifier
+   （Identifiers > 新規 > Media Device Sharing Extension）。審査は無い
+2. その値を拡張の entitlement と Info.plist の `UTExportedTypeDeclarations` に書く。
+   **entitlement の値は要素 1 個の配列**。文字列で書くと拡張が起動しない
+3. アプリ 2 本と拡張の App ID
 
 ## 仕掛けの詳細
 

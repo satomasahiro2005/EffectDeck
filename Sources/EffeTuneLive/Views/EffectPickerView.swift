@@ -1,5 +1,9 @@
 //  EffectPickerView.swift
-//  鎖に足すエフェクトを選ぶ。一覧は EffectCatalog.swift の生成物。
+//  足すエフェクトを選ぶ。
+//
+//  EffeTune は左に Available Effects をずっと出しているが、iPhone の幅では
+//  鎖と並べられないのでシートにした。見出しの並びは EffeTune と同じ。
+//  数が 100 近くあるので、探す欄を上に置いてある。
 
 import SwiftUI
 
@@ -23,35 +27,47 @@ struct EffectPickerView: View {
         NavigationStack {
             List {
                 ForEach(groups, id: \.0) { category, effects in
-                    Section(category) {
+                    Section(category.categoryLabel) {
                         ForEach(effects) { effect in
                             Button {
                                 dsp.add(effect)
                                 dismiss()
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(effect.name).foregroundStyle(.primary)
+                                    Text(effect.name)
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(.primary)
                                     if !effect.about.isEmpty {
                                         Text(effect.about)
-                                            .font(.caption)
+                                            .font(.system(size: 12))
                                             .foregroundStyle(.secondary)
                                     }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
                         }
                     }
                 }
             }
-            .searchable(text: $query, prompt: "エフェクトを探す")
-            .navigationTitle("エフェクト")
+            .searchable(text: $query, prompt: "Search effects")
+            .navigationTitle("Available Effects")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
             .overlay {
                 if groups.isEmpty {
-                    ContentUnavailableView("見つからない", systemImage: "magnifyingglass")
+                    ContentUnavailableView.search(text: query)
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Text("\(dsp.available.count) effects available")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(.bar)
             }
         }
     }

@@ -25,6 +25,8 @@ final class EffeTuneDSP: ObservableObject {
         var values: [Float]
         var enabled: Bool = true
         var instance: UInt32 = 0
+        /// 描画用の値がどのエフェクトから出たかを見分ける番号。
+        var tapId: UInt32 = 0
     }
 
     static let shared = EffeTuneDSP()
@@ -35,13 +37,19 @@ final class EffeTuneDSP: ObservableObject {
     @Published private(set) var ready = false
     @Published var bypass = false { didSet { ETChain_SetBypass(bypass ? 1 : 0) } }
 
-    private var engine: UInt32 = 0
+    /// テレメトリを読むのに要るので外へ出す。
+    private(set) var engine: UInt32 = 0
+    private var nextTap: UInt32 = 1
     private var sampleRate: Double = 48000
     private var maxFrames: UInt32 = 4096
     private var kernelIndex: [String: UInt32] = [:]
 
     /// 利用できるエフェクト。カーネルとして登録されているものだけ。
     private(set) var available: [ETEffect] = []
+
+    /// 可視化の値を貯める輪の大きさと、1 秒あたりに出す回数。
+    private static let telemetryRingBytes: UInt32 = 256 * 1024
+    private static let telemetryHz: Float = 30
 
     private init() {}
 
@@ -61,13 +69,17 @@ final class EffeTuneDSP: ObservableObject {
             buildKernelIndex()
         }
 
-        let st = et_engine_prepare(engine, Float(sampleRate), maxChannels, maxFrames, 0)
+        // テレメトリの輪を確保しないと、可視化の値が一切出てこない。
+        let st = et_engine_prepare(engine, Float(sampleRate), maxChannels, maxFrames,
+                                   Self.telemetryRingBytes)
         guard Int(st) == ET_OK else {
             log.error("et_engine_prepare が \(st) を返した")
             ready = false
             return
         }
         ready = true
+        et_engine_set_telemetry_rate(engine, Self.telemetryHz)
+        Telemetry.shared.clear()
         log.notice("DSP ready sr=\(sampleRate) engine=\(self.engine) kinds=\(self.available.count) abi=\(et_abi_version())")
 
         // 用意し直したので、いま並んでいるものを作り直す。
@@ -88,7 +100,8 @@ final class EffeTuneDSP: ObservableObject {
             guard n > 0 else { continue }
             kernelIndex[String(cString: buf)] = i
         }
-        available = ETCatalog.filter { kernelIndex[$0.type] != nil && !$0.isAnalyzer }
+        // analyzer も出す。値は DSP がテレメトリで吐くので、こちらは描くだけでよい。
+        available = ETCatalog.filter { kernelIndex[$0.type] != nil }
         let missing = ETCatalog.filter { kernelIndex[$0.type] == nil }
         if !missing.isEmpty {
             log.info("カーネルが無い型 \(missing.count) 個: \(missing.prefix(5).map(\.type).joined(separator: ","))")
@@ -157,8 +170,12 @@ final class EffeTuneDSP: ObservableObject {
             log.error("et_instance_create に失敗 \(typeName, privacy: .public)")
             return false
         }
+        let tap = nextTap
+        nextTap &+= 1
         node.instance = inst
-        log.notice("instance=\(inst) \(typeName, privacy: .public)")
+        node.tapId = tap
+        et_instance_set_tap(engine, inst, tap)
+        log.notice("instance=\(inst) tap=\(tap) \(typeName, privacy: .public)")
         pushParams(node)
         return true
     }

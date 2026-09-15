@@ -10,6 +10,7 @@
 //  こちらは内蔵スピーカーを掴んだままでいられる。回り込まない。
 
 import AVFoundation
+import Darwin
 import os
 
 /// 音のスレッドだけが触る置き場。確保はここで先に済ませる。
@@ -22,6 +23,16 @@ private final class RenderState {
     var meter: Float = 0
     var applied: UInt32 = 0
     var elapsed: Double = 0
+
+    /// 1 コールバックにかかった時間を、そのぶんの音の長さで割ったもの。
+    /// 1.0 を超えると間に合っていない。
+    var load: Double = 0
+    private var timebase = mach_timebase_info_data_t()
+
+    func now() -> Double {
+        if timebase.denom == 0 { mach_timebase_info(&timebase) }
+        return Double(mach_absolute_time()) * Double(timebase.numer) / Double(timebase.denom) / 1e9
+    }
 
     init(capacity: Int, sampleRate: Double) {
         self.capacity = capacity
@@ -51,13 +62,20 @@ final class AudioIO: ObservableObject {
     private static let capacity = 8192
 
     @Published var running = false
-    @Published var status = "停止中"
+    @Published var sampleRate: Double = 48000
+    @Published var status = "Stopped"
     @Published var route = "-"
     @Published var listening = false
     @Published var hasPeer = false
     @Published var received: UInt64 = 0
     @Published var level: Float = 0
     @Published var applied: Int = 0
+    /// 演算の余裕。1.0 で使い切り。
+    @Published var load: Double = 0
+    /// 待ち受け側に溜まっているフレーム数。そのまま遅延。
+    @Published var bufferedFrames: UInt32 = 0
+    /// 1 コールバックのフレーム数。
+    @Published var blockFrames: Int = 0
 
     private init() {
         // 拡張はいつ繋いでくるか分からないので、起動と同時に待ち受ける。
@@ -69,7 +87,7 @@ final class AudioIO: ObservableObject {
 
         if !ETLinkReceiver.shared.listening {
             guard ETLinkReceiver.shared.start() else {
-                status = "待ち受けを開けない"
+                status = "Cannot open the listening socket"
                 return
             }
         }
@@ -83,7 +101,7 @@ final class AudioIO: ObservableObject {
             try session.overrideOutputAudioPort(.speaker)
         } catch {
             let ns = error as NSError
-            status = "セッション失敗 \(ns.domain) \(ns.code)"
+            status = "Audio session failed: \(ns.domain) \(ns.code)"
             log.error("session NG \(ns.domain, privacy: .public) \(ns.code)")
             return
         }
@@ -97,6 +115,7 @@ final class AudioIO: ObservableObject {
 
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)!
         let src = AVAudioSourceNode { _, _, frameCount, ablPtr -> OSStatus in
+            let began = state.now()
             let abl = UnsafeMutableAudioBufferListPointer(ablPtr)
             let n = min(Int(frameCount), state.capacity)
 
@@ -132,6 +151,11 @@ final class AudioIO: ObservableObject {
                 if abl.count > 1 { r[i] = 0 }
             }
             state.meter = peak
+
+            let spent = state.now() - began
+            let budget = Double(n) / state.sampleRate
+            // 跳ねるので均す
+            state.load += (spent / max(budget, 1e-9) - state.load) * 0.1
             return noErr
         }
 
@@ -143,12 +167,13 @@ final class AudioIO: ObservableObject {
             try engine.start()
         } catch {
             let ns = error as NSError
-            status = "engine 失敗 \(ns.domain) \(ns.code)"
+            status = "Audio engine failed: \(ns.domain) \(ns.code)"
             return
         }
 
         running = true
-        status = "再生中"
+        sampleRate = sr
+        status = "Running"
         route = routeNow()
         log.notice("start sr=\(sr) route=\(self.route, privacy: .public)")
     }
@@ -163,7 +188,7 @@ final class AudioIO: ObservableObject {
         render = nil
         running = false
         level = 0
-        status = "停止中"
+        status = "Stopped"
     }
 
     private var ticks = 0
@@ -173,9 +198,14 @@ final class AudioIO: ObservableObject {
         if ticks % 10 == 0 {
             log.notice("tick applied=\(self.applied) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) level=\(self.level) proc=\(ETChain_ProcessCount())")
         }
+        Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine)
         route = routeNow()
         level = render?.meter ?? 0
         applied = Int(render?.applied ?? 0)
+        load = render?.load ?? 0
+        bufferedFrames = ETLinkReceiver.shared.bufferedFrames
+        let session = AVAudioSession.sharedInstance()
+        blockFrames = Int((session.ioBufferDuration * session.sampleRate).rounded())
         listening = ETLinkReceiver.shared.listening
         hasPeer = ETLinkReceiver.shared.hasPeer
         received = ETLinkReceiver.shared.receivedFrames
@@ -183,7 +213,7 @@ final class AudioIO: ObservableObject {
 
     private func routeNow() -> String {
         let outs = AVAudioSession.sharedInstance().currentRoute.outputs
-        if outs.isEmpty { return "(出力なし)" }
-        return outs.map { "\($0.portName)[\($0.portType.rawValue)]" }.joined(separator: ",")
+        if outs.isEmpty { return "no output" }
+        return outs.map(\.portName).joined(separator: ", ")
     }
 }

@@ -35,6 +35,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL listening;
 @property (nonatomic, readonly) BOOL hasPeer;
 @property (nonatomic, readonly) uint64_t receivedFrames;
+/// まだ読み出していないフレーム数。そのまま遅延になる。
+@property (nonatomic, readonly) uint32_t bufferedFrames;
 - (BOOL)start;
 - (void)stop;
 /// 受信済みのサンプルを取り出す。足りない分は無音で埋める。

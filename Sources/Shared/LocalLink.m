@@ -183,6 +183,15 @@ static os_log_t ETLinkLog(void) {
 - (BOOL)listening { return _listenFd >= 0; }
 - (BOOL)hasPeer   { return _peerFd >= 0; }
 
+- (uint32_t)bufferedFrames {
+    uint64_t w = atomic_load_explicit(&_w, memory_order_acquire);
+    uint64_t r = _r;
+    if (w <= r) return 0;
+    uint64_t samples = w - r;
+    if (samples > RECV_RING_SAMPLES) samples = RECV_RING_SAMPLES;
+    return (uint32_t)(samples / 2);
+}
+
 - (BOOL)start {
     if (_listenFd >= 0) return YES;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
