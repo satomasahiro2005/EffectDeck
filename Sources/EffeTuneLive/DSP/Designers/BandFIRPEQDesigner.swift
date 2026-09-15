@@ -53,6 +53,7 @@
 //  et_pipeline_configure に遅延補正を組み直させる（AssetUpload.swift:64-68 の但し書き）。
 //  JS も同じ場所で refreshDspPipelineForLatencyChange を呼んでいる。
 
+import Combine
 import Foundation
 import os
 
@@ -510,7 +511,7 @@ enum BandFIRPEQCore {
         var logMagnitude = [Double](repeating: 0, count: magnitudes.count)
         for bin in 0..<magnitudes.count {
             let magnitude = magnitudes[bin]
-            logMagnitude[bin] = Foundation.log(magnitude > minimumMagnitude ? magnitude : minimumMagnitude)
+            logMagnitude[bin] = log(magnitude > minimumMagnitude ? magnitude : minimumMagnitude)
         }
         var cepstrum = fft.inverseRealTransform(
             real: logMagnitude,
@@ -940,6 +941,10 @@ final class BandFIRPEQDesigner: ObservableObject {
             return engineChannels >= 2 ? 2 : 1
         case 0...15:                                // "L" / "R" / "3"〜"16"
             return 1
+        // 16 は JS の保存形式に綴りが無いが、engine は 16 以上を対として扱う
+        // （engine.cpp:759-764）。GroupDelayEQ / GroupDelayPEQ の担当も engine に
+        // 合わせているので、ここも揃える。
+        case 16:  return engineChannels >= 2 ? 2 : 0   // 1ch 目と 2ch 目の対
         case 17:  return engineChannels >= 4 ? 2 : 0   // "34"
         case 18:  return engineChannels >= 6 ? 2 : 0   // "56"
         case 19:  return engineChannels >= 8 ? 2 : 0   // "78"

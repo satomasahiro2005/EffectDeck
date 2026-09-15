@@ -257,8 +257,8 @@ private struct PEQ15SliderRow: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(corners: .concentric))
-                    .overlay(ConcentricRectangle().stroke(.tint, lineWidth: 1))
+                    .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                    .overlay(ConcentricRectangle(corners: .concentric(minimum: ETMetrics.innerMinRadius)).stroke(.tint, lineWidth: 1))
                     .submitLabel(.done)
                     .onSubmit { commit() }
             } else {
@@ -436,7 +436,7 @@ struct FifteenBandPEQView: View {
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(minWidth: 34, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                            in: .rect(corners: .concentric))
+                            in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
                 .opacity(isOn ? 1 : 0.45)
         }
         .buttonStyle(.plain)
@@ -464,12 +464,11 @@ struct FifteenBandPEQView: View {
 
                 Spacer(minLength: 0)
 
-                Button {
-                    dsp.setValue(current.enabled ? 0 : 1, at: index, offset: l.enabled + selected)
-                } label: {
-                    PowerBadge(isOn: current.enabled)
-                }
-                .buttonStyle(.plain)
+                Toggle("Enabled", isOn: Binding(
+                    get: { current.enabled },
+                    set: { _ in dsp.setValue(current.enabled ? 0 : 1, at: index, offset: l.enabled + selected) }))
+                    .toggleStyle(.power)
+                    .labelsHidden()
             }
 
             PEQ15SliderRow(title: "Freq", value: current.frequency, range: 20...20000,

@@ -131,7 +131,7 @@ private struct RoutingRow: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(.quaternary, in: .rect(corners: .concentric))
+            .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
         }
     }
 }

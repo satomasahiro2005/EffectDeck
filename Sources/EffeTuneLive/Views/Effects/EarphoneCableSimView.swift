@@ -361,9 +361,9 @@ struct EarphoneCableSimView: View {
                             .frame(minWidth: 30, minHeight: 26)
                             .background(slot == i ? AnyShapeStyle(.tint)
                                                   : AnyShapeStyle(.quaternary),
-                                        in: .rect(corners: .concentric))
+                                        in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
                             .overlay(
-                                ConcentricRectangle()
+                                ConcentricRectangle(corners: .concentric(minimum: ETMetrics.innerMinRadius))
                                     .stroke(.tint, lineWidth: isSlotEnabled(i) ? 1 : 0))
                     }
                     .buttonStyle(.plain)

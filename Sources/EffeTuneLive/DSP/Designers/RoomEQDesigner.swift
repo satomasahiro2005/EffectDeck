@@ -578,7 +578,7 @@ private extension RoomEQDesigner {
                 let low = gridFrequencies[upper - 1]
                 let high = gridFrequencies[upper]
                 lowerIndices[bin] = upper - 1
-                fractions[bin] = Foundation.log(frequency / low) / Foundation.log(high / low)
+                fractions[bin] = log(frequency / low) / log(high / low)
             }
         }
 
@@ -636,7 +636,7 @@ private extension RoomEQDesigner {
         let half = fftSize / 2
         var logMagnitude = [Double](repeating: 0, count: half + 1)
         for bin in 0...half {
-            logMagnitude[bin] = Foundation.log(max(minimumMagnitude, magnitudes[bin]))
+            logMagnitude[bin] = log(max(minimumMagnitude, magnitudes[bin]))
         }
         let halfImaginary = [Double](repeating: 0, count: logMagnitude.count)
         var cepstrum = fft.inverseRealTransform(real: logMagnitude, imag: halfImaginary)
@@ -964,7 +964,7 @@ private extension RoomEQDesigner {
             } else {
                 let low = points[upper - 1]
                 let high = points[upper]
-                let fraction = Foundation.log(frequency / low.frequency) / Foundation.log(high.frequency / low.frequency)
+                let fraction = log(frequency / low.frequency) / log(high.frequency / low.frequency)
                 result[index] = low.decibels + fraction * (high.decibels - low.decibels)
             }
         }
@@ -1013,7 +1013,7 @@ private extension RoomEQDesigner {
             }
             offsetWeights = weights
         } else if ascending {
-            let significantDistance = sigma * (-2 * Foundation.log(minimumSignificantWeight)).squareRoot()
+            let significantDistance = sigma * (-2 * log(minimumSignificantWeight)).squareRoot()
             var first = [Int](repeating: 0, count: count)
             var last = [Int](repeating: 0, count: count)
             var firstCandidate = 0

@@ -41,7 +41,7 @@ APP="$ROOT/out-sim/EffeTune Live.app"
 [ -d "$APP" ] || { echo "!! $APP が無い"; exit 1; }
 
 xcrun simctl install "$DEV" "$APP"
-xcrun simctl launch "$DEV" ai.nemut.effetune.player >/dev/null 2>&1
+xcrun simctl launch "$DEV" ai.nemut.effetune >/dev/null 2>&1
 sleep 4
 xcrun simctl io "$DEV" screenshot "$SHOT" 2>&1 | tail -1
 echo "SHOT: $SHOT"

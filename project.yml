@@ -67,7 +67,7 @@ targets:
     settings:
       base:
         <<: *dspSettings
-        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.player
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune
         PRODUCT_NAME: EffeTune Live
         INFOPLIST_FILE: Sources/EffeTuneLive/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: EffeTuneLive
@@ -92,7 +92,7 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.bridge
         PRODUCT_NAME: EffeTune Live Bridge
         INFOPLIST_FILE: Sources/EffeTuneLiveBridge/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: EffeTuneLiveBridge
@@ -111,12 +111,16 @@ targets:
     platform: iOS
     sources:
       - path: Sources/Extension
-      # 拡張は DSP コアを積まないので ETChain は渡さない（et_* が未解決になる）
-      - path: Sources/Shared/LocalLink.h
-      - path: Sources/Shared/LocalLink.m
+      # 拡張は DSP コアを積まないので、et_* を呼ぶものは除く。
+      # ファイルを 1 本ずつ書くと XcodeGen が拾わないことがあったので、
+      # ディレクトリごと入れて要らないものを excludes で落とす。
+      - path: Sources/Shared
+        excludes:
+          - "ETPipeline.*"
+          - "ETResample.*"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.extension
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.bridge.extension
         PRODUCT_NAME: EffeTuneLiveExtension
         INFOPLIST_FILE: Sources/Extension/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/Extension/Extension.entitlements
@@ -128,3 +132,29 @@ targets:
       - sdk: AVFoundation.framework
       - sdk: Network.framework
       - sdk: ExtensionFoundation.framework
+
+  # ------------------------------------------------------------------
+  # UI の当たり判定を機械で確かめるためのもの。製品には入らない。
+  # ------------------------------------------------------------------
+  EffeTuneLiveUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/UI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.uitests
+        TEST_TARGET_NAME: EffeTuneLive
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: EffeTuneLive
+
+schemes:
+  EffeTuneLive:
+    build:
+      targets:
+        EffeTuneLive: all
+        EffeTuneLiveUITests: [test]
+    test:
+      targets:
+        - EffeTuneLiveUITests

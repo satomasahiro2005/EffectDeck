@@ -22,6 +22,7 @@ xcrun simctl bootstatus "$DEV" -b >/dev/null 2>&1
 [ "${SHOW:-0}" = "1" ] && open -a Simulator --args -CurrentDeviceUDID "$DEV" 2>/dev/null
 
 python3 Tools/gen_catalog.py 2>&1 | tail -1
+python3 Tools/gen_presets.py 2>&1 | tail -1
 NS="Vendor/effetune/dsp/plugins/analyzer/note_spectrogram"
 rm -rf Generated/note-models && mkdir -p Generated/note-models
 for m in learned_model fine_model octave_model; do
@@ -38,14 +39,14 @@ APP="$ROOT/out-sim/EffeTune Live.app"
 [ -d "$APP" ] || { echo "!! 成果物が無い"; exit 1; }
 
 rm -rf "$OUT" && mkdir -p "$OUT"
-xcrun simctl uninstall "$DEV" ai.nemut.effetune.player >/dev/null 2>&1
+xcrun simctl uninstall "$DEV" ai.nemut.effetune >/dev/null 2>&1
 xcrun simctl install "$DEV" "$APP"
 
 # ETScreenshotSeed に何を仕込むかを渡す。
 shoot() {
   local name="$1"; shift
-  xcrun simctl terminate "$DEV" ai.nemut.effetune.player >/dev/null 2>&1
-  xcrun simctl launch "$DEV" ai.nemut.effetune.player "$@" >/dev/null 2>&1
+  xcrun simctl terminate "$DEV" ai.nemut.effetune >/dev/null 2>&1
+  xcrun simctl launch "$DEV" ai.nemut.effetune "$@" >/dev/null 2>&1
   sleep 10
   xcrun simctl io "$DEV" screenshot "$OUT/$name.png" >/dev/null 2>&1
   echo "  $name"

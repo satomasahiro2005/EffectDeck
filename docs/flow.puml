@@ -1,0 +1,54 @@
+@startuml EffeTuneLiveFlow
+' 通信の経路だけ。中身は見ない。
+' 描くには: plantuml docs/flow.puml
+'
+' 箱の幅を揃えてあるのは、矢印をまっすぐ落とすため。
+' PlantUML に幅の指定が無いので、ラベルの行長で揃えている。
+
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam nodesep 30
+skinparam ranksep 78
+skinparam ArrowColor #7A8794
+skinparam ArrowFontSize 11
+skinparam ArrowFontColor #55606B
+skinparam linetype ortho
+
+skinparam rectangle {
+  BorderColor #9AA7B4
+  BackgroundColor #FFFFFF
+  FontColor #1F2933
+}
+
+skinparam frame {
+  BorderColor #C7D2DC
+  BackgroundColor #F2F6FA
+  FontColor #4A5560
+  FontSize 12
+}
+
+frame "iPhone" as PHONE {
+
+  rectangle "　　　再生するアプリ　　　\nSpotify / Music / YouTube" as SRC
+
+  rectangle "　　　　CoreAudio　　　　\n　　　出力先ピッカー　　　" as CA
+
+  frame "EffeTune Live Bridge" as BRIDGE #EEF3F9 {
+    rectangle "　Media Device Extension　\n　仮想デバイス「EffeTune」　" as EXT
+  }
+
+  frame "EffeTune Live" as LIVE #EFF6EE {
+    rectangle "　　　　DSP と UI　　　　\n　　　　　　　　　　　　" as APP
+  }
+
+  rectangle "　　スピーカー / イヤホン　　\n　　　　　　　　　　　　" as OUT
+}
+
+SRC --> CA  : 音を出す
+CA  --> EXT : 出力先に選ばれる
+EXT --> APP : **TCP 127.0.0.1:47101**\nfloat32 インターリーブ / 48 kHz
+APP --> OUT : AVAudioSession
+
+@enduml

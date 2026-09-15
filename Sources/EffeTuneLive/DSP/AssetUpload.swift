@@ -567,6 +567,9 @@ enum AssetUpload {
         var current = status(engine: engine, instance: instance, slot: slot)
         while current.state == .preparing || current.state == .staged {
             if Date() >= deadline { break }
+            // 打ち切られたら降りる。Task.sleep は打ち切られた後 `try?` で
+            // すぐ返るので、ここを見ないと期限まで MainActor を回し続ける。
+            if Task.isCancelled { break }
             try? await Task.sleep(nanoseconds: 20_000_000)
             current = status(engine: engine, instance: instance, slot: slot)
         }

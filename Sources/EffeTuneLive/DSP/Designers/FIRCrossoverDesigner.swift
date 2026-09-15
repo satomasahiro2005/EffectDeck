@@ -203,7 +203,7 @@ enum FIRCrossoverDesignCore {
     /// 下側に残る割合。slope が急なほど切り替わりが速い。
     static func lowWeight(frequency: Double, cutoff: Double, slope: Double) -> Double {
         guard frequency > 0 else { return 1 }
-        let exponent = slope / octaveDecibels * Foundation.log(frequency / cutoff)
+        let exponent = slope / octaveDecibels * log(frequency / cutoff)
         if exponent <= -36 { return 1 }
         if exponent >= 36 { return 0 }
         return 1 / (1 + exp(exponent))
@@ -337,7 +337,7 @@ enum FIRCrossoverDesignCore {
                                      fft: FIRDesign.RealFFT) -> [Double] {
         var logMagnitude = [Double](repeating: 0, count: magnitudes.count)
         for bin in 0..<magnitudes.count {
-            logMagnitude[bin] = Foundation.log(max(minimumMagnitude, magnitudes[bin]))
+            logMagnitude[bin] = log(max(minimumMagnitude, magnitudes[bin]))
         }
         var cepstrum = fft.inverseRealTransform(
             real: logMagnitude,

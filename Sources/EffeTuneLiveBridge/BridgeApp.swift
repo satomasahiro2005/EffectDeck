@@ -46,7 +46,9 @@ struct BridgeView: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            // 固定の半径だと、端末の画面の丸みと合わない。
+            // iOS 26 からは外側の丸みに揃える concentric がある。
+            .background(.regularMaterial, in: .rect(corners: .concentric))
             .padding(.horizontal, 24)
             .padding(.bottom, 28)
         }

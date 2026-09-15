@@ -17,6 +17,28 @@ struct PresetsView: View {
     @State private var showPaste = false
     @State private var message: String?
 
+    private var builtinCategories: [String] {
+        var seen = Set<String>()
+        return ETBuiltinPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
+    }
+
+    private func builtin(in category: String) -> [ETBuiltinPreset] {
+        ETBuiltinPresets.filter { $0.category == category }
+    }
+
+    /// 読み込む経路はユーザーが保存したものと同じ。
+    /// 知らないエフェクトが混じっていれば PipelineStore.parse が黙って落とすので、
+    /// 何本読めたかを出す。
+    private func apply(_ preset: ETBuiltinPreset) {
+        let loaded = ETShareLink.parse(preset.json, catalog: ETCatalog)
+        guard !loaded.isEmpty else {
+            message = "Could not read \(preset.name)."
+            return
+        }
+        dsp.replaceChain(with: loaded)
+        dismiss()
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -51,6 +73,30 @@ struct PresetsView: View {
                             for i in offsets { store.remove(store.names[i]) }
                         }
                     }
+                }
+
+                Section {
+                    ForEach(builtinCategories, id: \.self) { category in
+                        DisclosureGroup(category) {
+                            ForEach(builtin(in: category)) { preset in
+                                Button {
+                                    apply(preset)
+                                } label: {
+                                    HStack {
+                                        Text(preset.name).foregroundStyle(.primary)
+                                        Spacer()
+                                        Text("\(preset.effectCount)")
+                                            .font(.system(size: 12, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Built-in")
+                } footer: {
+                    Text("The presets that ship with EffeTune. Loading one replaces the current chain.")
                 }
 
                 Section {

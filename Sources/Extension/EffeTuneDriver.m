@@ -26,11 +26,15 @@
 #import <mach/mach_time.h>
 
 // ---- オブジェクト ID。単一デバイスなので固定で足りる ----
+// 入力ストリーム（ID 4）は外した。音の受け渡しは TCP (ETLinkSender) に移っていて、
+// ReadInput を読む相手がもう居ない。使っていない面を名乗り続ける理由が無いだけで、
+// 外したことで症状が消えると分かっているわけではない。
+// ヘッダの「提示できるのは単一の出力デバイスのみ」はデバイスの本数の話であって、
+// 1 台が入力ストリームを持つことを禁じてはいない。
 enum {
     kObjectID_PlugIn        = kAudioObjectPlugInObject,   // 1
     kObjectID_Device        = 2,
     kObjectID_Stream_Output = 3,
-    kObjectID_Stream_Input  = 4,
 };
 
 // iOS SDK には AudioHardware.h 由来のこの2つが無いので自前で置く。
@@ -55,13 +59,12 @@ static AudioServerPlugInHostRef           gHost         = NULL;
 static pthread_mutex_t  gStateMutex = PTHREAD_MUTEX_INITIALIZER;
 static UInt32           gRefCount   = 1;
 static CFStringRef      gDeviceUID  = NULL;   // MediaOutputDevice.id と同じ文字列
-static Boolean          gRegistered = false;  // CoreAudio への登録はプロセスに1回だけ
-// デバイスが生きているか。
+static Boolean          gRegistered = false;  // 直近の登録が生きているか（publish は毎回やり直す）
+// 生存を出し入れして port を手放させる案は外した。
 //
-// **初期値は true。** false から始めると、システムがデバイスを調べに来た時点で
-// 「生きていない」と答えてしまい、接続待ちのまま終わらない。
-// 名乗っている間は生きている扱いにして、離れたときだけ落とす。
-static Boolean          gAlive      = true;
+// kAudioDevicePropertyDeviceIsAlive を 0 にして PropertiesChanged で知らせると、
+// 手放すどころか activate の途中でデバイスを切られて Unable to Connect になる。
+// 実機で確かめた。ここは常に 1 を返す。
 static Boolean          gIORunning  = false;
 static UInt64           gIOCount    = 0;
 
@@ -73,14 +76,7 @@ static UInt64   gPeriodCount    = 0;
 
 static EffeTuneSampleHandler gHandler = NULL;
 
-// 出力に書かれた音をそのまま入力へ返すためのリング。
-// これでこのデバイスは仮想オーディオケーブルになる。
-// 拡張のサンドボックスは App Group のファイルも POSIX 共有メモリも拒否するので
-// (deny file-write-data / ipc-posix-shm-*)、音の受け渡しは CoreAudio の中だけで完結させる。
-#define ET_LOOP_FRAMES 16384u
-static float    gLoop[ET_LOOP_FRAMES * 2];
-static volatile uint64_t gLoopWrite = 0;   // サンプル単位の通し番号
-static volatile uint64_t gLoopRead  = 0;
+// 出力→入力のリング（gLoop）は削除した。音の受け渡しは TCP (ETLinkSender) に移っている。
 static float   gVolume = 1.0f;
 static BOOL    gMuted  = NO;
 
@@ -249,7 +245,6 @@ static Boolean ET_HasProperty(AudioServerPlugInDriverRef d, AudioObjectID obj,
                     return true;
             }
             return false;
-        case kObjectID_Stream_Input:
         case kObjectID_Stream_Output:
             switch (addr->mSelector) {
                 case kAudioObjectPropertyBaseClass:
@@ -316,8 +311,12 @@ static OSStatus ET_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioObject
                 case kAudioObjectPropertyManufacturer:
                 case kAudioDevicePropertyDeviceUID:
                 case kAudioDevicePropertyModelUID:            RET_SIZE(sizeof(CFStringRef));
+                // 入力スコープにはストリームが無い。
+                // GetPropertyData が 0 個返すので、大きさも 0 でないと食い違う。
                 case kAudioObjectPropertyOwnedObjects:
-                case kAudioDevicePropertyStreams:             RET_SIZE(sizeof(AudioObjectID));
+                case kAudioDevicePropertyStreams:
+                    RET_SIZE(addr->mScope == kAudioObjectPropertyScopeInput
+                             ? 0u : (UInt32)sizeof(AudioObjectID));
                 case kAudioDevicePropertyTransportType:
                 case kAudioDevicePropertyClockDomain:
                 case kAudioDevicePropertyDeviceIsAlive:
@@ -335,7 +334,10 @@ static OSStatus ET_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioObject
                 case kAudioDevicePropertyPreferredChannelsForStereo:
                                                               RET_SIZE(2 * sizeof(UInt32));
                 case kNemutStreamConfiguration:
-                    RET_SIZE(offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer));
+                    // 入力スコープはバッファ 0 本なのでヘッダの分だけ。
+                    RET_SIZE(addr->mScope == kAudioObjectPropertyScopeInput
+                             ? (UInt32)offsetof(AudioBufferList, mBuffers)
+                             : (UInt32)(offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer)));
                 case kNemutPreferredChannelLayout:
                     RET_SIZE(offsetof(AudioChannelLayout, mChannelDescriptions));
                 case kAudioObjectPropertyControlList:
@@ -343,7 +345,6 @@ static OSStatus ET_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioObject
                     RET_SIZE(0);
             }
             break;
-        case kObjectID_Stream_Input:
         case kObjectID_Stream_Output:
             switch (addr->mSelector) {
                 case kAudioObjectPropertyBaseClass:
@@ -423,25 +424,31 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 case kAudioDevicePropertyTransportType:
                     PUT(UInt32, kAudioDeviceTransportTypeRemoteStreaming);
                 case kAudioDevicePropertyRelatedDevices:
+                    if (inDataSize < sizeof(AudioObjectID)) { *outDataSize = 0; return noErr; }
                     ((AudioObjectID *)outData)[0] = kObjectID_Device;
                     *outDataSize = sizeof(AudioObjectID);
                     return noErr;
                 case kAudioDevicePropertyClockDomain:       PUT(UInt32, 0);
-                case kAudioDevicePropertyDeviceIsAlive:     PUT(UInt32, gAlive ? 1 : 0);
+                case kAudioDevicePropertyDeviceIsAlive:     PUT(UInt32, 1);
                 case kAudioDevicePropertyDeviceIsRunning:   PUT(UInt32, gIORunning ? 1 : 0);
+                // どちらも 0。このデバイスは MediaDevice のルートピッカーで
+                // 明示的に選ばれたときだけ使えればよく、既定の出力の候補に入る必要は無い。
+                //
+                // 未確認: 「既定の候補だったからプレイヤー自身の出力もここへ来て
+                // 帰還ループになり、レベルが +33dB まで伸びた」という筋は測っていない。
+                // レベルが伸びたのは実機で見た事実だが、原因はこれと決まっていない。
+                // プレイヤーの出力が本当にここへ来ていたなら AddDeviceClient の
+                // bundle に ai.nemut.effetune.player が出る。まずそれを読むこと。
+                // 0 にした副作用（ルートピッカーから選べなくなる）も未確認。
                 case kAudioDevicePropertyDeviceCanBeDefaultDevice:       PUT(UInt32, 1);
                 case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: PUT(UInt32, 1);
                 case kAudioDevicePropertyLatency:           PUT(UInt32, 0);
                 case kAudioObjectPropertyOwnedObjects:
                 case kAudioDevicePropertyStreams: {
-                    AudioObjectID ids[2];
+                    // 出力ストリーム 1 本だけ。入力スコープには何も返さない。
+                    AudioObjectID ids[1];
                     UInt32 n = 0;
-                    if (addr->mScope == kAudioObjectPropertyScopeInput) {
-                        ids[n++] = kObjectID_Stream_Input;
-                    } else if (addr->mScope == kAudioObjectPropertyScopeOutput) {
-                        ids[n++] = kObjectID_Stream_Output;
-                    } else {
-                        ids[n++] = kObjectID_Stream_Input;
+                    if (addr->mScope != kAudioObjectPropertyScopeInput) {
                         ids[n++] = kObjectID_Stream_Output;
                     }
                     UInt32 fit = inDataSize / (UInt32)sizeof(AudioObjectID);
@@ -471,7 +478,15 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 }
                 case kNemutStreamConfiguration: {
                     AudioBufferList *bl = (AudioBufferList *)outData;
-                    // 入力も出力も 1 バッファ 2ch。出力に書かれた音を入力へ返す。
+                    // 出力は 1 バッファ 2ch。入力スコープはバッファ 0 本
+                    // （入力ストリームを外したので、ここも空でないと食い違う）。
+                    if (addr->mScope == kAudioObjectPropertyScopeInput) {
+                        size_t need = offsetof(AudioBufferList, mBuffers);
+                        if (inDataSize < need) return kAudioHardwareBadPropertySizeError;
+                        bl->mNumberBuffers = 0;
+                        *outDataSize = (UInt32)need;
+                        return noErr;
+                    }
                     size_t need = offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer);
                     if (inDataSize < need) return kAudioHardwareBadPropertySizeError;
                     bl->mNumberBuffers = 1;
@@ -497,20 +512,17 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
             }
             break;
 
-        case kObjectID_Stream_Input:
         case kObjectID_Stream_Output:
             switch (addr->mSelector) {
                 case kAudioObjectPropertyBaseClass: PUT(AudioClassID, kAudioObjectClassID);
                 case kAudioObjectPropertyClass:     PUT(AudioClassID, kAudioStreamClassID);
                 case kAudioObjectPropertyOwner:     PUT(AudioObjectID, kObjectID_Device);
                 case kAudioStreamPropertyIsActive:  PUT(UInt32, 1);
-                // 1 = input, 0 = output
+                // 1 = input, 0 = output。出力しか持たないので 0 固定。
                 case kAudioStreamPropertyDirection:
-                    PUT(UInt32, (obj == kObjectID_Stream_Input) ? 1 : 0);
+                    PUT(UInt32, 0);
                 case kAudioStreamPropertyTerminalType:
-                    PUT(UInt32, (obj == kObjectID_Stream_Input)
-                                 ? kAudioStreamTerminalTypeMicrophone
-                                 : kAudioStreamTerminalTypeSpeaker);
+                    PUT(UInt32, kAudioStreamTerminalTypeSpeaker);
                 case kAudioStreamPropertyStartingChannel: PUT(UInt32, 1);
                 case kAudioStreamPropertyLatency:         PUT(UInt32, 0);
                 case kAudioStreamPropertyVirtualFormat:
@@ -539,9 +551,25 @@ static OSStatus ET_SetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                                    pid_t client, const AudioObjectPropertyAddress *addr,
                                    UInt32 qualSize, const void *qual,
                                    UInt32 inDataSize, const void *inData) {
-    (void)d; (void)client; (void)qualSize; (void)qual; (void)inDataSize; (void)inData;
-    (void)obj; (void)addr;
-    // 単一フォーマット固定なので設定は受けない。
+    (void)d; (void)client; (void)qualSize; (void)qual;
+    if (!addr) return kAudioHardwareIllegalOperationError;
+
+    // IsPropertySettable が「書ける」と答えた 2 つは、ここで受けないと辻褄が合わない。
+    // 書けると答えたのにエラーを返すと、ホストはストリームの活性化と
+    // レート合わせを失敗として扱い、そのまま IO が始まらない。
+    if (obj == kObjectID_Stream_Output && addr->mSelector == kAudioStreamPropertyIsActive) {
+        // 受けるだけ。ストリームは 1 本しかないので常に有効のまま返す。
+        return noErr;
+    }
+    if (obj == kObjectID_Device && addr->mSelector == kAudioDevicePropertyNominalSampleRate) {
+        if (!inData || inDataSize < sizeof(Float64)) return kAudioHardwareBadPropertySizeError;
+        Float64 want = *((const Float64 *)inData);
+        // AvailableNominalSampleRates は 48k の 1 点だけ。それ以外は受けない。
+        if (want > kSampleRate - 1.0 && want < kSampleRate + 1.0) return noErr;
+        return kAudioHardwareIllegalOperationError;
+    }
+
+    // ほかは単一フォーマット固定なので受けない。
     return kAudioHardwareUnknownPropertyError;
 }
 
@@ -558,7 +586,7 @@ static OSStatus ET_StartIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt
     gZeroHostTime = 0;
     gPeriodCount = 0;
     pthread_mutex_unlock(&gStateMutex);
-    os_log(gLog, "StartIO");
+    os_log(gLog, "ET StartIO");
     return noErr;
 }
 
@@ -627,9 +655,9 @@ static OSStatus ET_WillDoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID
     // ミックスはホスト側がやる。こちらは書き出し段だけ引き受ける。
     // MixOutput まで true にすると、やらない仕事を引き受けたことになり
     // ホストの IO サイクルと噛み合わなくなる。
+    // ReadInput も false。入力ストリームを外したので読み出す相手がいない。
     switch (op) {
         case kAudioServerPlugInIOOperationWriteMix:   // 出力の書き出し。ここに音が届く
-        case kAudioServerPlugInIOOperationReadInput:  // 入力の読み出し。ここへ返す
             will = true;
             break;
         default:
@@ -657,35 +685,11 @@ static OSStatus ET_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID dev
     if (dev != kObjectID_Device) return kAudioHardwareBadObjectError;
     if (!ioMainBuffer || frames == 0) return noErr;
 
-    if (op == kAudioServerPlugInIOOperationReadInput) {
-        // 出力に書かれた音をそのまま入力として返す（仮想ケーブル）。
-        float *dst = (float *)ioMainBuffer;
-        uint64_t w = gLoopWrite;
-        uint64_t rd = gLoopRead;
-        const uint32_t cap = ET_LOOP_FRAMES * 2u;
-        uint32_t want = frames * kChannelCount;
-        uint64_t avail = (w > rd) ? (w - rd) : 0;
-        if (avail > cap) { rd = w - cap; avail = cap; }   // 遅れすぎたら追いつく
-        uint32_t got = (uint32_t)((avail < want) ? avail : want);
-        for (uint32_t i = 0; i < got; i++) dst[i] = gLoop[(rd + i) % cap];
-        for (uint32_t i = got; i < want; i++) dst[i] = 0.0f;
-        gLoopRead = rd + got;
-        return noErr;
-    }
-
+    // 引き受けるのは WriteMix だけ。ReadInput 用の出力→入力のリングは削除した
+    // （入力ストリームを外したので読む相手がいない。受け渡しは TCP に移っている）。
     if (op != kAudioServerPlugInIOOperationWriteMix) return noErr;
 
     gIOCount += frames;
-
-    // 入力へ返すためにリングへ積む。
-    {
-        const float *srcMix = (const float *)ioMainBuffer;
-        uint64_t w = gLoopWrite;
-        const uint32_t cap = ET_LOOP_FRAMES * 2u;
-        uint32_t n = frames * kChannelCount;
-        for (uint32_t i = 0; i < n; i++) gLoop[(w + i) % cap] = srcMix[i];
-        gLoopWrite = w + n;
-    }
 
     EffeTuneSampleHandler h = gHandler;
     if (h) {
@@ -698,8 +702,12 @@ static OSStatus ET_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID dev
           cycle ? cycle->mOutputTime.mHostTime : 0);
     }
 
-    // 出力先の実体は無いので、書き出し後のバッファは無音にしておく。
-    // （ここを残すとシステムが同じ音をもう一度どこかへ出す可能性がある）
+    // ミュート中だけ書き出し後のバッファを潰す。
+    //
+    // ただしこれは聞こえ方を変えない。すぐ上の h() で同じサンプルを既に TCP へ渡していて、
+    // 鳴らすのは本体側だから、ここを 0 にしても届く音は変わらない。
+    // gVolume も同じで、読んでいるのは volume のゲッターだけ。
+    // ルートピッカーの音量とミュートは、いまのところ効かない。
     if (gMuted) {
         memset(ioMainBuffer, 0, (size_t)frames * kChannelCount * sizeof(float));
     }
@@ -735,63 +743,61 @@ static OSStatus ET_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID de
 - (uint32_t)channelCount { return kChannelCount; }
 - (uint64_t)framesDelivered { return gIOCount; }
 
+/// vtable を埋めるのはプロセスに 1 回だけ。
+///
+/// 以前は publish のたびに memset して張り直していた。
+/// audio server が握っている最中に関数ポインタが一瞬 NULL になり、
+/// その隙に呼ばれるとデバイスが死んだ。
+/// 埋めるのを一度きりにすれば、登録だけを何度やり直しても危うくない。
+static void ETFillInterfaceOnce(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        gInterface._reserved                        = NULL;
+        gInterface.QueryInterface                   = ET_QueryInterface;
+        gInterface.AddRef                           = ET_AddRef;
+        gInterface.Release                          = ET_Release;
+        gInterface.Initialize                       = ET_Initialize;
+        gInterface.CreateDevice                     = ET_CreateDevice;
+        gInterface.DestroyDevice                    = ET_DestroyDevice;
+        gInterface.AddDeviceClient                  = ET_AddDeviceClient;
+        gInterface.RemoveDeviceClient               = ET_RemoveDeviceClient;
+        gInterface.PerformDeviceConfigurationChange = ET_PerformDeviceConfigurationChange;
+        gInterface.AbortDeviceConfigurationChange   = ET_AbortDeviceConfigurationChange;
+        gInterface.HasProperty                      = ET_HasProperty;
+        gInterface.IsPropertySettable               = ET_IsPropertySettable;
+        gInterface.GetPropertyDataSize              = ET_GetPropertyDataSize;
+        gInterface.GetPropertyData                  = ET_GetPropertyData;
+        gInterface.SetPropertyData                  = ET_SetPropertyData;
+        gInterface.StartIO                          = ET_StartIO;
+        gInterface.StopIO                           = ET_StopIO;
+        gInterface.GetZeroTimeStamp                 = ET_GetZeroTimeStamp;
+        gInterface.WillDoIOOperation                = ET_WillDoIOOperation;
+        gInterface.BeginIOOperation                 = ET_BeginIOOperation;
+        gInterface.DoIOOperation                    = ET_DoIOOperation;
+        gInterface.EndIOOperation                   = ET_EndIOOperation;
+    });
+}
+
 - (OSStatus)publishWithDeviceUID:(NSString *)uid {
     if (gDeviceUID) { CFRelease(gDeviceUID); gDeviceUID = NULL; }
     gDeviceUID = (CFStringRef)CFBridgingRetain([uid copy]);
 
-    // 登録はプロセスに 1 回だけ。
-    // activateDevice は選び直すたびに呼ばれるので、ここを素通しすると
-    // audio server が握っている最中の vtable を memset で消してから
-    // 貼り直すことになる。関数ポインタが一瞬 NULL になった隙に呼ばれると
-    // デバイスが死に、以後ルートピッカーで選んでも戻らなくなる。
-    if (gRegistered) {
-        os_log(gLog, "publish: 登録済みなので再利用 uid=%{public}@", uid);
-        return noErr;
-    }
+    ETFillInterfaceOnce();
 
-    memset(&gInterface, 0, sizeof(gInterface));
-    gInterface._reserved                        = NULL;
-    gInterface.QueryInterface                   = ET_QueryInterface;
-    gInterface.AddRef                           = ET_AddRef;
-    gInterface.Release                          = ET_Release;
-    gInterface.Initialize                       = ET_Initialize;
-    gInterface.CreateDevice                     = ET_CreateDevice;
-    gInterface.DestroyDevice                    = ET_DestroyDevice;
-    gInterface.AddDeviceClient                  = ET_AddDeviceClient;
-    gInterface.RemoveDeviceClient               = ET_RemoveDeviceClient;
-    gInterface.PerformDeviceConfigurationChange = ET_PerformDeviceConfigurationChange;
-    gInterface.AbortDeviceConfigurationChange   = ET_AbortDeviceConfigurationChange;
-    gInterface.HasProperty                      = ET_HasProperty;
-    gInterface.IsPropertySettable               = ET_IsPropertySettable;
-    gInterface.GetPropertyDataSize              = ET_GetPropertyDataSize;
-    gInterface.GetPropertyData                  = ET_GetPropertyData;
-    gInterface.SetPropertyData                  = ET_SetPropertyData;
-    gInterface.StartIO                          = ET_StartIO;
-    gInterface.StopIO                           = ET_StopIO;
-    gInterface.GetZeroTimeStamp                 = ET_GetZeroTimeStamp;
-    gInterface.WillDoIOOperation                = ET_WillDoIOOperation;
-    gInterface.BeginIOOperation                 = ET_BeginIOOperation;
-    gInterface.DoIOOperation                    = ET_DoIOOperation;
-    gInterface.EndIOOperation                   = ET_EndIOOperation;
-
+    // **毎回登録し直す。**
+    // 以前は gRegistered で短絡していたが、それだと
+    // audio server がポートを止めた（quies:1 rout:0）あとに負ける。
+    // 実機のログで確かめたところ、activate が 5 回来て全部
+    // 「登録済みなので再利用」になり、StartIO は 1 回も呼ばれなかった。
+    // 端末を再起動すると直るのは、プロセスが入れ替わって
+    // 1 回目の登録に戻るから。
     OSStatus st = AudioServerPlugInRegisterMediaDeviceExtension(gDriverRef, ^{
-        // 接続が切れたら登録も無効。次の activate で貼り直せるようにする。
         gRegistered = false;
-        os_log_error(gLog, "audio server との接続が切れた");
+        os_log_error(gLog, "ET audio server との接続が切れた");
     });
     if (st == noErr) gRegistered = true;
-    if (gRegistered) {
-        // 生きている状態にして、変わったことをホストへ知らせる。
-        gAlive = true;
-        if (gHost && gHost->PropertiesChanged) {
-            const AudioObjectPropertyAddress addr = {
-                kAudioDevicePropertyDeviceIsAlive,
-                kAudioObjectPropertyScopeGlobal,
-                kAudioObjectPropertyElementMain };
-            gHost->PropertiesChanged(gHost, kObjectID_Device, 1, &addr);
-        }
-    }
-    os_log(gLog, "RegisterMediaDeviceExtension uid=%{public}@ -> %d", uid, (int)st);
+    os_log_error(gLog, "ET publish uid=%{public}@ status=%d registered=%d",
+                 uid, (int)st, (int)gRegistered);
     return st;
 }
 
@@ -801,21 +807,6 @@ static OSStatus ET_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID de
 - (void)unpublish {
     gHandler = nil;
 
-    // 生きていないことにして知らせる。
-    // これをやらないとシステムは port を掴んだままになり、
-    // 次に同じ UID で名乗ったとき「もう繋がっている」と判断されて、
-    // 誰も IO を出さないまま "Unable to Connect" になる。
-    // 登録そのものを解除する手段は無い（対になる API が存在しない）ので、
-    // 生存の知らせで手放してもらう。
-    gAlive = false;
-    gIORunning = false;
-    if (gHost && gHost->PropertiesChanged) {
-        const AudioObjectPropertyAddress addr = {
-            kAudioDevicePropertyDeviceIsAlive,
-            kAudioObjectPropertyScopeGlobal,
-            kAudioObjectPropertyElementMain };
-        gHost->PropertiesChanged(gHost, kObjectID_Device, 1, &addr);
-    }
     os_log(gLog, "unpublish frames=%llu registered=%d",
            (unsigned long long)gIOCount, (int)gRegistered);
 }

@@ -62,6 +62,7 @@
 //  --- 数の扱い ---
 //  JS の Number は double。途中は Double で回して、カーネルへ渡す直前に Float へ落とす。
 
+import Combine
 import Foundation
 import os
 

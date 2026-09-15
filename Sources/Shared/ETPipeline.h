@@ -44,6 +44,9 @@ typedef struct {
     uint8_t  sectionGate;  // 0 or 1
 } ETPipeNode;
 
+/// engine を渡す。組めている状態を 0 に戻すので、et_engine_prepare のたびに呼ぶ。
+/// Engine::prepare は invalidatePipeline() で pipeline_configured_ を落とす
+/// （engine.cpp:219-222, 119-129）ので、こちら側も合わせないと嘘の ET_OK が残る。
 void ETPipeline_SetEngine(uint32_t engine);
 
 /// 鎖を差し替える。UI スレッドから呼ぶ。
@@ -58,15 +61,37 @@ void ETPipeline_SetBypass(int bypass);
 float *ETPipeline_MainBus(void);
 
 /// 1 ブロック処理する。リアルタイムスレッドから呼ぶ。
-/// 戻り値は通したノード数。0 は素通しか、まだ組めていないか。
-uint32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSeconds);
+///
+/// 戻り値は et_status。ET_OK(0) なら 1 ブロック通した。
+/// 以前はノード数を返していたが、上流の et_pipeline_process は件数を返さないので
+/// 自前で数えた値を混ぜていた。その結果「素通し」「まだ組めていない」「引数が悪い」
+/// 「処理は成功したがノードが 0 本」が全部 0 に潰れて区別できなかった。
+/// 通ったノード数は ETPipeline_ActiveNodes() で別に読む。
+int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSeconds);
 
-/// 直近の et_pipeline_configure が返した値。0 以外なら組めていない。
+/// 直近の et_pipeline_configure が返した値。
+/// 一度も configure していない間は ET_ERR_STATE。ET_OK(0) と紛れないようにしてある。
+/// process 側のエラーはここに入れない（ETPipeline_Process の戻り値で読む）。
 int32_t ETPipeline_LastStatus(void);
 
 /// ETPipeline_Process が呼ばれた回数。
 /// instance を壊す前に、この値が 2 つ進むのを待てば読み終えたと分かる。
 uint64_t ETPipeline_ProcessCount(void);
+
+/// et_pipeline_configure を呼んだ回数。成功・失敗の両方を数える。
+/// 0 なら Publish が音のスレッドに一度も拾われていない。
+uint64_t ETPipeline_ConfigureCount(void);
+
+/// いま組まれている鎖のうち、実際に処理されるノード数。
+/// enabled かつ sectionGate のものだけ数えている（engine.cpp:916-919 と同じ条件）。
+uint32_t ETPipeline_ActiveNodes(void);
+
+/// 素通しにしてあるか。
+int ETPipeline_IsBypassed(void);
+
+/// いま鎖が組めているか。直近の configure が ET_OK だったかどうか。
+/// engine を差し替えると 0 に戻る。
+int ETPipeline_HasConfigured(void);
 
 #ifdef __cplusplus
 }

@@ -17,6 +17,7 @@ struct ParameterRow: View {
     @State private var slot = 0
     @State private var editing = false
     @State private var draft = ""
+    @FocusState private var focused: Bool
 
     private var offset: Int { param.offset + (param.isArray ? slot : 0) }
     private var value: Float { values.indices.contains(offset) ? values[offset] : 0 }
@@ -25,7 +26,17 @@ struct ParameterRow: View {
         dsp.setValue(v, at: nodeIndex, offset: offset)
     }
 
+    @Environment(\.etGraphOnly) private var graphOnly
+
     var body: some View {
+        if graphOnly {
+            EmptyView()
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 6) {
             if param.isArray {
                 bandPicker
@@ -41,7 +52,7 @@ struct ParameterRow: View {
                 HStack {
                     Text(title).font(.system(size: 14))
                     Spacer(minLength: 8)
-                    Picker("", selection: Binding(
+                    Picker(title, selection: Binding(
                         get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
                         set: { set(Float($0)) })
                     ) {
@@ -50,6 +61,7 @@ struct ParameterRow: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
                 }
 
             case .number(let lo, let hi, let step, _, let isInteger):
@@ -90,30 +102,40 @@ struct ParameterRow: View {
     }
 
     /// 数値欄。触ると打ち込める。
+    ///
+    /// Text に onTapGesture を足す形だと、支援技術から操作できない
+    /// （ボタンでもテキスト欄でもないので、VoiceOver も Voice Control も届かない）。
+    /// だから常に TextField を置く。編集していない間は書式付きの値を出す。
     private var valueField: some View {
-        Group {
-            if editing {
-                TextField("", text: $draft)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(corners: .concentric))
-                    .overlay(ConcentricRectangle().stroke(.tint, lineWidth: 1))
-                    .submitLabel(.done)
-                    .onSubmit { commit() }
-            } else {
-                ValueBox(text: param.format(value))
-                    .onTapGesture {
-                        draft = trimmed(value)
-                        editing = true
-                    }
+        TextField(param.label, text: Binding(
+            get: { editing ? draft : param.format(value) },
+            set: { draft = $0 }))
+            .keyboardType(.numbersAndPunctuation)
+            .multilineTextAlignment(.center)
+            .font(.system(size: 13, design: .monospaced))
+            .focused($focused)
+            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+            .overlay(ConcentricRectangle(corners: .concentric(minimum: ETMetrics.innerMinRadius)).stroke(.tint, lineWidth: editing ? 1 : 0))
+            .submitLabel(.done)
+            .onSubmit { commit() }
+            .onChange(of: focused) { _, now in
+                if now {
+                    draft = trimmed(value)
+                    editing = true
+                } else if editing {
+                    // 他を触ってキーボードが引っ込んだときも確定させる。
+                    // これが無いと、打った値が渡らないまま消える。
+                    commit()
+                }
             }
-        }
+            .accessibilityLabel(param.label)
+            .accessibilityValue(param.format(value))
     }
 
     private func commit() {
         editing = false
+        focused = false
         guard let v = Float(draft.trimmingCharacters(in: .whitespaces)) else { return }
         if case .number(let lo, let hi, _, _, let isInteger) = param.kind {
             let clamped = min(max(v, lo), hi)
@@ -149,7 +171,7 @@ struct ParameterRow: View {
                                 .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                                 .frame(minWidth: 30, minHeight: 26)
                                 .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                            in: .rect(corners: .concentric))
+                                            in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
                         }
                         .buttonStyle(.plain)
                     }

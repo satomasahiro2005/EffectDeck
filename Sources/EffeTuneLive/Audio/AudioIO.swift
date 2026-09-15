@@ -29,6 +29,8 @@ private final class RenderState {
 
     var meter: Float = 0
     var applied: UInt32 = 0
+    /// 直近の ETPipeline_Process の戻り値（et_status）。ET_OK は 0。
+    var pipeStatus: Int32 = 0
     var elapsed: Double = 0
     var load: Double = 0
     var gate = PowerGate()
@@ -72,7 +74,9 @@ final class AudioIO: ObservableObject {
     static let shared = AudioIO()
 
     private let log = Logger(subsystem: "ai.nemut.effetune", category: "audio")
-    private let engine = AVAudioEngine()
+    /// mediaServicesWereReset のあとは古い engine が死んでいて二度と start しない。
+    /// 作り直せるように let ではなく var。
+    private var engine = AVAudioEngine()
     private var node: AVAudioSourceNode?
     private var render: RenderState?
 
@@ -86,8 +90,17 @@ final class AudioIO: ObservableObject {
     @Published var listening = false
     @Published var hasPeer = false
     @Published var received: UInt64 = 0
-    @Published var level: Float = 0
+    /// 出力のピーク。**@Published ではない。**
+    /// Sources のどのビューも読んでいない（メーターは Telemetry の枠を読む）のに
+    /// 30Hz で publish していて、観測している側の body を 33ms ごとに作り直していた。
+    /// 読み手が増えるときは、ここではなく Telemetry を見ること。
+    private(set) var level: Float = 0
     @Published var applied: Int = 0
+    /// このアプリの音がどこへ出ているか。
+    /// 仮想デバイス「EffeTune」を指していたら帰還ループ。
+    @Published var outputRoute: String = "—"
+    /// 出力先が仮想デバイスのままなら true。鎖が自分に戻っている。
+    @Published var loopback = false
     @Published var load: Double = 0
     @Published var bufferedFrames: UInt32 = 0
     @Published var blockFrames: Int = 0
@@ -98,10 +111,22 @@ final class AudioIO: ObservableObject {
 
     private var ticks = 0
 
+    /// 中断中は再開しない。中断中の setActive(true) は失敗するだけなので、
+    /// followPeer が 3.3Hz で叩き続けることになる。
+    private var interrupted = false
+    /// start() が失敗したとき、次を試すまでの間隔（秒）を稼ぐ。
+    private var lastStartAttempt: Double = 0
+    /// ハードウェアのレートが組んだときと食い違っている目盛りの数。
+    /// 一瞬の食い違いで組み直すと音が切れ続けるので、続いたものだけを見る。
+    private var rateMismatchTicks = 0
+    /// NotificationCenter の購読。singleton なので外す機会は無いが、持っておく。
+    private var observers: [NSObjectProtocol] = []
+
     private init() {
         // 拡張はいつ繋いでくるか分からないので、起動と同時に待ち受ける。
         _ = ETLinkReceiver.shared.start()
         Preferences.shared.onAudioChange = { [weak self] in self?.rebuild() }
+        observeSession()
 
         // DSP のエンジンは音と関係なく用意しておく。
         // 音が来るまで待っていると、その間エフェクトを足しても作れず一覧に出ない。
@@ -120,17 +145,110 @@ final class AudioIO: ObservableObject {
         start()
     }
 
-    /// 拡張が繋がったら自分で鳴らし始め、切れたら畳む。
+    // MARK: - セッション側の出来事
+
+    /// AVAudioSession から来る通知を拾う。
+    /// 購読が無かったので、経路が変わっても中断から戻っても誰も気づかなかった。
+    private func observeSession() {
+        let nc = NotificationCenter.default
+        // 経路変更も中断もメインスレッド以外から飛ぶことがあるので queue: .main で受ける。
+        // userInfo は Sendable ではないので、ブロックの中で数に落としてから渡す。
+        observers.append(nc.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshRoute() }
+            })
+
+        observers.append(nc.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil, queue: .main) { [weak self] note in
+                // 既定値を 0 にしない。rawValue 0 は .began なので、
+                // 型の入っていない通知が来たら音を止めることになる。
+                guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                else { return }
+                let opts = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                Task { @MainActor in self?.handleInterruption(raw: raw, options: opts) }
+            })
+
+        observers.append(nc.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.handleMediaServicesReset() }
+            })
+    }
+
+    /// 着信などで OS がセッションを落としたとき。
+    ///
+    /// これを見ていないと、engine は止まっているのに running は true のまま
+    /// （stop() を通っていないので）、peer も TCP が生きているので true のままになり、
+    /// followPeer の条件が両方とも成り立たず**永久に音が戻らない**。
+    /// 受信側の timer は別系統なので recv だけが増え続ける。
+    private func handleInterruption(raw: UInt, options: UInt) {
+        guard let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            interrupted = true
+            log.notice("interruption began")
+            if running { stop(keepListening: true) }
+            status = "Interrupted"
+        case .ended:
+            interrupted = false
+            let resume = AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
+            log.notice("interruption ended resume=\(resume)")
+            // shouldResume が無いときは何もしない。拡張が繋がったままなら followPeer が拾う。
+            if resume { start() }
+        @unknown default:
+            interrupted = false
+        }
+    }
+
+    /// メディアサービスが落ちて作り直されたとき。
+    /// 古い AVAudioEngine も古いセッションの設定も死んでいるので、全部作り直す。
+    private func handleMediaServicesReset() {
+        log.notice("media services were reset")
+        stop(keepListening: true)
+        interrupted = false
+        engine = AVAudioEngine()
+        node = nil
+        // ロック画面の割り当ても作り直す（wired が立っていれば有効化だけ）。
+        NowPlaying.start { on in EffeTuneDSP.shared.bypass = !on }
+        // 拡張が繋がっていなければ鳴らし始めない。判断は followPeer に任せる。
+        lastStartAttempt = 0
+        followPeer()
+    }
+
+    /// **拡張が繋がる前から鳴らしておく。**
+    ///
+    /// 以前は peer が立ってから start() していたが、それだと鷶と卵になる。
+    /// UIBackgroundModes の audio は「実際に鳴らしている間」だけアプリを生かす。
+    /// 鳴らしていないと背景で止められ、127.0.0.1:47101 が受け付けなくなる。
+    /// すると拡張は ECONNREFUSED で繋げず、システムは 1.5 秒で諾めて
+    /// Unable to Connect になる。実機のログで確かめた形:
+    ///   ET connect 失敗 errno=61 → 受信 frames=36864 接続=false → deactivation request
+    ///
+    /// なので、繋がっていなくても無音を出し続ける。
+    /// PowerGate が休むので演算はほぼ使わないし、.mixWithOthers なので
+    /// 他のアプリの音を止めない。
     private func followPeer() {
-        let peer = ETLinkReceiver.shared.hasPeer
-        if peer && !running {
+        // running だけを見ると取りこぼす。中断で OS が engine を止めても
+        // stop() を通らないので running は true のまま残る。食い違いを直接見る。
+        let alive = running && engine.isRunning
+
+        if !alive {
+            guard !interrupted else { return }
+            // start() が失敗し続けるとき（中断中の setActive など）に
+            // 3.3Hz で叩かないよう、1 秒は空ける。
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - lastStartAttempt >= 1 else { return }
             start()
-        } else if !peer && running {
+        } else if false {
             stop(keepListening: true)
         }
     }
 
     func start() {
+        // 失敗しても次まで 1 秒空けるため、入口で押しておく（followPeer が見る）。
+        lastStartAttempt = ProcessInfo.processInfo.systemUptime
         stop(keepListening: true)
 
         if !ETLinkReceiver.shared.listening {
@@ -143,24 +261,35 @@ final class AudioIO: ObservableObject {
         let prefs = Preferences.shared
         let session = AVAudioSession.sharedInstance()
         do {
-            // .playAndRecord は既定で Bluetooth の出力を候補から外す。
-            // .allowBluetoothA2DP を足さないとワイヤレスイヤホンへ出せない
-            // （足さずに .allowBluetooth だけだと HFP のモノラルに落ちる）。
+            // **試作（ios-audio-tap/MediaDeviceDSP/Player/PlayerApp.swift:92）と同じ形に戻してある。**
+            // あちらは実機で「別アプリが内蔵スピーカーを掴んだまま、
+            // 他アプリが EffeTune へ流す」が成立していた。
+            //
+            // 違っていたのは 2 点。
+            // ・.allowBluetoothA2DP を足していた。BT の出力を候補に入れると、
+            //   仮想デバイス（RemoteStreaming で名乗る）へセッションが追従する。
+            //   実機のログで `tick out=EffeTune ovr=true`、つまり
+            //   override を当てても出力先が戻らない状態になっていた。
+            // ・overrideOutputAudioPort を条件付きにしていた。試作は無条件。
+            //
+            // 代償として BT イヤホンが候補に出なくなる。
+            // 無音で暴走するよりはよいと判断している。
             try session.setCategory(.playAndRecord, mode: .default,
-                                    options: [.defaultToSpeaker, .mixWithOthers,
-                                              .allowBluetoothA2DP, .allowAirPlay])
+                                    options: [.defaultToSpeaker, .mixWithOthers])
             try session.setPreferredSampleRate(48000)
             try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
-            // 出力先はシステムに任せる。こちらから指定しない。
-            //
-            // 普通のアプリに「自分だけの出力先」を選ぶ手段は無い。
-            // AVRoutePickerView はシステムのルートピッカーそのもので、
-            // Spotify が出しているのと同じ画面。そこで選ぶと、Spotify が
-            // MediaDevice で EffeTune へ向けていたアプリごとの上書きまで外れる。
-            // overrideOutputAudioPort も同じ理由で使わない。
-            // イヤホンを繋いでいるのにスピーカーから鳴る事故も、これで起きない。
-            try session.overrideOutputAudioPort(.none)
+            try session.overrideOutputAudioPort(.speaker)
+            overriding = true
+
+
+            // このアプリの音がどこへ出ているか。
+            // 仮想デバイス自身を指していたら帰還ループ。
+            let outs = session.currentRoute.outputs
+                .map { "\($0.portType.rawValue):\($0.portName)" }
+                .joined(separator: ",")
+            log.notice("route out=\(outs, privacy: .public)")
+            refreshRoute()
         } catch {
             let ns = error as NSError
             status = "Audio session failed: \(ns.domain) \(ns.code)"
@@ -169,6 +298,17 @@ final class AudioIO: ObservableObject {
         }
 
         let sr = session.sampleRate > 0 ? session.sampleRate : 48000
+        // リンクは 48kHz 固定（LocalLink.h、EffeTuneDriver.m の kSampleRate）。
+        // setPreferredSampleRate は要求でしかなく、.mixWithOthers なので
+        // 先に鳴らしているアプリがハードウェアのレートを握っていれば通らない。
+        // 通らないまま進むと 48kHz のフレームを別のレートで出すことになり、
+        // 音程と速さがずれて、受信の輪も溜まるか枯れるかする。
+        // 止めると打つ手が無くなるので鳴らすが、黙って進めない
+        // （status と log と Settings の Device に出る）。
+        let rateOK = abs(sr - 48000) < 1
+        if !rateOK {
+            log.notice("device rate \(sr) != 48000, link is fixed at 48k")
+        }
         let factor = Int(prefs.processingRate.factor)
         let state = RenderState(capacity: Self.capacity, sampleRate: sr, factor: factor)
         state.gate.idleSeconds = prefs.powerMode.idleSeconds
@@ -213,14 +353,20 @@ final class AudioIO: ObservableObject {
             if awake, let main = ETPipeline_MainBus() {
                 if f > 1, let rs = state.resampler {
                     ETResampler_Up(rs, p, main, UInt32(n))
-                    state.applied = ETPipeline_Process(2, UInt32(n * f), state.elapsed)
+                    state.pipeStatus = ETPipeline_Process(2, UInt32(n * f), state.elapsed)
                     ETResampler_Down(rs, main, p, UInt32(n))
                 } else {
                     main.update(from: p, count: n * 2)
-                    state.applied = ETPipeline_Process(2, UInt32(n), state.elapsed)
+                    state.pipeStatus = ETPipeline_Process(2, UInt32(n), state.elapsed)
                     p.update(from: main, count: n * 2)
                 }
+                // ETPipeline_Process が返すのは et_status で、ET_OK は 0（ETPipeline.h）。
+                // これを件数として読むと「効いている数」が成功時にちょうど 0 になる。
+                // 通ったノード数は ETPipeline_ActiveNodes()。atomic の読みだけなので
+                // 音のスレッドから呼んでよい。
+                state.applied = state.pipeStatus == 0 ? ETPipeline_ActiveNodes() : 0
             } else {
+                state.pipeStatus = 0
                 state.applied = 0
             }
             state.elapsed += Double(n) / state.sampleRate
@@ -261,16 +407,19 @@ final class AudioIO: ObservableObject {
         }
 
         running = true
+        interrupted = false
         sampleRate = sr
         processingRate = sr * Double(factor)
         resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
-        status = "Running"
-        route = routeNow()
+        status = rateOK ? "Running"
+                        : String(format: "Running at %.0f Hz, input is 48000 Hz", sr)
+        refreshRoute()
         updateNowPlaying()
         log.notice("start sr=\(sr) x\(factor) route=\(self.route, privacy: .public)")
     }
 
     func stop(keepListening: Bool = false) {
+        overriding = false
         node.map { engine.detach($0) }
         node = nil
         engine.stop()
@@ -278,39 +427,95 @@ final class AudioIO: ObservableObject {
         if !keepListening { ETLinkReceiver.shared.stop() }
         EffeTuneDSP.shared.reset()
         render = nil
-        running = false
         level = 0
-        status = "Stopped"
+        // start() は毎回ここを通るので、同じ値を書かない（publish が増えるだけ）。
+        if running { running = false }
+        if status != "Stopped" { status = "Stopped" }
         NowPlaying.stop()
+        // 覚えている値も捨てる。捨てないと stop→start で同じ組になったとき
+        // updateNowPlaying() が「変わっていない」と見て、いま外したばかりの
+        // ロック画面の割り当てを付け直さない（設定変更やレート組み直しで毎回起きる）。
+        lastNowPlaying = (false, false, -1)
     }
 
     /// 描画用の値だけを速く取る。図が滑らかに動くのはこちらの速さで決まる。
     /// DSP は 30Hz で吐いているので、それに合わせる。
     /// 重い問い合わせ（ルートやセッション）はここでやらない。
+    ///
+    /// ここから @Published を書かないこと。30Hz の publish は観測している側の
+    /// body を 33ms ごとに作り直し、開いた Menu が提示を終えられなくなる。
+    /// 図は Telemetry を直接読んでいるので、ここは poll だけでよい。
     func pollTelemetry() {
         Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine)
-        level = render?.meter ?? 0
     }
 
     /// 状態の見直し。重いものはこちら。
+    ///
+    /// 代入はすべて「変わったときだけ」。@Published は同じ値でも publish するので、
+    /// 無条件に書くと 3.3Hz の再描画がそのまま出ていた。
     func tick() {
         ticks += 1
         followPeer()
         if ticks % 20 == 0 {
-            log.notice("tick applied=\(self.applied) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) load=\(self.load)")
+            // configure の結果（LastStatus）と process の戻り値（proc）は別物。
+            // applied が 0 のとき、どちらで止まっているかをここで分ける。
+            log.notice("tick out=\(self.route, privacy: .public) ovr=\(self.overriding) applied=\(self.applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) load=\(self.load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(self.render?.pipeStatus ?? 0)")
         }
-        route = routeNow()
+
+        refreshRoute()
+
+        // level は publish しないので、そのまま書いてよい。
         level = render?.meter ?? 0
-        applied = Int(render?.applied ?? 0)
-        load = render?.load ?? 0
-        resting = render?.resting ?? false
+
+        let nowApplied = Int(render?.applied ?? 0)
+        if applied != nowApplied { applied = nowApplied }
+
+        // 負荷は平滑化された実数で毎回わずかに動く。0.1% まで丸めて、
+        // 落ち着いているときは publish が止まるようにする（表示は整数 %）。
+        let nowLoad = ((render?.load ?? 0) * 1000).rounded() / 1000
+        if load != nowLoad { load = nowLoad }
+
+        let nowResting = render?.resting ?? false
+        if resting != nowResting { resting = nowResting }
+
         updateNowPlaying()
-        listening = ETLinkReceiver.shared.listening
-        hasPeer = ETLinkReceiver.shared.hasPeer
-        received = ETLinkReceiver.shared.receivedFrames
-        bufferedFrames = ETLinkReceiver.shared.bufferedFrames
+
+        let nowListening = ETLinkReceiver.shared.listening
+        if listening != nowListening { listening = nowListening }
+
+        let nowPeer = ETLinkReceiver.shared.hasPeer
+        if hasPeer != nowPeer { hasPeer = nowPeer }
+
+        let nowReceived = ETLinkReceiver.shared.receivedFrames
+        if received != nowReceived { received = nowReceived }
+
+        let nowBuffered = ETLinkReceiver.shared.bufferedFrames
+        if bufferedFrames != nowBuffered { bufferedFrames = nowBuffered }
+
         let session = AVAudioSession.sharedInstance()
-        blockFrames = Int((session.ioBufferDuration * session.sampleRate).rounded())
+        let nowBlock = Int((session.ioBufferDuration * session.sampleRate).rounded())
+        if blockFrames != nowBlock { blockFrames = nowBlock }
+
+        // イヤホンを挿すとハードウェアのレートごと変わる。組んだときのレートと
+        // 食い違ったまま流すと出力の速さがずれるので、組み直す。
+        // sampleRate は「いま組んであるレート」なので、ここでは書き換えない。
+        //
+        // 1 回の食い違いでは組み直さない。engine.start() のあとにレートが落ち着く
+        // ことがあり、そこで即座に組み直すと stop→start を毎秒繰り返して音が切れ続ける。
+        // 3 目盛り（約 0.9 秒）続いたものだけを本物として扱う。
+        let built = render?.sampleRate
+        if running, let built, session.sampleRate > 0,
+           abs(session.sampleRate - built) >= 1 {
+            rateMismatchTicks += 1
+        } else {
+            rateMismatchTicks = 0
+        }
+        if rateMismatchTicks >= 3,
+           ProcessInfo.processInfo.systemUptime - lastStartAttempt >= 1 {
+            rateMismatchTicks = 0
+            log.notice("hardware rate \(session.sampleRate) != built \(built ?? 0), rebuilding")
+            rebuild()
+        }
     }
 
     private var lastNowPlaying: (Bool, Bool, Int) = (false, false, -1)
@@ -325,9 +530,95 @@ final class AudioIO: ObservableObject {
         NowPlaying.update(running: running, active: active, count: count)
     }
 
-    private func routeNow() -> String {
+    /// 自分の音が仮想デバイスへ戻らないようにする。
+    ///
+    /// MediaDevice で「EffeTune」を選ぶと、それは**システム全体の出力先**になる。
+    /// このアプリも例外ではなく、何もしなければ出力先は EffeTune になる。
+    /// 実機のログで確かめた: `start sr=48000 x2 route=EffeTune`。
+    /// そうなると
+    ///   出力 → ドライバ → TCP → 自分の入力 → 出力 …
+    /// の環を float32 のまま回る。整数への丸めもクリップも起きないので、
+    /// レベルだけが上がり続けてスピーカーには何も届かない。
+    ///
+    /// 普通のアプリに「自分だけの出力先」を選ぶ手段は無いが、
+    /// overrideOutputAudioPort(.speaker) だけはこのセッションに限って効く。
+    /// 他のアプリの出力先（EffeTune）は変えない。
+    ///
+    /// 代償として、イヤホンを繋いでいても本体のスピーカーから鳴る。
+    /// 無音で暴走するよりはよいと判断している。
+    /// 仮想デバイスを指していないときは何もしないので、
+    /// イヤホンが選ばれている場合はそのまま鳴る。
+    /// いま引き剥がしているか。
+    ///
+    /// **状態を持たないと壊れる。**
+    /// overrideOutputAudioPort は即時には反映されない。呼んだ直後に
+    /// currentRoute を見てもまだ仮想デバイスのままで、実際に切り替わるのは
+    /// 2 秒ほど後だった（実機のログで確認）。
+    /// その間「まだ仮想デバイスだ」と見て呼び直すと、
+    /// 2 秒で 8 回のルート変更を打つことになり、
+    /// MediaDevice のセッションが壊れて Unable to Connect になる。
+    private var overriding = false
+
+    private func escapeVirtualDevice(_ session: AVAudioSession) {
+        let onVirtual = session.currentRoute.outputs.contains {
+            $0.portName.localizedCaseInsensitiveContains("EffeTune")
+        }
+        // 変える必要があるときだけ呼ぶ。
+        // 引き剥がし済みなら、まだ EffeTune と見えていても何もしない。
+        if onVirtual && !overriding {
+            apply(.speaker, on: session, reason: "仮想デバイスを指している")
+            overriding = true
+        } else if !onVirtual && overriding {
+            // 本当に外れたのかを確かめてから戻す。
+            // Speaker になっているのはこちらが引き剥がした結果なので、
+            // それを「外れた」と誤認して戻すと往復する。
+            let onSpeaker = session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
+            if !onSpeaker {
+                apply(.none, on: session, reason: "仮想デバイスを指していない")
+                overriding = false
+            }
+        }
+    }
+
+    private func apply(_ port: AVAudioSession.PortOverride,
+                       on session: AVAudioSession, reason: String) {
+        do {
+            try session.overrideOutputAudioPort(port)
+            log.notice("escape \(reason, privacy: .public) -> \(port == .speaker ? "speaker" : "none", privacy: .public)")
+        } catch {
+            log.error("出力先を変えられない \((error as NSError).code)")
+        }
+    }
+
+    /// 出力先の見直し。route / outputRoute / loopback は同じ 1 回の問い合わせから作る。
+    ///
+    /// 以前は start() の中で 1 回だけ outputRoute と loopback を組んでいて、
+    /// routeChangeNotification も購読していなかった。
+    /// そのため Settings の警告は起動直後にしか当たらず、走っている間に
+    /// 出力先が EffeTune へ移っても（レベルが上がり続ける状態）気づけなかった。
+    private func refreshRoute() {
+        // 走っている途中で出力先が仮想デバイスへ移ることがある。
+        // （他のアプリがルートピッカーで EffeTune を選んだときなど）
+        // そのときも当て直す。
+        if running { escapeVirtualDevice(AVAudioSession.sharedInstance()) }
+
         let outs = AVAudioSession.sharedInstance().currentRoute.outputs
-        if outs.isEmpty { return "no output" }
-        return outs.map(\.portName).joined(separator: ", ")
+        let names = outs.map(\.portName).joined(separator: ", ")
+
+        let nowRoute = outs.isEmpty ? "no output" : names
+        if route != nowRoute { route = nowRoute }
+
+        let nowOutput = names.isEmpty ? "—" : names
+        if outputRoute != nowOutput { outputRoute = nowOutput }
+
+        // 仮想デバイスを指していたら、自分の音が自分へ戻る。
+        // 名前で見る。ドライバは kAudioDeviceTransportTypeRemoteStreaming で名乗るので
+        // portType は .airPlay になるが、本物の AirPlay スピーカーも同じ型で出る。
+        // 型だけで判ると、実際には鳴っている相手に「戻っている」と警告してしまう。
+        // ドライバが出す名前は "EffeTune" 固定（EffeTuneDriver.m:407）。
+        let nowLoopback = outs.contains {
+            $0.portName.localizedCaseInsensitiveContains("EffeTune")
+        }
+        if loopback != nowLoopback { loopback = nowLoopback }
     }
 }

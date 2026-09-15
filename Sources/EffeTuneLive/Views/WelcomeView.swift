@@ -65,7 +65,7 @@ struct WelcomeView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: .rect(corners: .concentric))
+        .background(.regularMaterial, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
     }
 
     private struct StepSpec {

@@ -1,0 +1,91 @@
+@startuml EffeTuneLiveArchitecture
+' EffeTune Live のアーキテクチャ。
+' 描くには: plantuml docs/architecture.puml
+
+title EffeTune Live — 他のアプリの音を横取りして EffeTune の DSP を通す
+
+skinparam defaultFontName "Helvetica"
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam ArrowColor #555555
+skinparam NoteBackgroundColor #FFFDF0
+skinparam NoteBorderColor #C8C0A0
+
+skinparam rectangle {
+  BorderColor #666666
+  BackgroundColor #FFFFFF
+}
+
+rectangle "Spotify など\nふつうのアプリ" as SRC
+
+package "iOS" {
+  rectangle "コントロールセンターの\n出力先ピッカー" as PICKER
+  rectangle "audiomxd\n(CoreAudio HAL)" as HAL
+}
+
+package "EffeTune Live Bridge\nai.nemut.effetune.bridge" as BRIDGE #F4F7FB {
+  rectangle "EffeTuneLiveExtension\nai.nemut.effetune.bridge.extension" as EXT {
+    rectangle "MediaDeviceExtension\nstartDeviceDiscovery / activateDevice" as MDE
+    rectangle "AudioServerPlugIn ドライバ\nC・22 メソッド\nStartIO → DoIOOperation(WriteMix)" as DRV
+    rectangle "ETLinkSender" as SND
+  }
+}
+
+package "EffeTune Live\nai.nemut.effetune" as LIVE #F7FBF4 {
+  rectangle "ETLinkReceiver\nlisten → リングバッファ" as RCV
+  rectangle "AVAudioSourceNode のコールバック" as CB {
+    rectangle "1. リングから読む\n   インターリーブ" as S1
+    rectangle "2. プレーナへ並べ替え" as S2
+    rectangle "3. ETPipeline_Process\n   EffeTune dsp/ (C++20, arm64)" as S3
+    rectangle "4. インターリーブへ戻す" as S4
+  }
+  rectangle "AVAudioSession\n.playAndRecord" as SESS
+  rectangle "テレメトリリング\n30Hz" as TEL
+  rectangle "SwiftUI\n鎖・図・設定" as UI
+}
+
+rectangle "スピーカー / イヤホン" as OUT
+
+SRC --> PICKER : 再生
+PICKER --> MDE : EffeTune を選ぶ
+MDE --> DRV : publish\n(AudioServerPlugInRegister\nMediaDeviceExtension)
+DRV <-- HAL : StartIO\nDoIOOperation(WriteMix)
+DRV --> SND : ミックス済みのフレーム
+SND --> RCV : TCP 127.0.0.1:47101\nfloat32 インターリーブ / 48kHz 固定
+
+RCV --> S1
+S1 --> S2
+S2 --> S3
+S3 --> S4
+S4 --> SESS
+SESS --> OUT
+
+S3 --> TEL
+TEL --> UI
+UI --> S3 : descriptor\n12 バイト/ノード
+
+note right of SND
+  拡張は **作る・待つ** が
+  全部サンドボックスに拒否される。
+  ファイルも共有メモリも bind も不可。
+  外へ繋ぐことだけ許されている。
+end note
+
+note bottom of LIVE
+  **アプリが 2 本要る理由**
+  MediaDeviceExtension を同梱したアプリは
+  AVAudioSession が '!pla' で拒否される。
+  音を受け取るアプリは音を出せない。
+end note
+
+note right of S3
+  Engine::prepare は先頭で
+  destroyAllInstances() を呼ぶ
+  (dsp/core/engine.cpp:221)。
+  prepare のたびに instance を
+  全部作り直すこと。
+end note
+
+SESS ..> DRV #FF6B4A : **帰還ループ**\nこのアプリの出力が仮想デバイスへ回ると\nfloat32 のまま閉じた環になる。\n整数への丸めもクリップも起きないので\nレベルだけが上がり続け、\nスピーカーには何も届かない。
+
+@enduml

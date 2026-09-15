@@ -58,7 +58,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         // この API はネットワーク上の受信機を想定しているので、
         // ダミーではなく実際に listen しているソケットのエンドポイントを渡す。
         let eps = LocalEndpoint.shared.endpoints()
-        log.info("endpoints=\(eps.map { $0.debugDescription }.joined(separator: ","))")
+        log.notice("endpoints=\(eps.map { $0.debugDescription }.joined(separator: ","))")
         return MediaOutputDevice(
             id: Self.deviceUUID,
             displayName: "EffeTune",
@@ -74,7 +74,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     }()
 
     required init() {
-        log.info("EffeTuneLiveExtension init")
+        log.notice("EffeTuneLiveExtension init")
     }
 
     func startDeviceDiscovery() {
@@ -83,19 +83,19 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
             routingManager.discoveryFailed(MediaDeviceError(.discoveryFailed))
             return
         }
-        log.info("startDeviceDiscovery -> foundDevice \(dev.description)")
+        log.notice("startDeviceDiscovery -> foundDevice \(dev.description)")
         routingManager.foundDevice(dev)
     }
 
     func stopDeviceDiscovery() {
         if let dev = localDevice { routingManager.lostDevice(dev) }
-        log.info("stopDeviceDiscovery")
+        log.notice("stopDeviceDiscovery")
     }
 
     func activateDevice(_ device: MediaOutputDevice,
                         session: MediaOutputSession,
                         for deviceFeatures: MediaOutputDevice.Capabilities) {
-        log.info("activateDevice features=\(deviceFeatures.description)")
+        log.notice("activateDevice features=\(deviceFeatures.description)")
         // ヘッダの注意: activate 直後に速やかにオーディオデバイスが現れないと
         // システムが deactivate して "Unable to Connect" になる。
         // だから startRealtimeSampleDelivery を待たずにここで publish する。
@@ -116,15 +116,19 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     }
 
     func deactivateDevice(_ device: MediaOutputDevice, session: MediaOutputSession) {
-        log.info("deactivateDevice")
+        log.notice("deactivateDevice")
         reportTimer?.invalidate()
         reportTimer = nil
         EffeTuneDriver.shared.stopCapture()
         ETLinkSender.shared.stop()
         EffeTuneDriver.shared.unpublish()
 
-        // ここで foundDevice を呼び直さない。呼ぶとルートピッカーに同じものが
-        // 二重に出ることがある。離れたあとの再探索はシステムが自分でやる。
+        // 離れたあと、ルートピッカーに戻ってこないことがあるので名乗り直す。
+        // 二重に出る原因かと疑って一度外したが、外しても直らなかったので戻した。
+        if let dev = localDevice {
+            log.notice("deactivate 後に再度 foundDevice")
+            routingManager.foundDevice(dev)
+        }
     }
 
     // MARK: - 音量
@@ -155,12 +159,12 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     // MARK: - URL 再生（使わない）
 
     func startSession(_ session: MediaOutputSession, identifier: String?, url: URL) {
-        log.info("startSession url=\(url.absoluteString) — realtime のみ対応")
+        log.notice("startSession url=\(url.absoluteString) — realtime のみ対応")
         routingManager.sessionFailed(session, error: MediaDeviceError(.sessionFailed))
     }
 
     func stopSession(_ session: MediaOutputSession) {
-        log.info("stopSession")
+        log.notice("stopSession")
     }
 
     func sendData(_ data: Data, toApplication applicationIdentifier: String,
@@ -170,16 +174,12 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     // MARK: - RealtimeSampleHandling
 
     func startRealtimeSampleDelivery(session: MediaOutputSession) {
-        log.info("startRealtimeSampleDelivery session=\(session.id)")
+        log.notice("startRealtimeSampleDelivery session=\(session.id)")
 
-        // 受け取ったサンプルを App Group の共有リングへ書く。
-        // 鳴らすのはプレイヤーアプリ側（この拡張も、これを同梱するアプリも音を出せない）。
-        // 音の受け渡しはドライバ内のループ（出力→入力）で行う。
-        // 拡張のサンドボックスは共有メモリもファイルも拒否するため。
-
-        // ローカル接続でプレイヤーへ送る。
-        // 拡張は「作る・待つ」が全部禁じられている（ファイル/共有メモリ/bind すべて deny）が、
-        // 外へ繋ぐのはこの拡張の本来の用途なので許されているはず。
+        // 受け取ったサンプルは TCP で本体（EffeTuneLive）へ送る。鳴らすのは本体側。
+        // 拡張は「作る・待つ」が全部禁じられている（ファイル/共有メモリ/bind すべて deny）ので、
+        // App Group の共有リングもドライバ内のループ（出力→入力）も使えない。
+        // 外へ繋ぐのは許されているので、そちら 1 本にした。
         ETLinkSender.shared.start()
         EffeTuneDriver.shared.startCapture { planes, channels, frames, _ in
             ETLinkSender.shared.pushInterleaved(planes[0], frames: frames, channels: channels)
@@ -189,12 +189,12 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         reportTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             _ = self
-            log.info("受信 frames=\(EffeTuneDriver.shared.framesDelivered) 接続=\(ETLinkSender.shared.connected) 送信=\(ETLinkSender.shared.sentFrames)")
+            log.notice("受信 frames=\(EffeTuneDriver.shared.framesDelivered) 接続=\(ETLinkSender.shared.connected) 送信=\(ETLinkSender.shared.sentFrames)")
         }
     }
 
     func stopRealtimeSampleDelivery(session: MediaOutputSession) {
-        log.info("stopRealtimeSampleDelivery")
+        log.notice("stopRealtimeSampleDelivery")
         reportTimer?.invalidate()
         reportTimer = nil
         EffeTuneDriver.shared.stopCapture()

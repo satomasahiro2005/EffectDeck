@@ -16,7 +16,10 @@ LOG="$ROOT/build.log"
 # 実機だけを探す。シミュレータが起きていると devicectl はそれも connected として
 # 並べるので、最後の列（Reality）が physical のものに絞る。
 find_device() {
-  xcrun devicectl list devices 2>/dev/null     | awk '/connected/ && $NF == "physical" {
+  # 状態は connected だけではない。USB で繋いでいても
+  # "available (paired)" と出ることがあり、それでも install は通る。
+  # connected だけを見ていたせいで「実機が見つからない」を出していた。
+  xcrun devicectl list devices 2>/dev/null     | awk '$NF == "physical" && (/connected/ || /available/) {
              for (i = 1; i <= NF; i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{4}/) { print $i; exit }
            }'
 }
@@ -71,6 +74,7 @@ install_one() {
 
   echo "--- エフェクトのカタログを作る ---"
   python3 Tools/gen_catalog.py 2>&1 | tail -5
+python3 Tools/gen_presets.py 2>&1 | tail -1
 
   echo "--- Note Spectrogram のモデルを埋め込む ---"
   # upstream の models.cmake と同じことをする。
@@ -91,8 +95,15 @@ install_one() {
   echo "--- 成果物 ---"
   ls -d out/*.app 2>&1
 
-  install_one "out/EffeTune Live Bridge.app" ai.nemut.effetune
-  install_one "out/EffeTune Live.app"        ai.nemut.effetune.player
+  # 旧 ID の残骸を先に消す。両方が居ると同じ media-device-protocol を
+  # 名乗るものが 2 つになり、ルートピッカーに二重に出る。
+  if [ -n "${DEV_ID:-}" ]; then
+    for old in ai.nemut.effetune.player ai.nemut.effetune.extension; do
+      xcrun devicectl device uninstall app --device "$DEV_ID" "$old" >/dev/null 2>&1
+    done
+  fi
+  install_one "out/EffeTune Live Bridge.app" ai.nemut.effetune.bridge
+  install_one "out/EffeTune Live.app"        ai.nemut.effetune
 
   echo "=== done $(date) ==="
 } > "$LOG" 2>&1
