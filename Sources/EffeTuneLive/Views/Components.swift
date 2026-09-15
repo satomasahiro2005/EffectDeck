@@ -10,6 +10,7 @@
 //  見た目が先なので、値は cardRadius / innerRadius の 2 つだけに寄せてある。
 
 import SwiftUI
+import Foundation
 
 enum ETMetrics {
     static let cardPadding: CGFloat = 14
@@ -102,6 +103,87 @@ struct ETSlider: View {
         } else {
             Slider(value: $value, in: range)
         }
+    }
+}
+
+/// 対数目盛りのスライダー。周波数や Rate のつまみに使う。
+///
+/// EffeTune は createLogarithmicParameterControl でこの形を作っている。
+/// つまみの位置は log10 で決まり（plugin-base.js:1405-1420
+/// `const logMin = Math.log10(min)` … `((logValue - logMin) / logRange) * 100`）、
+/// 値は位置から `Math.pow(10, logMin + (sliderPos / 100) * logRange)` で戻す。
+/// 値そのものは線形のまま持つので、DSP に渡す数はリニア版と変わらない。
+///
+/// 刻みは位置側にしか無い。plugin-base.js:1413 が `slider.step = 0.1`（可動域 0-100 の 1/1000）
+/// を置くだけで、パラメータの step は数値欄の矢印と表示桁数にしか効かず
+/// （plugin-base.js:1443-1448 の `toFixed(step < 0.1 ? 2 : …)`）、
+/// つまみが返す値は丸めていない。だからここでも値は丸めない。
+/// 位置の 1/1000 は iPhone の幅では 0.3pt を切るので、位置は連続で持つ。
+/// 整数で持つパラメータの丸めは、呼ぶ側が渡す Binding が受け持つ。
+struct ETLogSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+
+    var body: some View {
+        Slider(value: Binding(get: { position }, set: { move(to: $0) }), in: 0...1)
+    }
+
+    private var lower: Double { range.lowerBound }
+    private var upper: Double { range.upperBound }
+    /// 何桁ぶんの幅か。
+    private var decades: Double { log10(upper) - log10(lower) }
+
+    private var position: Double {
+        guard lower > 0, decades > 0 else { return 0 }
+        let v = min(max(value, lower), upper)
+        return (log10(v) - log10(lower)) / decades
+    }
+
+    private func move(to p: Double) {
+        guard lower > 0, decades > 0 else { return }
+        let clamped = min(max(p, 0), 1)
+        value = min(max(pow(10, log10(lower) + clamped * decades), lower), upper)
+    }
+}
+
+/// 0 を含む対数スライダー。左端の 1 目盛りだけが 0 で、その右は下限から上限までの対数。
+///
+/// Static Rate のように、0（鳴らさない）と 0.01 から上の広い範囲を同じつまみで扱う値に使う。
+/// 上流は各プラグインが同じ _createZeroAwareLogControl を持っている
+/// （am_radio_simulator.js:2060-2100 / sw_radio_simulator.js:1785-1825 /
+/// vinyl_simulator.js:1413-1453。3 本とも中身は同じ）。
+///
+/// 位置は 0-1000 の 1 刻みで、0 だけが値 0。1 以上は
+/// `floor * Math.pow(max / floor, (position - 1) / 999)`。
+/// 下限は 3 本とも 0.001 に固定してある（am_radio_simulator.js:2085 の `const floor = 0.001;`）。
+struct ETZeroAwareLogSlider: View {
+    @Binding var value: Double
+    let maximum: Double
+
+    /// 0 の次の目盛りが取る値。
+    private static let floor = 0.001
+    private static let steps = 1000.0
+
+    var body: some View {
+        Slider(value: Binding(get: { position }, set: { move(to: $0) }),
+               in: 0...Self.steps, step: 1)
+    }
+
+    private var position: Double {
+        guard maximum > Self.floor, value > 0 else { return 0 }
+        let v = min(max(value, Self.floor), maximum)
+        return 1 + (Self.steps - 1) * log(v / Self.floor) / log(maximum / Self.floor)
+    }
+
+    private func move(to p: Double) {
+        guard maximum > Self.floor else { return }
+        let clamped = min(max(p, 0), Self.steps)
+        if clamped < 1 {
+            value = 0
+            return
+        }
+        let ratio = (clamped - 1) / (Self.steps - 1)
+        value = min(Self.floor * pow(maximum / Self.floor, ratio), maximum)
     }
 }
 

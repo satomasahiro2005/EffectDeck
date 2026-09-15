@@ -1,5 +1,5 @@
 //  NoteSpectrogramView.swift
-//  Note Spectrogram。縦が音名（ピアノの鍵）、横が時間。多重音の推定結果を流す。
+//  Note Spectrogram。音名と時間の面に多重音の推定結果を流し、端に鍵盤を置く。
 //
 //  解析は重い（学習済みの木を回す）が、値は DSP から出てくるので、こちらは描くだけ。
 //
@@ -27,25 +27,126 @@
 //  長さは 3548 ちょうど（同 14）。
 //
 //  細分は 1 半音を 5 つに割ったもの（kernel.cpp:25 の kFineDivisions）。
-//  p = (midi - 21) * 5 + division。web 版の Semitone 表示はその 5 つの最大を
-//  その音のものとして使う（note_spectrogram.js:828-835 の _bagConfidence）ので、
-//  こちらも同じにしてある。1/60 オクターブの表示は作っていない。
+//  p = (midi - 21) * 5 + division で、division は 0 が一番低い。
+//  Pitch Resolution が 1/12 のときは 5 つの最大をその音のものとして使う
+//  （note_spectrogram.js:828-835 の _bagConfidence）。High のときは 5 つを別々の行にする。
 //
 //  列は 1 本ずつ来る。Spectrogram と同じく、固定長の輪（ETNoteBand）に入れて
-//  CGImage 1〜2 枚に畳んで貼る。88×256 = 22528 個の升目を Path に積まない。
-//  色は決めないので、画像は alpha だけを持たせて型抜きに使い、塗りは .tint に任せる。
-//  web 版は音名ごとに色を割り当てている（note_spectrogram.js:43-61）が、そこは移していない。
+//  CGImage 1〜2 枚に畳んで貼る。88×256 の升目を Path に積まない。
+//  Color が Normal のときは画像に alpha だけを持たせて型抜きに使い、塗りは .tint に任せる。
+//  Note Colors のときだけ note_spectrogram.js:43-61 の色を前乗算で画像に入れて直に貼る。
 //
 //  取りこぼしについて。DSP は貯まった枠を writeTelemetry で全部吐く（kernel.cpp:165-172）
 //  が、Telemetry は tap と種類ごとに最新の 1 枠しか残さない。読み出しは
 //  PipelineView の 1/30 秒ごとの pollTelemetry で、DSP が吐くのは 60Hz
 //  （EffeTuneDSP.telemetryHz）。読むたびに残っているのは最後の 1 枠だけなので、
-//  実際に帯へ入るのも 1 回につき 1 列になる。
-//  横軸の目盛りを置かず、見えている範囲が何秒ぶんかだけを見出しに出しているのはそのため。
+//  実際に帯へ入るのも 1 回につき 1 列になる。列の幅は一定の時間を表さない。
+//  Time Span は上流のように列の間隔を時間で決められないので、
+//  溜まっている列の平均の間隔から「何列ぶんを横幅いっぱいに並べるか」を出している。
 
 import SwiftUI
 import Foundation
 import CoreGraphics
+
+// MARK: - 表示だけの切り替え
+
+/// 塗り分け。note_spectrogram.js:20-23 の MULTI_F0_COLORS。
+enum ETNoteColor: String, CaseIterable, Identifiable {
+    case normal
+    case rainbow
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .normal:  return "Normal"
+        case .rainbow: return "Note Colors"
+        }
+    }
+}
+
+/// 縦の細かさ。note_spectrogram.js:24-27 の MULTI_F0_RESOLUTIONS。
+enum ETNoteResolution: String, CaseIterable, Identifiable {
+    case semitone
+    case high
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .semitone: return "1/12 Octave"
+        case .high:     return "High (1/60 Octave)"
+        }
+    }
+}
+
+/// 向き。note_spectrogram.js:28 の MULTI_F0_LAYOUTS。
+/// Horizontal は上流と同じく面ごと 90 度回す（同 :1063-1065）。
+/// 音の高さが横、時間が縦に流れ、鍵盤は下に来る。
+enum ETNoteLayout: String, CaseIterable, Identifiable {
+    case vertical
+    case horizontal
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .vertical:   return "Vertical"
+        case .horizontal: return "Horizontal"
+        }
+    }
+}
+
+/// 図の描き方。上流は cl / pr / ly / vl / ts をプリセットに書くが
+/// （note_spectrogram.js:160-164）、DSP のパラメータではないので params.json に無い。
+/// こちらは画面の @State で持つだけで、保存も DSP への送信もしない。
+///
+/// 既定は上流（同 :86-90）と 3 つ違う。上流は ly が Horizontal、vl が true、ts が 2。
+/// 向きと Volume は初手の見た目が大きく変わるので、いまの姿のまま Vertical・切にしてある。
+struct ETNoteDisplay: Equatable {
+    var color: ETNoteColor = .normal
+    var resolution: ETNoteResolution = .semitone
+    var layout: ETNoteLayout = .vertical
+    var volume: Bool = false
+    /// 秒。上流 :726-729 の 1〜10、刻み 1。
+    var timeSpan: Double = 2
+
+    /// 画像を作り直す必要があるか。向きと時間の幅は画像に関わらない。
+    var repaintKey: String { "\(color.rawValue)/\(resolution.rawValue)/\(volume)" }
+}
+
+/// 鍵盤の寸法。note_spectrogram.js:29-30。
+enum ETNoteKeyboard {
+    /// 鍵盤の帯の幅（css px）。28 × 1.6。
+    static let gutter: CGFloat = 44.8
+    /// 黒鍵の深さに対する帯の幅の比。
+    static let blackRatio: CGFloat = 1.6
+    /// 白鍵の音名。note_spectrogram.js:33。
+    static let whiteClasses = [0, 2, 4, 5, 7, 9, 11]
+    /// 黒鍵の音名。同 :32。
+    static let blackClasses: Set<Int> = [1, 3, 6, 8, 10]
+    /// 音名ごとの色。同 :43-56。Note Colors のときだけ使う。
+    static let noteColors: [(r: Double, g: Double, b: Double)] = [
+        (170, 98, 86), (161, 105, 57), (140, 115, 42), (109, 124, 55),
+        (69, 130, 84), (19, 132, 116), (0, 130, 146), (56, 123, 167),
+        (96, 115, 175), (129, 107, 168), (153, 99, 148), (167, 96, 119)
+    ]
+
+    /// 細分 1 つぶんの色。note_spectrogram.js:58-70 と同じ混ぜ方。
+    static func fineColor(pitch: Int) -> (r: Double, g: Double, b: Double) {
+        let midi = Double(ETNoteBand.firstMidi)
+            + (Double(pitch) - Double(ETNoteBand.divisions / 2)) / Double(ETNoteBand.divisions)
+        let lowerMidi = Int(midi.rounded(.down))
+        let fraction = midi - Double(lowerMidi)
+        let lower = noteColors[((lowerMidi % 12) + 12) % 12]
+        let upper = noteColors[(((lowerMidi + 1) % 12) + 12) % 12]
+        return (lower.r + (upper.r - lower.r) * fraction,
+                lower.g + (upper.g - lower.g) * fraction,
+                lower.b + (upper.b - lower.b) * fraction)
+    }
+}
+
+// MARK: - 画面
 
 struct NoteSpectrogramView: View {
 
@@ -53,118 +154,70 @@ struct NoteSpectrogramView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @ObservedObject private var telemetry = Telemetry.shared
-    @StateObject private var band = ETNoteBand()
-
-    @State private var probe: ETNoteProbe?
+    @Environment(\.etGraphOnly) private var graphOnly
+    @State private var display = ETNoteDisplay()
 
     var body: some View {
-        // 枠を読むのは 1 回だけ。指で触っている間も body は回るので、
-        // 3548 バイトの解きほぐしを 1 回の描き直しに何度もやらない。
-        let snapshot = self.snapshot
-        return VStack(alignment: .leading, spacing: 12) {
-            graph(snapshot)
+        VStack(alignment: .leading, spacing: 12) {
+            NoteSpectrogramGraph(tapId: node.tapId, display: display, range: midiRange)
+            // 上流 :748-755 の並びは Color → Pitch Resolution → Layout → Volume →
+            // Time Span → Regular Note Limit → Lowest Note → Highest Note。
+            if !graphOnly { controls }
             ForEach(node.spec.params) { param in
-                ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+                parameterRow(param)
             }
         }
-        .onAppear { if let latest = snapshot { band.push(latest) } }
-        .onChange(of: snapshot?.frameIndex) { _, _ in
-            if let latest = snapshot { band.push(latest) }
-        }
     }
 
-    private func graph(_ snapshot: ETNoteSnapshot?) -> some View {
-        let range = midiRange
-        return GraphCanvas(
-            x: .blank(),
-            y: ETAxis.linear((Double(range.lowerBound) - 0.5)...(Double(range.upperBound) + 0.5),
-                             ticks: Self.noteTicks(range),
-                             label: { ETNoteBand.name(Int($0.rounded())) }),
-            height: ETGraphMetrics.height,
-            insets: ETGraphInsets(leading: 30, trailing: 6, top: 6, bottom: 6),
-            readout: readout,
-            caption: caption(snapshot),
-            clipsContent: true,
-            draw: { context, plot in
-                let pieces = band.pieces(in: plot.rect, midi: range)
-                if !pieces.isEmpty {
-                    // 画像は alpha だけを持つ。それで型を抜いて .tint を流し込む。
-                    context.drawLayer { layer in
-                        layer.clipToLayer { mask in
-                            for piece in pieces {
-                                mask.draw(Image(decorative: piece.image, scale: 1),
-                                          in: piece.rect)
-                            }
-                        }
-                        layer.fill(Path(plot.rect), with: ETGraphShading.curve)
-                    }
-                }
-                if let hover = probe {
-                    var line = Path()
-                    let y = plot.y(Double(hover.midi))
-                    line.move(to: CGPoint(x: plot.rect.minX, y: y))
-                    line.addLine(to: CGPoint(x: plot.rect.maxX, y: y))
-                    context.stroke(line, with: ETGraphShading.axis,
-                                   style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                }
-            },
-            overlay: { plot in
-                // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
-                Color.clear
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { touch in
-                                probe = sample(at: touch.location, plot: plot, midi: range)
-                            }
-                            .onEnded { _ in probe = nil })
-            })
-    }
-
-    // MARK: 触った所
-
-    private func sample(at location: CGPoint, plot: ETPlot,
-                        midi range: ClosedRange<Int>) -> ETNoteProbe {
-        let raw = plot.yAxis.clamp(plot.yValue(at: location.y))
-        let midi = min(max(Int(raw.rounded()), range.lowerBound), range.upperBound)
-
-        let columnWidth = plot.rect.width / CGFloat(ETNoteBand.columns)
-        var confidence: Double?
-        var level: Double?
-        if columnWidth > 0 {
-            let slot = Int(((location.x - (plot.rect.maxX - CGFloat(band.count) * columnWidth))
-                            / columnWidth).rounded(.down))
-            if let cell = band.cell(displayColumn: slot, midi: midi) {
-                confidence = Double(cell.confidence)
-                level = cell.confidence > 0 ? Double(cell.level) : nil
+    /// DSP に送らない 5 つ。上流 :711-729。
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ETNoteChoiceRow(title: "Color",
+                            options: ETNoteColor.allCases,
+                            text: { $0.label },
+                            selection: $display.color)
+            ETNoteChoiceRow(title: "Pitch Resolution",
+                            options: ETNoteResolution.allCases,
+                            text: { $0.label },
+                            selection: $display.resolution)
+            ETNoteChoiceRow(title: "Layout",
+                            options: ETNoteLayout.allCases,
+                            text: { $0.label },
+                            selection: $display.layout)
+            Toggle(isOn: $display.volume) {
+                Text("Volume").font(.system(size: 14))
             }
+            .padding(.vertical, 2)
+            timeSpanRow
         }
-        return ETNoteProbe(midi: midi, confidence: confidence, level: level)
     }
 
-    private var readout: [ETReadoutItem] {
-        guard let probe = probe else { return [] }
-        var items = [ETReadoutItem("NOTE", ETNoteBand.name(probe.midi))]
-        if let confidence = probe.confidence {
-            items.append(ETReadoutItem("CONF", String(format: "%.0f%%", confidence * 100)))
+    /// 上流 :726-729 の createParameterControl('Time Span', 1, 10, 1, …, 's', 'ts')。
+    private var timeSpanRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Time Span (s)")
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                ValueBox(text: "\(Int(display.timeSpan.rounded())) s")
+            }
+            Slider(value: $display.timeSpan, in: 1...10, step: 1)
+                .accessibilityLabel("Time Span")
+                .accessibilityValue("\(Int(display.timeSpan.rounded())) seconds")
         }
-        if let level = probe.level, level > -200 {
-            items.append(ETReadoutItem("LEVEL", ETFormat.db(level)))
-        }
-        return items
+        .padding(.vertical, 2)
     }
 
-    private func caption(_ snapshot: ETNoteSnapshot?) -> String {
-        guard band.count > 0 else { return "Waiting for audio" }
-        var text = "\(band.count) col"
-        if let span = band.span {
-            text += String(format: " · %.1f s", span)
+    /// 音の高さの 2 本だけ、値を音名で出す（上流 :675 と :693 の multiF0NoteName）。
+    @ViewBuilder
+    private func parameterRow(_ param: ETParam) -> some View {
+        if param.name == "minimumMidi" || param.name == "maximumMidi" {
+            ETNoteRangeRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+        } else {
+            ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
         }
-        if let snapshot = snapshot {
-            text += String(format: " · hop %.0f ms", snapshot.hopSeconds * 1000)
-        }
-        return text
     }
 
     /// 出す音の範囲。params.json の minimumMidi / maximumMidi（21〜108）。
@@ -185,21 +238,412 @@ struct NoteSpectrogramView: View {
         let v = node.values[param.offset]
         return v.isFinite ? v : fallback
     }
+}
 
-    /// 縦の目盛りは C の音に置く。範囲が狭くて 2 本に届かないときは両端も足す。
-    private static func noteTicks(_ range: ClosedRange<Int>) -> [Double] {
-        var ticks = range.filter { $0 % 12 == 0 }.map { Double($0) }
-        if ticks.count < 2 {
-            ticks = [Double(range.lowerBound), Double(range.upperBound)]
+// MARK: - 選ぶ 1 行
+
+/// createRadioGroup（note_spectrogram.js:711-722）に当たる並び。Menu にはしない。
+private struct ETNoteChoiceRow<Option: Hashable & Identifiable>: View {
+
+    let title: String
+    let options: [Option]
+    let text: (Option) -> String
+    @Binding var selection: Option
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 14))
+            HStack(spacing: 6) {
+                ForEach(options) { option in
+                    let isSelected = selection == option
+                    Button {
+                        selection = option
+                    } label: {
+                        Text(text(option))
+                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .foregroundStyle(isSelected ? AnyShapeStyle(.white)
+                                                        : AnyShapeStyle(.secondary))
+                            .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                            .background(isSelected ? AnyShapeStyle(.tint)
+                                                   : AnyShapeStyle(.quaternary),
+                                        in: .rect(cornerRadius: ETMetrics.innerRadius,
+                                                  style: .continuous))
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(text(option)) \(title)")
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                }
+            }
         }
-        return ticks
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - 音名で読ませる 1 行
+
+/// 上流 createNoteRangeControl（note_spectrogram.js:645-699）に当たる。
+/// 値の欄は打ち込ませない（上流も :673 で readOnly）。動かすのはつまみだけ。
+private struct ETNoteRangeRow: View {
+
+    let param: ETParam
+    let nodeIndex: Int
+    let values: [Float]
+
+    @ObservedObject var dsp: EffeTuneDSP
+    @Environment(\.etGraphOnly) private var graphOnly
+
+    var body: some View {
+        if graphOnly {
+            EmptyView()
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(param.label)
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                ValueBox(text: ETNoteBand.name(midi))
+            }
+            Slider(value: Binding(get: { Double(midi) },
+                                  set: { dsp.setValue(Float($0.rounded()),
+                                                      at: nodeIndex, offset: param.offset) }),
+                   in: Double(bounds.lo)...Double(bounds.hi), step: 1)
+                .accessibilityLabel(param.label)
+                .accessibilityValue(ETNoteBand.name(midi))
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// つまみの端。上流 :663-664 は 21〜108 で固定。
+    private var bounds: (lo: Int, hi: Int) {
+        guard case .number(let lo, let hi, _, _, _) = param.kind else {
+            return (ETNoteBand.firstMidi, ETNoteBand.lastMidi)
+        }
+        return (Int(lo.rounded()), Int(hi.rounded()))
+    }
+
+    private var midi: Int {
+        guard values.indices.contains(param.offset) else { return bounds.lo }
+        let v = values[param.offset]
+        guard v.isFinite else { return bounds.lo }
+        return min(max(Int(v.rounded()), bounds.lo), bounds.hi)
+    }
+}
+
+// MARK: - 図の中の置き方
+
+/// draw 空間は x が時間（右が新しい）、y が音の高さ（上が高い）。
+/// Horizontal では上流と同じく全体を 90 度回す（note_spectrogram.js:1063-1065）ので、
+/// 画面では x が音の高さ（右が高い）、y が時間（下が新しい）になる。
+struct ETNoteRollFrame {
+
+    let rect: CGRect
+    let horizontal: Bool
+
+    /// 時間の側の長さ。
+    var width: CGFloat { horizontal ? rect.height : rect.width }
+    /// 音の高さの側の長さ。
+    var height: CGFloat { horizontal ? rect.width : rect.height }
+
+    /// draw 空間の点を画面へ。
+    func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        horizontal ? CGPoint(x: rect.minX + rect.width - y, y: rect.minY + x)
+                   : CGPoint(x: rect.minX + x, y: rect.minY + y)
+    }
+
+    /// 画面の点を draw 空間へ。指の位置を読むのに使う。
+    func local(_ p: CGPoint) -> CGPoint {
+        horizontal ? CGPoint(x: p.y - rect.minY, y: rect.minX + rect.width - p.x)
+                   : CGPoint(x: p.x - rect.minX, y: p.y - rect.minY)
+    }
+
+    /// 以降の描画を draw 空間で書けるようにする。
+    func apply(_ context: inout GraphicsContext) {
+        if horizontal {
+            context.translateBy(x: rect.minX + rect.width, y: rect.minY)
+            context.rotate(by: .degrees(90))
+        } else {
+            context.translateBy(x: rect.minX, y: rect.minY)
+        }
+    }
+}
+
+// MARK: - 図
+
+/// 図の一番内側。**Telemetry を見るのはここだけ**にしてある。
+/// カード全体で観測すると 30Hz で作り直されて、下のボタンが固まる。
+private struct NoteSpectrogramGraph: View {
+
+    let tapId: UInt32
+    let display: ETNoteDisplay
+    let range: ClosedRange<Int>
+
+    @ObservedObject private var telemetry = Telemetry.shared
+    @StateObject private var band = ETNoteBand()
+
+    @State private var probe: ETNoteProbe?
+
+    var body: some View {
+        // 枠を読むのは 1 回だけ。指で触っている間も body は回るので、
+        // 3548 バイトの解きほぐしを 1 回の描き直しに何度もやらない。
+        let snapshot = self.snapshot
+        let slots = band.slots(forSpan: display.timeSpan)
+        return GraphCanvas(
+            x: .blank(),
+            y: .blank(),
+            height: ETGraphMetrics.height,
+            insets: ETGraphInsets(leading: 6, trailing: 6, top: 6, bottom: 6),
+            readout: readout,
+            caption: caption(snapshot, slots: slots),
+            clipsContent: true,
+            draw: { context, plot in
+                let frame = ETNoteRollFrame(rect: plot.rect,
+                                            horizontal: display.layout == .horizontal)
+                // 鍵盤の帯。上流は 44.8pt で固定だが、Horizontal では時間の側が
+                // 170pt しかなく帯だけで 1/4 を超えるので、そこで頭を打つ。
+                let gutter = min(ETNoteKeyboard.gutter, frame.width * 0.25)
+                let rollWidth = frame.width - gutter
+                guard rollWidth > 0, frame.height > 0 else { return }
+                let rowHeight = frame.height / CGFloat(range.count)
+
+                context.drawLayer { layer in
+                    frame.apply(&layer)
+                    drawGrid(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
+                    drawRoll(&layer, frame: frame, rollWidth: rollWidth, slots: slots)
+                    drawKeys(&layer, frame: frame, rollWidth: rollWidth,
+                             gutter: gutter, rowHeight: rowHeight)
+                    if let hover = probe {
+                        var line = Path()
+                        let y = frame.height
+                            - (CGFloat(hover.midi - range.lowerBound) + 0.5) * rowHeight
+                        line.move(to: CGPoint(x: 0, y: y))
+                        line.addLine(to: CGPoint(x: rollWidth, y: y))
+                        layer.stroke(line, with: ETGraphShading.axis,
+                                     style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                    }
+                }
+                // 字は回さない。上流も Horizontal では 90 度戻している（:1222-1227）。
+                drawOctaveLabels(&context, frame: frame, rollWidth: rollWidth,
+                                 gutter: gutter, rowHeight: rowHeight)
+            },
+            overlay: { plot in
+                // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
+                Color.clear
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { touch in
+                                probe = sample(at: touch.location, plot: plot, slots: slots)
+                            }
+                            .onEnded { _ in probe = nil })
+            })
+            .onAppear {
+                band.display = display
+                if let latest = snapshot { band.push(latest) }
+            }
+            .onChange(of: snapshot?.frameIndex) { _, _ in
+                if let latest = snapshot { band.push(latest) }
+            }
+            .onChange(of: display) { _, now in band.display = now }
+    }
+
+    // MARK: 描く
+
+    /// 横の罫。C は濃く、F は細く。上流 :1188-1202。
+    /// 線は音の行の下の境目に来る。Horizontal では鍵盤に掛からない（同 :1199）。
+    private func drawGrid(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                          rollWidth: CGFloat, rowHeight: CGFloat) {
+        var strong = Path()
+        var subtle = Path()
+        let end = frame.horizontal ? rollWidth : frame.width
+        for midi in range where midi >= 24 && (midi % 12 == 0 || midi % 12 == 5) {
+            let y = CGFloat(range.upperBound - midi + 1) * rowHeight
+            guard y > 0, y < frame.height else { continue }
+            if midi % 12 == 0 {
+                strong.move(to: CGPoint(x: 0, y: y))
+                strong.addLine(to: CGPoint(x: end, y: y))
+            } else {
+                subtle.move(to: CGPoint(x: 0, y: y))
+                subtle.addLine(to: CGPoint(x: end, y: y))
+            }
+        }
+        context.stroke(subtle, with: ETGraphShading.grid, lineWidth: 0.5)
+        context.stroke(strong, with: ETGraphShading.axis, lineWidth: 1)
+    }
+
+    private func drawRoll(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                          rollWidth: CGFloat, slots: Int) {
+        let rect = CGRect(x: 0, y: 0, width: rollWidth, height: frame.height)
+        let pieces = band.pieces(in: rect, midi: range, slots: slots)
+        guard !pieces.isEmpty else { return }
+        if display.color == .rainbow {
+            // 画像が色を持っているので、そのまま貼る。
+            for piece in pieces {
+                context.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
+            }
+        } else {
+            // 画像は alpha だけを持つ。それで型を抜いて .tint を流し込む。
+            context.drawLayer { layer in
+                layer.clipToLayer { mask in
+                    for piece in pieces {
+                        mask.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
+                    }
+                }
+                layer.fill(Path(rect), with: ETGraphShading.curve)
+            }
+        }
+    }
+
+    /// 鍵盤。白鍵は帯いっぱい、黒鍵は手前だけ。最新の列の confidence で光らせる。
+    /// 上流 :1125-1183。色は決めないので、消灯は .quaternary と .secondary、
+    /// 点灯は .tint の濃さで出す。
+    private func drawKeys(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                          rollWidth: CGFloat, gutter: CGFloat, rowHeight: CGFloat) {
+        let blackDepth = gutter / ETNoteKeyboard.blackRatio
+        let whiteHeight = 12 * rowHeight / 7
+        var white = Path()
+        var black = Path()
+        var separators = Path()
+        // 光っている鍵は帯を塗り直す。白鍵は黒鍵の下に置く（上流も白→黒の順）。
+        var whiteGlow: [(rect: CGRect, value: Double)] = []
+        var blackGlow: [(rect: CGRect, value: Double)] = []
+
+        for midi in ETNoteBand.firstMidi...ETNoteBand.lastMidi {
+            let pitchClass = ((midi % 12) + 12) % 12
+            guard let whiteIndex = ETNoteKeyboard.whiteClasses.firstIndex(of: pitchClass)
+                else { continue }
+            // 白鍵は半音の行ではなく、1 オクターブを 7 等分した位置に置く。
+            let cBoundary = CGFloat(midi - pitchClass - range.lowerBound) * rowHeight
+            let center = cBoundary + (CGFloat(whiteIndex) + 0.5) * whiteHeight
+            let top = max(center - whiteHeight / 2, 0)
+            let bottom = min(center + whiteHeight / 2, frame.height)
+            if top < bottom {
+                let rect = CGRect(x: rollWidth, y: frame.height - bottom,
+                                  width: gutter, height: bottom - top)
+                white.addRect(rect)
+                let value = band.latestConfidence(midi: midi)
+                if value > 0.01 { whiteGlow.append((rect, value)) }
+            }
+            // 鍵の境。上流 :1152-1165。
+            let boundary = cBoundary + CGFloat(whiteIndex) * whiteHeight
+            if boundary > 0, boundary < frame.height {
+                separators.move(to: CGPoint(x: rollWidth, y: frame.height - boundary))
+                separators.addLine(to: CGPoint(x: frame.width, y: frame.height - boundary))
+            }
+        }
+
+        for midi in range where ETNoteKeyboard.blackClasses.contains(((midi % 12) + 12) % 12) {
+            let rect = CGRect(x: rollWidth, y: CGFloat(range.upperBound - midi) * rowHeight,
+                              width: blackDepth, height: rowHeight)
+            black.addRect(rect)
+            let value = band.latestConfidence(midi: midi)
+            if value > 0.01 { blackGlow.append((rect, value)) }
+        }
+
+        context.fill(white, with: ETGraphShading.grid)
+        light(&context, whiteGlow)
+        context.stroke(separators, with: ETGraphShading.axis, lineWidth: 0.5)
+        context.fill(black, with: ETGraphShading.muted)
+        light(&context, blackGlow)
+        var edge = Path()
+        edge.move(to: CGPoint(x: rollWidth, y: 0))
+        edge.addLine(to: CGPoint(x: rollWidth, y: frame.height))
+        context.stroke(edge, with: ETGraphShading.axis, lineWidth: 1)
+    }
+
+    /// 鳴っている鍵を .tint で塗り直す。濃さが確からしさ。
+    private func light(_ context: inout GraphicsContext,
+                       _ keys: [(rect: CGRect, value: Double)]) {
+        for key in keys {
+            var lamp = context
+            lamp.opacity = key.value
+            lamp.fill(Path(key.rect), with: ETGraphShading.curve)
+        }
+    }
+
+    /// C の字を鍵の上に置く。上流 :1203-1212。白鍵の真ん中に来る。
+    private func drawOctaveLabels(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                                  rollWidth: CGFloat, gutter: CGFloat, rowHeight: CGFloat) {
+        let blackDepth = gutter / ETNoteKeyboard.blackRatio
+        let x = rollWidth + (blackDepth + gutter) / 2
+        let whiteHeight = 12 * rowHeight / 7
+        for midi in range where midi >= 24 && midi % 12 == 0 {
+            let y = frame.height
+                - (CGFloat(midi - range.lowerBound) * rowHeight + whiteHeight / 2)
+            guard y >= 0, y <= frame.height else { continue }
+            context.draw(Text("C\(midi / 12 - 1)")
+                            .font(.system(size: ETGraphMetrics.labelSize, design: .monospaced))
+                            .foregroundStyle(.secondary),
+                         at: frame.point(x, y), anchor: .center)
+        }
+    }
+
+    // MARK: 触った所
+
+    private func sample(at location: CGPoint, plot: ETPlot, slots: Int) -> ETNoteProbe {
+        let frame = ETNoteRollFrame(rect: plot.rect, horizontal: display.layout == .horizontal)
+        let local = frame.local(location)
+        let gutter = min(ETNoteKeyboard.gutter, frame.width * 0.25)
+        let rollWidth = frame.width - gutter
+        let rowHeight = frame.height / CGFloat(range.count)
+
+        let row = rowHeight > 0 ? Int((local.y / rowHeight).rounded(.down)) : 0
+        let midi = min(max(range.upperBound - row, range.lowerBound), range.upperBound)
+
+        var confidence: Double?
+        var level: Double?
+        let columnWidth = rollWidth / CGFloat(max(slots, 1))
+        if columnWidth > 0, rollWidth > 0 {
+            let shown = min(band.count, slots)
+            let left = rollWidth - CGFloat(shown) * columnWidth
+            let slot = Int(((local.x - left) / columnWidth).rounded(.down))
+            if let cell = band.cell(displayColumn: slot, midi: midi, slots: slots) {
+                confidence = Double(cell.confidence)
+                level = cell.confidence > 0 ? Double(cell.level) : nil
+            }
+        }
+        return ETNoteProbe(midi: midi, confidence: confidence, level: level)
+    }
+
+    private var readout: [ETReadoutItem] {
+        guard let probe = probe else { return [] }
+        var items = [ETReadoutItem("NOTE", ETNoteBand.name(probe.midi))]
+        if let confidence = probe.confidence {
+            items.append(ETReadoutItem("CONF", String(format: "%.0f%%", confidence * 100)))
+        }
+        if let level = probe.level, level > -200 {
+            items.append(ETReadoutItem("LEVEL", ETFormat.db(level)))
+        }
+        return items
+    }
+
+    private func caption(_ snapshot: ETNoteSnapshot?, slots: Int) -> String {
+        guard band.count > 0 else { return "Waiting for audio" }
+        var text = "\(min(band.count, slots)) col"
+        if let span = band.span(slots: slots) {
+            text += String(format: " · %.1f s", span)
+        }
+        if let snapshot = snapshot {
+            text += String(format: " · hop %.0f ms", snapshot.hopSeconds * 1000)
+        }
+        return text
     }
 
     // MARK: 枠を読む
 
     private var snapshot: ETNoteSnapshot? {
         // frameType 24 は ETFrameType に無いので、鍵を自分で組む。
-        ETNoteSnapshot(telemetry.latest[UInt64(node.tapId) << 16 | 24])
+        ETNoteSnapshot(telemetry.latest[UInt64(tapId) << 16 | 24])
     }
 }
 
@@ -211,9 +655,9 @@ struct ETNoteSnapshot {
     let time: Double
     let hopSeconds: Double
     let frameIndex: UInt32
-    /// 音ごとの確からしさ。細分 5 つの最大（note_spectrogram.js:828-835）。
+    /// 細分ごとの確からしさ。440 個（note_spectrogram.js:321-332）。
     let confidence: [Float]
-    /// その最大を出した細分の dB（note_spectrogram.js:522-534）。
+    /// 同じ並びの dB（床は -240）。
     let level: [Float]
 
     init?(_ frame: ETFrame?) {
@@ -232,33 +676,27 @@ struct ETNoteSnapshot {
 
         // note_spectrogram.js:313-319 と同じ門。
         guard rate.isFinite, rate > 0, seconds.isFinite, seconds >= 0,
-              pitchCount == 440, firstMidi == UInt16(ETNoteBand.firstMidi),
-              hop.isFinite, hop > 0, modeCode == 5, generation != 0 else { return nil }
+              pitchCount == UInt16(ETNoteBand.pitches),
+              firstMidi == UInt16(ETNoteBand.firstMidi),
+              hop.isFinite, hop > 0, modeCode == UInt32(ETNoteBand.divisions),
+              generation != 0 else { return nil }
 
-        guard let fineConfidence = payload.floats(at: 28, count: 440),
-              let fineLevel = payload.floats(at: 1788, count: 440) else { return nil }
-
-        var bagged = [Float](repeating: 0, count: ETNoteBand.notes)
-        var levels = [Float](repeating: -240, count: ETNoteBand.notes)
-        for note in 0..<ETNoteBand.notes {
-            let first = note * 5
-            var best = first
-            for division in 1..<5 where fineConfidence[first + division] > fineConfidence[best] {
-                best = first + division
-            }
-            let value = fineConfidence[best]
+        guard let fineConfidence = payload.floats(at: 28, count: ETNoteBand.pitches),
+              let fineLevel = payload.floats(at: 1788, count: ETNoteBand.pitches)
+            else { return nil }
+        // 同 :324-331。1 つでも外れていたら枠ごと捨てる。
+        for pitch in 0..<ETNoteBand.pitches {
+            let value = fineConfidence[pitch]
             guard value.isFinite, value >= 0, value <= 1,
-                  fineLevel[best].isFinite else { return nil }
-            bagged[note] = value
-            levels[note] = fineLevel[best]
+                  fineLevel[pitch].isFinite else { return nil }
         }
 
         sampleRate = Double(rate)
         time = Double(seconds)
         hopSeconds = Double(hop)
         frameIndex = index
-        confidence = bagged
-        level = levels
+        confidence = fineConfidence
+        level = fineLevel
     }
 }
 
@@ -270,29 +708,66 @@ struct ETNoteProbe {
 
 // MARK: - 横に流す帯
 
-/// 音ごとの確からしさを固定長の輪で持つ。新しい列は右端、古い列は左へ。
-/// 中身は alpha だけの RGBA として持ち、CGImage に畳んでから貼る。
+/// 細分ごとの確からしさを固定長の輪で持つ。新しい列は右端、古い列は左へ。
+/// 描く用の並びは表示の切り替えで作り直す。
 final class ETNoteBand: ObservableObject {
 
     static let columns = 256
     /// 88 鍵。note_spectrogram.js:4 の MULTI_F0_NOTE_COUNT。
     static let notes = 88
+    /// 1 半音を割る数。同 :5 の MULTI_F0_FINE_DIVISIONS。
+    static let divisions = 5
+    /// 440。同 :7 の MULTI_F0_PITCH_COUNT。
+    static let pitches = notes * divisions
     static let firstMidi = 21
     static let lastMidi = firstMidi + notes - 1
+    /// 音量の目盛りの幅。同 :16-17 の MULTI_F0_LEVEL_RANGE_DB / _CEILING_DB。
+    static let levelRangeDB: Double = 24
+    static let levelCeilingDB: Double = -36
+    /// 目盛りの上端の落とし方。同 :18-19。
+    static let levelReleaseDBPerSecond: Double = 20
+    static let levelHoldSeconds: Double = 1
 
     @Published private(set) var revision: UInt32 = 0
 
     private(set) var image: CGImage?
     private(set) var count = 0
+    /// 画像が 1 音に使う行数。1（半音）か 5（細分）。
+    private(set) var rowsPerNote = 1
+
+    /// 表示の切り替え。変えると溜めてある列を全部描き直す。
+    var display = ETNoteDisplay() {
+        didSet {
+            guard display.repaintKey != oldValue.repaintKey else { return }
+            allocate()
+            for column in 0..<Self.columns { paint(column: column) }
+            image = makeImage()
+            revision &+= 1
+        }
+    }
 
     private var head = 0
     private var lastIndex: UInt32?
-    /// RGBA、前乗算。使うのは alpha だけ。上の行ほど高い音。
-    private var pixels = [UInt8](repeating: 0,
-                                 count: ETNoteBand.columns * ETNoteBand.notes * 4)
+    /// 来たままの確からしさ。[pitch * columns + column]、0〜255。
+    private var fine = [UInt8](repeating: 0, count: ETNoteBand.pitches * ETNoteBand.columns)
+    /// 音ごとの、一番強い細分の dB。触った所を読むのに使う。[note * columns + column]
     private var levels = [Float](repeating: -240,
-                                 count: ETNoteBand.columns * ETNoteBand.notes)
+                                 count: ETNoteBand.notes * ETNoteBand.columns)
+    /// 同じ位置を 0〜255 に直したもの。Volume の太さに使う。
+    private var loudness = [UInt8](repeating: 0,
+                                   count: ETNoteBand.notes * ETNoteBand.columns)
     private var times = [Double](repeating: .nan, count: ETNoteBand.columns)
+    /// RGBA、前乗算。Normal では 4 バイトとも同じ値（使うのは alpha だけ）。
+    private var pixels: [UInt8] = []
+
+    /// 音量の目盛りの上端。note_spectrogram.js:501-516。
+    private var levelReference: Double = -240
+    private var levelHold: Double = 0
+    private var lastTime: Double?
+
+    init() {
+        allocate()
+    }
 
     static func name(_ midi: Int) -> String {
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -300,29 +775,40 @@ final class ETNoteBand: ObservableObject {
         return names[pitchClass] + "\(midi / 12 - 1)"
     }
 
-    /// midi から画像の行へ。行 0 が一番高い音。
-    private static func row(midi: Int) -> Int {
-        (notes - 1) - (midi - firstMidi)
+    private var rows: Int { Self.notes * rowsPerNote }
+
+    private func allocate() {
+        // Volume は太さを細分の行で出すので、半音表示でも 5 行いる。
+        let needed = (display.resolution == .high || display.volume) ? Self.divisions : 1
+        let bytes = Self.notes * needed * Self.columns * 4
+        guard rowsPerNote != needed || pixels.count != bytes else { return }
+        rowsPerNote = needed
+        pixels = [UInt8](repeating: 0, count: bytes)
     }
 
     func push(_ snapshot: ETNoteSnapshot) {
-        guard snapshot.confidence.count == Self.notes,
-              snapshot.level.count == Self.notes else { return }
+        guard snapshot.confidence.count == Self.pitches,
+              snapshot.level.count == Self.pitches else { return }
         // 同じ枠を 2 度入れない。描き直しのたびに列が増えてしまう。
         if let previous = lastIndex, previous == snapshot.frameIndex { return }
         lastIndex = snapshot.frameIndex
 
+        let elapsed = max(0, snapshot.time - (lastTime ?? snapshot.time))
+        lastTime = snapshot.time
+        updateLevelReference(snapshot, elapsed: elapsed)
+
         let column = head
+        for pitch in 0..<Self.pitches {
+            fine[pitch * Self.columns + column] = Self.byte(snapshot.confidence[pitch])
+        }
         for note in 0..<Self.notes {
-            let value = UInt8(min(max(snapshot.confidence[note], 0), 1) * 255)
-            let offset = (Self.row(midi: Self.firstMidi + note) * Self.columns + column) * 4
-            pixels[offset] = value
-            pixels[offset + 1] = value
-            pixels[offset + 2] = value
-            pixels[offset + 3] = value
-            levels[note * Self.columns + column] = snapshot.level[note]
+            let best = Self.best(in: snapshot.confidence, note: note)
+            let db = Double(snapshot.level[best])
+            levels[note * Self.columns + column] = snapshot.level[best]
+            loudness[note * Self.columns + column] = Self.byte(Float(normalized(level: db)))
         }
         times[column] = snapshot.time
+        paint(column: column)
 
         head = (head + 1) % Self.columns
         if count < Self.columns { count += 1 }
@@ -330,10 +816,36 @@ final class ETNoteBand: ObservableObject {
         revision &+= 1
     }
 
-    /// 表示している範囲の秒数。列の間隔は一定でないので、端の時刻の差で出す。
-    var span: Double? {
-        guard count > 1 else { return nil }
+    /// 最新の列のその音の確からしさ。鍵盤を光らせるのに使う。
+    func latestConfidence(midi: Int) -> Double {
+        guard count > 0, midi >= Self.firstMidi, midi <= Self.lastMidi else { return 0 }
+        let column = (head - 1 + Self.columns) % Self.columns
+        let first = (midi - Self.firstMidi) * Self.divisions
+        var value: UInt8 = 0
+        for division in 0..<Self.divisions {
+            let v = fine[(first + division) * Self.columns + column]
+            if v > value { value = v }
+        }
+        return Double(value) / 255
+    }
+
+    /// 時間の幅から、横幅いっぱいに並べる列の数。
+    /// 列の間隔は一定ではないので、溜まっている列の平均で割る。
+    func slots(forSpan span: Double) -> Int {
+        guard count > 1 else { return Self.columns }
         let oldest = times[(head - count + Self.columns) % Self.columns]
+        let newest = times[(head - 1 + Self.columns) % Self.columns]
+        guard oldest.isFinite, newest.isFinite, newest > oldest else { return Self.columns }
+        let period = (newest - oldest) / Double(count - 1)
+        guard period > 0 else { return Self.columns }
+        return min(Self.columns, max(1, Int((span / period).rounded())))
+    }
+
+    /// いま出している列が何秒ぶんか。
+    func span(slots: Int) -> Double? {
+        let shown = min(count, slots)
+        guard shown > 1 else { return nil }
+        let oldest = times[(head - shown + Self.columns) % Self.columns]
         let newest = times[(head - 1 + Self.columns) % Self.columns]
         guard oldest.isFinite, newest.isFinite, newest > oldest else { return nil }
         return newest - oldest
@@ -341,17 +853,19 @@ final class ETNoteBand: ObservableObject {
 
     /// 左から右へ、古い順に並べた切れ端。輪が一周していると 2 枚になる。
     /// 縦は midi の範囲だけを切り出す。
-    func pieces(in rect: CGRect,
-                midi range: ClosedRange<Int>) -> [(image: CGImage, rect: CGRect)] {
-        guard count > 0, rect.width > 0, rect.height > 0, let image = image else { return [] }
-        let top = Self.row(midi: range.upperBound)
-        let height = range.upperBound - range.lowerBound + 1
-        guard top >= 0, height > 0, top + height <= Self.notes else { return [] }
+    func pieces(in rect: CGRect, midi range: ClosedRange<Int>,
+                slots: Int) -> [(image: CGImage, rect: CGRect)] {
+        guard count > 0, rect.width > 0, rect.height > 0, slots > 0,
+              let image = image else { return [] }
+        let top = (Self.lastMidi - range.upperBound) * rowsPerNote
+        let height = range.count * rowsPerNote
+        guard top >= 0, height > 0, top + height <= rows else { return [] }
 
-        let columnWidth = rect.width / CGFloat(Self.columns)
-        let left = rect.maxX - CGFloat(count) * columnWidth
-        let start = (head - count + Self.columns) % Self.columns
-        let firstRun = min(count, Self.columns - start)
+        let shown = min(count, slots)
+        let columnWidth = rect.width / CGFloat(slots)
+        let left = rect.maxX - CGFloat(shown) * columnWidth
+        let start = (head - shown + Self.columns) % Self.columns
+        let firstRun = min(shown, Self.columns - start)
 
         var out: [(image: CGImage, rect: CGRect)] = []
         if let older = image.cropping(to: CGRect(x: CGFloat(start), y: CGFloat(top),
@@ -361,33 +875,191 @@ final class ETNoteBand: ObservableObject {
                                       width: CGFloat(firstRun) * columnWidth,
                                       height: rect.height)))
         }
-        if firstRun < count,
+        if firstRun < shown,
            let newer = image.cropping(to: CGRect(x: 0, y: CGFloat(top),
-                                                 width: CGFloat(count - firstRun),
+                                                 width: CGFloat(shown - firstRun),
                                                  height: CGFloat(height))) {
             out.append((newer, CGRect(x: left + CGFloat(firstRun) * columnWidth, y: rect.minY,
-                                      width: CGFloat(count - firstRun) * columnWidth,
+                                      width: CGFloat(shown - firstRun) * columnWidth,
                                       height: rect.height)))
         }
         return out
     }
 
     /// 左から数えた列と音の中身。触った所の値を読むのに使う。
-    func cell(displayColumn: Int, midi: Int) -> (confidence: Float, level: Float)? {
-        guard displayColumn >= 0, displayColumn < count,
+    func cell(displayColumn: Int, midi: Int,
+              slots: Int) -> (confidence: Float, level: Float)? {
+        let shown = min(count, slots)
+        guard displayColumn >= 0, displayColumn < shown,
               midi >= Self.firstMidi, midi <= Self.lastMidi else { return nil }
-        let start = (head - count + Self.columns) % Self.columns
+        let start = (head - shown + Self.columns) % Self.columns
         let column = (start + displayColumn) % Self.columns
         let note = midi - Self.firstMidi
-        let alpha = pixels[(Self.row(midi: midi) * Self.columns + column) * 4 + 3]
-        return (Float(alpha) / 255, levels[note * Self.columns + column])
+        let first = note * Self.divisions
+        var value: UInt8 = 0
+        for division in 0..<Self.divisions {
+            let v = fine[(first + division) * Self.columns + column]
+            if v > value { value = v }
+        }
+        return (Float(value) / 255, levels[note * Self.columns + column])
+    }
+
+    // MARK: 描く用の並びへ
+
+    private func paint(column: Int) {
+        if display.volume {
+            clear(column: column)
+            paintVolume(column: column)
+        } else {
+            paintConfidence(column: column)
+        }
+    }
+
+    private func clear(column: Int) {
+        for row in 0..<rows {
+            let offset = (row * Self.columns + column) * 4
+            pixels[offset] = 0
+            pixels[offset + 1] = 0
+            pixels[offset + 2] = 0
+            pixels[offset + 3] = 0
+        }
+    }
+
+    /// 確からしさをそのまま升目に置く。上流 _writePixels（:422-452）に当たる。
+    private func paintConfidence(column: Int) {
+        for note in 0..<Self.notes {
+            let first = note * Self.divisions
+            if rowsPerNote == 1 {
+                // 1/12 は細分 5 つの最大をその音のものにする（上流 :828-835）。
+                var value: UInt8 = 0
+                for division in 0..<Self.divisions {
+                    let v = fine[(first + division) * Self.columns + column]
+                    if v > value { value = v }
+                }
+                write(row: Self.notes - 1 - note, column: column, value: value,
+                      color: noteColor(note: note))
+            } else {
+                for division in 0..<Self.divisions {
+                    let value = fine[(first + division) * Self.columns + column]
+                    let row = (Self.notes - 1 - note) * rowsPerNote
+                        + (Self.divisions - 1 - division)
+                    write(row: row, column: column, value: value,
+                          color: fineColor(pitch: first + division))
+                }
+            }
+        }
+    }
+
+    /// Volume。音量を線の太さにする。上流 _paintVolumeBar（:860-897）。
+    /// 上流は図の高さの画素で太さを取るが、こちらは細分の行を単位にする。
+    /// 上流の下限 rowHeight/5 が 1 行、上限 rowHeight-1 が 5 行に当たる。
+    private func paintVolume(column: Int) {
+        for note in 0..<Self.notes {
+            let first = note * Self.divisions
+            var best = 0
+            var value: UInt8 = 0
+            for division in 0..<Self.divisions {
+                let v = fine[(first + division) * Self.columns + column]
+                if v > value {
+                    value = v
+                    best = division
+                }
+            }
+            guard value > 0 else { continue }
+            let level = Double(loudness[note * Self.columns + column]) / 255
+            let thickness = min(Self.divisions,
+                                max(1, Int((1 + Double(Self.divisions - 1) * level).rounded())))
+            // 1/60 では一番強い細分の位置、1/12 では行の真ん中に置く（上流 :881-885）。
+            let center = (Self.notes - 1 - note) * Self.divisions
+                + (display.resolution == .high ? (Self.divisions - 1 - best)
+                                               : Self.divisions / 2)
+            let start = center - (thickness - 1) / 2
+            for row in start..<(start + thickness) where row >= 0 && row < rows {
+                write(row: row, column: column, value: value,
+                      color: display.resolution == .high
+                          ? fineColor(pitch: first + best)
+                          : noteColor(note: note))
+            }
+        }
+    }
+
+    /// Normal のときは nil。色を持たせず alpha だけにして、塗りは描く側の .tint に任せる。
+    private func noteColor(note: Int) -> (r: Double, g: Double, b: Double)? {
+        guard display.color == .rainbow else { return nil }
+        return ETNoteKeyboard.noteColors[((Self.firstMidi + note) % 12 + 12) % 12]
+    }
+
+    private func fineColor(pitch: Int) -> (r: Double, g: Double, b: Double)? {
+        guard display.color == .rainbow else { return nil }
+        return ETNoteKeyboard.fineColor(pitch: pitch)
+    }
+
+    private func write(row: Int, column: Int, value: UInt8,
+                       color: (r: Double, g: Double, b: Double)?) {
+        let offset = (row * Self.columns + column) * 4
+        if let color = color {
+            // 前乗算なので、確からしさを掛けた色を置く。
+            let alpha = Double(value) / 255
+            pixels[offset] = UInt8(min(255, max(0, (color.r * alpha).rounded())))
+            pixels[offset + 1] = UInt8(min(255, max(0, (color.g * alpha).rounded())))
+            pixels[offset + 2] = UInt8(min(255, max(0, (color.b * alpha).rounded())))
+            pixels[offset + 3] = value
+        } else {
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+            pixels[offset + 3] = value
+        }
+    }
+
+    // MARK: 音量の目盛り
+
+    /// 上端は確からしさ 0.5 以上の中の最大。1 秒持ってから 20dB/s で落とす。
+    /// note_spectrogram.js:501-516。
+    private func updateLevelReference(_ snapshot: ETNoteSnapshot, elapsed: Double) {
+        var peak = -240.0
+        for pitch in 0..<Self.pitches where snapshot.confidence[pitch] >= 0.5 {
+            let db = Double(snapshot.level[pitch])
+            if db > peak { peak = db }
+        }
+        if peak >= levelReference {
+            levelReference = peak
+            levelHold = Self.levelHoldSeconds
+        } else {
+            let decay = max(0, elapsed - levelHold)
+            levelHold = max(0, levelHold - elapsed)
+            levelReference = max(peak, levelReference - Self.levelReleaseDBPerSecond * decay)
+        }
+    }
+
+    /// dB を 0〜1 へ。note_spectrogram.js:492-499。
+    private func normalized(level: Double) -> Double {
+        let upper = max(levelReference, Self.levelCeilingDB)
+        let value = (level - (upper - Self.levelRangeDB)) / Self.levelRangeDB
+        return min(max(value, 0), 1)
+    }
+
+    // MARK: 細々
+
+    private static func best(in confidence: [Float], note: Int) -> Int {
+        let first = note * divisions
+        var best = first
+        for division in 1..<divisions where confidence[first + division] > confidence[best] {
+            best = first + division
+        }
+        return best
+    }
+
+    private static func byte(_ value: Float) -> UInt8 {
+        let scaled = (Double(value) * 255).rounded()
+        return UInt8(min(255, max(0, scaled)))
     }
 
     private func makeImage() -> CGImage? {
         guard let data = CFDataCreate(nil, pixels, pixels.count),
               let provider = CGDataProvider(data: data) else { return nil }
         return CGImage(width: Self.columns,
-                       height: Self.notes,
+                       height: rows,
                        bitsPerComponent: 8,
                        bitsPerPixel: 32,
                        bytesPerRow: Self.columns * 4,

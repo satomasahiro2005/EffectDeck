@@ -481,11 +481,11 @@ struct PhaseSelectEqView: View {
 
     private var xAxis: ETAxis {
         if axisMode == .phase {
-            // js:229-243 phaseSelectEqAxisGrid の <560px のとき。
+            // js:229-243 phaseSelectEqAxisGrid の <560px のとき。度記号まで同じ。
             let ticks: [ETAxisTick] = [
-                ETAxisTick(-180, "-180"), ETAxisTick(-90, "-90"),
-                ETAxisTick(0, "0", emphasized: true),
-                ETAxisTick(90, "+90"), ETAxisTick(180, "+180")
+                ETAxisTick(-180, "-180°"), ETAxisTick(-90, "-90°"),
+                ETAxisTick(0, "0°", emphasized: true),
+                ETAxisTick(90, "+90°"), ETAxisTick(180, "+180°")
             ]
             return ETAxis(scale: .linear, lower: -180, upper: 180, ticks: ticks)
         }
@@ -884,53 +884,76 @@ struct PhaseSelectEqView: View {
         }
     }
 
+    /// js:801-826。タブは折り返す（effetune.css:3871 flex-wrap、mobile は 1 本 72px から）。
+    /// iPhone の幅だと 3 本で折り返る。
     private var bandRow: some View {
-        HStack(spacing: 6) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], spacing: 6) {
             ForEach(0..<Self.bandCount, id: \.self) { slot in
-                Button {
-                    band = slot
-                } label: {
-                    Text("\(slot + 1)")
-                        .font(.system(size: 12, weight: band == slot ? .bold : .regular))
-                        .foregroundStyle(band == slot ? AnyShapeStyle(.white)
-                                                      : AnyShapeStyle(.secondary))
-                        .frame(maxWidth: .infinity, minHeight: 28)
-                        .background(band == slot ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                    in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                        // 切ってあるバンドは薄く。
-                        .opacity(region(slot).enabled ? 1 : 0.45)
-                }
-                .buttonStyle(.plain)
+                bandTab(slot)
             }
         }
     }
 
+    /// チェックは選んでいないバンドにも効く（js:815-818）。
+    private func bandTab(_ slot: Int) -> some View {
+        let picked = band == slot
+        let on = region(slot).enabled
+        return HStack(spacing: 0) {
+            Button {
+                enable(slot, !on)
+            } label: {
+                Image(systemName: on ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 15))
+                    .foregroundStyle(picked ? AnyShapeStyle(.white)
+                                            : (on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)))
+                    .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Enable Band \(slot + 1)")
+
+            Button {
+                band = slot
+            } label: {
+                Text("Band \(slot + 1)")
+                    .font(.system(size: 12, weight: picked ? .bold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .foregroundStyle(picked ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                    .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+        }
+        .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
+                    in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+    }
+
+    /// js:835-837 は Gain と Solo の 2 本だけ。入切はタブのチェックが持つ。
     private var bandControls: some View {
         let r = region(band)
         return VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(get: { r.enabled }, set: { enable($0) })) {
-                Text("Enabled").font(.system(size: 14))
-            }
-            Toggle(isOn: Binding(get: { r.solo }, set: { set("so", band, $0 ? 1 : 0) })) {
-                Text("Solo").font(.system(size: 14))
-            }
             ETPhaseSliderRow(label: "Gain", unit: "%", value: r.gain,
                              range: 0...200, step: 1, logarithmic: false) {
                 set("gn", band, $0)
+            }
+            Toggle(isOn: Binding(get: { r.solo }, set: { set("so", band, $0 ? 1 : 0) })) {
+                Text("Solo").font(.system(size: 14))
             }
         }
     }
 
     /// 生成された EffectCatalog は配列の既定を 0 に潰しているので、
     /// 中身が範囲の外のまま入にすると図に出ない四角になる。そのときだけ規定値を入れる。
-    private func enable(_ on: Bool) {
-        var r = region(band)
+    private func enable(_ slot: Int, _ on: Bool) {
+        var r = region(slot)
         if on && r.isDegenerate {
+            let solo = r.solo
             r = ETPhaseRegion.fallback
-            r.solo = region(band).solo
+            r.solo = solo
         }
         r.enabled = on
-        commitNormalized(r, band)
+        commitNormalized(r, slot)
     }
 
     private var boundaryRows: some View {
@@ -949,33 +972,41 @@ struct PhaseSelectEqView: View {
             .foregroundStyle(.secondary)
     }
 
+    /// js:838-841 と 848-853。絶対値で触るのは核だけ、渡りはオクターブ差で触る。
+    /// 値は整えたぶんを読む。normalized が 20 ≤ ofl ≤ fl と fh ≤ ofh ≤ 40000 を
+    /// 約束するので、log2 が負や inf にならない。
     private var frequencyRows: some View {
-        let r = region(band)
+        let r = displayRegion(band)
         return VStack(alignment: .leading, spacing: 8) {
             groupHeading("FREQUENCY")
-            ETPhaseSliderRow(label: "Outer Low", unit: "Hz", value: r.ofl,
-                             range: 20...40000, step: 1, logarithmic: true) { setOuter(\.ofl, $0) }
             ETPhaseSliderRow(label: "Core Low", unit: "Hz", value: r.fl,
                              range: 20...40000, step: 1, logarithmic: true) { core(.frequency, .low, $0) }
             ETPhaseSliderRow(label: "Core High", unit: "Hz", value: r.fh,
                              range: 20...40000, step: 1, logarithmic: true) { core(.frequency, .high, $0) }
-            ETPhaseSliderRow(label: "Outer High", unit: "Hz", value: r.ofh,
-                             range: 20...40000, step: 1, logarithmic: true) { setOuter(\.ofh, $0) }
+            ETPhaseSliderRow(label: "Low Transition", unit: "oct", value: log2(r.fl / r.ofl),
+                             range: 0...10, step: 0.01, logarithmic: false) {
+                setFrequencyTransition(.low, $0)
+            }
+            ETPhaseSliderRow(label: "High Transition", unit: "oct", value: log2(r.ofh / r.fh),
+                             range: 0...10, step: 0.01, logarithmic: false) {
+                setFrequencyTransition(.high, $0)
+            }
         }
     }
 
+    /// js:842-847 と 854-859。核の端は 0-179 / 1-180 で、潰せないようにずらしてある。
     private var phaseRows: some View {
-        let r = region(band)
+        let r = displayRegion(band)
         return VStack(alignment: .leading, spacing: 8) {
             groupHeading("PHASE")
-            ETPhaseSliderRow(label: "Outer Low", unit: "°", value: r.opl,
-                             range: 0...180, step: 1, logarithmic: false) { setOuter(\.opl, $0) }
             ETPhaseSliderRow(label: "Core Low", unit: "°", value: r.pl,
-                             range: 0...180, step: 1, logarithmic: false) { core(.phase, .low, $0) }
+                             range: 0...179, step: 1, logarithmic: false) { core(.phase, .low, $0) }
             ETPhaseSliderRow(label: "Core High", unit: "°", value: r.ph,
-                             range: 0...180, step: 1, logarithmic: false) { core(.phase, .high, $0) }
-            ETPhaseSliderRow(label: "Outer High", unit: "°", value: r.oph,
-                             range: 0...180, step: 1, logarithmic: false) { setOuter(\.oph, $0) }
+                             range: 1...180, step: 1, logarithmic: false) { core(.phase, .high, $0) }
+            ETPhaseSliderRow(label: "Low Transition", unit: "°", value: r.pl - r.opl,
+                             range: 0...180, step: 1, logarithmic: false) { setPhaseTransition(.low, $0) }
+            ETPhaseSliderRow(label: "High Transition", unit: "°", value: r.oph - r.ph,
+                             range: 0...180, step: 1, logarithmic: false) { setPhaseTransition(.high, $0) }
         }
     }
 
@@ -992,6 +1023,22 @@ struct PhaseSelectEqView: View {
             ETPhaseSliderRow(label: "Outer High", unit: "%", value: r.obh,
                              range: -100...100, step: 0.1, logarithmic: false) { setOuter(\.obh, $0) }
         }
+    }
+
+    /// js:766-773 _setTransitionOctaves。核は動かさず、渡りだけを何オクターブ外へ置くか。
+    private func setFrequencyTransition(_ edge: ETPhaseEdge, _ octaves: Double) {
+        var r = displayRegion(band)
+        let o = ETPhaseMath.clamp(octaves, 0, 10)
+        if edge == .low { r.ofl = r.fl / pow(2, o) } else { r.ofh = r.fh * pow(2, o) }
+        commitNormalized(r, band)
+    }
+
+    /// js:775-782 _setPhaseTransition。渡りは核から何度ぶん外か。
+    private func setPhaseTransition(_ edge: ETPhaseEdge, _ degrees: Double) {
+        var r = displayRegion(band)
+        let d = ETPhaseMath.clamp(degrees, 0, 180)
+        if edge == .low { r.opl = r.pl - d } else { r.oph = r.ph + d }
+        commitNormalized(r, band)
     }
 
     /// 渡り（outer）だけを動かす。並びは normalized が整える。
@@ -1044,7 +1091,9 @@ private struct ETPhaseSliderRow: View {
             return value >= 1000 ? String(format: "%.2f k", value / 1000)
                                  : String(format: "%.0f", value)
         }
-        return step >= 1 ? String(format: "%.0f", value) : String(format: "%.1f", value)
+        if step >= 1 { return String(format: "%.0f", value) }
+        // 刻みが 0.01 の行（oct）は 1 桁だと動かしても数字が変わらない。
+        return step >= 0.1 ? String(format: "%.1f", value) : String(format: "%.2f", value)
     }
 
     private var normalized: Double {

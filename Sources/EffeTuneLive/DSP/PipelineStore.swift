@@ -210,4 +210,19 @@ enum PipelineStore {
     static var hasSaved: Bool {
         UserDefaults.standard.data(forKey: lastKey) != nil
     }
+
+    // MARK: - 開いている段
+
+    private static let expandedKey = "pipeline.expanded"
+
+    /// 開いている段を鎖の位置で残す。UUID は起動のたびに作り直されるので使えない。
+    /// shortForm には混ぜない。あれは EffeTune の共有リンクと同じ形なので、
+    /// 見た目の話を足すと他所で読めなくなる。
+    static func saveExpanded(_ indices: [Int]) {
+        UserDefaults.standard.set(indices, forKey: expandedKey)
+    }
+
+    static func loadExpanded() -> [Int] {
+        UserDefaults.standard.array(forKey: expandedKey) as? [Int] ?? []
+    }
 }

@@ -1,12 +1,9 @@
 #!/bin/bash
-# EffeTune Live（本体）と EffeTune Live Bridge（拡張の入れ物）をビルドして実機に入れる。
+# EffeTune Live をビルドして実機に入れる。
 #
 # 使い方:
 #   bash Scripts/build.sh              つないである実機を自動で探す
 #   DEV_ID=<UDID> bash Scripts/build.sh 実機を指定する
-#
-# macOS の GUI セッションの Terminal から走らせること。
-# SSH 越しだと codesign が login keychain に届かず errSecInternalComponent になる。
 set -u
 export PATH="/opt/homebrew/bin:$PATH"   # xcodegen と、3.10 以降の python3
 cd "$(dirname "$0")/.." || exit 1
@@ -72,23 +69,7 @@ install_one() {
   echo "--- 掃除 ---"
   rm -rf out build EffeTuneLive.xcodeproj
 
-  echo "--- エフェクトのカタログを作る ---"
-  python3 Tools/gen_catalog.py 2>&1 | tail -5
-python3 Tools/gen_presets.py 2>&1 | tail -1
-python3 Tools/gen_licenses.py 2>&1 | tail -1
-
-  echo "--- Note Spectrogram のモデルを埋め込む ---"
-  # upstream の models.cmake と同じことをする。
-  # kernel.cpp が読む *.generated.h と、中身を持つアセンブリを吐く。
-  NS="Vendor/effetune/dsp/plugins/analyzer/note_spectrogram"
-  rm -rf Generated/note-models && mkdir -p Generated/note-models
-  for m in learned_model fine_model octave_model; do
-    python3 "$NS/embed_models.py" "$NS/$m.json" Generated/note-models --target macho 2>&1 | tail -2
-  done
-  ls Generated/note-models
-
-  echo "--- プロジェクトを作る ---"
-  xcodegen generate --spec project.yml 2>&1 | tail -5
+  bash Scripts/setup.sh
 
   build_one EffeTuneLive
 

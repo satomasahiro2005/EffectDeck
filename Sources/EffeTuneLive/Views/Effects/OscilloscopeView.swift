@@ -53,49 +53,114 @@ struct OscilloscopeView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            OscilloscopeGraph(tapId: node.tapId,
+                              displayTime: displayTimeMilliseconds,
+                              displayLevel: displayLevel,
+                              verticalOffset: verticalOffset)
+            ForEach(node.spec.params) { param in
+                switch param.name {
+                case "displayTime":
+                    // 上流は 1-100ms、刻み 1、小数なし（oscilloscope.js:214-215）。
+                    ETScopeMillisecondRow(param: param, nodeIndex: index, values: node.values,
+                                          step: 1, decimals: 0, dsp: dsp)
+                case "holdoff":
+                    // 上流は 0.1-10ms、刻み 0.1、小数 1 桁（oscilloscope.js:320-321）。
+                    ETScopeMillisecondRow(param: param, nodeIndex: index, values: node.values,
+                                          step: 0.1, decimals: 1, dsp: dsp)
+                default:
+                    ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+                }
+            }
+        }
+    }
+
+    // MARK: パラメータ
+
+    private func value(_ name: String, _ fallback: Float) -> Float {
+        guard let param = node.spec.params.first(where: { $0.name == name }),
+              node.values.indices.contains(param.offset) else { return fallback }
+        let v = node.values[param.offset]
+        return v.isFinite ? v : fallback
+    }
+
+    /// 掃引の長さ。kernel.cpp:108-113 と同じ丸め方。
+    private var displayTimeMilliseconds: Double {
+        Double(min(0.1, max(0.001, value("displayTime", 0.01)))) * 1000
+    }
+
+    private var displayLevel: Double {
+        Double(min(0, max(-96, value("displayLevel", 0))))
+    }
+
+    private var verticalOffset: Double {
+        Double(min(1, max(-1, value("verticalOffset", 0))))
+    }
+}
+
+// MARK: - 図
+
+/// 図の一番内側。**Telemetry を見るのはここだけ**にしてある。
+/// カード全体で観測すると 30Hz で作り直されて、Trigger Mode と Trigger Edge の
+/// Menu が開かなくなる。
+private struct OscilloscopeGraph: View {
+
+    let tapId: UInt32
+    /// Display Time（ms）。横の目盛りの字はここから出す（oscilloscope.js:916）。
+    let displayTime: Double
+    let displayLevel: Double
+    let verticalOffset: Double
+
     @ObservedObject private var telemetry = Telemetry.shared
 
     @State private var probe: ETScopeProbe?
 
     /// 縦の目盛りの本数。oscilloscope.js:861 の isNarrow 側。
     private static let amplitudeTickCount = 8
-    /// 横の区切り。oscilloscope.js:903 の isNarrow 側。
-    private static let timeDivisions = 4
+    /// 横の区切り。oscilloscope.js:905 の isNarrow 側。
+    private static let timeDivisions = 5
+    /// 目盛りの字を置く余白。軸の名前もこの幅に合わせて置く。
+    private static let insets = ETGraphInsets(leading: 34, trailing: 8, top: 6, bottom: 14)
 
+    /// 図と軸の名前。oscilloscope.js:925 が下の中央に 'Time (ms)'、
+    /// :926-931 が左に回して 'Amplitude' を描いている。
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            graph
-            ForEach(node.spec.params) { param in
-                ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+        HStack(spacing: 0) {
+            Text("Amplitude")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .rotationEffect(.degrees(-90))
+                .frame(width: 12)
+
+            VStack(alignment: .leading, spacing: 2) {
+                canvas
+                // 左右の余白ぶんだけ寄せると、図の枠の真ん中に来る。
+                Text("Time (ms)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, Self.insets.leading)
+                    .padding(.trailing, Self.insets.trailing)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
     }
 
-    private var graph: some View {
+    private var canvas: some View {
         let trace = reading
-        let span = trace?.spanMilliseconds ?? displayTimeMilliseconds
+        let span = trace?.spanMilliseconds ?? displayTime
         let scale = ETScopeScale(displayLevel: displayLevel, verticalOffset: verticalOffset)
-        let level = triggerLevel
 
         return GraphCanvas(
-            x: .linear(0...span, ticks: Self.timeTicks(span), label: Self.timeLabel(span)),
+            x: Self.timeAxis(span, labeling: displayTime),
             y: scale.axis(tickCount: Self.amplitudeTickCount),
             height: ETGraphMetrics.height,
-            insets: ETGraphInsets(leading: 34, trailing: 8, top: 6, bottom: 14),
+            insets: Self.insets,
             readout: readout,
             caption: caption(trace),
             clipsContent: true,
             draw: { context, plot in
-                // トリガの高さ。見えている範囲に入っているときだけ。
-                if level >= scale.lower, level <= scale.upper {
-                    var line = Path()
-                    let y = plot.y(level)
-                    line.move(to: CGPoint(x: plot.rect.minX, y: y))
-                    line.addLine(to: CGPoint(x: plot.rect.maxX, y: y))
-                    context.stroke(line, with: ETGraphShading.muted,
-                                   style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                }
-
                 guard let trace = trace, trace.values.count > 1 else { return }
                 var path = Path()
                 for i in trace.values.indices {
@@ -145,48 +210,132 @@ struct OscilloscopeView: View {
         return text
     }
 
-    // MARK: パラメータ
-
-    private func value(_ name: String, _ fallback: Float) -> Float {
-        guard let param = node.spec.params.first(where: { $0.name == name }),
-              node.values.indices.contains(param.offset) else { return fallback }
-        let v = node.values[param.offset]
-        return v.isFinite ? v : fallback
-    }
-
-    /// 枠が来る前に軸を引くための長さ。kernel.cpp:108-113 と同じ丸め方。
-    private var displayTimeMilliseconds: Double {
-        Double(min(0.1, max(0.001, value("displayTime", 0.01)))) * 1000
-    }
-
-    private var displayLevel: Double {
-        Double(min(0, max(-96, value("displayLevel", 0))))
-    }
-
-    private var verticalOffset: Double {
-        Double(min(1, max(-1, value("verticalOffset", 0))))
-    }
-
-    private var triggerLevel: Double {
-        Double(min(1, max(-1, value("triggerLevel", 0))))
-    }
-
     // MARK: 横の目盛り
 
-    private static func timeTicks(_ span: Double) -> [Double] {
-        guard span > 0 else { return [] }
-        return (0...timeDivisions).map { span * Double($0) / Double(timeDivisions) }
-    }
-
-    private static func timeLabel(_ span: Double) -> (Double) -> String {
-        let decimals = span >= 20 ? 0 : (span >= 2 ? 1 : 2)
-        return { String(format: "%.\(decimals)f", $0) }
+    /// oscilloscope.js:906-918 と同じ。線は両端も引くが、字は内側だけに単位付きで出す。
+    ///
+    /// 字の値は掴んだ枠の長さではなく Display Time から出す（js:916 の
+    /// `t_ms = (i / timeDivisions) * (this.displayTime * 1000)`）。
+    /// 枠の標本数は秒×標本化周波数の切り捨てなので（kernel.cpp:180-187）、
+    /// 96kHz で 10ms の設定なら 959 標本＝9.99ms 入る。枠の長さで字を作ると
+    /// 上流が 6.00 / 8.00 と書く所が 5.99 / 7.99 になる。
+    private static func timeAxis(_ span: Double, labeling displayTime: Double) -> ETAxis {
+        guard span > 0 else { return .blank(0...1) }
+        let ticks = (0...timeDivisions).map { i -> ETAxisTick in
+            let fraction = Double(i) / Double(timeDivisions)
+            let inner = i != 0 && i != timeDivisions
+            return ETAxisTick(span * fraction,
+                              inner ? String(format: "%.2f ms", displayTime * fraction) : nil)
+        }
+        return ETAxis(scale: .linear, lower: 0, upper: span, ticks: ticks)
     }
 
     // MARK: 枠を読む
 
     private var reading: ETScopeTrace? {
-        ETScopeTrace(telemetry.frame(tap: node.tapId, type: .scopeSnapshot))
+        ETScopeTrace(telemetry.frame(tap: tapId, type: .scopeSnapshot))
+    }
+}
+
+// MARK: - ms のつまみ
+
+/// 秒で持っている値を ms で触らせる 1 行。
+///
+/// 上流はこの 2 本だけ ms のつまみにしている（oscilloscope.js:213-223 の Display Time と
+/// :319-328 の Holdoff。どちらも「The widget is in ms while the model holds seconds」）。
+/// EffectCatalog の単位は s なので、ParameterRow に任せると既定の holdoff 0.0001s が
+/// "0.00 s" に潰れて読めない。見た目と打ち込みの動きは ParameterRow に合わせてある。
+struct ETScopeMillisecondRow: View {
+    let param: ETParam
+    let nodeIndex: Int
+    let values: [Float]
+    /// つまみの刻み（ms）。上流 createParameterControl の 4 番目。
+    let step: Double
+    /// 数値欄の小数桁。上流 toFixed と同じ。
+    let decimals: Int
+
+    @ObservedObject var dsp: EffeTuneDSP
+    @Environment(\.etGraphOnly) private var graphOnly
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    /// 秒の範囲を ms に直したもの。上流の 1-100 / 0.1-10 と同じ値になる。
+    private var bounds: (lo: Double, hi: Double) {
+        guard case .number(let lo, let hi, _, _, _) = param.kind else { return (0, 1) }
+        return (Double(lo) * 1000, Double(hi) * 1000)
+    }
+
+    private var milliseconds: Double {
+        values.indices.contains(param.offset) ? Double(values[param.offset]) * 1000 : 0
+    }
+
+    private var valueText: String { String(format: "%.\(decimals)f ms", milliseconds) }
+
+    private func set(_ ms: Double) {
+        let b = bounds
+        dsp.setValue(Float(min(max(ms, b.lo), b.hi) / 1000), at: nodeIndex, offset: param.offset)
+    }
+
+    var body: some View {
+        if graphOnly {
+            EmptyView()
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(param.label + " (ms)")
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                valueField
+            }
+            let b = bounds
+            if b.hi > b.lo {
+                Slider(value: Binding(get: { min(max(milliseconds, b.lo), b.hi) },
+                                      set: { set($0) }),
+                       in: b.lo...b.hi, step: step)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var valueField: some View {
+        TextField(param.label, text: Binding(
+            get: { editing ? draft : valueText },
+            set: { draft = $0 }))
+            .keyboardType(.numbersAndPunctuation)
+            .multilineTextAlignment(.center)
+            .font(.system(size: 13, design: .monospaced))
+            .focused($focused)
+            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: editing ? 1 : 0))
+            .submitLabel(.done)
+            .onSubmit { commit() }
+            .onChange(of: focused) { _, now in
+                if now {
+                    draft = String(format: "%.\(decimals)f", milliseconds)
+                    editing = true
+                } else if editing {
+                    // 他を触ってキーボードが引っ込んだときも確定させる。
+                    commit()
+                }
+            }
+            .accessibilityLabel(param.label)
+            .accessibilityValue(valueText)
+    }
+
+    private func commit() {
+        editing = false
+        focused = false
+        guard let v = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
+        set(v)
     }
 }
 

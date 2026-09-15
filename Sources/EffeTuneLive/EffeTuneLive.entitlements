@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- **空の配列にしてある。**
+	     配信側の検査（ITMS-91183）は、Media Sharing Extension を同梱する
+	     main app bundle にこのキーがあることを要求する。
+	     一方で実行時は MediaExperience の
+	       _CMSUtility_FetchSessionEntitlements
+	     が SecTaskCopyValueForEntitlement の戻りを見て、
+	     **CFArrayGetCount(値) != 0 のときだけ** hasMediaDeviceEntitlement を立てる。
+	     立つと AVAudioSession が '!pla' で拒否される。
+	     だからキーは置き、中身は空にする。
+	     拡張側（Extension.entitlements）には protocol ID を入れてある。
+	     実機とアップロードの両方で確認済み。これでアプリは 1 本で足りる。 -->
+	<key>com.apple.developer.media-device-extension</key>
+	<array/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.ai.nemut.effetune</string>

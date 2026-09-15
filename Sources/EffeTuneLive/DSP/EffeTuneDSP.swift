@@ -74,6 +74,21 @@ final class EffeTuneDSP: ObservableObject {
     private let log = Logger(subsystem: "ai.nemut.effetune", category: "dsp")
 
     @Published private(set) var chain: [Node] = []
+
+    /// 開いている段。ここに入っているものだけが開く。
+    ///
+    /// 人が 1 本ずつ足したものは開いて出す。足した直後に触るのはその段なので、
+    /// 畳んだまま出すと必ず 1 タップ増える。
+    /// プリセットや共有リンクで鎖ごと入れ替えたときは全部畳む。10 本以上並ぶので、
+    /// 開いていると一覧として読めない。
+    /// 画面ではなくここに置いてあるのは、足す・入れ替えるの両方をこの型が握っていて、
+    /// 端末に残すのも persist() だから。
+    @Published var expanded: Set<UUID> = [] {
+        didSet { if !restoring { persistExpanded() } }
+    }
+
+    /// restore() の最中だけ true。読み込みで入れた値を書き戻さないため。
+    private var restoring = false
     @Published private(set) var ready = false
     @Published var bypass = false { didSet { ETPipeline_SetBypass(bypass ? 1 : 0) } }
 
@@ -162,6 +177,7 @@ final class EffeTuneDSP: ObservableObject {
     func add(_ spec: ETEffect) {
         guard appendSpec(spec) else { return }
         publish()
+        if let id = chain.last?.id { expanded.insert(id) }
     }
 
     /// 1 本足すだけ。publish はしない。
@@ -205,6 +221,11 @@ final class EffeTuneDSP: ObservableObject {
     /// 端末に残す。次の起動で同じ鎖が出る。
     private func persist() {
         PipelineStore.saveLast(chain)
+        persistExpanded()
+    }
+
+    private func persistExpanded() {
+        PipelineStore.saveExpanded(chain.indices.filter { expanded.contains(chain[$0].id) })
     }
 
     /// 起動時に呼ぶ。前回の鎖が残っていればそれを、無ければ既定を組む。
@@ -223,12 +244,23 @@ final class EffeTuneDSP: ObservableObject {
             for type in seed {
                 if let spec = Self.spec(forType: type) { appendSpec(spec) }
             }
+            // 撮るときは中身が写らないと意味が無いので全部開く。
+            restoring = true
+            expanded = Set(chain.map(\.id))
+            restoring = false
             publish()
             return
         }
 
         if let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty {
             for item in saved { append(item) }
+            // 前回開いていた段を開き直す。位置で覚えてあるので、
+            // 読み込んだ本数に収まるものだけを拾う。
+            restoring = true
+            expanded = Set(PipelineStore.loadExpanded()
+                .filter { chain.indices.contains($0) }
+                .map { chain[$0].id })
+            restoring = false
             publish()
         } else if !PipelineStore.hasSaved {
             if let meter = ETCatalog.first(where: { $0.type == "LevelMeterPlugin" }) {
@@ -242,6 +274,10 @@ final class EffeTuneDSP: ObservableObject {
         guard ready else { return }
         let doomed = chain.map(\.instance).filter { $0 != 0 }
         chain.removeAll()
+        // 丸ごと入れ替えたら全部畳む。前の鎖の id は残っていても指す先が無い。
+        restoring = true
+        expanded.removeAll()
+        restoring = false
         for item in items { append(item) }
         publish()
         retire(doomed)

@@ -1,0 +1,201 @@
+//  IRReverbView.swift
+//  IR Reverb（IRReverbPlugin）。
+//
+//  上流はカードの頭に「Import file… / Choose from library…」と状態行・情報行を置き、
+//  その下に EDC（エネルギー減衰）グラフを出す
+//  （Vendor/effetune/plugins/reverb/ir_reverb.js:1952-1987）。
+//  ここで作ったのは IR を取り込む口までで、グラフは出していない。
+//
+//  --- グラフを出していない理由 ---
+//  上流のグラフは IR の PCM から包絡と EDC を計算して描いている
+//  （ir_reverb.js:1787-1934）。テレメトリでは来ない値なので、材料は IR そのもの。
+//  その IR が iOS 側ではカーネルに入らない:
+//    - 資産を送る口は AssetUpload.send（DSP/AssetUpload.swift:421）にあるが、
+//      呼び手は FIR 系の designer だけで、IRReverbPlugin へ送る側が居ない。
+//    - IRLibrary（DSP/IRLibrary.swift）は取り込んだファイルを Documents/IR に
+//      置くところで止まっていて、instance へは繋がっていない。
+//  カーネルは資産が ACTIVE でない間 wet を出さず dry だけ通す
+//  （dsp/plugins/reverb/ir_reverb/kernel.cpp:205-208 の applyDryWithWetFadeOut）。
+//  描く材料も鳴らす IR も無いので、曲線の代わりに理由を出す。
+//
+//  上流の metadata 行（ir_reverb.js:1719-1741。秒数・ch 数・トポロジ・レート変換・
+//  レイテンシ・MiB）も、その値が _prepared から来る。IR を用意する側が無いので
+//  出せるのは「入っていない」だけ。上流も IR が無いときは
+//  'No impulse response loaded.'（:1721）の 1 行なので、その 1 行を下の注記に出す。
+//
+//  Channel Mode / Conv Rate が auto のとき解決後の値を横に出す副表示
+//  （:1765-1785 の _updateResolvedModeDisplay）も _prepared.config を読む。
+//  上流も IR が無い間は span を hidden にするので、こちらでも出さない。
+//
+//  --- 取り込む口をここに置く理由 ---
+//  IR Library はツールバーから外してある（PipelineView.swift:277 のコメント）。
+//  PipelineView の sheet は private なので、シートはこのビューから出す。
+//
+//  --- 選択肢の表示名 ---
+//  EffectCatalog の enumeration は保存値（"indep" や "128"）をそのまま持っていて、
+//  ParameterRow はそれを Text にそのまま出す。上流は表示名を別に持っている
+//  （ir_reverb.js:1995-2001 / 2010-2016 / 2017-2022）ので、ここで引き当てて出す。
+//  切り替えは Menu ではなく直のボタン。
+
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct IRReverbView: View {
+
+    let index: Int
+    let node: EffeTuneDSP.Node
+    @ObservedObject var dsp: EffeTuneDSP
+
+    @StateObject private var library = IRLibrary.shared
+    @State private var picking = false
+    @State private var browsing = false
+
+    /// ボタンの帯で出す選択肢。残りは ParameterRow に任せる。
+    private static let stripKeys: Set<String> = ["cm", "lt", "cr"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            source
+            notice
+
+            ForEach(node.spec.params) { param in
+                if case .enumeration(let options) = param.kind,
+                   Self.stripKeys.contains(param.key) {
+                    choiceRow(param, options: options)
+                } else {
+                    ParameterRow(param: param, nodeIndex: index,
+                                 values: node.values, dsp: dsp)
+                }
+            }
+        }
+        .sheet(isPresented: $browsing) { IRLibraryView() }
+    }
+
+    // MARK: IR を取り込む
+
+    private var source: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                // fileImporter と sheet を同じビューに重ねない。
+                // 重ねると後から付けた方しか出ない（PipelineView.swift:29-32）。
+                actionButton("Import file…") { picking = true }
+                    .fileImporter(isPresented: $picking,
+                                  allowedContentTypes: [.audio, .wav, .aiff,
+                                                        .mpeg4Audio, .data],
+                                  allowsMultipleSelection: true) { result in
+                        if case .success(let urls) = result {
+                            for url in urls { library.importFile(at: url) }
+                        }
+                    }
+
+                actionButton("Choose from library…") { browsing = true }
+            }
+
+            Text(status)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 上流の status 行（ir_reverb.js:1963-1970）に当たるもの。
+    private var status: String {
+        switch library.entries.count {
+        case 0:  return "Import an impulse response to use IR Reverb."
+        case 1:  return "1 impulse response in the library."
+        case let n: return "\(n) impulse responses in the library."
+        }
+    }
+
+    /// 何も言わずに図を省くと壊れて見えるので、無い理由をカードの中に書く。
+    private var notice: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("No impulse response loaded")
+                .font(.system(size: 12, weight: .semibold))
+            Text("""
+                 Imported files are kept in this app's IR library, keyed the way the web \
+                 version keys them. Nothing hands them to the convolver yet, so this \
+                 effect only passes the dry signal and there is no decay curve to plot.
+                 """)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary,
+                    in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+    }
+
+    private func actionButton(_ title: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(.tint)
+                .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                .background(.quaternary,
+                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 選択肢
+
+    /// 選択肢の帯。名前が長いので横 1 列に詰めず、幅に合わせて折り返す。
+    private func choiceRow(_ param: ETParam, options: [String]) -> some View {
+        let current = min(max(intValue(param), 0), max(options.count - 1, 0))
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(param.label).font(.system(size: 14))
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
+                      alignment: .leading, spacing: 6) {
+                ForEach(Array(options.enumerated()), id: \.offset) { i, option in
+                    let selected = i == current
+                    let name = optionLabel(key: param.key, option: option)
+                    Button {
+                        dsp.setValue(Float(i), at: index, offset: param.offset)
+                    } label: {
+                        Text(name)
+                            .font(.system(size: 13, weight: selected ? .bold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .foregroundStyle(selected ? AnyShapeStyle(.white)
+                                                      : AnyShapeStyle(.secondary))
+                            .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                            .background(selected ? AnyShapeStyle(.tint)
+                                                 : AnyShapeStyle(.quaternary),
+                                        in: .rect(cornerRadius: ETMetrics.innerRadius,
+                                                  style: .continuous))
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(param.label) \(name)")
+                    .accessibilityAddTraits(selected ? [.isSelected] : [])
+                }
+            }
+        }
+    }
+
+    /// 保存値から上流の表示名へ。
+    /// cm は ir_reverb.js:1995-2001、cr は :2017-2022、lt は :2010-2016。
+    private func optionLabel(key: String, option: String) -> String {
+        if key == "lt" { return option == "0" ? "Zero" : "\(option) samples" }
+        return Self.optionNames[key]?[option] ?? option
+    }
+
+    private static let optionNames: [String: [String: String]] = [
+        "cm": ["auto": "Auto", "mono": "Mono", "indep": "Independent",
+               "true": "True Stereo", "multi": "Diagonal Matrix"],
+        "cr": ["auto": "Auto", "full": "Full", "half": "Half", "quarter": "Quarter"],
+    ]
+
+    private func intValue(_ param: ETParam) -> Int {
+        guard node.values.indices.contains(param.offset) else { return 0 }
+        return Int(node.values[param.offset].rounded())
+    }
+}

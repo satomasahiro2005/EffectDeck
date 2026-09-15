@@ -1,5 +1,5 @@
 //  SpectrogramView.swift
-//  Spectrogram。縦が対数の周波数、横が時間。新しい列が右端に入り、古い列が左へ流れる。
+//  Spectrogram。縦が周波数、横が時間。新しい列が右端に入り、古い列が左へ流れる。
 //
 //  テレメトリ: ETFrameType.spectrogramColumn = 5、formatVersion 1
 //  （kernel.cpp:21-22 の kTapSpectrogramColumn / kTelemetryVersion、
@@ -16,8 +16,12 @@
 //
 //  升目 y の周波数は kernel.cpp:277-281:
 //      f(y) = 10 ^ (log10(40000) - (y / 255) * (log10(40000) - log10(20)))
-//  つまり y=0 が 40kHz（上）、y=255 が 20Hz（下）。20Hz〜40kHz の対数で等間隔なので、
-//  そのまま .frequency(20, 40000) の縦軸へ引き伸ばせば位置が合う。
+//  つまり y=0 が 40kHz（上）、y=255 が 20Hz（下）。20Hz〜40kHz の対数で等間隔。
+//  DSP が出す升目はこの対数の並びだけで、縦軸の取り方は上流も描く側で決めている
+//  （spectrogram.js:41 の this.sc、:274-280 の setFrequencyScale）。
+//  Log のときは升目をそのまま縦へ引き伸ばす。Linear のときは描く前に行を読み替える
+//  （spectrogram.js:15-22 の SPECTROGRAM_LINEAR_TO_CANONICAL_ROW、:224-227）。
+//  読み替えた行は整数にならないので、上下の升目を混ぜる（同 229-236）。
 //
 //  intensity は dB ではなく 0〜255 に正規化済み（kernel.cpp:488-495）:
 //      normalized = (level - dBRange) / (-dBRange) を 0..1 に丸めて *255
@@ -35,16 +39,106 @@
 //  最後の 1 列だけ。実際に帯へ入るのも 1 回につき 1 列になる。図は間引かれた時間軸になり、
 //  列の幅は一定の時間を表さない。そのため横軸には目盛りを置かず、
 //  いま見えている範囲が何秒ぶんかを見出しに出している。
+//  1 秒の印（spectrogram.js:1031-1042）は列ごとの時刻を持っているので打てる。
+//  ただし置けるのは列の境目だけで、上流のような等間隔にはならない。
 
 import SwiftUI
 import Foundation
 import CoreGraphics
+
+/// 縦軸の取り方。上流の `sc`（spectrogram.js:41、:274-280）に当たる。
+/// DSP へは送らない。升目は常に対数で来るので、描く側だけの切り替えになる。
+enum ETSpectrogramScale: String, CaseIterable, Identifiable {
+    case log
+    case linear
+
+    var id: String { rawValue }
+
+    /// spectrogram.js:672-675 の label。
+    var label: String {
+        switch self {
+        case .log:    return "Log"
+        case .linear: return "Linear"
+        }
+    }
+}
 
 struct SpectrogramView: View {
 
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
+
+    /// 図だけ出す指定。ParameterRow は自分で消える（ParameterRow.swift:128-135）が、
+    /// ここで足したボタンは消えないので自分で見る。
+    @Environment(\.etGraphOnly) private var graphOnly
+
+    @State private var scale: ETSpectrogramScale = .log
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB, scale: scale)
+            // 上流は DB Range・Points・Frequency Scale の順に並べている
+            // （spectrogram.js:631-678）。同じ順にする。
+            ForEach(node.spec.params) { param in
+                ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+            }
+            if !graphOnly { scalePicker }
+        }
+    }
+
+    /// spectrogram.js:670-678 の createRadioGroup に当たる。Menu にはしない。
+    private var scalePicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Frequency Scale")
+                .font(.system(size: 14))
+            HStack(spacing: 6) {
+                ForEach(ETSpectrogramScale.allCases) { option in
+                    let isSelected = scale == option
+                    Button {
+                        scale = option
+                    } label: {
+                        Text(option.label)
+                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .foregroundStyle(isSelected ? AnyShapeStyle(.white)
+                                                        : AnyShapeStyle(.secondary))
+                            .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                            .background(isSelected ? AnyShapeStyle(.tint)
+                                                   : AnyShapeStyle(.quaternary),
+                                        in: .rect(cornerRadius: ETMetrics.innerRadius,
+                                                  style: .continuous))
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(option.label) frequency scale")
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// 縦の下端。params.json の dBRange（-144〜-48、既定 -96）。
+    private var floorDB: Double {
+        guard let param = node.spec.params.first(where: { $0.name == "dBRange" }),
+              node.values.indices.contains(param.offset) else { return -96 }
+        let v = Double(node.values[param.offset])
+        guard v.isFinite else { return -96 }
+        return min(-48, max(-144, v))
+    }
+}
+
+// MARK: - 図
+
+/// 図の一番内側。**Telemetry を見るのはここだけ**にしてある。
+/// カード全体で観測すると 30Hz で作り直されて、下のボタンが固まる。
+private struct SpectrogramGraph: View {
+
+    let tapId: UInt32
+    let floorDB: Double
+    let scale: ETSpectrogramScale
 
     @ObservedObject private var telemetry = Telemetry.shared
     @StateObject private var band = ETSpectrogramBand()
@@ -55,20 +149,10 @@ struct SpectrogramView: View {
         // 枠を読むのは 1 回だけ。指で触っている間も body は回るので、
         // 268 バイトの解きほぐしを 1 回の描き直しに何度もやらない。
         let column = self.column
-        return VStack(alignment: .leading, spacing: 12) {
-            graph(column)
-            ForEach(node.spec.params) { param in
-                ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
-            }
-        }
-        .onAppear { push(column) }
-        .onChange(of: column?.sequence) { _, _ in push(column) }
-    }
-
-    private func graph(_ column: ETSpectrogramColumn?) -> some View {
-        GraphCanvas(
+        let axis = self.axis
+        return GraphCanvas(
             x: .blank(),
-            y: .frequency(20, 40000),
+            y: axis,
             height: ETGraphMetrics.height,
             insets: ETGraphInsets(leading: 28, trailing: 6, top: 6, bottom: 6),
             readout: readout,
@@ -88,6 +172,13 @@ struct SpectrogramView: View {
                         layer.fill(Path(plot.rect), with: ETGraphShading.curve)
                     }
                 }
+                // 1 秒の印。spectrogram.js:1031-1042 は下端から 16px 上げた所から引いている。
+                for markX in band.secondMarks(in: plot.rect) {
+                    var mark = Path()
+                    mark.move(to: CGPoint(x: markX, y: plot.rect.maxY - 8))
+                    mark.addLine(to: CGPoint(x: markX, y: plot.rect.maxY))
+                    context.stroke(mark, with: ETGraphShading.axis, lineWidth: 1.5)
+                }
                 if let hover = probe {
                     var line = Path()
                     let y = plot.y(hover.hz)
@@ -106,23 +197,39 @@ struct SpectrogramView: View {
                             .onChanged { touch in probe = sample(at: touch.location, plot: plot) }
                             .onEnded { _ in probe = nil })
             })
+            .onAppear {
+                band.scale = scale
+                push(column)
+            }
+            .onChange(of: column?.sequence) { _, _ in push(column) }
+            .onChange(of: scale) { _, new in band.scale = new }
+    }
+
+    /// Log は升目の並びそのまま。Linear の目盛りは spectrogram.js:995-1000 の狭い方を写す。
+    private var axis: ETAxis {
+        switch scale {
+        case .log:
+            return ETAxis.frequency(ETSpectrogramBand.minHz, ETSpectrogramBand.maxHz)
+        case .linear:
+            return ETAxis.linear(ETSpectrogramBand.minHz...ETSpectrogramBand.maxHz,
+                                 ticks: [20, 10000, 20000, 30000, 40000],
+                                 label: { ETFormat.hzTick($0) })
+        }
     }
 
     // MARK: 触った所
 
     private func sample(at location: CGPoint, plot: ETPlot) -> ETSpectrogramProbe {
         let hz = plot.yAxis.clamp(plot.yValue(at: location.y))
-        // 縦軸も升目も 20Hz〜40kHz の対数なので、正規化した位置がそのまま行になる。
-        let t = plot.yAxis.normalized(hz)
-        let row = min(max(Int(((1 - t) * Double(ETSpectrogramBand.rows - 1)).rounded()), 0),
-                      ETSpectrogramBand.rows - 1)
+        // 升目は縦軸の取り方に関わらず対数なので、周波数から行を出す。
+        let row = ETSpectrogramBand.canonicalRow(forHz: hz)
 
         let columnWidth = plot.rect.width / CGFloat(ETSpectrogramBand.columns)
         let left = plot.rect.maxX - CGFloat(band.count) * columnWidth
         var db: Double?
         if columnWidth > 0 {
             let slot = Int(((location.x - left) / columnWidth).rounded(.down))
-            if let v = band.intensity(displayColumn: slot, row: row) {
+            if let v = band.intensity(displayColumn: slot, canonicalRow: row) {
                 db = floorDB * (1 - Double(v) / 255)
             }
         }
@@ -145,15 +252,6 @@ struct SpectrogramView: View {
         return text
     }
 
-    /// 縦の下端。params.json の dBRange（-144〜-48、既定 -96）。
-    private var floorDB: Double {
-        guard let param = node.spec.params.first(where: { $0.name == "dBRange" }),
-              node.values.indices.contains(param.offset) else { return -96 }
-        let v = Double(node.values[param.offset])
-        guard v.isFinite else { return -96 }
-        return min(-48, max(-144, v))
-    }
-
     // MARK: 枠を読む
 
     private func push(_ column: ETSpectrogramColumn?) {
@@ -162,7 +260,7 @@ struct SpectrogramView: View {
     }
 
     private var column: ETSpectrogramColumn? {
-        ETSpectrogramColumn(telemetry.frame(tap: node.tapId, type: .spectrogramColumn))
+        ETSpectrogramColumn(telemetry.frame(tap: tapId, type: .spectrogramColumn))
     }
 }
 
@@ -206,7 +304,8 @@ struct ETSpectrogramProbe {
 // MARK: - 横に流す帯
 
 /// 列を固定長の輪で持つ。新しい列は右端、古い列は左へ。
-/// 中身は alpha だけの RGBA として持ち、CGImage に畳んでから貼る。
+/// 来た升目（対数）はそのまま canonical に置き、縦軸の取り方に合わせて
+/// 描く用の pixels を作る。触った値は canonical から読むので、読み替えの影響を受けない。
 /// 升目ごとに矩形を描くと 65536 個になるので、そこは通らない。
 final class ETSpectrogramBand: ObservableObject {
 
@@ -215,15 +314,55 @@ final class ETSpectrogramBand: ObservableObject {
     /// 1 列の升目。DSP が 256 個で出す（kernel.cpp:24 の kCellCount）。
     static let rows = 256
 
+    /// 表示する周波数の範囲。spectrogram.js:7-8。
+    static let minHz: Double = 20
+    static let maxHz: Double = 40000
+
+    /// Linear の表示行 → 升目の行。spectrogram.js:15-22 と同じ式。
+    /// 行 0 が 40kHz、行 255 が 20Hz なので、周波数は上から下へ等差で降りる。
+    private static let linearToCanonicalRow: [Double] = {
+        let logMin = log10(minHz)
+        let logMax = log10(maxHz)
+        let hzSpan = maxHz - minHz
+        return (0..<rows).map { row in
+            let position = Double(row) / Double(rows - 1)
+            let frequency = maxHz - position * hzSpan
+            return Double(rows - 1) * (logMax - log10(frequency)) / (logMax - logMin)
+        }
+    }()
+
+    /// 周波数から升目の行。spectrogram.js:198-222 の freqToY の log 側と同じ。
+    static func canonicalRow(forHz hz: Double) -> Int {
+        let logMin = log10(minHz)
+        let logMax = log10(maxHz)
+        let clamped = min(max(hz, minHz), maxHz)
+        let row = Double(rows - 1) * (logMax - log10(clamped)) / (logMax - logMin)
+        return min(max(Int(row.rounded()), 0), rows - 1)
+    }
+
     /// 中身が変わったことだけを知らせる。配列そのものは publish しない。
     @Published private(set) var revision: UInt32 = 0
+
+    /// 縦軸の取り方。変えると溜めてある列を全部描き直す
+    /// （spectrogram.js:282-291 の repaintSpectrogramHistory）。
+    var scale: ETSpectrogramScale = .log {
+        didSet {
+            guard scale != oldValue else { return }
+            for column in 0..<Self.columns { paint(column: column) }
+            image = makeImage()
+            revision &+= 1
+        }
+    }
 
     private(set) var image: CGImage?
     private(set) var count = 0
 
     private var head = 0
     private var lastSequence: UInt32?
-    /// RGBA、前乗算。白の前乗算なので 4 バイトとも同じ値が入る。使うのは alpha だけ。
+    /// 来たままの升目。行は対数で等間隔。[row * columns + column]。
+    private var canonical = [UInt8](repeating: 0,
+                                    count: ETSpectrogramBand.columns * ETSpectrogramBand.rows)
+    /// 描く用。RGBA、前乗算。白の前乗算なので 4 バイトとも同じ値が入る。使うのは alpha だけ。
     private var pixels = [UInt8](repeating: 0,
                                  count: ETSpectrogramBand.columns * ETSpectrogramBand.rows * 4)
     private var times = [Double](repeating: .nan, count: ETSpectrogramBand.columns)
@@ -236,14 +375,10 @@ final class ETSpectrogramBand: ObservableObject {
 
         let column = head
         for row in 0..<Self.rows {
-            let value = cells[row]
-            let offset = (row * Self.columns + column) * 4
-            pixels[offset] = value
-            pixels[offset + 1] = value
-            pixels[offset + 2] = value
-            pixels[offset + 3] = value
+            canonical[row * Self.columns + column] = cells[row]
         }
         times[column] = time
+        paint(column: column)
 
         head = (head + 1) % Self.columns
         if count < Self.columns { count += 1 }
@@ -287,13 +422,64 @@ final class ETSpectrogramBand: ObservableObject {
         return out
     }
 
-    /// 左から数えた列と行の中身。触った所の値を読むのに使う。
-    func intensity(displayColumn: Int, row: Int) -> UInt8? {
+    /// 1 秒をまたいだ列の境目の x。
+    /// 印を置けるのは列と列の間だけなので、間隔は上流のような等分にはならない。
+    /// 列が飛んで 2 秒以上空いたときも境目は 1 本しか無いので、印も 1 本になる。
+    func secondMarks(in rect: CGRect) -> [CGFloat] {
+        guard count > 1, rect.width > 0 else { return [] }
+        let columnWidth = rect.width / CGFloat(Self.columns)
+        let left = rect.maxX - CGFloat(count) * columnWidth
+        let start = (head - count + Self.columns) % Self.columns
+
+        var out: [CGFloat] = []
+        var previous = times[start]
+        for slot in 1..<count {
+            let time = times[(start + slot) % Self.columns]
+            defer { previous = time }
+            guard previous.isFinite, time.isFinite, time > previous else { continue }
+            if time.rounded(.down) > previous.rounded(.down) {
+                out.append(left + CGFloat(slot) * columnWidth)
+            }
+        }
+        return out
+    }
+
+    /// 左から数えた列と、升目の行の中身。触った所の値を読むのに使う。
+    func intensity(displayColumn: Int, canonicalRow row: Int) -> UInt8? {
         guard displayColumn >= 0, displayColumn < count,
               row >= 0, row < Self.rows else { return nil }
         let start = (head - count + Self.columns) % Self.columns
         let column = (start + displayColumn) % Self.columns
-        return pixels[(row * Self.columns + column) * 4 + 3]
+        return canonical[row * Self.columns + column]
+    }
+
+    /// 1 列ぶんを描く用の並びに写す。
+    private func paint(column: Int) {
+        for row in 0..<Self.rows {
+            let value = displayValue(row: row, column: column)
+            let offset = (row * Self.columns + column) * 4
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+            pixels[offset + 3] = value
+        }
+    }
+
+    private func displayValue(row: Int, column: Int) -> UInt8 {
+        switch scale {
+        case .log:
+            return canonical[row * Self.columns + column]
+        case .linear:
+            // 読み替えた行は整数にならない。spectrogram.js:229-236 と同じく上下を混ぜる。
+            let source = Self.linearToCanonicalRow[row]
+            let first = min(max(Int(source.rounded(.down)), 0), Self.rows - 1)
+            let second = min(first + 1, Self.rows - 1)
+            let fraction = source - Double(first)
+            let low = Double(canonical[first * Self.columns + column])
+            let high = Double(canonical[second * Self.columns + column])
+            let mixed = low + (high - low) * fraction
+            return UInt8(min(max(mixed.rounded(), 0), 255))
+        }
     }
 
     private func makeImage() -> CGImage? {

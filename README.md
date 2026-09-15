@@ -1,85 +1,74 @@
 # EffeTune Live
 
-他のアプリが鳴らしている音を横取りして、[EffeTune](https://github.com/Frieve-A/effetune)
-のエフェクトを通して、内蔵スピーカーから出し直す iOS アプリ。
-iPhone だけで動く。脱獄も PC も要らない。
+[EffeTune](https://github.com/Frieve-A/effetune) for iOS.
+
+It takes the audio other apps are playing, runs it through EffeTune's effects, and sends
+it to the built-in speaker. No virtual cable, no input device to configure. Pick
+**EffeTune** as the output in Control Center and that is the whole setup.
 
 ```
-他のアプリ（Spotify / YouTube など）
-  ↓ コントロールセンターの出力先で「EffeTune」を選ぶ
-EffeTune Live Bridge の中の Media Device Extension        ← 横取り
-  ↓ TCP 127.0.0.1:47101
-EffeTune Live
-  ↓ EffeTune の DSP コア（100 種）                        ← 加工
-内蔵スピーカー                                            ← 差し替え
+Spotify / YouTube / games
+  ↓ pick EffeTune as the output in Control Center
+extension (Media Device Extension)   ← receives
+  ↓ 127.0.0.1:47101
+app                                  ← runs EffeTune's DSP
+  ↓
+built-in speaker
 ```
 
-## アプリが 2 つある理由
+## The iOS 27 Media Device Extension
 
-Media Device Extension を**同梱したアプリは AVAudioSession を開けない**。
-どのカテゴリでも `'!pla'`（CannotStartPlaying）で拒否される。その拡張を
-出力先に選んでいない状態でも拒否されるし、アプリ側の entitlement を外しても変わらない。
-拡張プロセス自身も音を出せない（全カテゴリ `'msrv'`）。
+iOS 27 added `MediaDevice.framework`, which lets an app present itself as an output
+device the way an AirPlay speaker does. EffeTune Live advertises itself that way, and
+once it is picked the system hands it the audio as samples.
 
-だから拡張を運ぶ側と鳴らす側を分けてある。
+It runs as two processes. The extension advertises the device and receives the audio;
+the app processes it and plays it. They are split because the extension's sandbox denies
+files, shared memory and `bind`. Outbound connections are allowed, so the audio goes over
+a single TCP connection to the app. It ships as one app, and the user installs one app.
 
-| | 中身 | ユーザー |
-|---|---|---|
-| **EffeTune Live** (`ai.nemut.effetune.player`) | UI・DSP・スピーカー出力 | これを開く |
-| **EffeTune Live Bridge** (`ai.nemut.effetune`) | Media Device Extension | 入れておくだけ |
+Signing the app itself with `com.apple.developer.media-device-extension` stops it from
+opening an `AVAudioSession` — every category fails with `'!pla'`. The check only looks at
+whether the entitlement's array is empty, so the app carries an empty array and the
+extension carries the protocol identifier. That also gets past App Store Connect's
+ITMS-91183.
 
-拡張を持たない Live は、EffeTune がシステムの出力先になっていても内蔵スピーカーを
-掴んだままでいられる。だから回り込まない。
-
-## 音の加工
-
-EffeTune の `dsp/` をそのまま積んでいる。移植も書き直しもしていないので、PC 版と同じ音が出る。
-
-`dsp/` は host-neutral な C++20 で、ブラウザや WebAudio の API を含まない。
-だから WASM を経由せず iOS 向けに arm64 で直接ビルドできる。
-
-画面は `dsp/plugins/**/params.json` と `dsp/generated/cpp/*Params.h` から
-`Tools/gen_catalog.py` が組み立てる。エフェクトごとに手で書いていないので、
-upstream が増えればサブモジュールを進めて生成し直すだけで増える。
-
-- 詰め順は `*Params.h` が決めている。全部 float で、配列は展開され、enum も bool も float に潰れる
-- 音のバッファはプレーナ（ch0 のフレームが frames 個、その後 ch1 …）
-
-## 建て方
+## Building
 
 ```bash
-git clone --recurse-submodules <このリポジトリ>
-bash Scripts/build.sh
+git clone --recurse-submodules https://github.com/satomasahiro2005/effetune-live
+cd effetune-live
+bash Scripts/build.sh          # build and install on the attached device
 ```
 
-要るもの:
+To open it in Xcode, generate first. The `.xcodeproj` is not tracked; `project.yml` is the
+source.
 
-- Xcode 27 以降
-- iOS 27 以降の実機（拡張の entitlement が iOS 27 からなので、シミュレータでは音が流れない）
-- Apple Developer Program の所属（`project.yml` の `DEVELOPMENT_TEAM` を自分のものに変える）
-- `xcodegen`、`python3` 3.10 以降（どちらも Homebrew で入る）
+```bash
+bash Scripts/setup.sh
+open EffeTuneLive.xcodeproj
+```
 
-つないである実機を自動で探す。複数あるときは `DEV_ID=<UDID> bash Scripts/build.sh`。
+You need:
 
-**macOS の GUI セッションの Terminal から使うこと。** SSH 越しだと
-`codesign` が login keychain に届かず `errSecInternalComponent` で落ちる。
+- macOS with Xcode 27 or later
+- A device running iOS 27 or later. The extension needs iOS 27, so no audio flows in the simulator
+- Apple Developer Program membership (set `DEVELOPMENT_TEAM` in `project.yml` to yours)
+- `xcodegen` and python3 3.10+ from Homebrew
 
-### 自分の Apple ID で建てるときに要る登録
+The script finds the attached device. With more than one, use
+`DEV_ID=<UDID> bash Scripts/build.sh`.
 
-`ai.nemut.*` のままでは通らないので、bundle ID を自分のものに変えたうえで、
-Apple Developer のポータルで次を作る。
+### Building under your own Apple ID
 
-1. **Media Device Sharing Extension** の identifier
-   （Identifiers > 新規 > Media Device Sharing Extension）。審査は無い
-2. その値を拡張の entitlement と Info.plist の `UTExportedTypeDeclarations` に書く。
-   **entitlement の値は要素 1 個の配列**。文字列で書くと拡張が起動しない
-3. アプリ 2 本と拡張の App ID
+Change the bundle IDs to yours, then create the following in the Apple Developer portal.
 
-## 仕掛けの詳細
+1. A **Media Device Sharing Extension** identifier (Identifiers > new). There is no review
+2. Put that value in the extension's entitlements and in `UTExportedTypeDeclarations` in
+   its Info.plist. The entitlement value must be an array with one element; a bare string
+   stops the extension from launching
+3. App IDs for the app and the extension
 
-音の横取りをどうやって見つけたか、何が塞がっていたかは
-[ios-audio-tap](https://github.com/satomasahiro2005/ios-audio-tap) に書いてある。
+## License
 
-## ライセンス
-
-MIT。同梱しているものは [NOTICE.md](NOTICE.md)。
+MIT. See [NOTICE.md](NOTICE.md) for what is bundled.

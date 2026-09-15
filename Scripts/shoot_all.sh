@@ -33,6 +33,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   for m in learned_model fine_model octave_model; do
     python3 "$NS/embed_models.py" "$NS/$m.json" Generated/note-models --target macho >/dev/null 2>&1
   done
+  python3 Tools/gen_version.py 2>&1 | tail -1
   xcodegen generate --spec project.yml 2>&1 | tail -1
   /usr/bin/xcodebuild -project EffeTuneLive.xcodeproj -scheme EffeTuneLive \
     -configuration Debug -sdk iphonesimulator -arch arm64 \

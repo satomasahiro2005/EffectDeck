@@ -13,6 +13,11 @@
 //
 //  web は Stage1/Stage2（または Push/Pull）を横に 2 枚並べるが、390pt では 1 枚 180pt
 //  になって軸の字が潰れる。面を選ぶ帯を 1 本足して、図は常に幅いっぱいの 1 枚にした。
+//
+//  操作は上流と同じ 5 つのタブに分けてある（同 7283 _createTabbedControls）。
+//  Output Circuit で使わなくなる行は引っ込める（同 6355 _syncPowerSectionVisibility）。
+//  並びは操作 → 面の帯 → 図 → 数値で、上流の「Settings first, then the read-outs」
+//  （同 7506-7512）と同じ。
 
 import SwiftUI
 import Foundation
@@ -212,6 +217,121 @@ private struct ETTubeAxes {
     var loadLine: (CGPoint, CGPoint)?
 }
 
+// MARK: - 操作のまとまり
+
+/// js:7333-7400 の 5 枚（_createTabbedControls は同 7283）。名前も並びも上流のまま。
+private enum ETTubeTab: String, CaseIterable, Identifiable {
+    case input, driver, power, transformer, output
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .input:       return "Input"
+        case .driver:      return "Driver"
+        case .power:       return "Power"
+        case .transformer: return "Transformer"
+        case .output:      return "Output"
+        }
+    }
+
+    /// タブの中の順。上流が appendChild する順そのもの（js:7333-7400）。
+    var keys: [String] {
+        switch self {
+        case .input:       return ["dr", "iv", "sz"]
+        case .driver:      return ["tp", "bi", "pv", "su", "nf"]
+        case .power:       return ["os", "pt", "pb", "kr", "sd", "sb", "sr"]
+        case .transformer: return ["st", "zp", "sp", "sl", "rl"]
+        case .output:      return ["og", "sg", "ag", "mx"]
+        }
+    }
+}
+
+/// os で出し入れする行（js:6355-6365 `_syncPowerSectionVisibility`）。
+/// 値は消さずに行だけ引っ込めるので、回路を戻せば前の設定がそのまま戻る。
+private enum ETTubeRows {
+    /// 出力段があるときだけ出る。上流の `_powerRows`（js:7379-7380 の 2 行）。
+    static let power: Set<String> = ["sl", "rl"]
+    /// Push-Pull 専用。`_ppRows`（js:7355-7357 の 3 行 ＋ 7372-7373 の 2 行）。
+    static let pushPull: Set<String> = ["pt", "pb", "kr", "st", "zp"]
+    /// SE 専用。`_seRows`（js:7360-7362 の 3 行 ＋ 7376 の 1 行）。
+    static let singleEnded: Set<String> = ["sd", "sb", "sr", "sp"]
+
+    static func shows(_ key: String, outputCircuit: String) -> Bool {
+        if pushPull.contains(key) { return outputCircuit == "Power" }
+        if singleEnded.contains(key) { return outputCircuit == "SingleEnded" }
+        if power.contains(key) { return outputCircuit != "Line" }
+        return true
+    }
+}
+
+/// 画面に出す選択肢の字。js:17-57 `TUBE_SIMULATOR_ENUM_ABI` の labels 側で、
+/// 上流も画面にはこちらを出す（js:7327-7330 abiOptions）。
+/// 保存値（values）は EffectCatalog.swift が持っていて、そちらは生成物なので触らない。
+private enum ETTubeEnumLabels {
+    static let table: [String: [String]] = [
+        "tp": ["12AX7", "12AT7", "12AU7", "Bypass"],
+        "os": ["Line", "Push-Pull Power", "SE Triode"],
+        "pt": ["EL84 ×2", "EL34 ×2", "6L6GC ×2", "KT88 ×2"],
+        "sd": ["300B", "2A3"],
+        "st": ["0%", "20%", "43%"],
+        "zp": ["6.0 kΩ", "6.6 kΩ", "8.0 kΩ"],
+        "sp": ["2.5 kΩ", "3.5 kΩ", "5.0 kΩ"],
+        "sl": ["4 Ω", "8 Ω", "15 Ω", "16 Ω"]
+    ]
+
+    /// 数が合わなければ保存値をそのまま出す。ABI が動いたときに字だけずれるのを避ける。
+    static func labels(_ key: String, values: [String]) -> [String] {
+        guard let labels = table[key], labels.count == values.count else { return values }
+        return labels
+    }
+}
+
+/// 選択肢を押せる面で並べる行。上流も `createRadioGroup`（js:7311-7318）で
+/// 全部の選択肢を出しているので、開いてから選ぶ形にはしない。
+/// title が nil なら見出しの行を作らない（タブの帯で使う）。
+private struct ETTubeChoiceRow: View {
+    let title: String?
+    let labels: [String]
+    let selected: Int
+    let onSelect: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            HStack(spacing: 6) {
+                ForEach(Array(labels.enumerated()), id: \.offset) { i, label in
+                    let isSelected = i == selected
+                    Button {
+                        onSelect(i)
+                    } label: {
+                        Text(label)
+                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .foregroundStyle(isSelected ? AnyShapeStyle(.white)
+                                                        : AnyShapeStyle(.secondary))
+                            .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                            .background(isSelected ? AnyShapeStyle(.tint)
+                                                   : AnyShapeStyle(.quaternary),
+                                        in: .rect(cornerRadius: ETMetrics.innerRadius,
+                                                  style: .continuous))
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(label)
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 本体
 
 struct TubeSimulatorView: View {
@@ -220,43 +340,84 @@ struct TubeSimulatorView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @Environment(\.etGraphOnly) private var graphOnly
 
+    /// 開いているタブ。上流の初期値も input（js:6063）。
+    @State private var tab: ETTubeTab = .input
     /// 選んでいる面。使えなくなったときは resolvedPanel が拾い直す。
     @State private var panelID: String?
-    /// 動作点の尾。新しいものが後ろ。
-    @State private var trail: [ETTubeTrailSample] = []
-    /// 指で触った所の Vak。値を読むだけ。
-    @State private var probeVak: Double?
-    /// Output Safety Trim を掴んでいる間。掴んでいる間はテレメトリで数値を動かさない。
-    @State private var trimHeld = false
-    /// 一度取り込んだ自動減衰。同じ値を二重に畳み込まない（js:6256 のコメント）。
-    @State private var adoptedReduction: Double?
 
-    /// 尾の長さ。js:628-639 と同じ 0.5 秒・時定数 0.22 秒。
-    private static let trailSeconds: TimeInterval = 0.5
-    private static let trailFade: TimeInterval = 0.22
-    private static let trailMinimumOpacity: Double = 0.02
     private static let curvePoints = 96
 
     var body: some View {
+        // Telemetry を観測するのは図と Output Safety Trim の中だけ。ここで観測すると
+        // 30Hz でカードごと作り直されて、タブと選択肢の押し心地が落ちる。
         VStack(alignment: .leading, spacing: 12) {
+            // graph only のときは操作を丸ごと畳む。ParameterRow は自分で消えるが、
+            // タブの帯と選択肢の行は自分では消えない。
+            if !graphOnly {
+                ETTubeChoiceRow(title: nil,
+                                labels: ETTubeTab.allCases.map(\.title),
+                                selected: ETTubeTab.allCases.firstIndex(of: tab) ?? 0,
+                                onSelect: { tab = ETTubeTab.allCases[$0] })
+                tabContent
+                Divider()
+            }
+            // 上流も操作が先で、図と数値は後ろ（js:7506-7512 のコメント）。
             if panels.isEmpty {
                 Text("No tube stage is active.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-            } else {
-                if panels.count > 1 { panelPicker }
-                graph
+            } else if panels.count > 1 {
+                panelPicker
             }
-            readouts
-            Divider()
-            parameters
+            TubeSimulatorHUD(tapId: node.tapId,
+                             panel: resolvedPanel,
+                             axes: axes,
+                             caption: caption,
+                             driverBypassed: choice("tp") == "Bypass",
+                             inputReferenceVpk: value("iv"),
+                             inputVolumeDb: value("dr"))
         }
-        .onChange(of: frameSequence) { _, _ in
-            releaseAdoptionIfReductionChanged()
-            appendTrail()
+    }
+
+    // MARK: パラメータ
+
+    /// 開いているタブの行だけ。os で消える行はここで落とす。
+    private var tabContent: some View {
+        let outputCircuit = choice("os")
+        return VStack(alignment: .leading, spacing: 12) {
+            ForEach(tab.keys, id: \.self) { key in
+                if let p = param(key), ETTubeRows.shows(key, outputCircuit: outputCircuit) {
+                    row(p)
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func row(_ p: ETParam) -> some View {
+        if p.key == "sg" {
+            TubeSimulatorSafetyTrimRow(index: index, param: p, values: node.values,
+                                       dsp: dsp, tapId: node.tapId)
+        } else if let options = enumOptions(p) {
+            ETTubeChoiceRow(title: p.label,
+                            labels: ETTubeEnumLabels.labels(p.key, values: options),
+                            selected: enumIndex(p, count: options.count),
+                            onSelect: { dsp.setValue(Float($0), at: index, offset: p.offset) })
+        } else {
+            ParameterRow(param: p, nodeIndex: index, values: node.values, dsp: dsp)
+        }
+    }
+
+    private func enumOptions(_ p: ETParam) -> [String]? {
+        if case .enumeration(let options) = p.kind { return options }
+        return nil
+    }
+
+    private func enumIndex(_ p: ETParam, count: Int) -> Int {
+        guard node.values.indices.contains(p.offset) else { return 0 }
+        return min(max(Int(node.values[p.offset].rounded()), 0), max(count - 1, 0))
     }
 
     // MARK: 値の読み書き
@@ -268,11 +429,6 @@ struct TubeSimulatorView: View {
     private func value(_ key: String) -> Double {
         guard let p = param(key), node.values.indices.contains(p.offset) else { return 0 }
         return Double(node.values[p.offset])
-    }
-
-    private func set(_ key: String, _ v: Double) {
-        guard let p = param(key) else { return }
-        dsp.setValue(Float(v), at: index, offset: p.offset)
     }
 
     /// 選択肢の中身（"12AX7" や "6.0"）。数の選択肢はこの文字列を数として読む。
@@ -287,31 +443,9 @@ struct TubeSimulatorView: View {
         Double(choice(key)) ?? 0
     }
 
-    // MARK: テレメトリ
-
-    private var frame: ETFrame? {
-        telemetry.frame(tap: node.tapId, type: .tubeSimulator)
-    }
-
-    private var frameSequence: UInt32 { frame?.sequence ?? 0 }
-
-    private var latest: ETTubeTelemetry? {
-        guard let frame else { return nil }
-        return ETTubeTelemetry.read(frame)
-    }
-
-    private func appendTrail() {
-        guard let sample = latest else { return }
-        let now = Date.timeIntervalSinceReferenceDate
-        trail.append(ETTubeTrailSample(time: now, left: sample.left, right: sample.right))
-        let cutoff = now - Self.trailSeconds
-        trail.removeAll { $0.time < cutoff }
-        if trail.count > 96 { trail.removeFirst(trail.count - 96) }
-    }
-
     // MARK: 面
 
-    /// いま回路にある球の群れ。js:6597-6602 _hudViewAvailable と同じ条件。
+    /// いま回路にある球の群れ。js:6620-6625 _hudViewAvailable と同じ条件。
     private var panels: [ETTubePanel] {
         var out: [ETTubePanel] = []
         if choice("tp") != "Bypass" {
@@ -349,6 +483,18 @@ struct TubeSimulatorView: View {
         .pickerStyle(.segmented)
     }
 
+    private var caption: String {
+        guard let panel = resolvedPanel else { return "" }
+        let tube: String
+        switch panel.group {
+        case .driver:      tube = choice("tp")
+        case .pushPull:    tube = choice("pt")
+        case .singleEnded: tube = choice("sd")
+        }
+        // 尾の印の見分け方も一緒に出す（左は塗り丸、右は抜き四角）。
+        return "\(panel.title) · \(tube) · L ● / R □"
+    }
+
     // MARK: 軸
 
     private var axes: ETTubeAxes {
@@ -356,8 +502,8 @@ struct TubeSimulatorView: View {
             return ETTubeAxes(xMax: 1, yMax: 1, plateCurves: [], loadLine: nil)
         }
         switch panel.group {
-        case .driver:     return driverAxes()
-        case .pushPull:   return pushPullAxes()
+        case .driver:      return driverAxes()
+        case .pushPull:    return pushPullAxes()
         case .singleEnded: return singleEndedAxes()
         }
     }
@@ -420,59 +566,125 @@ struct TubeSimulatorView: View {
             }
         }
     }
+}
+
+// MARK: - 図と数値
+
+/// **Telemetry を観測するのはここと Output Safety Trim の行だけ。**
+/// カード全体で観測すると 30Hz で作り直されて、タブと選択肢が固まる。
+private struct TubeSimulatorHUD: View {
+
+    let tapId: UInt32
+    let panel: ETTubePanel?
+    let axes: ETTubeAxes
+    let caption: String
+    /// ドライバを外していると、段の数値は上流も出さない（js:6845-6882）。
+    let driverBypassed: Bool
+    let inputReferenceVpk: Double
+    let inputVolumeDb: Double
+
+    @ObservedObject private var telemetry = Telemetry.shared
+
+    /// 動作点の尾。新しいものが後ろ。
+    @State private var trail: [ETTubeTrailSample] = []
+    /// 指で触った所の Vak。値を読むだけ。
+    @State private var probeVak: Double?
+
+    /// 尾の長さ。js:628-639 と同じ 0.5 秒・時定数 0.22 秒。
+    private static let trailSeconds: TimeInterval = 0.5
+    private static let trailFade: TimeInterval = 0.22
+    private static let trailMinimumOpacity: Double = 0.02
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if panel != nil { graph }
+            readouts
+        }
+        .onChange(of: frameSequence) { _, _ in appendTrail() }
+    }
+
+    // MARK: テレメトリ
+
+    private var frame: ETFrame? {
+        telemetry.frame(tap: tapId, type: .tubeSimulator)
+    }
+
+    private var frameSequence: UInt32 { frame?.sequence ?? 0 }
+
+    private var latest: ETTubeTelemetry? {
+        guard let frame else { return nil }
+        return ETTubeTelemetry.read(frame)
+    }
+
+    private func appendTrail() {
+        guard let sample = latest else { return }
+        let now = Date.timeIntervalSinceReferenceDate
+        trail.append(ETTubeTrailSample(time: now, left: sample.left, right: sample.right))
+        let cutoff = now - Self.trailSeconds
+        trail.removeAll { $0.time < cutoff }
+        if trail.count > 96 { trail.removeFirst(trail.count - 96) }
+    }
 
     // MARK: 図
 
     private var graph: some View {
-        let a = axes
-        let panel = resolvedPanel
-        return GraphCanvas(
-            x: xAxis(a),
-            y: yAxis(a),
-            height: ETGraphMetrics.height,
-            insets: ETGraphInsets(leading: 32, trailing: 10, top: 6, bottom: 14),
-            readout: probeReadout(a),
-            caption: caption,
-            clipsContent: true,
-            draw: { context, plot in
-                drawPlateCurves(&context, plot, a)
-                drawLoadLine(&context, plot, a)
-                drawTrail(&context, plot, panel)
-                drawProbe(&context, plot, a)
-            },
-            overlay: { plot in
-                // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
-                Color.clear
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { touch in
-                                probeVak = plot.xAxis.clamp(plot.xValue(at: touch.location.x))
-                            }
-                            .onEnded { _ in probeVak = nil })
-            })
+        VStack(alignment: .leading, spacing: 2) {
+            // 上流は軸名を図の中に書く（js:7113-7123）。iPhone の幅では目盛りと重なるので外へ出した。
+            Text("Ia (mA)")
+                .font(.system(size: ETGraphMetrics.labelSize))
+                .foregroundStyle(.secondary)
+            GraphCanvas(
+                x: xAxis,
+                y: yAxis,
+                height: ETGraphMetrics.height,
+                insets: ETGraphInsets(leading: 32, trailing: 10, top: 6, bottom: 14),
+                readout: probeReadout,
+                caption: caption,
+                clipsContent: true,
+                draw: { context, plot in
+                    drawPlateCurves(&context, plot)
+                    drawLoadLine(&context, plot)
+                    drawTrail(&context, plot)
+                    drawProbe(&context, plot)
+                },
+                overlay: { plot in
+                    // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { touch in
+                                    probeVak = plot.xAxis.clamp(plot.xValue(at: touch.location.x))
+                                }
+                                .onEnded { _ in probeVak = nil })
+                })
+            Text("Vak (V)")
+                .font(.system(size: ETGraphMetrics.labelSize))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
     }
 
-    private func xAxis(_ a: ETTubeAxes) -> ETAxis {
+    private var xAxis: ETAxis {
         // js:708-712 tubeSimulatorHudTicks と同じ 5 本。字は整数（js:7162 tick.toFixed(0)）。
         let ticks = (0..<5).map { i -> ETAxisTick in
-            let v = a.xMax * Double(i) / 4
+            let v = axes.xMax * Double(i) / 4
             return ETAxisTick(v, String(format: "%.0f", v))
         }
-        return ETAxis(scale: .linear, lower: 0, upper: a.xMax, ticks: ticks)
+        return ETAxis(scale: .linear, lower: 0, upper: axes.xMax, ticks: ticks)
     }
 
-    private func yAxis(_ a: ETTubeAxes) -> ETAxis {
+    private var yAxis: ETAxis {
         // 中身は A のままで、字だけ mA にする（js:7174 tick * 1000）。
         let ticks = (0..<5).map { i -> ETAxisTick in
-            let v = a.yMax * Double(i) / 4
+            let v = axes.yMax * Double(i) / 4
             return ETAxisTick(v, String(format: "%.1f", v * 1000))
         }
-        return ETAxis(scale: .linear, lower: 0, upper: a.yMax, ticks: ticks)
+        return ETAxis(scale: .linear, lower: 0, upper: axes.yMax, ticks: ticks)
     }
 
-    private func drawPlateCurves(_ context: inout GraphicsContext, _ plot: ETPlot, _ a: ETTubeAxes) {
-        for curve in a.plateCurves {
+    private func drawPlateCurves(_ context: inout GraphicsContext, _ plot: ETPlot) {
+        for curve in axes.plateCurves {
             guard curve.count > 1 else { continue }
             var path = Path()
             for (i, p) in curve.enumerated() {
@@ -483,8 +695,8 @@ struct TubeSimulatorView: View {
         }
     }
 
-    private func drawLoadLine(_ context: inout GraphicsContext, _ plot: ETPlot, _ a: ETTubeAxes) {
-        guard let line = a.loadLine else { return }
+    private func drawLoadLine(_ context: inout GraphicsContext, _ plot: ETPlot) {
+        guard let line = axes.loadLine else { return }
         var path = Path()
         path.move(to: plot.point(Double(line.0.x), Double(line.0.y)))
         path.addLine(to: plot.point(Double(line.1.x), Double(line.1.y)))
@@ -494,7 +706,7 @@ struct TubeSimulatorView: View {
 
     /// 尾。点であって線ではない（js:7253-7255 のコメント: 枠は連続した曲線ではない）。
     /// 左は塗り丸、右は抜き四角。色は使わないので形で分ける。
-    private func drawTrail(_ context: inout GraphicsContext, _ plot: ETPlot, _ panel: ETTubePanel?) {
+    private func drawTrail(_ context: inout GraphicsContext, _ plot: ETPlot) {
         guard let panel else { return }
         let now = Date.timeIntervalSinceReferenceDate
         for sample in trail {
@@ -504,12 +716,12 @@ struct TubeSimulatorView: View {
             guard opacity >= Self.trailMinimumOpacity else { continue }
             context.opacity = opacity
 
-            let l = operatingPoint(sample.left, panel)
+            let l = Self.operatingPoint(sample.left, panel)
             let lp = plot.point(l.x, l.y)
             context.fill(Path(ellipseIn: CGRect(x: lp.x - 2.5, y: lp.y - 2.5, width: 5, height: 5)),
                          with: ETGraphShading.curve)
 
-            let r = operatingPoint(sample.right, panel)
+            let r = Self.operatingPoint(sample.right, panel)
             let rp = plot.point(r.x, r.y)
             context.stroke(Path(CGRect(x: rp.x - 2.5, y: rp.y - 2.5, width: 5, height: 5)),
                            with: ETGraphShading.muted, lineWidth: 1.5)
@@ -517,7 +729,7 @@ struct TubeSimulatorView: View {
         context.opacity = 1
     }
 
-    private func drawProbe(_ context: inout GraphicsContext, _ plot: ETPlot, _ a: ETTubeAxes) {
+    private func drawProbe(_ context: inout GraphicsContext, _ plot: ETPlot) {
         guard let vak = probeVak else { return }
         var line = Path()
         let x = plot.x(vak)
@@ -525,7 +737,7 @@ struct TubeSimulatorView: View {
         line.addLine(to: CGPoint(x: x, y: plot.rect.maxY))
         context.stroke(line, with: ETGraphShading.axis,
                        style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-        if let ia = loadLineCurrent(at: vak, a) {
+        if let ia = loadLineCurrent(at: vak) {
             let pt = plot.clampedPoint(vak, ia)
             context.stroke(Path(ellipseIn: CGRect(x: pt.x - 5, y: pt.y - 5, width: 10, height: 10)),
                            with: ETGraphShading.muted, lineWidth: 1.5)
@@ -533,7 +745,8 @@ struct TubeSimulatorView: View {
     }
 
     /// 面ごとに、どの 2 つの値を (Vak, Ia) として置くか（js:6775-6788 _appendTrajectory）。
-    private func operatingPoint(_ p: ETTubeOperatingPoint, _ panel: ETTubePanel) -> (x: Double, y: Double) {
+    private static func operatingPoint(_ p: ETTubeOperatingPoint,
+                                       _ panel: ETTubePanel) -> (x: Double, y: Double) {
         switch panel.id {
         case "stage1":   return (p.vak1, p.ia1)
         case "stage2":   return (p.vak2, p.ia2)
@@ -542,8 +755,8 @@ struct TubeSimulatorView: View {
         }
     }
 
-    private func loadLineCurrent(at vak: Double, _ a: ETTubeAxes) -> Double? {
-        guard let line = a.loadLine else { return nil }
+    private func loadLineCurrent(at vak: Double) -> Double? {
+        guard let line = axes.loadLine else { return nil }
         let x0 = Double(line.0.x), y0 = Double(line.0.y)
         let x1 = Double(line.1.x), y1 = Double(line.1.y)
         guard x1 != x0 else { return nil }
@@ -552,102 +765,209 @@ struct TubeSimulatorView: View {
         return y0 + t * (y1 - y0)
     }
 
-    private func probeReadout(_ a: ETTubeAxes) -> [ETReadoutItem] {
+    private var probeReadout: [ETReadoutItem] {
         guard let vak = probeVak else { return [] }
         var items = [ETReadoutItem("VAK", String(format: "%.0f V", vak))]
-        if let ia = loadLineCurrent(at: vak, a) {
+        if let ia = loadLineCurrent(at: vak) {
             items.append(ETReadoutItem("LOAD", String(format: "%.2f mA", ia * 1000)))
         }
         return items
     }
 
-    private var caption: String {
-        guard let panel = resolvedPanel else { return "" }
-        let tube: String
-        switch panel.group {
-        case .driver:      tube = choice("tp")
-        case .pushPull:    tube = choice("pt")
-        case .singleEnded: tube = choice("sd")
-        }
-        // 尾の印の見分け方も一緒に出す（左は塗り丸、右は抜き四角）。
-        return "\(panel.title) · \(tube) · L ● / R □"
-    }
-
     // MARK: 数値
+
+    private struct Reading: Identifiable {
+        let label: String
+        let value: String
+        var id: String { label }
+
+        init(_ label: String, _ value: String) {
+            self.label = label
+            self.value = value
+        }
+    }
 
     private var readouts: some View {
         VStack(alignment: .leading, spacing: 5) {
-            if let t = latest, let panel = resolvedPanel {
-                switch panel.group {
-                case .driver:
-                    readoutRow("STAGE 1 BIAS", t.left.vk1, t.right.vk1, "V")
-                    readoutRow("STAGE 2 BIAS", t.left.vk2, t.right.vk2, "V")
-                    readoutRow("B+", t.left.vbPlus, t.right.vbPlus, "V")
-                case .pushPull:
-                    readoutRow("LTP BALANCE", t.left.ltpBalanceV, t.right.ltpBalanceV, "V")
-                    readoutRow("POWER B+", t.left.powerBPlusV, t.right.powerBPlusV, "V")
-                    readoutRow("SPEAKER", t.left.speakerVrms100ms, t.right.speakerVrms100ms, "Vrms")
-                    readoutRow("REAL POWER", t.left.speakerRealPower100ms,
-                               t.right.speakerRealPower100ms, "W")
-                    readoutRow("FLUX", abs(t.left.transformerFluxWb),
-                               abs(t.right.transformerFluxWb), "Wb", digits: 3)
-                case .singleEnded:
-                    readoutRow("POWER B+", t.left.powerBPlusV, t.right.powerBPlusV, "V")
-                    readoutRow("SPEAKER", t.left.speakerVrms100ms, t.right.speakerVrms100ms, "Vrms")
-                    readoutRow("REAL POWER", t.left.speakerRealPower100ms,
-                               t.right.speakerRealPower100ms, "W")
-                    readoutRow("FLUX", abs(t.left.transformerFluxWb),
-                               abs(t.right.transformerFluxWb), "Wb", digits: 3)
+            ForEach(readings) { reading in
+                HStack(spacing: 6) {
+                    Text(reading.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Text(reading.value)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                 }
-                Text(safetyLine)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Waiting for measurements…")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private func readoutRow(_ label: String, _ left: Double, _ right: Double,
-                            _ unit: String, digits: Int = 2) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(0.4)
+            Text(safetyLine)
+                .font(.system(size: 10))
                 .foregroundStyle(.secondary)
-            Spacer(minLength: 4)
-            Text(String(format: "L %.\(digits)f / R %.\(digits)f", left, right) + " \(unit)")
-                .font(.system(size: 11, design: .monospaced))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
+    /// js:7485-7496 の 12 個。見出しも順も上流のまま。
+    /// 値が来ていない行は上流の初期表示と同じダッシュにする。
+    private var readings: [Reading] {
+        let t = latest
+        let l = t?.left
+        let r = t?.right
+        // ドライバ段の 5 つは、球を外していると上流も値を出さない。
+        let d = driverBypassed ? nil : t
+        return [
+            Reading("STAGE 1 BIAS", Self.stereo(d?.left.vk1, d?.right.vk1, "V")),
+            Reading("STAGE 2 BIAS", Self.stereo(d?.left.vk2, d?.right.vk2, "V")),
+            Reading("B+", Self.stereo(d?.left.vbPlus, d?.right.vbPlus, "V")),
+            Reading("STAGE 1 PLATE − B+ SAG",
+                    Self.stereoFixed(d.map { $0.left.vak1 + $0.left.vk1 - $0.left.vbPlus },
+                                     d.map { $0.right.vak1 + $0.right.vk1 - $0.right.vbPlus },
+                                     "V", digits: 2, integerDigits: 3)),
+            Reading("STAGE 2 PLATE − B+ SAG",
+                    Self.stereoFixed(d.map { $0.left.vak2 + $0.left.vk2 - $0.left.vbPlus },
+                                     d.map { $0.right.vak2 + $0.right.vk2 - $0.right.vbPlus },
+                                     "V", digits: 2, integerDigits: 3)),
+            Reading("INPUT REFERENCE (0 dBFS)", inputReferenceText),
+            Reading("STAGE 1 EXTERNAL INPUT (0 dBFS)", stage1ExternalInputText),
+            Reading("POWER LTP BALANCE",
+                    Self.stereoFixed(l?.ltpBalanceV, r?.ltpBalanceV,
+                                     "V", digits: 2, integerDigits: 3)),
+            Reading("POWER B+", Self.stereo(l?.powerBPlusV, r?.powerBPlusV, "V")),
+            Reading("SPEAKER OUTPUT (100 ms)",
+                    Self.stereo(l?.speakerVrms100ms, r?.speakerVrms100ms, "Vrms")),
+            Reading("SPEAKER REAL POWER (100 ms)",
+                    Self.stereo(l?.speakerRealPower100ms, r?.speakerRealPower100ms, "W")),
+            Reading("TRANSFORMER FLUX",
+                    Self.stereoFixed(l.map { abs($0.transformerFluxWb) },
+                                     r.map { abs($0.transformerFluxWb) },
+                                     "Wb", digits: 3, integerDigits: 2))
+        ]
+    }
+
+    /// js:6830-6835。テレメトリは要らない。iv だけで出る。
+    private var inputReferenceText: String {
+        let vrms = inputReferenceVpk / sqrt(2)
+        let dbuFS = 20 * log10(vrms / 0.775)
+        guard dbuFS.isFinite else { return String(format: "%.3f Vpk", inputReferenceVpk) }
+        return String(format: "%.3f Vpk · %.3f Vrms · %.1f dBuFS", inputReferenceVpk, vrms, dbuFS)
+    }
+
+    /// js:6836-6841。ドライバを外していてもここは出る。
+    private var stage1ExternalInputText: String {
+        let vpk = inputReferenceVpk * pow(10, inputVolumeDb / 20)
+        let text = String(format: "%.3f Vpk", vpk)
+        return driverBypassed ? "Driver bypassed · " + text : text
+    }
+
+    /// js:6798-6801 _formatStereo。
+    private static func stereo(_ left: Double?, _ right: Double?, _ unit: String,
+                               digits: Int = 2) -> String {
+        guard let left, let right, left.isFinite, right.isFinite else { return "L — / R —" }
+        return String(format: "L %.\(digits)f / R %.\(digits)f", left, right) + " \(unit)"
+    }
+
+    /// js:6814-6827 _formatStereoFixed。符号を必ず出し、整数部を桁数ぶん空白で詰める。
+    /// 符号や桁が変わっても列が動かないので、動いている数字が読める。
+    private static func stereoFixed(_ left: Double?, _ right: Double?, _ unit: String,
+                                    digits: Int, integerDigits: Int) -> String {
+        guard let left, let right, left.isFinite, right.isFinite else { return "L — / R —" }
+        return "L " + fixed(left, digits: digits, integerDigits: integerDigits)
+            + " / R " + fixed(right, digits: digits, integerDigits: integerDigits)
+            + " \(unit)"
+    }
+
+    /// 引き算の記号は U+2212。ハイフンより幅が広く、プラスと同じ幅になる。
+    private static func fixed(_ v: Double, digits: Int, integerDigits: Int) -> String {
+        let sign = v < 0 ? "\u{2212}" : "+"
+        let text = String(format: "%.\(digits)f", abs(v))
+        let whole = text.prefix { $0 != "." }
+        let fraction = text.dropFirst(whole.count)
+        let pad = String(repeating: " ", count: max(0, integerDigits - whole.count))
+        return sign + pad + String(whole) + String(fraction)
+    }
+
+    /// 上流の status（js:6983-6988）。0 dB でも必ず出す。
     private var safetyLine: String {
-        let reduction = safetyReductionDb
-        if reduction < 0 {
-            return String(format: "Output safety reduction: %.1f dB applied automatically. "
-                          + "Move Output Safety Trim to clear it.", -reduction)
+        guard let reported = latest?.safetyReductionDb, reported.isFinite, reported < 0 else {
+            return "Output safety reduction: 0.0 dB."
         }
-        return "Output safety reduction: 0.0 dB."
+        return String(format: "Output safety reduction: %.1f dB applied automatically. "
+                      + "Move Output Safety Trim to clear it.", -reported)
+    }
+}
+
+// MARK: - Output Safety Trim（web 版で唯一の掴む操作）
+
+/// 掴んだ瞬間に「いま効いている減衰込みの値」を設定値へ取り込む行（js:6243-6312）。
+/// テレメトリで数が動くので、Telemetry を見るのは図とこの行だけ。
+private struct TubeSimulatorSafetyTrimRow: View {
+
+    let index: Int
+    let param: ETParam
+    let values: [Float]
+    @ObservedObject var dsp: EffeTuneDSP
+    let tapId: UInt32
+
+    @ObservedObject private var telemetry = Telemetry.shared
+
+    /// 掴んでいる間はテレメトリで数値を動かさない。
+    @State private var held = false
+    /// 一度取り込んだ自動減衰。同じ値を二重に畳み込まない（js:6256 のコメント）。
+    @State private var adoptedReduction: Double?
+
+    var body: some View {
+        // 掴んでいる間は設定値そのもの（取り込み済みなので同じ数）。
+        // 離しているときは「いま効いている合計」を出す（js:6583-6588, 6299-6312）。
+        let shown = held ? setting : effectiveTrimDb
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Output Safety Trim (dB)")
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                ValueBox(text: String(format: "%.1f dB", shown))
+            }
+            Slider(value: Binding(get: { shown }, set: { set(($0 * 10).rounded() / 10) }),
+                   in: -96...0,
+                   step: 0.1,
+                   onEditingChanged: { editing in
+                       if editing {
+                           held = true
+                           adoptEffectiveTrim()
+                       } else {
+                           held = false
+                       }
+                   })
+        }
+        .padding(.vertical, 2)
+        // 報告された減衰が変わったら、二重取り込みの止めを外す（js:6579-6583）。
+        .onChange(of: safetyReductionDb) { _, _ in adoptedReduction = nil }
     }
 
-    // MARK: Output Safety Trim（web 版で唯一の掴む操作）
+    private var setting: Double {
+        values.indices.contains(param.offset) ? Double(values[param.offset]) : 0
+    }
 
-    /// 常に 0 以下。テレメトリが来るまでは 0（js:6997-7001 _safetyReductionDb）。
+    private func set(_ v: Double) {
+        dsp.setValue(Float(v), at: index, offset: param.offset)
+    }
+
+    /// 常に 0 以下。テレメトリが来るまでは 0（js:6997-7002 _safetyReductionDb）。
     private var safetyReductionDb: Double {
-        guard let reported = latest?.safetyReductionDb, reported.isFinite, reported <= 0 else {
-            return 0
-        }
+        guard let frame = telemetry.frame(tap: tapId, type: .tubeSimulator),
+              let reported = ETTubeTelemetry.read(frame)?.safetyReductionDb,
+              reported.isFinite, reported <= 0 else { return 0 }
         return reported
     }
 
     /// 設定値 ＋ 自動減衰。0.1 dB に丸めて -96…0 に収める（js:6243-6249）。
     private var effectiveTrimDb: Double {
-        let effective = value("sg") + safetyReductionDb
+        let effective = setting + safetyReductionDb
         let clamped = effective < -96 ? -96 : (effective > 0 ? 0 : effective)
         return (clamped * 10).rounded() / 10
     }
@@ -659,54 +979,7 @@ struct TubeSimulatorView: View {
         if reduction == adoptedReduction { return }
         adoptedReduction = reduction
         let effective = effectiveTrimDb
-        if effective == value("sg") { return }
-        set("sg", effective)
-    }
-
-    /// 報告された減衰が変わったら、二重取り込みの止めを外す（js:6579-6583）。
-    private func releaseAdoptionIfReductionChanged() {
-        if adoptedReduction != safetyReductionDb { adoptedReduction = nil }
-    }
-
-    private var safetyTrimRow: some View {
-        // 掴んでいる間は設定値そのもの（取り込み済みなので同じ数）。
-        // 離しているときは「いま効いている合計」を出す（js:6583-6588, 6299-6312）。
-        let shown = trimHeld ? value("sg") : effectiveTrimDb
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("Output Safety Trim (dB)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 4)
-                ValueBox(text: String(format: "%.1f dB", shown))
-            }
-            Slider(value: Binding(get: { shown }, set: { set("sg", ($0 * 10).rounded() / 10) }),
-                   in: -96...0,
-                   step: 0.1,
-                   onEditingChanged: { editing in
-                       if editing {
-                           trimHeld = true
-                           adoptEffectiveTrim()
-                       } else {
-                           trimHeld = false
-                       }
-                   })
-        }
-        .padding(.vertical, 2)
-    }
-
-    // MARK: パラメータ
-
-    private var parameters: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(node.spec.params) { p in
-                if p.key == "sg" {
-                    safetyTrimRow
-                } else {
-                    ParameterRow(param: p, nodeIndex: index, values: node.values, dsp: dsp)
-                }
-            }
-        }
+        if effective == setting { return }
+        set(effective)
     }
 }

@@ -8,6 +8,105 @@
 
 import SwiftUI
 
+/// つまみをどの目盛りで置くか。`型名.key` で引く。
+///
+/// EffectCatalog.swift は生成物なので印を足せない。だから表をここに持つ。
+///
+/// 範囲や単位から決める形にはしなかった。「min > 0 かつ max/min が 100 倍以上」を
+/// EffectCatalog の number 全部に当てて上流の呼び出し箇所と突き合わせると、
+/// 上流がリニアのまま置いている 62 本を拾う。例：
+///   - Compressor の Attack 0.1-100ms（compressor.js:795 は createParameterControl）
+///   - Multiband Compressor の Freq 1-4（multiband_compressor.js:1318-1326 は
+///     min/max を range に直結した線形のスライダー）
+///   - 5Band PEQ の Freq（five_band_peq.js:589-594 に数値欄しか無く、つまみが無い）
+/// 逆に Rotary Speaker の Crossover 200-2000Hz（10 倍）は取りこぼす。
+/// 上流はプラグインごとに呼び分けているので、呼び出し箇所をそのまま写す。
+enum ETSliderScale {
+    case linear
+    case logarithmic
+    /// 0 を含む対数。0 は左端の 1 目盛り。
+    case zeroAwareLog
+
+    /// 上流がこのパラメータをどれで作っているか。
+    static func upstream(type: String, key: String) -> ETSliderScale {
+        let id = type + "." + key
+        if logKeys.contains(id) { return .logarithmic }
+        if zeroAwareKeys.contains(id) { return .zeroAwareLog }
+        return .linear
+    }
+
+    /// createLogarithmicParameterControl を呼んでいるもの。行は Vendor/effetune/plugins の下。
+    private static let logKeys: Set<String> = [
+        // delay/delay.js:318,323
+        "DelayPlugin.hd", "DelayPlugin.ld",
+        // dynamics/compressor.js:797、expander.js:754（どちらも Ratio）
+        "CompressorPlugin.rt", "ExpanderPlugin.rt",
+        // eq/band_pass_filter.js:340,352
+        "BandPassFilterPlugin.hf", "BandPassFilterPlugin.lf",
+        // eq/comb_filter.js:184
+        "CombFilterPlugin.ff",
+        // eq/hi_pass_filter.js:394、eq/lo_pass_filter.js:394
+        "HiPassFilterPlugin.fr", "LoPassFilterPlugin.fr",
+        // eq/narrow_range.js:456,462
+        "NarrowRangePlugin.hf", "NarrowRangePlugin.lf",
+        // eq/room_eq.js:1445,3335,3337,3382（この 4 本はまだ EffectCatalog に無い）
+        "RoomEqPlugin.pl", "RoomEqPlugin.fl", "RoomEqPlugin.fh", "RoomEqPlugin.rf",
+        // lofi/am_radio_simulator.js:2148,2157
+        "AMRadioSimulatorPlugin.fd", "AMRadioSimulatorPlugin.dt",
+        // lofi/fm_radio_simulator.js:1251
+        "FMRadioSimulatorPlugin.dl",
+        // lofi/sw_radio_simulator.js:1901,1903,1909,1935
+        "SWRadioSimulatorPlugin.fd", "SWRadioSimulatorPlugin.ds",
+        "SWRadioSimulatorPlugin.io", "SWRadioSimulatorPlugin.dt",
+        // lofi/vinyl_simulator.js:1530
+        "VinylSimulatorPlugin.rg",
+        // modulation/auto_filter.js:354,355,358,362,363
+        "AutoFilterPlugin.lf", "AutoFilterPlugin.hf", "AutoFilterPlugin.rt",
+        "AutoFilterPlugin.at", "AutoFilterPlugin.rl",
+        // modulation/auto_pan.js:205
+        "AutoPanPlugin.rt",
+        // modulation/chorus.js:298
+        "ChorusPlugin.rt",
+        // modulation/frequency_shifter.js:345,349
+        "FrequencyShifterPlugin.cf", "FrequencyShifterPlugin.rt",
+        // modulation/phaser.js:323,325
+        "PhaserPlugin.rt", "PhaserPlugin.cf",
+        // modulation/rotary_speaker.js:312
+        "RotarySpeakerPlugin.xo",
+        // resonator/horn_resonator.js:465、resonator/horn_resonator_plus.js:496
+        "HornResonatorPlugin.co", "HornResonatorPlusPlugin.co",
+        // restoration/hum_remover.js:255
+        "HumRemoverPlugin.hc",
+        // saturation/exciter.js:398
+        "ExciterPlugin.hf",
+        // saturation/sub_synth.js:366,373,381
+        "SubSynthPlugin.slf", "SubSynthPlugin.shf", "SubSynthPlugin.dhf",
+        // spatial/crossfeed_filter.js:178
+        "CrossfeedFilterPlugin.lf",
+        // spatial/crosstalk_cancellation.js:744,746（この 2 本もまだ EffectCatalog に無い）
+        "CrosstalkCancellationPlugin.fl", "CrosstalkCancellationPlugin.fh",
+
+        // 同じ配置を自前の変換で書いているもの。位置の目盛り数が違うだけで写像は同じ。
+        // basics/channel_divider.js:708-730 と 786-796（位置 0-1000、10-40000Hz）
+        "ChannelDividerPlugin.f1", "ChannelDividerPlugin.f2", "ChannelDividerPlugin.f3",
+        // basics/fir_crossover.js:720-763 と 777-783（位置 0-1000、10-40000Hz。
+        // 周波数は EffectCatalog にまだ無い）
+        "FIRCrossoverPlugin.f1", "FIRCrossoverPlugin.f2", "FIRCrossoverPlugin.f3",
+        // others/oscillator.js:442-450 と 744-756（位置 0-100000、20-96000Hz）
+        "OscillatorPlugin.fr",
+    ]
+
+    /// _createZeroAwareLogControl を呼んでいるもの。
+    private static let zeroAwareKeys: Set<String> = [
+        // lofi/am_radio_simulator.js:2149
+        "AMRadioSimulatorPlugin.st",
+        // lofi/sw_radio_simulator.js:1905
+        "SWRadioSimulatorPlugin.st",
+        // lofi/vinyl_simulator.js:1531,1532,1533
+        "VinylSimulatorPlugin.dr", "VinylSimulatorPlugin.st", "VinylSimulatorPlugin.sc",
+    ]
+}
+
 struct ParameterRow: View {
     let param: ETParam
     let nodeIndex: Int
@@ -81,10 +180,21 @@ struct ParameterRow: View {
                     let binding = Binding(
                         get: { Double(value) },
                         set: { set(isInteger ? Float($0.rounded()) : Float($0)) })
-                    if stride > 0 {
-                        Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
-                    } else {
-                        Slider(value: binding, in: Double(lo)...Double(hi))
+                    switch scale(lo: lo, hi: hi) {
+                    case .logarithmic:
+                        // 位置は対数、値はリニアのまま。刻みは付けない（上流も値を丸めない）。
+                        // 読み上げは位置ではなく値を渡す。
+                        ETLogSlider(value: binding, range: Double(lo)...Double(hi))
+                            .accessibilityValue(param.format(value))
+                    case .zeroAwareLog:
+                        ETZeroAwareLogSlider(value: binding, maximum: Double(hi))
+                            .accessibilityValue(param.format(value))
+                    case .linear:
+                        if stride > 0 {
+                            Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
+                        } else {
+                            Slider(value: binding, in: Double(lo)...Double(hi))
+                        }
                     }
                 }
             }
@@ -94,6 +204,28 @@ struct ParameterRow: View {
 
     private var title: String {
         param.isArray ? param.label : param.label + unitSuffix
+    }
+
+    /// この行のつまみをどの目盛りで置くか。
+    ///
+    /// 上流はプラグインごとに呼び分けているので型名が要る。ETParam は型を知らないので
+    /// 鎖から引く。EffectCatalog.swift は生成物なので、そちらに印を足す形は取らない。
+    private func scale(lo: Float, hi: Float) -> ETSliderScale {
+        switch ETSliderScale.upstream(type: effectType, key: param.key) {
+        case .logarithmic:
+            // log10 を通すので下端が 0 以下では置けない。
+            return lo > 0 ? .logarithmic : .linear
+        case .zeroAwareLog:
+            // 0 を持たない範囲に来たら普通の対数と変わらないので、表の想定と違う。
+            return lo <= 0 && hi > 0 ? .zeroAwareLog : .linear
+        case .linear:
+            return .linear
+        }
+    }
+
+    /// 上流のプラグイン名。
+    private var effectType: String {
+        dsp.chain.indices.contains(nodeIndex) ? dsp.chain[nodeIndex].spec.type : ""
     }
 
     private var unitSuffix: String {

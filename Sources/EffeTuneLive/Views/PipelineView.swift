@@ -36,12 +36,13 @@ struct PipelineView: View {
 
     @State private var sheet: Sheet?
     @AppStorage("welcome.seen") private var welcomeSeen = false
-    /// 畳んだものだけを覚える。既定は開いた状態。
-    /// Section もここに入る。Section の場合は自分のパラメータではなく、
-    /// 配下の行が消える（下の rows）。
-    /// 開いている段。**既定は畳んだ状態**なので、ここに入っているものだけが開く。
-    /// 以前は逆（既定で開く）だったが、段が増えると一覧として使えなくなる。
-    @State private var expanded: Set<UUID> = []
+    /// 開いている段。中身は EffeTuneDSP が持っている（足す・入れ替えるを握っているのが
+    /// あちらで、端末に残すのも persist() なので）。Section もここに入り、
+    /// その場合は自分のパラメータではなく配下の行が消える（下の rows）。
+    private var expanded: Set<UUID> {
+        get { dsp.expanded }
+        nonmutating set { dsp.expanded = newValue }
+    }
 
 
     /// io から写した値。AudioIO.tick() が同じ値の代入をやめたので、
@@ -68,7 +69,7 @@ struct PipelineView: View {
             // その 1 行ぶん鎖が見える。
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { PipelineToolbar(sheet: $sheet, dsp: dsp, io: io) }
+            .toolbar { PipelineToolbar(sheet: $sheet, dsp: dsp, io: io, hasPeer: hasPeer) }
             .sheet(item: $sheet) { which in
                 switch which {
                 case .picker:
@@ -91,11 +92,6 @@ struct PipelineView: View {
             .onAppear {
                 // 画面を撮るときは案内を出さない。後ろが見えなくなるので。
                 if !welcomeSeen && ETScreenshotSeed.requested == nil { sheet = .welcome }
-                // 画面を撮るときは全部開く。既定は畳んだ状態なので、
-                // そのままだと中身が写らない。
-                if ETScreenshotSeed.requested != nil {
-                    expanded = Set(dsp.chain.map(\.id))
-                }
                 // 写した値の初期合わせ。購読の初回配信に頼らない。
                 running = io.running
                 hasPeer = io.hasPeer
@@ -255,16 +251,28 @@ private struct PipelineToolbar: ToolbarContent {
     @Binding var sheet: PipelineView.Sheet?
     @ObservedObject var dsp: EffeTuneDSP
     let io: AudioIO
+    /// 拡張が繋がっているか。繋がっていないあいだマスターを沈める。
+    let hasPeer: Bool
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             // 鎖ごとの入切。帯を無くしたのでここへ。
+            //
+            // 音が来ていないあいだは沈めて出す。**bypass は触らない。**
+            // 見た目だけの話で、鎖の入切は人が決めた値のまま残す。
+            // ここで bypass を立てると、繋がった瞬間に素通しで鳴り始めて、
+            // なぜ効かないのか分からなくなる。
+            // 押せるままにしてあるのは、繋ぐ前に切っておきたいことがあるため。
             Toggle("Effects", isOn: Binding(get: { !dsp.bypass },
                                             set: { dsp.bypass = !$0 }))
                 .toggleStyle(.power)
                 .labelsHidden()
                 .scaleEffect(0.7, anchor: .center)
+                .grayscale(hasPeer ? 0 : 1)
+                .opacity(hasPeer ? 1 : 0.4)
+                .animation(.easeInOut(duration: 0.2), value: hasPeer)
                 .accessibilityLabel("Effect pipeline")
+                .accessibilityValue(hasPeer ? "" : "No audio")
         }
         ToolbarItem(placement: .principal) {
             // 帯を 1 行使うのをやめて、ナビゲーションの中に入れた。

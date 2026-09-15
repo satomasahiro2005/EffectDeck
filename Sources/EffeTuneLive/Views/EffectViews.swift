@@ -14,12 +14,15 @@ enum ETEffectViews {
     static func has(_ type: String) -> Bool { types.contains(type) }
 
     private static let types: Set<String> = [
+        "AutoLevelerPlugin",
+        "ChannelDividerPlugin",
         "CompressorPlugin",
         "DynamicSaturationPlugin",
         "EarphoneCableSimPlugin",
         "ExpanderPlugin",
         "FifteenBandGEQPlugin",
         "FifteenBandPEQPlugin",
+        "FIRCrossoverPlugin",
         "FiveBandDynamicEQ",
         "FiveBandFIRPEQPlugin",
         "FiveBandPEQPlugin",
@@ -27,7 +30,9 @@ enum ETEffectViews {
         "GroupDelayPEQPlugin",
         "HardClippingPlugin",
         "HarmonicDistortionPlugin",
+        "IRReverbPlugin",
         "LevelMeterPlugin",
+        "MatrixPlugin",
         "MultibandSaturationPlugin",
         "ModalResonatorPlugin",
         "MultiChannelPanelPlugin",
@@ -35,13 +40,17 @@ enum ETEffectViews {
         "MultibandExpanderPlugin",
         "MultibandCompressorPlugin",
         "NoteSpectrogramPlugin",
+        "OscillatorPlugin",
         "OscilloscopePlugin",
         "PhaseSelectEqPlugin",
+        "PowerAmpSagPlugin",
         "RoomEqPlugin",
         "SaturationPlugin",
         "SpectrogramPlugin",
         "SpectrumAnalyzerPlugin",
         "StereoMeterPlugin",
+        "SubSynthPlugin",
+        "SWRadioSimulatorPlugin",
         "TubeSimulatorPlugin",
     ]
 
@@ -50,6 +59,10 @@ enum ETEffectViews {
     static func view(index: Int, node: EffeTuneDSP.Node,
                      dsp: EffeTuneDSP) -> some View {
         switch node.spec.type {
+        case "AutoLevelerPlugin":
+            AutoLevelerView(index: index, node: node, dsp: dsp)
+        case "ChannelDividerPlugin":
+            ChannelDividerView(index: index, node: node, dsp: dsp)
         case "CompressorPlugin":
             CompressorView(index: index, node: node, dsp: dsp)
         case "DynamicSaturationPlugin":
@@ -62,6 +75,8 @@ enum ETEffectViews {
             FifteenBandGEQView(index: index, node: node, dsp: dsp)
         case "FifteenBandPEQPlugin":
             FifteenBandPEQView(index: index, node: node, dsp: dsp)
+        case "FIRCrossoverPlugin":
+            FIRCrossoverView(index: index, node: node, dsp: dsp)
         case "FiveBandDynamicEQ":
             FiveBandDynamicEQView(index: index, node: node, dsp: dsp)
         case "FiveBandFIRPEQPlugin":
@@ -76,8 +91,12 @@ enum ETEffectViews {
             HardClippingView(index: index, node: node, dsp: dsp)
         case "HarmonicDistortionPlugin":
             HarmonicDistortionView(index: index, node: node, dsp: dsp)
+        case "IRReverbPlugin":
+            IRReverbView(index: index, node: node, dsp: dsp)
         case "LevelMeterPlugin":
             LevelMeterView(index: index, node: node, dsp: dsp)
+        case "MatrixPlugin":
+            MatrixView(index: index, node: node, dsp: dsp)
         case "MultibandSaturationPlugin":
             MultibandSaturationView(index: index, node: node, dsp: dsp)
         case "ModalResonatorPlugin":
@@ -92,10 +111,14 @@ enum ETEffectViews {
             MultibandCompressorView(index: index, node: node, dsp: dsp)
         case "NoteSpectrogramPlugin":
             NoteSpectrogramView(index: index, node: node, dsp: dsp)
+        case "OscillatorPlugin":
+            OscillatorView(index: index, node: node, dsp: dsp)
         case "OscilloscopePlugin":
             OscilloscopeView(index: index, node: node, dsp: dsp)
         case "PhaseSelectEqPlugin":
             PhaseSelectEqView(index: index, node: node, dsp: dsp)
+        case "PowerAmpSagPlugin":
+            PowerAmpSagView(index: index, node: node, dsp: dsp)
         case "RoomEqPlugin":
             RoomEQView(index: index, node: node, dsp: dsp)
         case "SaturationPlugin":
@@ -106,6 +129,10 @@ enum ETEffectViews {
             SpectrumAnalyzerView(index: index, node: node, dsp: dsp)
         case "StereoMeterPlugin":
             StereoMeterView(index: index, node: node, dsp: dsp)
+        case "SubSynthPlugin":
+            SubSynthView(index: index, node: node, dsp: dsp)
+        case "SWRadioSimulatorPlugin":
+            SWRadioSimulatorView(index: index, node: node, dsp: dsp)
         case "TubeSimulatorPlugin":
             TubeSimulatorView(index: index, node: node, dsp: dsp)
         default:
