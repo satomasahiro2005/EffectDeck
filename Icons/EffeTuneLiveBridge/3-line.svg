@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 端から端まで抜ける線。ここは運ぶだけで何もしない -->
+  <path d="M 96 512 H 928" fill="none" stroke="#5d7488" stroke-width="30"/>
+</svg>

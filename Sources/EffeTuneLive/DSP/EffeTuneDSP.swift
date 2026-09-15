@@ -68,7 +68,7 @@ final class EffeTuneDSP: ObservableObject {
             return
         }
         ready = true
-        log.info("DSP 用意できた sr=\(sampleRate) 種類=\(self.available.count) ABI=\(et_abi_version())")
+        log.notice("DSP ready sr=\(sampleRate) engine=\(self.engine) kinds=\(self.available.count) abi=\(et_abi_version())")
 
         // 用意し直したので、いま並んでいるものを作り直す。
         rebuildAll()
@@ -158,6 +158,7 @@ final class EffeTuneDSP: ObservableObject {
             return false
         }
         node.instance = inst
+        log.notice("instance=\(inst) \(typeName, privacy: .public)")
         pushParams(node)
         return true
     }
@@ -181,15 +182,14 @@ final class EffeTuneDSP: ObservableObject {
             et_instance_set_params(engine, node.instance, $0.baseAddress,
                                    UInt32(node.spec.floatCount), node.spec.paramsHash, 0)
         }
-        if Int(st) != ET_OK {
-            log.error("set_params が \(st) \(node.spec.type, privacy: .public)")
-        }
+        log.notice("set_params=\(st) \(node.spec.type, privacy: .public) n=\(node.spec.floatCount) v0=\(v.first ?? 0)")
     }
 
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
         let ids = chain.filter { $0.enabled && $0.instance != 0 }.map(\.instance)
         ids.withUnsafeBufferPointer { ETChain_Publish($0.baseAddress, UInt32($0.count)) }
+        log.notice("publish count=\(ids.count) ids=\(ids.map(String.init).joined(separator: ","), privacy: .public)")
     }
 
     /// 外した instance を、音のスレッドが読み終えてから壊す。

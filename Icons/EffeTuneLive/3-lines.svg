@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 左右へ抜ける線。音が途中を通っていくこと -->
+  <g stroke="#4aa8dd" stroke-width="30" stroke-linecap="round">
+    <path d="M 96 512 H 236"/>
+    <path d="M 788 512 H 928"/>
+  </g>
+</svg>

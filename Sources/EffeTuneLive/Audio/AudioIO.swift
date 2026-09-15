@@ -150,7 +150,7 @@ final class AudioIO: ObservableObject {
         running = true
         status = "再生中"
         route = routeNow()
-        log.info("開始 sr=\(sr) route=\(self.route, privacy: .public)")
+        log.notice("start sr=\(sr) route=\(self.route, privacy: .public)")
     }
 
     func stop(keepListening: Bool = false) {
@@ -166,7 +166,13 @@ final class AudioIO: ObservableObject {
         status = "停止中"
     }
 
+    private var ticks = 0
+
     func tick() {
+        ticks += 1
+        if ticks % 10 == 0 {
+            log.notice("tick applied=\(self.applied) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) level=\(self.level) proc=\(ETChain_ProcessCount())")
+        }
         route = routeNow()
         level = render?.meter ?? 0
         applied = Int(render?.applied ?? 0)

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 中央のプラス -->
+  <g stroke="#eaf8ff" stroke-width="52" stroke-linecap="round">
+    <path d="M 512 388 V 636"/>
+    <path d="M 388 512 H 636"/>
+  </g>
+</svg>
