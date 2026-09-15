@@ -1,11 +1,11 @@
 //  PipelineView.swift
 //  本画面。EffeTune の Effect Pipeline にあたる。
 //
-//  EffeTune との違い:
-//    - 左のエフェクト一覧は常時は出さない。iPhone の幅では鎖が読めなくなるので、
-//      + から出すシートにしてある
-//    - 音源はファイルではなく他のアプリなので、下の帯は再生位置ではなく
-//      「音が来ているか」と「出している先」を出す
+//  EffeTune との違いと、その理由:
+//    - 左のエフェクト一覧は常時は出さない。iPhone の幅では鎖が読めなくなるので + から出す
+//    - 再生の開始/停止は持たない。拡張が繋がったら自分で鳴らし始める。
+//      鎖を切りたいときは頭の ON を切る（素通しになる）
+//    - レベルメーターは下の帯に置かない。要る人は Level Meter を鎖に入れる
 
 import SwiftUI
 
@@ -13,8 +13,8 @@ struct PipelineView: View {
     @StateObject private var io = AudioIO.shared
     @StateObject private var dsp = EffeTuneDSP.shared
     @State private var showPicker = false
-    @State private var showHelp = false
     @State private var showSettings = false
+    @State private var expanded: Set<UUID> = []
 
     private let timer = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
 
@@ -23,14 +23,10 @@ struct PipelineView: View {
             VStack(spacing: 0) {
                 pipelineHeader
                 chainList
-                transportBar
             }
             .navigationTitle("EffeTune Live")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showPicker = true } label: { Image(systemName: "plus") }
                 }
@@ -38,8 +34,13 @@ struct PipelineView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
-            .sheet(isPresented: $showPicker) { EffectPickerView() }
-            .sheet(isPresented: $showHelp) { HelpView() }
+            .sheet(isPresented: $showPicker) {
+                EffectPickerView { spec in
+                    dsp.add(spec)
+                    // 足した直後のものだけ開いておく。他は畳んだまま。
+                    if let last = dsp.chain.last { expanded = [last.id] }
+                }
+            }
             .sheet(isPresented: $showSettings) { SettingsView(io: io) }
         }
         .onReceive(timer) { _ in io.tick() }
@@ -70,123 +71,86 @@ struct PipelineView: View {
     }
 
     private var chainList: some View {
-        Group {
+        List {
+            if !io.hasPeer {
+                ConnectBanner()
+                    .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 8, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
             if dsp.chain.isEmpty {
-                ContentUnavailableView {
-                    Label("No Effects", systemImage: "slider.horizontal.3")
-                } description: {
-                    Text("Add an effect to start shaping the audio coming from other apps.")
-                } actions: {
-                    Button("Add Effect") { showPicker = true }
-                        .buttonStyle(.borderedProminent)
-                }
+                EmptyChainRow { showPicker = true }
+                    .listRowInsets(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             } else {
-                List {
-                    ForEach(Array(dsp.chain.enumerated()), id: \.element.id) { index, node in
-                        EffectCardView(index: index, node: node, dsp: dsp)
-                            .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                    }
-                    .onDelete { dsp.remove(at: $0) }
-                    .onMove { dsp.move(from: $0, to: $1) }
+                ForEach(Array(dsp.chain.enumerated()), id: \.element.id) { index, node in
+                    EffectCardView(
+                        index: index,
+                        node: node,
+                        dsp: dsp,
+                        isExpanded: expanded.contains(node.id),
+                        toggleExpanded: {
+                            if expanded.contains(node.id) { expanded.remove(node.id) }
+                            else { expanded.insert(node.id) }
+                        })
+                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 }
-                .listStyle(.plain)
-                .environment(\.defaultMinListRowHeight, 0)
+                .onDelete { dsp.remove(at: $0) }
+                .onMove { dsp.move(from: $0, to: $1) }
             }
         }
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 0)
     }
+}
 
-    /// 下の帯。音がどこから来てどこへ出ているか。
-    private var transportBar: some View {
-        VStack(spacing: 8) {
-            Divider()
-            HStack(spacing: 12) {
-                Button {
-                    io.running ? io.stop() : io.start()
-                } label: {
-                    Image(systemName: io.running ? "stop.fill" : "play.fill")
-                        .font(.system(size: 17, weight: .bold))
-                        .frame(width: 46, height: 38)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(io.running ? .red : .accentColor)
+/// 拡張が繋がっていない間だけ、鎖の一番上に出る。
+/// 2本構成は普通ではないので、黙っていると詰まる。
+private struct ConnectBanner: View {
+    var body: some View {
+        Card {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "airplayaudio")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.tint)
+                    .frame(width: 26)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(sourceLine)
+                    Text("No audio yet")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Play something in another app, then pick **EffeTune** as the output in Control Center.")
                         .font(.system(size: 12))
-                        .foregroundStyle(io.hasPeer ? .primary : .secondary)
-                        .lineLimit(1)
-                    LevelBar(level: io.level)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 6)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(.bar)
-    }
-
-    private var sourceLine: String {
-        if !io.running { return "Stopped" }
-        if !io.hasPeer { return "Waiting — pick EffeTune in Control Center" }
-        return "Receiving · \(io.route)"
     }
 }
 
-/// 出ている音の大きさ。EffeTune の Level Meter ほどの情報は無いが、
-/// 音が通っているかどうかはここで分かる。
-struct LevelBar: View {
-    let level: Float
+private struct EmptyChainRow: View {
+    let add: () -> Void
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary)
-                Capsule()
-                    .fill(level > 0.95 ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
-                    .frame(width: geo.size.width * CGFloat(min(max(level, 0), 1)))
-            }
+        VStack(spacing: 10) {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+            Text("No effects")
+                .font(.system(size: 16, weight: .semibold))
+            Text("The audio passes through untouched.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            Button("Add Effect", action: add)
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 2)
         }
-        .frame(height: 4)
-    }
-}
-
-struct HelpView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("How to use") {
-                    Text("1. Keep this app open.")
-                    Text("2. Play something in another app.")
-                    Text("3. In Control Center, set the output to EffeTune.")
-                    Text("4. Press play here.")
-                }
-                Section("Why there are two apps") {
-                    Text("""
-                         The audio is captured by an extension that ships inside \
-                         EffeTune Live Bridge. iOS does not let an app that contains \
-                         such an extension open an audio session of its own, so \
-                         playback lives here instead. Bridge only needs to be installed; \
-                         you never have to open it.
-                         """)
-                }
-                Section("Effects") {
-                    Text("""
-                         The effects are EffeTune's own DSP, running unmodified. \
-                         Nothing was ported or rewritten, so it sounds like the \
-                         desktop version.
-                         """)
-                }
-            }
-            .navigationTitle("About")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-        }
+        .frame(maxWidth: .infinity)
     }
 }

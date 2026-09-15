@@ -42,7 +42,7 @@ EffeTune の `dsp/` をそのまま積んでいる。移植も書き直しもし
 `Tools/gen_catalog.py` が組み立てる。エフェクトごとに手で書いていないので、
 upstream が増えればサブモジュールを進めて生成し直すだけで増える。
 
-- 詰め順の正本は `*Params.h`。全部 float で、配列は展開され、enum も bool も float に潰れる
+- 詰め順は `*Params.h` が決めている。全部 float で、配列は展開され、enum も bool も float に潰れる
 - 音のバッファはプレーナ（ch0 のフレームが frames 個、その後 ch1 …）
 
 ## 建て方
@@ -55,13 +55,13 @@ bash Scripts/build.sh
 要るもの:
 
 - Xcode 27 以降
-- iOS 27 以降の実機（拡張の entitlement が iOS 27 からなので、シミュレータでは音の経路は動かない）
+- iOS 27 以降の実機（拡張の entitlement が iOS 27 からなので、シミュレータでは音が流れない）
 - Apple Developer Program の所属（`project.yml` の `DEVELOPMENT_TEAM` を自分のものに変える）
 - `xcodegen`、`python3` 3.10 以降（どちらも Homebrew で入る）
 
 つないである実機を自動で探す。複数あるときは `DEV_ID=<UDID> bash Scripts/build.sh`。
 
-**macOS の GUI セッションの Terminal から走らせること。** SSH 越しに走らせると
+**macOS の GUI セッションの Terminal から使うこと。** SSH 越しだと
 `codesign` が login keychain に届かず `errSecInternalComponent` で落ちる。
 
 ### 自分の Apple ID で建てるときに要る登録
@@ -77,7 +77,7 @@ Apple Developer のポータルで次を作る。
 
 ## 仕掛けの詳細
 
-横取りの経路をどうやって見つけたか、何が塞がっていたかは
+音の横取りをどうやって見つけたか、何が塞がっていたかは
 [ios-audio-tap](https://github.com/satomasahiro2005/ios-audio-tap) に書いてある。
 
 ## ライセンス

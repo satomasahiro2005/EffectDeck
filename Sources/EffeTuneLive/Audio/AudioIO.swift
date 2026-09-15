@@ -1,13 +1,16 @@
 //  AudioIO.swift
-//  拡張から届いた PCM を EffeTune の鎖へ通して、内蔵スピーカーへ返す。
+//  拡張から届いた PCM を EffeTune の鎖へ通して、スピーカーへ返す。
 //
 //  なぜこのアプリが鳴らす役なのか（実機のログで確定）:
 //    Media Device Extension を同梱したアプリは AVAudioSession を開けない（'!pla'）。
 //    拡張プロセス自身も開けない（'msrv'）。
-//    だから拡張は EffeTune Bridge が運び、音はこのアプリが出す。
+//    だから拡張は EffeTune Live Bridge が運び、音はこのアプリが出す。
 //
-//  拡張を同梱していないので、EffeTune がシステムの出力先になっていても
-//  こちらは内蔵スピーカーを掴んだままでいられる。回り込まない。
+//  開始/停止のボタンは持たない。拡張が繋がったら自分で鳴らし始め、切れたら畳む。
+//  鎖を切りたいときは Effect Pipeline の ON を切る（素通しになる）。
+//
+//  DSP は入力より高いレートで回せる。EffeTune が AudioContext を 96kHz で開いて
+//  非線形エフェクトの折り返しを減らしているのと同じことを、両端のリサンプラでやる。
 
 import AVFoundation
 import Darwin
@@ -15,37 +18,49 @@ import os
 
 /// 音のスレッドだけが触る置き場。確保はここで先に済ませる。
 private final class RenderState {
-    let capacity: Int
-    let interleaved: UnsafeMutablePointer<Float>
-    let planar: UnsafeMutablePointer<Float>
-    let sampleRate: Double
+    let capacity: Int          // 入力レートでのフレーム数の上限
+    let factor: Int
+    let sampleRate: Double     // 出力（＝入力）レート
+
+    let interleaved: UnsafeMutablePointer<Float>   // capacity * 2
+    let planar: UnsafeMutablePointer<Float>        // capacity * 2
+    let hi: UnsafeMutablePointer<Float>            // capacity * factor * 2
+    var resampler: OpaquePointer?
 
     var meter: Float = 0
     var applied: UInt32 = 0
     var elapsed: Double = 0
-
-    /// 1 コールバックにかかった時間を、そのぶんの音の長さで割ったもの。
-    /// 1.0 を超えると間に合っていない。
     var load: Double = 0
+
     private var timebase = mach_timebase_info_data_t()
 
-    func now() -> Double {
-        if timebase.denom == 0 { mach_timebase_info(&timebase) }
-        return Double(mach_absolute_time()) * Double(timebase.numer) / Double(timebase.denom) / 1e9
-    }
-
-    init(capacity: Int, sampleRate: Double) {
+    init(capacity: Int, sampleRate: Double, factor: Int) {
         self.capacity = capacity
         self.sampleRate = sampleRate
+        self.factor = factor
+
         interleaved = .allocate(capacity: capacity * 2)
-        planar = .allocate(capacity: capacity * 2)
+        planar      = .allocate(capacity: capacity * 2)
+        hi          = .allocate(capacity: capacity * factor * 2)
         interleaved.initialize(repeating: 0, count: capacity * 2)
         planar.initialize(repeating: 0, count: capacity * 2)
+        hi.initialize(repeating: 0, count: capacity * factor * 2)
+
+        if factor > 1 {
+            resampler = ETResampler_Create(UInt32(factor), 2, UInt32(capacity))
+        }
     }
 
     deinit {
         interleaved.deallocate()
         planar.deallocate()
+        hi.deallocate()
+        ETResampler_Destroy(resampler)
+    }
+
+    func now() -> Double {
+        if timebase.denom == 0 { mach_timebase_info(&timebase) }
+        return Double(mach_absolute_time()) * Double(timebase.numer) / Double(timebase.denom) / 1e9
     }
 }
 
@@ -59,27 +74,47 @@ final class AudioIO: ObservableObject {
     private var node: AVAudioSourceNode?
     private var render: RenderState?
 
-    private static let capacity = 8192
+    private static let capacity = 4096
 
     @Published var running = false
     @Published var sampleRate: Double = 48000
+    @Published var processingRate: Double = 48000
     @Published var status = "Stopped"
-    @Published var route = "-"
+    @Published var route = "—"
     @Published var listening = false
     @Published var hasPeer = false
     @Published var received: UInt64 = 0
     @Published var level: Float = 0
     @Published var applied: Int = 0
-    /// 演算の余裕。1.0 で使い切り。
     @Published var load: Double = 0
-    /// 待ち受け側に溜まっているフレーム数。そのまま遅延。
     @Published var bufferedFrames: UInt32 = 0
-    /// 1 コールバックのフレーム数。
     @Published var blockFrames: Int = 0
+    /// リサンプラが増やす遅延（入力レートのサンプル数）。
+    @Published var resamplerLatency: Int = 0
+
+    private var ticks = 0
 
     private init() {
         // 拡張はいつ繋いでくるか分からないので、起動と同時に待ち受ける。
         _ = ETLinkReceiver.shared.start()
+        Preferences.shared.onAudioChange = { [weak self] in self?.rebuild() }
+    }
+
+    /// 音の経路に関わる設定が変わったら組み直す。一瞬切れる。
+    private func rebuild() {
+        guard running else { return }
+        stop(keepListening: true)
+        start()
+    }
+
+    /// 拡張が繋がったら自分で鳴らし始め、切れたら畳む。
+    private func followPeer() {
+        let peer = ETLinkReceiver.shared.hasPeer
+        if peer && !running {
+            start()
+        } else if !peer && running {
+            stop(keepListening: true)
+        }
     }
 
     func start() {
@@ -92,13 +127,21 @@ final class AudioIO: ObservableObject {
             }
         }
 
+        let prefs = Preferences.shared
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .default,
                                     options: [.defaultToSpeaker, .mixWithOthers])
             try session.setPreferredSampleRate(48000)
+            try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
-            try session.overrideOutputAudioPort(.speaker)
+            // イヤホンを挿しているのに内蔵スピーカーへ流すのは間違い。
+            // 明示の override は「常にスピーカー」を選んだときだけ掛ける。
+            if prefs.outputRoute == .speaker {
+                try session.overrideOutputAudioPort(.speaker)
+            } else {
+                try session.overrideOutputAudioPort(.none)
+            }
         } catch {
             let ns = error as NSError
             status = "Audio session failed: \(ns.domain) \(ns.code)"
@@ -107,23 +150,25 @@ final class AudioIO: ObservableObject {
         }
 
         let sr = session.sampleRate > 0 ? session.sampleRate : 48000
-        let state = RenderState(capacity: Self.capacity, sampleRate: sr)
+        let factor = Int(prefs.processingRate.factor)
+        let state = RenderState(capacity: Self.capacity, sampleRate: sr, factor: factor)
         render = state
 
-        EffeTuneDSP.shared.prepare(sampleRate: sr, maxChannels: 2,
-                                   maxFrames: UInt32(Self.capacity))
+        EffeTuneDSP.shared.prepare(sampleRate: sr * Double(factor), maxChannels: 2,
+                                   maxFrames: UInt32(Self.capacity * factor))
 
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)!
         let src = AVAudioSourceNode { _, _, frameCount, ablPtr -> OSStatus in
             let began = state.now()
             let abl = UnsafeMutableAudioBufferListPointer(ablPtr)
             let n = min(Int(frameCount), state.capacity)
+            let f = state.factor
 
-            // 1. リンクから受ける（インターリーブ）
+            // 1. リンクから受ける（インターリーブ・48kHz）
             _ = ETLinkReceiver.shared.readInterleaved(state.interleaved, frames: UInt32(n))
 
-            // 2. プレーナへ並べ替える
-            //    EffeTune のカーネルは offset = channel * frame_count で読むため。
+            // 2. プレーナへ並べ替える。
+            //    EffeTune のカーネルは offset = channel * frame_count で読む。
             let p = state.planar
             let s = state.interleaved
             for i in 0..<n {
@@ -131,8 +176,15 @@ final class AudioIO: ObservableObject {
                 p[n + i] = s[i * 2 + 1]
             }
 
-            // 3. EffeTune の鎖を通す
-            state.applied = ETChain_Process(p, 2, UInt32(n), state.elapsed)
+            // 3. 要るなら上げて、鎖を通して、戻す
+            if f > 1, let rs = state.resampler {
+                let hi = state.hi
+                ETResampler_Up(rs, p, hi, UInt32(n))
+                state.applied = ETChain_Process(hi, 2, UInt32(n * f), state.elapsed)
+                ETResampler_Down(rs, hi, p, UInt32(n))
+            } else {
+                state.applied = ETChain_Process(p, 2, UInt32(n), state.elapsed)
+            }
             state.elapsed += Double(n) / state.sampleRate
 
             // 4. 出力へ書く
@@ -154,7 +206,6 @@ final class AudioIO: ObservableObject {
 
             let spent = state.now() - began
             let budget = Double(n) / state.sampleRate
-            // 跳ねるので均す
             state.load += (spent / max(budget, 1e-9) - state.load) * 0.1
             return noErr
         }
@@ -173,9 +224,11 @@ final class AudioIO: ObservableObject {
 
         running = true
         sampleRate = sr
+        processingRate = sr * Double(factor)
+        resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
         status = "Running"
         route = routeNow()
-        log.notice("start sr=\(sr) route=\(self.route, privacy: .public)")
+        log.notice("start sr=\(sr) x\(factor) route=\(self.route, privacy: .public)")
     }
 
     func stop(keepListening: Bool = false) {
@@ -191,24 +244,23 @@ final class AudioIO: ObservableObject {
         status = "Stopped"
     }
 
-    private var ticks = 0
-
     func tick() {
         ticks += 1
-        if ticks % 10 == 0 {
-            log.notice("tick applied=\(self.applied) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) level=\(self.level) proc=\(ETChain_ProcessCount())")
+        followPeer()
+        if ticks % 20 == 0 {
+            log.notice("tick applied=\(self.applied) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) load=\(self.load)")
         }
         Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine)
         route = routeNow()
         level = render?.meter ?? 0
         applied = Int(render?.applied ?? 0)
         load = render?.load ?? 0
-        bufferedFrames = ETLinkReceiver.shared.bufferedFrames
-        let session = AVAudioSession.sharedInstance()
-        blockFrames = Int((session.ioBufferDuration * session.sampleRate).rounded())
         listening = ETLinkReceiver.shared.listening
         hasPeer = ETLinkReceiver.shared.hasPeer
         received = ETLinkReceiver.shared.receivedFrames
+        bufferedFrames = ETLinkReceiver.shared.bufferedFrames
+        let session = AVAudioSession.sharedInstance()
+        blockFrames = Int((session.ioBufferDuration * session.sampleRate).rounded())
     }
 
     private func routeNow() -> String {

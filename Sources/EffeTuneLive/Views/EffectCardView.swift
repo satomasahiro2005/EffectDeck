@@ -1,12 +1,12 @@
 //  EffectCardView.swift
 //  エフェクト 1 個ぶんのカード。
 //
-//  EffeTune は頭に「⋮ / ON / 名前」を置き、その下にパラメータを並べている。
-//  そこは同じにした。違うのは操作の出し方で、EffeTune が横に並べている
-//  ▲▼・複製・削除といったボタンは、iPhone では場所を食うので ⋯ にまとめ、
-//  並べ替えと削除はリストの標準の動き（長押しで移動・横に払って削除）に任せている。
+//  EffeTune は頭に「⋮ / ON / 名前」を置き、その下にパラメータを並べている。そこは同じ。
+//  違うのは開閉で、iPhone だと 5Band PEQ 1 個で画面が埋まるので既定では畳んである。
+//  足した直後のものだけ開く。
 //
-//  パラメータが多いエフェクトがあるので、頭を触ると畳めるようにしてある。
+//  ▲▼・削除は EffeTune では横に並んでいるが、場所を食うので ⋯ にまとめ、
+//  並べ替えと削除はリストの標準の動き（長押しで移動・横に払って削除）に任せている。
 
 import SwiftUI
 
@@ -14,14 +14,14 @@ struct EffectCardView: View {
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
-
-    @State private var collapsed = false
+    let isExpanded: Bool
+    let toggleExpanded: () -> Void
 
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                if !collapsed && !node.spec.params.isEmpty {
+                if isExpanded && !node.spec.params.isEmpty {
                     Divider().padding(.horizontal, ETMetrics.cardPadding)
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(node.spec.params) { param in
@@ -48,17 +48,19 @@ struct EffectCardView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(node.spec.name)
                     .font(.system(size: 16, weight: .semibold))
-                Text(node.spec.category.categoryLabel)
+                Text(summary)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
             if !node.spec.params.isEmpty {
-                Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
             }
 
             Menu {
@@ -91,7 +93,21 @@ struct EffectCardView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard !node.spec.params.isEmpty else { return }
-            withAnimation(.snappy(duration: 0.2)) { collapsed.toggle() }
+            withAnimation(.snappy(duration: 0.2)) { toggleExpanded() }
         }
+    }
+
+    /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
+    private var summary: String {
+        guard !node.spec.params.isEmpty else { return node.spec.category.categoryLabel }
+        let shown = node.spec.params.prefix(3).compactMap { param -> String? in
+            guard !param.isArray,
+                  node.values.indices.contains(param.offset) else { return nil }
+            let v = node.values[param.offset]
+            if case .number = param.kind, v == param.defaultValue { return nil }
+            if case .toggle = param.kind, v == param.defaultValue { return nil }
+            return "\(param.label) \(param.format(v))"
+        }
+        return shown.isEmpty ? node.spec.category.categoryLabel : shown.joined(separator: " · ")
     }
 }

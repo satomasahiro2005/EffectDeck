@@ -9,3 +9,5 @@ xcuserdata/
 *.log
 .DS_Store
 Generated/note-models/
+node_modules/
+package-lock.json
