@@ -182,7 +182,7 @@ struct FiveBandDynamicEQView: View {
                     .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                     .frame(maxWidth: .infinity, minHeight: 34)
                     .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                                in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                     .opacity(bands[i].enabled ? 1 : 0.45)
                 }
                 .buttonStyle(.plain)
@@ -413,8 +413,8 @@ struct DynamicEQParameterRow: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
-                    .overlay(ConcentricRectangle(corners: .concentric(minimum: ETMetrics.innerMinRadius)).stroke(.tint, lineWidth: 1))
+                    .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: 1))
                     .submitLabel(.done)
                     .onSubmit { commit() }
             } else {

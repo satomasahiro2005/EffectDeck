@@ -1,0 +1,400 @@
+{
+ "analyzer": [
+  {
+   "type": "LevelMeterPlugin",
+   "name": "Level Meter"
+  },
+  {
+   "type": "NoteSpectrogramPlugin",
+   "name": "Note Spectrogram"
+  },
+  {
+   "type": "OscilloscopePlugin",
+   "name": "Oscilloscope"
+  },
+  {
+   "type": "SpectrogramPlugin",
+   "name": "Spectrogram"
+  },
+  {
+   "type": "SpectrumAnalyzerPlugin",
+   "name": "Spectrum Analyzer"
+  },
+  {
+   "type": "StereoMeterPlugin",
+   "name": "Stereo Meter"
+  }
+ ],
+ "basics": [
+  {
+   "type": "ChannelDividerPlugin",
+   "name": "Channel Divider"
+  },
+  {
+   "type": "DCOffsetPlugin",
+   "name": "DC Offset"
+  },
+  {
+   "type": "FIRCrossoverPlugin",
+   "name": "FIR Crossover"
+  },
+  {
+   "type": "MatrixPlugin",
+   "name": "Matrix"
+  },
+  {
+   "type": "MultiChannelPanelPlugin",
+   "name": "MultiChannel Panel"
+  },
+  {
+   "type": "MutePlugin",
+   "name": "Mute"
+  },
+  {
+   "type": "PolarityInversionPlugin",
+   "name": "Polarity Inversion"
+  },
+  {
+   "type": "StereoBalancePlugin",
+   "name": "Stereo Balance"
+  },
+  {
+   "type": "VolumePlugin",
+   "name": "Volume"
+  }
+ ],
+ "delay": [
+  {
+   "type": "DelayPlugin",
+   "name": "Delay"
+  },
+  {
+   "type": "TimeAlignmentPlugin",
+   "name": "Time Alignment"
+  }
+ ],
+ "dynamics": [
+  {
+   "type": "AutoLevelerPlugin",
+   "name": "Auto Leveler"
+  },
+  {
+   "type": "BrickwallLimiterPlugin",
+   "name": "Brickwall Limiter"
+  },
+  {
+   "type": "CompressorPlugin",
+   "name": "Compressor"
+  },
+  {
+   "type": "ExpanderPlugin",
+   "name": "Expander"
+  },
+  {
+   "type": "GatePlugin",
+   "name": "Gate"
+  },
+  {
+   "type": "PowerAmpSagPlugin",
+   "name": "Power Amp Sag"
+  },
+  {
+   "type": "TransientShaperPlugin",
+   "name": "Transient Shaper"
+  }
+ ],
+ "eq": [
+  {
+   "type": "FifteenBandPEQPlugin",
+   "name": "15Band PEQ"
+  },
+  {
+   "type": "FiveBandDynamicEQ",
+   "name": "5Band Dynamic EQ"
+  },
+  {
+   "type": "FiveBandFIRPEQPlugin",
+   "name": "5Band FIR PEQ"
+  },
+  {
+   "type": "FiveBandPEQPlugin",
+   "name": "5Band PEQ"
+  },
+  {
+   "type": "BandPassFilterPlugin",
+   "name": "Band Pass Filter"
+  },
+  {
+   "type": "CombFilterPlugin",
+   "name": "Comb Filter"
+  },
+  {
+   "type": "EarphoneCableSimPlugin",
+   "name": "Earphone Cable Sim"
+  },
+  {
+   "type": "GroupDelayEqPlugin",
+   "name": "Group Delay EQ"
+  },
+  {
+   "type": "GroupDelayPEQPlugin",
+   "name": "Group Delay PEQ"
+  },
+  {
+   "type": "HiPassFilterPlugin",
+   "name": "Hi Pass Filter"
+  },
+  {
+   "type": "LoPassFilterPlugin",
+   "name": "Lo Pass Filter"
+  },
+  {
+   "type": "LoudnessEqualizerPlugin",
+   "name": "Loudness Equalizer"
+  },
+  {
+   "type": "NarrowRangePlugin",
+   "name": "Narrow Range"
+  },
+  {
+   "type": "RoomEqPlugin",
+   "name": "Room EQ"
+  },
+  {
+   "type": "TiltEQPlugin",
+   "name": "Tilt EQ"
+  },
+  {
+   "type": "ToneControlPlugin",
+   "name": "Tone Control"
+  }
+ ],
+ "lofi": [
+  {
+   "type": "AMRadioSimulatorPlugin",
+   "name": "AM Radio Simulator"
+  },
+  {
+   "type": "BitCrusherPlugin",
+   "name": "Bit Crusher"
+  },
+  {
+   "type": "CassetteArtifactsPlugin",
+   "name": "Cassette Artifacts"
+  },
+  {
+   "type": "DSD64IMDSimulatorPlugin",
+   "name": "DSD64 IMD Simulator"
+  },
+  {
+   "type": "DigitalErrorEmulatorPlugin",
+   "name": "Digital Error Emulator"
+  },
+  {
+   "type": "FMRadioSimulatorPlugin",
+   "name": "FM Radio Simulator"
+  },
+  {
+   "type": "G726ADPCMSimulatorPlugin",
+   "name": "G.726 Simulator"
+  },
+  {
+   "type": "GSMFullRateSimulatorPlugin",
+   "name": "GSM-FR Simulator"
+  },
+  {
+   "type": "HumGeneratorPlugin",
+   "name": "Hum Generator"
+  },
+  {
+   "type": "MDSimulatorPlugin",
+   "name": "MD Simulator"
+  },
+  {
+   "type": "MP3CodecSimulatorPlugin",
+   "name": "MP3 Codec Simulator"
+  },
+  {
+   "type": "NoiseBlenderPlugin",
+   "name": "Noise Blender"
+  },
+  {
+   "type": "BluetoothSBCSimulatorPlugin",
+   "name": "SBC Codec Simulator"
+  },
+  {
+   "type": "SWRadioSimulatorPlugin",
+   "name": "SW Radio Simulator"
+  },
+  {
+   "type": "SimpleJitterPlugin",
+   "name": "Simple Jitter"
+  },
+  {
+   "type": "TapeArtifactsPlugin",
+   "name": "Tape Artifacts"
+  },
+  {
+   "type": "VinylArtifactsPlugin",
+   "name": "Vinyl Artifacts"
+  },
+  {
+   "type": "VinylSimulatorPlugin",
+   "name": "Vinyl Simulator"
+  }
+ ],
+ "modulation": [
+  {
+   "type": "AutoFilterPlugin",
+   "name": "Auto Filter"
+  },
+  {
+   "type": "AutoPanPlugin",
+   "name": "Auto Pan"
+  },
+  {
+   "type": "ChorusPlugin",
+   "name": "Chorus"
+  },
+  {
+   "type": "DopplerDistortionPlugin",
+   "name": "Doppler Distortion"
+  },
+  {
+   "type": "FrequencyShifterPlugin",
+   "name": "Frequency Shifter"
+  },
+  {
+   "type": "PhaserPlugin",
+   "name": "Phaser"
+  },
+  {
+   "type": "PitchShifterPlugin",
+   "name": "Pitch Shifter"
+  },
+  {
+   "type": "PitchShifterHQPlugin",
+   "name": "Pitch Shifter HQ"
+  },
+  {
+   "type": "RotarySpeakerPlugin",
+   "name": "Rotary Speaker"
+  },
+  {
+   "type": "TremoloPlugin",
+   "name": "Tremolo"
+  },
+  {
+   "type": "WowFlutterPlugin",
+   "name": "Wow Flutter"
+  }
+ ],
+ "others": [
+  {
+   "type": "OscillatorPlugin",
+   "name": "Oscillator"
+  }
+ ],
+ "resonator": [
+  {
+   "type": "HornResonatorPlugin",
+   "name": "Horn Resonator"
+  },
+  {
+   "type": "HornResonatorPlusPlugin",
+   "name": "Horn Resonator Plus"
+  }
+ ],
+ "restoration": [
+  {
+   "type": "ClickRemoverPlugin",
+   "name": "Click Remover"
+  },
+  {
+   "type": "ClipRestorerPlugin",
+   "name": "Clip Restorer"
+  },
+  {
+   "type": "HumRemoverPlugin",
+   "name": "Hum Remover"
+  },
+  {
+   "type": "NoiseReductionPlugin",
+   "name": "Noise Reduction"
+  }
+ ],
+ "reverb": [
+  {
+   "type": "DattorroPlateReverbPlugin",
+   "name": "Dattorro Plate Reverb"
+  },
+  {
+   "type": "FDNReverbPlugin",
+   "name": "FDN Reverb"
+  },
+  {
+   "type": "IRReverbPlugin",
+   "name": "IR Reverb"
+  },
+  {
+   "type": "RSReverbPlugin",
+   "name": "RS Reverb"
+  }
+ ],
+ "saturation": [
+  {
+   "type": "BandwidthExtenderPlugin",
+   "name": "Bandwidth Extender"
+  },
+  {
+   "type": "DynamicSaturationPlugin",
+   "name": "Dynamic Saturation"
+  },
+  {
+   "type": "ExciterPlugin",
+   "name": "Exciter"
+  },
+  {
+   "type": "HardClippingPlugin",
+   "name": "Hard Clipping"
+  },
+  {
+   "type": "HarmonicDistortionPlugin",
+   "name": "Harmonic Distortion"
+  },
+  {
+   "type": "SaturationPlugin",
+   "name": "Saturation"
+  },
+  {
+   "type": "SubSynthPlugin",
+   "name": "Sub Synth"
+  },
+  {
+   "type": "TubeSimulatorPlugin",
+   "name": "Tube Simulator"
+  }
+ ],
+ "spatial": [
+  {
+   "type": "CrossfeedFilterPlugin",
+   "name": "Crossfeed Filter"
+  },
+  {
+   "type": "CrosstalkCancellationPlugin",
+   "name": "Crosstalk Cancellation"
+  },
+  {
+   "type": "MSMatrixPlugin",
+   "name": "MS Matrix"
+  },
+  {
+   "type": "PhaseSelectEqPlugin",
+   "name": "Phase Select EQ"
+  },
+  {
+   "type": "StereoBlendPlugin",
+   "name": "Stereo Blend"
+  }
+ ]
+}

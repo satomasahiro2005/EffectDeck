@@ -75,6 +75,7 @@ install_one() {
   echo "--- エフェクトのカタログを作る ---"
   python3 Tools/gen_catalog.py 2>&1 | tail -5
 python3 Tools/gen_presets.py 2>&1 | tail -1
+python3 Tools/gen_licenses.py 2>&1 | tail -1
 
   echo "--- Note Spectrogram のモデルを埋め込む ---"
   # upstream の models.cmake と同じことをする。
@@ -90,7 +91,6 @@ python3 Tools/gen_presets.py 2>&1 | tail -1
   xcodegen generate --spec project.yml 2>&1 | tail -5
 
   build_one EffeTuneLive
-  build_one EffeTuneLiveBridge
 
   echo "--- 成果物 ---"
   ls -d out/*.app 2>&1
@@ -98,11 +98,10 @@ python3 Tools/gen_presets.py 2>&1 | tail -1
   # 旧 ID の残骸を先に消す。両方が居ると同じ media-device-protocol を
   # 名乗るものが 2 つになり、ルートピッカーに二重に出る。
   if [ -n "${DEV_ID:-}" ]; then
-    for old in ai.nemut.effetune.player ai.nemut.effetune.extension; do
+    for old in ai.nemut.effetune.player ai.nemut.effetune.bridge ai.nemut.effetune.bridge.extension; do
       xcrun devicectl device uninstall app --device "$DEV_ID" "$old" >/dev/null 2>&1
     done
   fi
-  install_one "out/EffeTune Live Bridge.app" ai.nemut.effetune.bridge
   install_one "out/EffeTune Live.app"        ai.nemut.effetune
 
   echo "=== done $(date) ==="

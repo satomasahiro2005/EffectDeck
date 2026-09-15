@@ -24,6 +24,7 @@
 #import <os/log.h>
 #import <pthread.h>
 #import <mach/mach_time.h>
+#import <stdatomic.h>
 
 // ---- オブジェクト ID。単一デバイスなので固定で足りる ----
 // 入力ストリーム（ID 4）は外した。音の受け渡しは TCP (ETLinkSender) に移っていて、
@@ -46,7 +47,11 @@ enum {
 
 static const Float64  kSampleRate     = 48000.0;
 static const UInt32   kChannelCount   = 2;
-static const UInt32   kRingFrames     = 8192;            // ゼロタイムスタンプの周期
+// ゼロタイムスタンプの周期。
+// **ヘッダが下限を決めている。** AudioServerPlugIn.h:433
+//   "The minimum allowed value for this is 10923 sample frames."
+// 8192 でしばらく回していたが、下回っていた。
+static const UInt32   kRingFrames     = 16384;
 
 static os_log_t gLog;
 
@@ -73,8 +78,42 @@ static Float64  gZeroSampleTime = 0;
 static UInt64   gZeroHostTime   = 0;
 static UInt64   gAnchorHostTime = 0;
 static UInt64   gPeriodCount    = 0;
+/// タイムラインの世代。**StartIO で張り直したときだけ進める。**
+/// 周期ごとに進めるとホストが毎回再同期し、後続の活性化が '!pla' で落ちる。
+/// かといって固定にすると、StartIO で gAnchorHostTime を 0 に戻して
+/// 時刻が巻き戻っているのに同じ seed を名乗ることになる。
+/// AudioServerPlugIn.h は「タイムラインが変わったら seed を変えろ」と書いている。
+static UInt64   gTimelineSeed   = 1;
 
-static EffeTuneSampleHandler gHandler = NULL;
+/// システム音声の渡し先。**ARC の strong 変数にしない。**
+///
+/// 理由は 2 つある。
+///
+/// 1. ET_DoIOOperation は AudioServerPlugIn.h:1115-1123 で CA_REALTIME_API 付き
+///    ＝ CoreAudioBaseTypes.h:44 の [[clang::nonblocking]]。project.yml:14 が
+///    CLANG_ENABLE_OBJC_ARC: YES なので、strong な static をローカルへ読むだけで
+///    objc_retain と objc_release が入る。release は side table のロックを取り得るから、
+///    EffeTuneDriver.h:28「リアルタイムスレッドなので確保も待ちもしないこと」を
+///    自分で踏むことになる。推測ではなく IR を見た結果:
+///      xcrun --sdk iphoneos clang -S -emit-llvm -O0 -target arm64-apple-ios27.0 \
+///        -fobjc-arc -I Sources/Extension -x objective-c EffeTuneDriver.m -o -
+///    直す前の ET_DoIOOperation の本体に、WriteMix 1 回につき
+///      call ptr @llvm.objc.retainBlock(ptr %46)
+///      call void @llvm.objc.storeStrong(ptr %20, ptr null)
+///    が 1 組ずつ出ていた。いまの形では同じ関数に llvm.objc.* が 0 個になる。
+///
+/// 2. それ以前にデータ競合。unpublish と stopCapture は拡張のスレッドから来るが、
+///    ET_DoIOOperation は HAL の IO スレッドから来る。実機では unpublish が
+///    StopIO より先に着く往復がある:
+///      dev.log 2026-09-16 01:49:50.407832 unpublish → 01:49:50.408843 StopIO
+///      dev.log 2026-09-16 01:54:30.306399 unpublish → 01:54:30.307165 StopIO
+///    この 0.2〜1.0ms のあいだ IO は走っている。ポインタを読んでから retain するまでに
+///    解放されると、解放済みのブロックを呼ぶ。
+///
+/// 渡されたブロックは解放しない。activate ごとに 1 個積むだけで、ブロックは何も
+/// キャプチャしていない（Swift 側は ETLinkSender.shared を呼ぶだけ）。
+/// IO スレッドが読んでいる最中に消える経路そのものを無くすほうが安い。
+static _Atomic(void *) gHandlerPtr = NULL;
 
 // 出力→入力のリング（gLoop）は削除した。音の受け渡しは TCP (ETLinkSender) に移っている。
 static float   gVolume = 1.0f;
@@ -581,6 +620,9 @@ static OSStatus ET_StartIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt
     pthread_mutex_lock(&gStateMutex);
     gIORunning = true;
     gIOCount = 0;
+    // ここで時刻の基準を巻き戻すので、タイムラインは不連続になる。
+    // seed を進めないと、ホストは前の続きと思って飛んだ時刻を受け取る。
+    gTimelineSeed++;
     gAnchorHostTime = 0;
     gZeroSampleTime = 0;
     gZeroHostTime = 0;
@@ -602,11 +644,14 @@ static OSStatus ET_StopIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt3
 
 // ゼロタイムスタンプ。仮想デバイスなのでホストクロックから作る。
 //
-// 直した点: 以前は周期ごとに seed を増やしていたが、これは
+// seed の扱い。
+// 以前は周期ごとに増やしていて、それは
 //   HALS_IORawClock::Update: Re-anchoring IO timeline. Zero timestamp seed changed
 // をホストに毎回起こさせ、後続のセッション活性化が
 //   AudioSessionServerImp_iOS.mm:899 "early exit due to failure" ('!pla') で落ちていた。
-// seed は「タイムラインが不連続に変わったとき」だけ変える値なので固定にする。
+// そのあと 1 固定にしたが、今度は StartIO で時刻を巻き戻しているのに
+// 同じ seed を名乗ることになっていた。
+// 正しいのは「連続しているあいだは同じ、張り直したときだけ進める」。
 static OSStatus ET_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID dev,
                                     UInt32 client, Float64 *outSampleTime,
                                     UInt64 *outHostTime, UInt64 *outSeed) {
@@ -642,7 +687,7 @@ static OSStatus ET_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID 
 
     if (outSampleTime) *outSampleTime = st;
     if (outHostTime)   *outHostTime   = ht;
-    if (outSeed)       *outSeed       = 1;   // 固定。変えるとホストが再同期する。
+    if (outSeed)       *outSeed       = gTimelineSeed;
     return noErr;
 }
 
@@ -691,8 +736,11 @@ static OSStatus ET_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID dev
 
     gIOCount += frames;
 
-    EffeTuneSampleHandler h = gHandler;
-    if (h) {
+    // atomic に読んで __unsafe_unretained で受ける。理由は gHandlerPtr の宣言のところ。
+    // ここで strong なローカルに受け直すと retain/release が復活するので書き換えないこと。
+    void *hp = atomic_load_explicit(&gHandlerPtr, memory_order_acquire);
+    if (hp) {
+        __unsafe_unretained EffeTuneSampleHandler h = (__bridge EffeTuneSampleHandler)hp;
         // ストリームのフォーマットはインターリーブの float32 x2。
         // Passthrough 側が非インターリーブを期待しているので、
         // ここではインターリーブのまま1面として渡し、受け側で分ける。
@@ -784,6 +832,57 @@ static void ETFillInterfaceOnce(void) {
 
     ETFillInterfaceOnce();
 
+    // ======== 2 回目以降が繋がらない理由。ここを触る前に読むこと ========
+    //
+    // 症状: ルートピッカーで EffeTune → スピーカー → EffeTune と往復すると、
+    // 2 回目から "Unable to Connect"。端末を再起動すると直る。
+    //
+    // 分岐しているのは audiomxd の 1 行で、しかも拡張の activateDevice が呼ばれる
+    // **4ms 前**に決まっている（gate 02:40:01.489240 / activateDevice 02:40:01.493678）。
+    //   悪い枝 dev.log 2026-09-16 02:40:01.489240
+    //     customEndpoint_Activate: VA port type 'rstm' already connected;
+    //       skipping port-publication wait
+    //   良い枝 dev.log 2026-09-16 02:39:46.442868
+    //     customEndpoint_handleActivationCompletionCallback: Extension callback
+    //       received; waiting for VA port type 'rstm'
+    //     → 02:39:46.958108 Endpoint [0x7a9c4e7d40] observed expected VA port type 'rstm'
+    // 悪い枝に入ると誰もエンドポイントを新しいポートに結ばず、1.5 秒後に諦められる。
+    //     02:40:03.084986 mediaremoted [AVRoutingServer] Route Connect Error ... Code=10
+    //     02:40:03.087586 SpringBoard ... title: Unable to Connect
+    //
+    // dev.log 全体（3.5GB・activate 19 回）を数えた結果:
+    //     "already connected; skipping"                       7 回（7 回とも直後に失敗）
+    //     "waiting for VA port type"                         12 回（12 回とも成功）
+    //     "ET publish"                                       19 回
+    //     PortManager.cpp:746 Adding port [ type: rstm ... ]  19 回
+    //     ポートを外す行                                      0 回
+    //       （PortManager.cpp に出る動詞は Notify/Created/Queued/Request/Found/Adding だけ）
+    //
+    // つまり **publish 1 回につき rstm/rstt の port が 1 組できて、二度と消えない。**
+    //     02:40:01.521588 ET publish uid=6E656D75-... status=0
+    //     02:40:01.634736 Port_Remote_Aspen.cpp:87 Creating an Remote port 'rstm' for EffeTune
+    //     02:40:01.635348 PortManager.cpp:746 Adding port [ type: rstm; ...; conn: 1; rout: 0 ]
+    // 残骸はシステム自身が数えていて、往復のたびに 2 ずつ増える:
+    //     02:40:01.635372 PortManager.cpp:540 Found 2 prospective partner ports
+    //     02:40:07.671688 PortManager.cpp:540 Found 4 prospective partner ports
+    //     01:57:21.008474 PortManager.cpp:540 Found 6 prospective partner ports
+    // この "Found N" は 7 回の "already connected; skipping" と 1 対 1 で出る。
+    // 12 回の良い枝には 1 行も出ない。
+    //
+    // deactivate が落とすのは routability だけで、接続（conn:1）は残る:
+    //     02:39:59.343636 Port.cpp:1041 Changing port routability to 0 for port ... "EffeTune"
+    //
+    // だから 2 回目の gate は「前回の publish が置いていった rstm」を見て待ちを飛ばす。
+    // 端末の再起動で直るのは拡張プロセスが入れ替わって残骸が消えるからで、
+    // 良い枝 12/12 が「そのプロセスの初回 activate」なのも同じ理由。
+    //
+    // 試す価値が無いと分かっているもの:
+    //   - 拡張側の activate 経路をいじる。判定は拡張が呼ばれる前に終わっている
+    //   - UID を毎回変える。gate の文面は UID ではなく型 'rstm' を見ている
+    //   - publish を 1 回に短絡する。ポートが 1 つでも gate は待ちを飛ばすうえ、
+    //     新しいポートが生えないので StartIO も来ない（下のコメントの実測）
+    // 打ち手は「次の activate までに前回のポートを消す」だけで、それは unpublish にある。
+    //
     // **毎回登録し直す。**
     // 以前は gRegistered で短絡していたが、それだと
     // audio server がポートを止めた（quies:1 rout:0）あとに負ける。
@@ -801,24 +900,63 @@ static void ETFillInterfaceOnce(void) {
     return st;
 }
 
-/// 音の受け取りだけ止める。CoreAudio への登録は残す。
-/// 登録を捨てても貼り直す手段が無い（RegisterMediaDeviceExtension に対になる
-/// Unregister が無い）ので、捨てた時点でこのプロセスでは二度と出せなくなる。
+/// 音の受け取りを止め、**CoreAudio への登録も落とす。**
+///
+/// 落とすのは、前回の publish が残した rstm ポートを消す手段がほかに無いから
+/// （publish 側の長いコメントを読むこと）。正確に言うと、ポートを外す行は dev.log
+/// 3.5GB に 1 行も無い。残骸が効かなくなるのは拡張プロセスが入れ替わったときだけで、
+/// 良い枝 12/12 が「そのプロセスの初回 activate」なのがその現れ。プロセスが死ぬと
+/// audio server とこのドライバの繋がりも切れるので、プロセス内で同じ状態を作るなら
+/// 登録を外すしかない。
+///
+/// 外し方はヘッダの宣言から読める。AudioServerPlugIn.h:1184-1185:
+///     extern OSStatus
+///     AudioServerPlugInRegisterMediaDeviceExtension(
+///         AudioServerPlugInDriverRef __nullable inPlugIn,
+///         void (^ __nullable interruptionHandler)()) API_AVAILABLE(ios(27.0)) ...
+/// 登録専用の関数で in 引数が __nullable なのは、NULL を渡して外す形。
+/// iPhoneOS27.0.sdk の CoreAudio.tbd に居る AudioServerPlugIn 系のシンボルは
+///     _AudioServerPlugInRegisterMediaDeviceExtension
+///     _AudioServerPlugInRegisterRemote
+///     _AudioServerPlugIns
+/// の 3 つだけで、Unregister は無い。discussion にも呼び出し回数の規定は無い
+/// （AudioServerPlugIn.h:1165-1182）。
+///
+/// **ここには推測が 1 つ残っている。** 「NULL＝解除」はこの nullable 注釈だけが根拠で、
+/// Apple はどこにも書いていない。だから結果をログに出す。次に読むときの判定:
+///   - "ET unregister status=0" が出て、次の activate が
+///     "waiting for VA port type 'rstm'" を通る → 当たり。ここで終わり
+///   - status が 0 以外 → NULL は解除ではない。この行は消してよく、次の手は
+///     deactivateDevice の最後で拡張プロセスを終わらせて、次の activate を
+///     毎回「プロセス初回」にすること（良い枝 12/12 の実測がある唯一の状態）
+///   - "ET unregister status=" 自体が dev.log に出ない → この呼び出しでプロセスが
+///     死んでいる。**その場合、症状は消えるが直ってはいない。** 上の 2 番目の手を
+///     意図的にやったのと同じ状態なので、クラッシュログを 1 本読んでから決めること
 - (void)unpublish {
-    gHandler = nil;
+    // 先にサンプルの渡しを止める。登録を落とす前に止めないと、
+    // audio server がドライバを手放す最中に IO コールバックが走る。
+    atomic_store_explicit(&gHandlerPtr, NULL, memory_order_release);
+
+    os_log_error(gLog, "ET unregister 試行 frames=%llu registered=%d",
+                 (unsigned long long)gIOCount, (int)gRegistered);
+    OSStatus st = AudioServerPlugInRegisterMediaDeviceExtension(NULL, NULL);
+    gRegistered = false;
+    os_log_error(gLog, "ET unregister status=%d", (int)st);
 
     os_log(gLog, "unpublish frames=%llu registered=%d",
            (unsigned long long)gIOCount, (int)gRegistered);
 }
 
 - (void)startCaptureWithHandler:(EffeTuneSampleHandler)handler {
-    gHandler = [handler copy];
+    // 意図的に解放しない（gHandlerPtr の宣言を読むこと）。
+    void *p = (__bridge_retained void *)[handler copy];
+    atomic_store_explicit(&gHandlerPtr, p, memory_order_release);
     gIOCount = 0;
     os_log(gLog, "startCapture");
 }
 
 - (void)stopCapture {
-    gHandler = nil;
+    atomic_store_explicit(&gHandlerPtr, NULL, memory_order_release);
     os_log(gLog, "stopCapture frames=%llu", (unsigned long long)gIOCount);
 }
 

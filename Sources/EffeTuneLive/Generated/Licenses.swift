@@ -1,0 +1,114 @@
+//  Licenses.swift
+//  Tools/gen_licenses.py が作る。手で直さないこと。
+//
+//  本文は置き場のファイルをそのまま読んでいる。
+//  外へリンクを張らず同梱するのは、配布物と表示が食い違わないようにするため。
+
+import Foundation
+
+struct ETLicense: Identifiable {
+    var id: String { name }
+    let name: String
+    let license: String
+    let author: String
+    let text: String
+}
+
+let ETLicenses: [ETLicense] = [
+    ETLicense(
+      name: "EffeTune Live",
+      license: "MIT",
+      author: "nemut.ai",
+      text: #"""
+      MIT License
+
+      Copyright (c) 2026 nemut.ai
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy
+      of this software and associated documentation files (the "Software"), to deal
+      in the Software without restriction, including without limitation the rights
+      to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+      copies of the Software, and to permit persons to whom the Software is
+      furnished to do so, subject to the following conditions:
+
+      The above copyright notice and this permission notice shall be included in all
+      copies or substantial portions of the Software.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+      FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+      AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+      LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+      OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+      SOFTWARE.
+      """#),
+    ETLicense(
+      name: "EffeTune",
+      license: "MIT",
+      author: "Yoshiyuki Kobayashi",
+      text: #"""
+      MIT License
+
+      Copyright (c) 2025-2026, Yoshiyuki Kobayashi
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy
+      of this software and associated documentation files (the "Software"), to deal
+      in the Software without restriction, including without limitation the rights
+      to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+      copies of the Software, and to permit persons to whom the Software is
+      furnished to do so, subject to the following conditions:
+
+      The above copyright notice and this permission notice shall be included in all
+      copies or substantial portions of the Software.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+      FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+      AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+      LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+      OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+      SOFTWARE.
+      """#),
+    ETLicense(
+      name: "PFFFT",
+      license: "BSD-3-Clause",
+      author: "Julien Pommier",
+      text: #"""
+      Copyright (c) 2020  Dario Mambro ( dario.mambro@gmail.com )
+      Copyright (c) 2019  Hayati Ayguen ( h_ayguen@web.de )
+      Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
+
+      Copyright (c) 2004 the University Corporation for Atmospheric
+      Research ("UCAR"). All rights reserved. Developed by NCAR's
+      Computational and Information Systems Laboratory, UCAR,
+      www.cisl.ucar.edu.
+
+      Redistribution and use of the Software in source and binary forms,
+      with or without modification, is permitted provided that the
+      following conditions are met:
+
+      - Neither the names of NCAR's Computational and Information Systems
+      Laboratory, the University Corporation for Atmospheric Research,
+      nor the names of its sponsors or contributors may be used to
+      endorse or promote products derived from this Software without
+      specific prior written permission.  
+
+      - Redistributions of source code must retain the above copyright
+      notices, this list of conditions, and the disclaimer below.
+
+      - Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions, and the disclaimer below in the
+      documentation and/or other materials provided with the
+      distribution.
+
+      THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+      EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO THE WARRANTIES OF
+      MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+      NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT
+      HOLDERS BE LIABLE FOR ANY CLAIM, INDIRECT, INCIDENTAL, SPECIAL,
+      EXEMPLARY, OR CONSEQUENTIAL DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+      ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+      CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+      SOFTWARE.
+      """#),
+]

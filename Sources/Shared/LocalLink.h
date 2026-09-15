@@ -42,6 +42,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) uint64_t receivedFrames;
 /// まだ読み出していないフレーム数。そのまま遅延になる。
 @property (nonatomic, readonly) uint32_t bufferedFrames;
+
+/// 再同期のときに置く、書き位置からの遅れ（フレーム）。
+/// 設計上の定数なので、遅れの表示にはこちらを使う。
+/// bufferedFrames はその瞬間の溜まりで、払うたびに動く。
+@property (class, nonatomic, readonly) uint32_t targetFrames;
 - (BOOL)start;
 - (void)stop;
 /// 受信済みのサンプルを取り出す。足りない分は無音で埋める。

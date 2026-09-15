@@ -258,6 +258,8 @@ static os_log_t ETLinkLog(void) {
 - (BOOL)listening { return _listenFd >= 0; }
 - (BOOL)hasPeer   { return _peerFd >= 0; }
 
++ (uint32_t)targetFrames { return 2048; }
+
 - (uint32_t)bufferedFrames {
     uint64_t w = atomic_load_explicit(&_w, memory_order_acquire);
     uint64_t r = _r;
@@ -420,7 +422,7 @@ static os_log_t ETLinkLog(void) {
     uint64_t r = _r;
     uint32_t want = frames * 2;
     if (r == 0 || w > r + RECV_RING_SAMPLES) {
-        uint64_t behind = 2048ull * 2ull;
+        uint64_t behind = (uint64_t)[ETLinkReceiver targetFrames] * 2ull;
         r = (w > behind) ? (w - behind) : 0;
     }
     uint64_t avail = (w > r) ? (w - r) : 0;

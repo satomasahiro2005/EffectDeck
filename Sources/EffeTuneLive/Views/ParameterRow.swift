@@ -115,8 +115,8 @@ struct ParameterRow: View {
             .font(.system(size: 13, design: .monospaced))
             .focused($focused)
             .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-            .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
-            .overlay(ConcentricRectangle(corners: .concentric(minimum: ETMetrics.innerMinRadius)).stroke(.tint, lineWidth: editing ? 1 : 0))
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: editing ? 1 : 0))
             .submitLabel(.done)
             .onSubmit { commit() }
             .onChange(of: focused) { _, now in
@@ -171,7 +171,7 @@ struct ParameterRow: View {
                                 .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                                 .frame(minWidth: 30, minHeight: 26)
                                 .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                            in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }

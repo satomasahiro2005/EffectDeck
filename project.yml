@@ -14,7 +14,7 @@ settings:
     CLANG_ENABLE_OBJC_ARC: YES
     TARGETED_DEVICE_FAMILY: "1,2"
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "2"
 
 # EffeTune の DSP コアは host-neutral な C++20 なので、そのまま arm64 で建つ。
 # WASM を経由しない。include の場所だけ揃えれば通る（実機向けに 75/75 確認済み）。
@@ -75,36 +75,26 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Sources/EffeTuneLive/EffeTuneLive-Bridging-Header.h
     dependencies:
       - sdk: AVFoundation.framework
-
-  # ------------------------------------------------------------------
-  # 入れ物。Media Device Extension を運ぶためだけに在る。
-  # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否されるので、
-  # ここに UI も DSP も置けない。だからアプリが 2 本要る。
-  # ------------------------------------------------------------------
-  EffeTuneLiveBridge:
-    type: application
-    platform: iOS
-    sources:
-      - path: Sources/EffeTuneLiveBridge
-        excludes: ["**/*.icon/**"]
-      - path: Sources/EffeTuneLiveBridge/EffeTuneLiveBridge.icon
-        type: file
-        buildPhase: resources
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.bridge
-        PRODUCT_NAME: EffeTune Live Bridge
-        INFOPLIST_FILE: Sources/EffeTuneLiveBridge/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: EffeTuneLiveBridge
-        CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLiveBridge/EffeTuneLiveBridge.entitlements
-    dependencies:
+      # **拡張をここに同梱する。**
+      # 以前は別のアプリ（Bridge）に入れていた。
+      # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否される、
+      # と思っていたから。
+      #
+      # 実際の判定は MediaExperience の
+      #   -[MXCoreSession hasMediaDeviceEntitlement]
+      # だけで、その入力は**アプリプロセスの署名 entitlement
+      # com.apple.developer.media-device-extension ただ一つ**。
+      # 同梱している .appex の有無でも Info.plist でもない。
+      # だから**本体の entitlement から落とし、.appex 側にだけ残す**と通る。
+      # 2026-09-16 に実機で確かめた。
       - target: EffeTuneLiveExtension
         embed: true
         codeSign: true
 
   # ------------------------------------------------------------------
-  # Media Device Extension。ルートピッカーに EffeTune を1台出し、
-  # 選ばれたら他アプリの PCM を受け取って本体へ送る。
+  # 入れ物。Media Device Extension を運ぶためだけに在る。
+  # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否されるので、
+  # ここに UI も DSP も置けない。だからアプリが 2 本要る。
   # ------------------------------------------------------------------
   EffeTuneLiveExtension:
     type: extensionkit-extension
@@ -120,7 +110,7 @@ targets:
           - "ETResample.*"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.bridge.extension
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.extension
         PRODUCT_NAME: EffeTuneLiveExtension
         INFOPLIST_FILE: Sources/Extension/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/Extension/Extension.entitlements

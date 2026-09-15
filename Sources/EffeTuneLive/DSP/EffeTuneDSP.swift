@@ -24,9 +24,14 @@ final class EffeTuneDSP: ObservableObject {
         let spec: ETEffect
         var values: [Float]
         var enabled: Bool = true
+        /// Analyzer を図だけで見る。パラメータ行を畳む。
+        var graphOnly: Bool = false
         var instance: UInt32 = 0
         /// 描画用の値がどのエフェクトから出たかを見分ける番号。
         var tapId: UInt32 = 0
+        /// Section の名前（section.js の `cm`）。Section 以外では空。
+        /// ETParam は float しか運べないので values には入れられない。
+        var sectionName: String = ""
 
         // --- 鎖の形 ---
         // 普通の使い方では全部 0→0 の All なので、既定から外れたものだけ画面に出す。
@@ -35,9 +40,33 @@ final class EffeTuneDSP: ObservableObject {
         var channelSpec: Int8 = -1      // Stereo。EffeTune の既定に合わせてある
         var sectionGate: UInt8 = 1
 
+        /// 上の Section で止められている。
+        /// これは鎖の並びから publish のたびに引き直す値で、
+        /// 人が触ったルーティングではない。だから isDefaultRouting とは別に持つ。
+        var isGated: Bool { sectionGate == 0 }
+
         var isDefaultRouting: Bool {
-            inputBus == 0 && outputBus == 0 && channelSpec == -1 && sectionGate == 1
+            // sectionGate をここに入れない。
+            // Section を切ると配下の gate が 0 になるので、
+            // ルーティングを一切触っていない段にまで印が付き、
+            // Routing に「Reset routing」が生えてしまう。
+            // それを押しても gate は publish で引き直され、
+            // 代わりに全段の bus / channel が既定へ戻る。
+            inputBus == 0 && outputBus == 0 && channelSpec == -1
         }
+
+        /// 音を触らない飾り。DSP の instance を持たない。
+        var isSection: Bool { ETSection.isSection(spec) }
+
+        /// 音が通る形になっているか。false のものは publish の filter で descriptor から
+        /// 落ちるので、画面に並んでいても音は通らない。UI はこれを出して区別する。
+        /// 保存せず instance から引くのは、片方だけ古くなるのを避けるため。
+        ///
+        /// Section は instance を持たないが死んでいるわけではない。カーネルが無いので
+        /// et_instance_create は必ず 0 を返す（engine.cpp:314-365 の registry 引き）。
+        /// 上流も Section を descriptor に入れない
+        /// （js/audio/dsp-pipeline-descriptor.js:194-198 の continue）。
+        var alive: Bool { isSection || instance != 0 }
     }
 
     static let shared = EffeTuneDSP()
@@ -76,9 +105,14 @@ final class EffeTuneDSP: ObservableObject {
                 log.error("et_engine_create が 0 を返した")
                 return
             }
-            ETPipeline_SetEngine(engine)
             buildKernelIndex()
         }
+
+        // 毎回呼ぶ。Engine::prepare は destroyAllInstances() と invalidatePipeline() を
+        // 通る（engine.cpp:219-222, 119-129）ので、pipeline_configured_ が false に戻る。
+        // 以前は engine を作ったときだけ呼んでいたため、二度目の prepare のあとも
+        // 「組めている」印と古い ET_OK が残り、死んだ instance のまま process していた。
+        ETPipeline_SetEngine(engine)
 
         // テレメトリの輪を確保しないと、可視化の値が一切出てこない。
         let st = et_engine_prepare(engine, Float(sampleRate), maxChannels, maxFrames,
@@ -91,11 +125,12 @@ final class EffeTuneDSP: ObservableObject {
         ready = true
         et_engine_set_telemetry_rate(engine, Self.telemetryHz)
         Telemetry.shared.clear()
-        restore()
         log.notice("DSP ready sr=\(sampleRate) engine=\(self.engine) kinds=\(self.available.count) abi=\(et_abi_version())")
 
         // 用意し直したので、いま並んでいるものを作り直す。
         rebuildAll()
+        // 何も無ければ、前回の鎖か既定を組む。
+        restore()
     }
 
     func reset() {
@@ -113,7 +148,9 @@ final class EffeTuneDSP: ObservableObject {
             kernelIndex[String(cString: buf)] = i
         }
         // analyzer も出す。値は DSP がテレメトリで吐くので、こちらは描くだけでよい。
-        available = ETCatalog.filter { kernelIndex[$0.type] != nil }
+        // Section はカーネルを持たないので kernelIndex に載らない。鎖の飾りとして
+        // 選べないと困るので、ここで足す（plugins/plugins.txt:123 と同じ扱い）。
+        available = ETCatalog.filter { kernelIndex[$0.type] != nil } + [ETSection.spec]
         let missing = ETCatalog.filter { kernelIndex[$0.type] == nil }
         if !missing.isEmpty {
             log.info("カーネルが無い型 \(missing.count) 個: \(missing.prefix(5).map(\.type).joined(separator: ","))")
@@ -123,14 +160,22 @@ final class EffeTuneDSP: ObservableObject {
     // MARK: - 鎖をいじる
 
     func add(_ spec: ETEffect) {
+        guard appendSpec(spec) else { return }
+        publish()
+    }
+
+    /// 1 本足すだけ。publish はしない。
+    /// まとめて足すときに 1 本ごとに configure を走らせないよう、単発用と分けてある。
+    @discardableResult
+    private func appendSpec(_ spec: ETEffect) -> Bool {
         var node = Node(spec: spec, values: spec.defaults)
         if node.values.count != spec.floatCount {
             node.values = spec.defaults + Array(repeating: 0,
                                                 count: max(0, spec.floatCount - spec.defaults.count))
         }
-        guard instantiate(&node) else { return }
+        guard instantiate(&node) else { return false }
         chain.append(node)
-        publish()
+        return true
     }
 
     func remove(at offsets: IndexSet) {
@@ -143,6 +188,12 @@ final class EffeTuneDSP: ObservableObject {
     func move(from source: IndexSet, to destination: Int) {
         chain.move(fromOffsets: source, toOffset: destination)
         publish()
+    }
+
+    /// 図だけ表示する。DSP には何も伝えない（見た目だけの話）。
+    func setGraphOnly(_ on: Bool, at index: Int) {
+        guard chain.indices.contains(index) else { return }
+        chain[index].graphOnly = on
     }
 
     func setEnabled(_ enabled: Bool, at index: Int) {
@@ -159,19 +210,26 @@ final class EffeTuneDSP: ObservableObject {
     /// 起動時に呼ぶ。前回の鎖が残っていればそれを、無ければ既定を組む。
     /// 既定に Level Meter を 1 つ置いているのは、音が来ているかどうかが
     /// 一目で分かるようにするため。下の帯にメーターを置かない代わり。
+    ///
+    /// 全部 chain に入れ終えてから publish() を 1 回だけ呼ぶ。以前は append が
+    /// 1 本ごとに publish していたので、10 本なら et_pipeline_configure が 10 回積まれた。
+    /// configure は音のスレッドで走り、std::array<PipelineNode,128> のコピーと
+    /// 遅延補正の確保・解放を伴う（engine.cpp:648-709）ので、起動直後に一番重くなる。
     func restore() {
         guard ready, chain.isEmpty else { return }
 
         // シミュレータで画面を見るときだけ、起動の引数で鎖を仕込む。
         if let seed = ETScreenshotSeed.requested {
             for type in seed {
-                if let spec = ETCatalog.first(where: { $0.type == type }) { add(spec) }
+                if let spec = Self.spec(forType: type) { appendSpec(spec) }
             }
+            publish()
             return
         }
 
         if let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty {
             for item in saved { append(item) }
+            publish()
         } else if !PipelineStore.hasSaved {
             if let meter = ETCatalog.first(where: { $0.type == "LevelMeterPlugin" }) {
                 add(meter)
@@ -189,15 +247,31 @@ final class EffeTuneDSP: ObservableObject {
         retire(doomed)
     }
 
-    private func append(_ item: PipelineStore.Loaded) {
+    /// 1 本足すだけ。publish はしない（呼び手がまとめて 1 回だけ呼ぶ）。
+    @discardableResult
+    private func append(_ item: PipelineStore.Loaded) -> Bool {
         var node = Node(spec: item.spec, values: item.values)
         node.enabled = item.enabled
         node.inputBus = item.inputBus
         node.outputBus = item.outputBus
         node.channelSpec = item.channelSpec
-        guard instantiate(&node) else { return }
+        node.sectionName = item.sectionName
+        guard instantiate(&node) else { return false }
         chain.append(node)
-        publish()
+        return true
+    }
+
+    /// 型名から spec を引く。Section はカタログに載っていないので別に見る。
+    static func spec(forType type: String) -> ETEffect? {
+        if type == ETSection.type { return ETSection.spec }
+        return ETCatalog.first { $0.type == type }
+    }
+
+    /// Section の名前を変える。DSP には伝えない（section.js の `cm` は音に効かない）。
+    func setSectionName(_ name: String, at index: Int) {
+        guard chain.indices.contains(index), chain[index].isSection else { return }
+        chain[index].sectionName = name
+        persist()
     }
 
     /// パラメータを 1 つ変える。offset は ETParam.offset（配列なら +i）。
@@ -225,10 +299,23 @@ final class EffeTuneDSP: ObservableObject {
 
     private func instantiate(_ node: inout Node) -> Bool {
         guard engine != 0, ready else { return false }
+
+        // Section はカーネルを持たない。呼べば必ず 0 が返り、失敗として弾かれてしまう。
+        // 上流も Section を descriptor に入れない（dsp-pipeline-descriptor.js:194-198）。
+        if node.isSection {
+            node.instance = 0
+            node.tapId = 0
+            return true
+        }
+
         let typeName = node.spec.type          // inout を os_log に渡せないので控えておく
         let inst = typeName.withCString { et_instance_create(engine, $0) }
         guard inst != 0 else {
-            log.error("et_instance_create に失敗 \(typeName, privacy: .public)")
+            // 0 を返す条件は engine.cpp:314-365 に 4 つ。!prepared_ / 型が registry に無い /
+            // objectSize > 16384 / kernel->prepare が preparedSuccessfully() を満たさない。
+            // 最後のは sr と maxFrames 次第なので一緒に出す。
+            let known = kernelIndex[typeName] != nil
+            log.error("et_instance_create に失敗 \(typeName, privacy: .public) known=\(known) ready=\(self.ready) sr=\(self.sampleRate) maxFrames=\(self.maxFrames)")
             return false
         }
         let tap = nextTap
@@ -241,14 +328,34 @@ final class EffeTuneDSP: ObservableObject {
         return true
     }
 
+    /// engine を用意し直したあとに呼ぶ。
+    ///
+    /// **必ず全部作り直す。** Engine::prepare は先頭で destroyAllInstances() を
+    /// 呼ぶので（dsp/core/engine.cpp:221）、二度目の prepare で instance が
+    /// 全部消える。番号だけ持ったまま descriptor を渡すと slot == nullptr で
+    /// ET_ERR_DESC になり、鎖が一切効かなくなる。
+    ///
+    /// 失敗を握り潰さない。instance が 0 のまま残ったノードは publish() の
+    /// filter で descriptor から落ちるが、descriptor 自体は整合しているので
+    /// et_pipeline_configure は ET_OK を返す。画面には N 本並んだまま、
+    /// 通っているのは 0〜N-1 本という状態になり、status だけ見ても気づけない。
+    ///
+    /// 鎖が空のときは何もしない。**publish() を通すと persist() が走り、
+    /// まだ何も無いうちに "pipeline.last" へ [] が書かれる。** すると直後の
+    /// restore() で PipelineStore.hasSaved が true になり、既定の Level Meter を
+    /// 置く枝（loadLast が [] を返すので第一の枝は外れる）へ二度と入らない。
+    /// 初回起動から鎖が空のまま＝ノード 0 本＝applied 0 になっていた。
     private func rebuildAll() {
-        guard ready else { return }
+        guard ready, !chain.isEmpty else { return }
+        var failed: [String] = []
         for i in chain.indices {
-            if chain[i].instance == 0 {
-                _ = instantiate(&chain[i])
-            } else {
-                pushParams(chain[i])
-            }
+            chain[i].instance = 0
+            chain[i].tapId = 0
+            if !instantiate(&chain[i]) { failed.append(chain[i].spec.type) }
+        }
+        if !failed.isEmpty {
+            let total = chain.count
+            log.error("rebuild で instance を作れなかった \(failed.count)/\(total): \(failed.joined(separator: ","), privacy: .public)")
         }
         publish()
     }
@@ -263,8 +370,27 @@ final class EffeTuneDSP: ObservableObject {
         log.notice("set_params=\(st) \(node.spec.type, privacy: .public) n=\(node.spec.floatCount) v0=\(v.first ?? 0)")
     }
 
+    /// Section の入切を、配下の段の sectionGate へ落とす。
+    ///
+    /// 上流は descriptor を組むたびに走らせている（dsp-pipeline-descriptor.js:190-212）。
+    /// こちらも publish のたびに引き直す。sectionGate は鎖の並びから決まる値で、
+    /// 段ごとに持たせる設定ではない。
+    ///
+    /// chain に書き戻すのは、descriptor を組み直す口がここだけではないため。
+    /// BandFIRPEQDesigner.republishForLatencyChange が chain から ETPipeNode を
+    /// 作り直していて、そこは node.sectionGate をそのまま読む。
+    private func applySectionGates() {
+        let gates = ETSection.gates(types: chain.map(\.spec.type), enabled: chain.map(\.enabled))
+        for i in chain.indices where chain[i].sectionGate != gates[i] {
+            chain[i].sectionGate = gates[i]
+        }
+    }
+
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
+        applySectionGates()
+        // Section は instance を持たないのでここで落ちる。上流も同じく
+        // descriptor に入れない（dsp-pipeline-descriptor.js:194-198）。
         let nodes = chain.filter { $0.instance != 0 }.map { n in
             ETPipeNode(instance: n.instance,
                        enabled: n.enabled ? 1 : 0,
@@ -274,11 +400,22 @@ final class EffeTuneDSP: ObservableObject {
                        sectionGate: n.sectionGate)
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
-        log.notice("publish nodes=\(nodes.count)")
+        // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
+        // ノードが混ざっている＝画面の本数だけ音が通っていない。
+        // Section は必ず descriptor から外れるので、先に引いて dead と分ける。
+        // 分けないと Section を 1 本置くたびに dead が 1 増えて、取りこぼしと見分けが付かない。
+        let sections = chain.filter(\.isSection).count
+        let dead = chain.count - sections - nodes.count
+        let active = nodes.filter { $0.enabled != 0 && $0.sectionGate != 0 }.count
+        let gated = nodes.filter { $0.enabled != 0 && $0.sectionGate == 0 }.count
+        log.notice("publish nodes=\(nodes.count) chain=\(self.chain.count) sections=\(sections) dead=\(dead) active=\(active) gated=\(gated) types=\(self.chain.map(\.spec.type).joined(separator: ","), privacy: .public)")
         persist()
     }
 
     /// 鎖の形を変える。既定は 0→0 の All。
+    ///
+    /// sectionGate は受けるが残らない。Section の入切と鎖の並びから決まる値なので、
+    /// この直後の publish() が applySectionGates() で引き直す。
     func setRouting(at index: Int, inputBus: UInt8? = nil, outputBus: UInt8? = nil,
                     channelSpec: Int8? = nil, sectionGate: UInt8? = nil) {
         guard chain.indices.contains(index) else { return }

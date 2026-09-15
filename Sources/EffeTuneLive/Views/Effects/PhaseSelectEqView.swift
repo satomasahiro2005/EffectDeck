@@ -896,7 +896,7 @@ struct PhaseSelectEqView: View {
                                                       : AnyShapeStyle(.secondary))
                         .frame(maxWidth: .infinity, minHeight: 28)
                         .background(band == slot ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                    in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                                    in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                         // 切ってあるバンドは薄く。
                         .opacity(region(slot).enabled ? 1 : 0.45)
                 }

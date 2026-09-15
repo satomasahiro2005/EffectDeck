@@ -23,6 +23,7 @@ xcrun simctl bootstatus "$DEV" -b >/dev/null 2>&1
 
 python3 Tools/gen_catalog.py 2>&1 | tail -1
 python3 Tools/gen_presets.py 2>&1 | tail -1
+python3 Tools/gen_licenses.py 2>&1 | tail -1
 NS="Vendor/effetune/dsp/plugins/analyzer/note_spectrogram"
 rm -rf Generated/note-models && mkdir -p Generated/note-models
 for m in learned_model fine_model octave_model; do

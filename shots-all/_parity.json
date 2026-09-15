@@ -1,0 +1,2037 @@
+[
+ {
+  "type": "DelayPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/delay/delay.js:318-326 — High Damp と Low Damp だけ `createLogarithmicParameterControl('High Damp', 20, 20000, 1, this.hd, …, 'Hz', 'hd')` / 同 'Low Damp'。plugin-base.js:1406-1420 でつまみ位置は log10 変換（`const logMin = Math.log10(min)` … `((logValue - logMin) / logRange) * 100`）。",
+  "ours": "汎用の線形スライダー。Sources/EffeTuneLive/Views/ParameterRow.swift:85 `Slider(value: binding, in: Double(lo)...Double(hi), step: stride)` で、対数の分岐が無い。EffectCatalog.swift:209-210 も hd/ld は他と同じ `.number(min: 20.0, max: 20000.0, step: 1.0, unit: \"Hz\")`。スクショでも High Damp 5000 Hz のつまみが左から約25%（線形の 5000/20000）、Low Damp 100 Hz は左端に張り付いている。対数なら約80%と約23%。",
+  "fix": "hd/ld のスライダーだけ log10 位置で持たせる（対数スライダーを ParameterRow に足すか、Delay 専用ビューを作る）",
+  "severity": "high"
+ },
+ {
+  "type": "DelayPlugin",
+  "kind": "単位・表記",
+  "upstream": "Vendor/effetune/plugins/plugin-base.js:1378 — 桁数は step で決まる `numericValue.toFixed(step < 0.01 ? 3 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0)))`。delay.js:313-341 の Damping / Mix / Feedback / Ping-Pong / Delay Size は step 1 なので 0 桁、Pre-Delay は delay.js:304 で step 0.1 なので 1 桁。初期表示は plugin-base.js:1325 `valueInput.value = value;` で素の数値。",
+  "ours": "桁数を値の大きさで決めている。Sources/EffeTuneLive/DSP/EffectSpec.swift:44-47 `abs(v) >= 100 ? \"%.0f\" : abs(v) >= 10 ? \"%.1f\" : \"%.2f\"`。スクショでは Damping「50.0 %」Mix「16.0 %」Feedback「50.0 %」Ping Pong「0.00 %」Pre Delay「0.00 ms」。上流はそれぞれ 50 / 16 / 50 / 0 / 0.0。",
+  "fix": "format() の桁数を値の大きさでなく step から決める",
+  "severity": "medium"
+ },
+ {
+  "type": "DelayPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/delay/delay.js:304 `'Pre-Delay'`、delay.js:339-340 `'Ping-Pong'`（ハイフン付き）",
+  "ours": "Sources/EffeTuneLive/Generated/EffectCatalog.swift:206 label: \"Pre Delay\"、:213 label: \"Ping Pong\"。スクショも「Pre Delay (ms)」「Ping Pong (%)」",
+  "fix": "生成元の params.json のラベルをハイフン付きに直す",
+  "severity": "low"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:442-448 で freqSlider は min=0 / max=100000 の抽象目盛りで、値は mapFrequencyToSlider() 経由（同:744-749『const scale = Math.log(maxFreq / minFreq); return Math.round((Math.log(freq / minFreq) / scale) * 100000);』）。つまり 20Hz–96000Hz を対数で割り付ける。既定 880Hz は log(44)/log(4800) ≈ 45% の位置。",
+  "ours": "Sources/EffeTuneLive/Generated/EffectCatalog.swift:1178 の .number(min: 20.0, max: 96000.0, step: 1.0, unit: \"Hz\") を Sources/EffeTuneLive/Views/ParameterRow.swift:80-87 の Slider(value:in:step:) がそのまま線形で描く。スクショでも 880 Hz でつまみはほぼ左端（トラックの約 6%）。可聴域のほぼ全部が左端 1% に潰れていて動かせない。",
+  "fix": "周波数だけ対数スライダーにする（表示値 20–96000 を log で 0–1 に写す Binding を挟む）",
+  "severity": "high"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "落ちている",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:683-697 の updateControlStates():『freqSlider.disabled = disablesFrequency』(impulse/white/pink のとき)、『modeRadios.continuous.disabled = isImpulse』、『intervalSlider.disabled = !isPulsed』、『widthSlider.disabled = !isPulsed || isImpulse』。同:700 で初期表示にも適用。さらに同:376『if (this.wf === 'impulse') this.md = 'pulsed';』で impulse を選ぶと Mode が pulsed に固定される。",
+  "ours": "ParameterRow.swift には disabled の分岐が一つも無い（全 182 行に .disabled も条件付き描画も無い）。スクショは Mode=continuous なのに Interval (ms) と Width (ms) が青く塗られたまま操作でき、上流なら灰色で触れない状態。ノイズ系波形でも Frequency が触れる。",
+  "fix": "波形と Mode を見て Frequency / Interval / Width を disabled にする（Oscillator 専用ビューを起こすのが早い）",
+  "severity": "high"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:490-512 で Panning は radio-group。『['Center', 'Left', 'Right'].forEach((label, index) => { const value = index === 1 ? -1 : index === 2 ? 1 : 0;』の 3 択で、数値欄もスライダーも無い。",
+  "ours": "EffectCatalog.swift:1180 の .number(min: -1.0, max: 1.0, step: 1.0) を汎用スライダーで描いている。スクショでは連続つまみ＋数値欄「0.00」。実質 3 段なのにスライダーに見え、Center/Left/Right という語も出ない。",
+  "fix": "3 つのセグメント（Center / Left / Right）に差し替える",
+  "severity": "medium"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:530-538 の waveformOptions は表示名を別に持つ：『['sine','Sine'], ['sawtooth','Sawtooth'], ['triangle','Triangle'], ['square','Square'], ['impulse','Impulse'], ['white','White Noise'], ['pink','Pink Noise']』。Mode も同:567『['Continuous', 'Pulsed'].forEach』で大文字始まり。",
+  "ours": "EffectCatalog.swift:1181,1182 は内部値の配列だけを持ち、ParameterRow.swift:58-61 がその文字列をそのまま Text に流す。スクショの表示は「sine」「continuous」。white / pink は上流の「White Noise」「Pink Noise」と違って何のことか読めない。",
+  "fix": "enum に表示名を持たせて Picker はそちらを出す",
+  "severity": "medium"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "並び順",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:530-538 のメニュー順は sine → sawtooth → triangle → square → impulse → white → pink。",
+  "ours": "EffectCatalog.swift:1181 の .enumeration([\"sine\", \"square\", \"triangle\", \"sawtooth\", \"white\", \"pink\", \"impulse\"]) の順でメニューが出る（sawtooth と square が入れ替わり、impulse が末尾）。なおこの配列順は oscillator.js:371-375 の isAllowedEnum の順＝保存値の並びなので、値の対応は正しい。",
+  "fix": "メニューの表示順だけ上流の select 順に並べ替える（値の対応は変えない）",
+  "severity": "low"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:563-591 で Mode は radio-group（Continuous / Pulsed の 2 つを常に並べて見せる）。",
+  "ours": "EffectCatalog.swift:1182 の enumeration を ParameterRow.swift:53-63 がポップアップメニューで描く。スクショは「continuous ⌄」で、もう一方の選択肢は開くまで見えない。",
+  "fix": "2 択セグメントにする",
+  "severity": "low"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:522『waveLabel.textContent = 'Waveform Type:';』",
+  "ours": "EffectCatalog.swift:1181 の label: \"Waveform\"。スクショの表示も「Waveform」。",
+  "fix": "ラベルを Waveform Type にする",
+  "severity": "low"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:488『panLabel.textContent = 'Panning (L/R):';』",
+  "ours": "EffectCatalog.swift:1180 の label: \"Panning\"（unit が空なので括弧も付かない）。スクショの表示も「Panning」。",
+  "fix": "ラベルを Panning (L/R) にする",
+  "severity": "low"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "落ちている",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:396-399『clampWidthToInterval(width, interval) { const maxWidth = interval * 0.5; return width > maxWidth ? maxWidth : width; }』を setInterval(385-389) と setWidth(391-395) の両方が通し、UI も同:623-624 と 668-669 で『widthValue.value = this.wd;』と書き戻す。Interval を縮めると Width の表示も追随して縮む。",
+  "ours": "Width は EffectCatalog.swift:1184 の 2–100ms 独立スライダーで、Interval を 100ms にしても Width は 100ms のまま。ParameterRow.swift:26-28 の set() は自分の offset しか書かない。",
+  "fix": "Width の上限を Interval/2 に連動させ、Interval 変更時に Width も詰める",
+  "severity": "low"
+ },
+ {
+  "type": "OscillatorPlugin",
+  "kind": "単位・表記",
+  "upstream": "Vendor/effetune/plugins/others/oscillator.js:655-659 で Width の数値欄は step='1'（同:773『return Math.round(parseFloat(value));』で整数に丸める）。既定は「5」。",
+  "ours": "Sources/EffeTuneLive/DSP/EffectSpec.swift:43-48 の format が isInteger:false かつ |v|<10 で %.2f を使うため、スクショの表示は「5.00 ms」。",
+  "fix": "step が 1 以上のパラメータは整数表示にする",
+  "severity": "low"
+ },
+ {
+  "type": "HornResonatorPlugin",
+  "kind": "図が違う",
+  "upstream": "Vendor/effetune/plugins/resonator/horn_resonator.js:465 — `c.appendChild(this.createLogarithmicParameterControl('Crossover', 20, 5000, 10, this.co, ...,'Hz','co'));`。plugin-base.js:1393-1420 でスライダーは 0-100 の目盛りで、`linearToLogSlider` = `((log10(v)-log10(20))/(log10(5000)-log10(20)))*100` の対数配置。既定 600Hz はつまみが 61.6% の位置に来る。",
+  "ours": "Generated/EffectCatalog.swift:1195 が `kind: .number(min: 20.0, max: 5000.0, step: 10.0, unit: \"Hz\")` で対数の印を持たず、Views/ParameterRow.swift:85 が `Slider(value: binding, in: Double(lo)...Double(hi), step: stride)` の線形スライダー一本しか持たない（`grep -rn logarithmic Sources/` はPEQ系の専用Viewにしか当たらない）。shots-all/HornResonatorPlugin.png で 600Hz のつまみは可動域の約12%＝線形の (600-20)/4980 = 11.6% の位置。20-600Hz が可動域の1割強に潰れている。",
+  "fix": "Crossover を対数マッピングにする（ETParamKind に対数フラグを足すか、Horn 用の専用行を作る）",
+  "severity": "high"
+ },
+ {
+  "type": "HornResonatorPlusPlugin",
+  "kind": "図が違う",
+  "upstream": "Vendor/effetune/plugins/resonator/horn_resonator_plus.js:496 — `createLogarithmicParameterControl('Crossover', 20, 5000, 10, ...)`。無印版と同一で対数配置。",
+  "ours": "Generated/EffectCatalog.swift:1213 が無印版と同じ `.number(min: 20.0, max: 5000.0, step: 10.0, unit: \"Hz\")`。専用Viewが無く（Views/EffectViews.swift の `types` に Horn 系は無い）ParameterRow の線形スライダーに落ちる。shots-all/HornResonatorPlusPlugin.png のつまみ位置も無印版と同じ約12%。",
+  "fix": "無印版と同じ直し（対数マッピング）",
+  "severity": "high"
+ },
+ {
+  "type": "HornResonatorPlugin",
+  "kind": "名前",
+  "upstream": "horn_resonator.js:466-472, 466 `'Horn Length'` / 467 `'Throat Dia.'` / 468 `'Mouth Dia.'` / 471 `'Throat Refl.'` / 472 `'Output Gain'`。",
+  "ours": "Generated/EffectCatalog.swift:1196-1202 が順に `label: \"Length\"` / `\"Throat Diameter\"` / `\"Mouth Diameter\"` / `\"Throat Reflection\"` / `\"Waveguide Gain\"`。スクショでもこの5つが上流と違う文字で出ている。4つは略語の展開だが、`Waveguide Gain` は上流の `Output Gain` と語そのものが別。",
+  "fix": "EffectCatalog の label を上流の表示名に合わせる（特に Waveguide Gain → Output Gain）",
+  "severity": "medium"
+ },
+ {
+  "type": "HornResonatorPlusPlugin",
+  "kind": "名前",
+  "upstream": "horn_resonator_plus.js:497-503, 497 `'Horn Length'` / 498 `'Throat Dia.'` / 499 `'Mouth Dia.'` / 502 `'Throat Refl.'` / 503 `'Output Gain'`。",
+  "ours": "Generated/EffectCatalog.swift:1214-1220 が順に `\"Length\"` / `\"Throat Diameter\"` / `\"Mouth Diameter\"` / `\"Throat Reflection\"` / `\"Waveguide Gain\"`。無印版と同じずれ。",
+  "fix": "無印版と同じ直し",
+  "severity": "medium"
+ },
+ {
+  "type": "HornResonatorPlugin / HornResonatorPlusPlugin",
+  "kind": "単位・表記",
+  "upstream": "plugin-base.js:1305 でラベルが `${label}${unit ? ' (' + unit + ')' : ''}:` ＝単位はラベル側だけに付く。数値欄は plugin-base.js:1326 `valueInput.value = value;` で単位なしの素の値。桁数も step 基準（対数版 plugin-base.js:1444 `value.toFixed(step < 0.1 ? 2 : (step < 1 ? 1 : 0))`）で、Horn Length は step 1 なので `70`、Throat Dia. は step 0.1 なので `3.0`、Curve は step 1 なので `40`。",
+  "ours": "ラベルは Views/ParameterRow.swift:100 で `\" (\\(unit))\"` を付け、さらに DSP/EffectSpec.swift:47 `return unit.isEmpty ? s : \"\\(s) \\(unit)\"` が数値欄にも単位を入れるので二重になる。数値欄の幅は固定（ParameterRow.swift:117 `.frame(width: ETMetrics.valueWidth, ...)`）で、スクショの Damping は `Damping (dB/m)` ＋ 値が `0.03 dB…` と切れている。桁数も EffectSpec.swift:44-46 が step でなく絶対値で決めるため、Length `70.0`／Throat Diameter `3.00`／Curve `40.0` と上流より1-2桁多い。",
+  "fix": "数値欄は単位なしの素の値にする（EffectSpec.format の単位付加をやめる）。この2本だけでなく全効果に効く箇所",
+  "severity": "low"
+ },
+ {
+  "type": "ClickRemoverPlugin",
+  "kind": "図が無い",
+  "upstream": "Vendor/effetune/plugins/restoration/click_remover.js:227 `container.appendChild(this._createTelemetryHud());`。描画は :160-197 で、16:1（モバイルは3:1）のキャンバスに `context.fillText('REPAIRS/S', ...)`(:187)、`context.fillText(repairs.toFixed(1), ...)`(:190)、0〜20 repairs/s を満たすバー(:180 `const level = repairs <= 0 ? 0 : (repairs >= 20 ? 1 : repairs / 20);`)。",
+  "ours": "shots-all/ClickRemoverPlugin.png はスライダー2本だけで図が無い。Sources/EffeTuneLive/Views/EffectViews.swift:16-46 の types に ClickRemoverPlugin が無く専用ビューが無い。上流が読む frame 21（click_remover.js:5 `CLICK_REMOVER_TELEMETRY_FRAME = 21`）に対して Sources/EffeTuneLive/DSP/Telemetry.swift:22-43 の ETFrameType は 20 までしか無い。",
+  "fix": "frame 21 を読んで REPAIRS/S を出す横長1行のHUDビューを足す（NoteSpectrogramView.swift:201 と同じく鍵を自前で組めば enum に無い番号も読める）",
+  "severity": "high"
+ },
+ {
+  "type": "ClipRestorerPlugin",
+  "kind": "図が無い",
+  "upstream": "Vendor/effetune/plugins/restoration/clip_restorer.js:227 `container.appendChild(this._createTelemetryHud());`。描画は :160-197 で `context.fillText('RESTORED', ...)`(:187)、`context.fillText(`${restored.toFixed(2)}%`, ...)`(:190)、0〜100% のバー(:180)。frame は :5 `CLIP_RESTORER_TELEMETRY_FRAME = 22`。",
+  "ours": "shots-all/ClipRestorerPlugin.png は Threshold と Output Gain のスライダーだけ。EffectViews.swift:16-46 に ClipRestorerPlugin が無い。Telemetry.swift:22-43 に frame 22 の口が無い。",
+  "fix": "frame 22 を読んで RESTORED (%) を出すHUDを足す",
+  "severity": "high"
+ },
+ {
+  "type": "HumRemoverPlugin",
+  "kind": "図が無い",
+  "upstream": "Vendor/effetune/plugins/restoration/hum_remover.js:262 `container.appendChild(this._createTelemetryHud());`。描画は :174-229 で、カードが2枚（:192-204）: `title: 'FUNDAMENTAL', value: `${fundamental.toFixed(2)} Hz`, level: (fundamental - 45) / 20` と `title: 'REMOVED', value: `${removed.toFixed(1)} dBFS`, level: (removed + 140) / 140`。frame は :7 `HUM_REMOVER_TELEMETRY_FRAME = 23`。",
+  "ours": "shots-all/HumRemoverPlugin.png は Frequency / Harmonics / Tracking Speed の3行だけ。EffectViews.swift:16-46 に HumRemoverPlugin が無い。Telemetry.swift:22-43 に frame 23 の口が無い。追従した基本波も除去量も画面に出ない。",
+  "fix": "frame 23 を読んで FUNDAMENTAL(Hz) と REMOVED(dBFS) の2枚カードを出す",
+  "severity": "high"
+ },
+ {
+  "type": "HumRemoverPlugin",
+  "kind": "操作面が違う",
+  "upstream": "hum_remover.js:255-257 は `createLogarithmicParameterControl('Harmonics', 1, HUM_REMOVER_MAX_HARMONICS, 1, this.hc, ...)`。plugin-base.js:1405-1420 でスライダー位置は log10 スケール（`slider.min = 0; slider.max = 100`、`linearToLogSlider`）。既定 8 は log10(8)/log10(64) = 0.5 でつまみが中央に来る。",
+  "ours": "ParameterRow.swift:85 `Slider(value: binding, in: Double(lo)...Double(hi), step: stride)` で線形のみ。EffectCatalog.swift:1271 も `min: 1.0, max: 64.0, step: 1.0` の線形指定。shots-all/HumRemoverPlugin.png のつまみは 8 で左端から約11%（線形の (8-1)/63）にあり、上流の中央と違う。低次側の刻みが細かく取れない。",
+  "fix": "ETParamKind に対数の目盛りを足すか、この型だけ log スライダーのビューを作る",
+  "severity": "medium"
+ },
+ {
+  "type": "ClickRemoverPlugin / ClipRestorerPlugin / HumRemoverPlugin",
+  "kind": "落ちている",
+  "upstream": "click_remover.js:226 / clip_restorer.js:226 / hum_remover.js:261 が `this._createStatusElement()` を並べる。中身は click_remover.js:137-141 `_executionStatusText()` で、バイパス時に `CLICK_REMOVER_BYPASS_REASONS`（:8-15 「This sample rate is not supported.」等）＋「… is bypassed. Audio remains unchanged.」を出す。",
+  "ours": "この3型に専用ビューが無く（EffectViews.swift:16-46）、Sources/EffeTuneLive/Views 以下に実行状態の文言を出す場所が無い（bypass / unsupported を grep しても PipelineView.swift:262 の全体スイッチしか当たらない）。DSPが素通しに落ちても画面は普段と同じ。",
+  "fix": "ヘッダの下にバイパス理由を出す1行を足す",
+  "severity": "low"
+ },
+ {
+  "type": "ClickRemoverPlugin / ClipRestorerPlugin / HumRemoverPlugin / NoiseReductionPlugin",
+  "kind": "単位・表記",
+  "upstream": "plugin-base.js:1305 `labelEl.textContent = `${label}${unit ? ' (' + unit + ')' : ''}:`;` で単位はラベル側だけに付き、数値欄(:1309-1326)は素の数字。桁数は step で決まる（:1377 `valueInput.value = numericValue.toFixed(step < 0.01 ? 3 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0)));`）。例: Sensitivity は step 1（click_remover.js:221）なので「50」、Output Gain は step 0.1（clip_restorer.js:224）なので「-3.0」。",
+  "ours": "ParameterRow.swift:96-102 でラベルに ` (%)` を付けたうえ、EffectSpec.swift:44-48 が数値側にも単位を足す。桁数は step でなく絶対値で決まる（`abs(v) >= 100 ? %.0f : abs(v) >= 10 ? %.1f : %.2f`）。スクショでは「50.0 %」(ClickRemover Sensitivity, 上流は50)、「1.00 ms」(Max Repair Length, 上流は1.0)、「-3.00 dB」(ClipRestorer Output Gain, 上流は-3.0)、「0.00 dB」(NoiseReduction Sensitivity, step 0.5 なので上流は0.0)。同じ step 0.5 の Reduction が「12.0」で Sensitivity が「0.00」と型の中でも揃っていない。",
+  "fix": "桁数を step から決め、単位は数値欄かラベルのどちらか一方に寄せる",
+  "severity": "low"
+ },
+ {
+  "type": "HumRemoverPlugin",
+  "kind": "操作面が違う",
+  "upstream": "hum_remover.js:252-254 は `createRadioGroup('Frequency', HUM_REMOVER_FREQUENCIES, ...)`。plugin-base.js:1572-1596 が Auto / 50 Hz / 60 Hz の3つをラジオとして横に並べ、全部が常に見える。",
+  "ours": "ParameterRow.swift:55-64 の `.pickerStyle(.menu)` なので、shots-all/HumRemoverPlugin.png では選択中の「Auto」だけが出て、他の選択肢は開かないと見えない。",
+  "fix": "選択肢が3つ程度の enum は segmented にする",
+  "severity": "low"
+ },
+ {
+  "type": "MatrixPlugin",
+  "name": "Matrix",
+  "kind": "落ちている",
+  "upstream": "matrix.js:283-385 の _buildMatrixTable が Input×Output の表を組む。ヘッダは 'Output'（304-308）と 'Input'（316-319）、各セルに 'ON' ボタン（348-358）と位相反転の 'Ø' ボタン（361-371）。createUI（matrix.js:264-281）はこの表だけを置く。",
+  "ours": "shots-all/MatrixPlugin.png はカードの見出し行だけで、開く中身が一切ない。EffectCatalog.swift:128-137 が floatCount 0 / params 空。ルーティングは float ではなく文字列パラメータ mx（matrix.js:10, 111）なので生成カタログに乗っていない。",
+  "fix": "mx 文字列を持つ専用 View（ON/Ø の格子）を足す",
+  "severity": "high"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "落ちている",
+  "upstream": "fir_crossover.js:678-679 が _createCrossoverControl を 3 本作り、各行は 'Freq N (Hz):' ラベル＋対数レンジスライダー＋数値欄＋スロープ select（fir_crossover.js:720-775）。スロープの選択肢は fir_crossover.js:4 の [-24,-48,-72,-96,-144,-192,-288,-384]。",
+  "ours": "shots-all/FIRCrossoverPlugin.png には Latency Mode / Filter Delay Samples / Band Count の 3 つしかない。EffectCatalog.swift:115-126 が floatCount 3 で f1..f3 / s1..s3 を持っていない。",
+  "fix": "クロスオーバー周波数とスロープをパラメータに足して 3 行出す",
+  "severity": "high"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "落ちている",
+  "upstream": "fir_crossover.js:635-638 が Phase のラジオ（'Minimum Phase' / 'Linear Phase'、モデルは pm）、fir_crossover.js:639-645 が Taps の select（8192/16384/32768/65536/131072、モデルは tp）を置く。",
+  "ours": "どちらも画面に無い。EffectCatalog.swift:115-126 の params は lt / fd / bc だけ。",
+  "fix": "pm と tp をパラメータに足す",
+  "severity": "high"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "その他",
+  "upstream": "fd は派生値で、UI には出さない。fir_crossover.js:90 が `fd: this.pm === 'min' ? 0 : this.tp / 2` と計算して返すだけ（同 401 も同じ形）。createUI（fir_crossover.js:624-718）に fd の操作は無い。",
+  "ours": "shots-all/FIRCrossoverPlugin.png に 'Filter Delay Samples' が 0..65536 のスライダーとして出て、手で動かせる。EffectCatalog.swift:124。",
+  "fix": "fd は画面から外す（pm/tp から出す）",
+  "severity": "medium"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "図が無い",
+  "upstream": "fir_crossover.js:681-695 でグラフ（aspectRatio 5/2、mobile 2/1）を置き、drawGraph（fir_crossover.js:839-924）が X を 10Hz–40kHz の対数、Y を -60..+12 dB（884-885）で引き、バンドごとに 1 本ずつトレースを描く（911-923）。",
+  "ours": "グラフが無い。Sources/EffeTuneLive/Views/EffectViews.swift の types に FIRCrossoverPlugin が入っていないので汎用スライダーだけ。",
+  "fix": "バンドごとの応答を描く専用 View を足す",
+  "severity": "high"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "落ちている",
+  "upstream": "fir_crossover.js:697-708 が status 行とレイテンシ行を置き、_renderStatus（同 603-613）が `N samples / X.X ms · Y.Y Hz · <bypass|staged|preparing|active|error>` を出す。出力チャンネル数が不正なときは _renderBusError（同 615-622）が 'This effect needs an even number of output channels from 4 to 16.' を出す。",
+  "ours": "状態表示もエラー表示も無い。",
+  "fix": "レイテンシ／設計状態の 1 行とエラー行を足す",
+  "severity": "medium"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "操作面が違う",
+  "upstream": "fir_crossover.js:655-676 で Band Count は 'Band Count:' ラベル＋2/3/4 のラジオ。使えない本数は disabled になる（同 790-791）。",
+  "ours": "shots-all/FIRCrossoverPlugin.png では 'Band Count' が 2..4 のスライダー＋数値欄。EffectCatalog.swift:125。",
+  "fix": "2/3/4 のセグメント切り替えにする",
+  "severity": "medium"
+ },
+ {
+  "type": "FIRCrossoverPlugin",
+  "name": "FIR Crossover",
+  "kind": "名前",
+  "upstream": "fir_crossover.js:646-652 はラベルが 'Latency'、選択肢の表示が `${value} samples`（0 samples / 128 samples / …）。",
+  "ours": "ラベルが 'Latency Mode'、選択肢は '0' '128' … の裸の数字。EffectCatalog.swift:123 の enumeration([\"0\",\"128\",\"256\",\"512\",\"1024\"])。",
+  "fix": "ラベルを Latency に、選択肢に samples を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "ChannelDividerPlugin",
+  "name": "Channel Divider",
+  "kind": "図が無い",
+  "upstream": "channel_divider.js:627-641 でグラフを置き、drawGraph（同 799-883）が X を 10Hz–40kHz の対数（811-812）、Y を -60..+12 dB（833-835）で引き、バンド数に応じた Low/Mid/High …（同 856-869）のトレースを描く。軸名は 'Frequency (Hz)' と 'Level (dB)'（845-850）。",
+  "ours": "shots-all/ChannelDividerPlugin.png はスライダー 7 本だけでグラフが無い。EffectViews.swift の types に ChannelDividerPlugin が無い。",
+  "fix": "バンド応答のグラフを足す",
+  "severity": "high"
+ },
+ {
+  "type": "ChannelDividerPlugin",
+  "name": "Channel Divider",
+  "kind": "図が違う",
+  "upstream": "周波数のスライダーは対数。channel_divider.js:715-716 でレンジを 0..1000 にして logToLinear/linearToLog（同 786-797）で 10Hz–40kHz に写している。",
+  "ours": "線形。EffectCatalog.swift:96 が min 10 / max 40000 の素のスライダー。shots-all/ChannelDividerPlugin.png で 2000 Hz のつまみが左端から 5% 程度の位置にあり、可聴域がスライダーの左端に潰れている。",
+  "fix": "周波数は対数目盛りのスライダーにする",
+  "severity": "high"
+ },
+ {
+  "type": "ChannelDividerPlugin",
+  "name": "Channel Divider",
+  "kind": "操作面が違う",
+  "upstream": "channel_divider.js:603-621 で Band Count は 'Band Count:' ラベル＋2/3/4 のラジオ。スロープは channel_divider.js:687-706 の select で、選択肢は [-12..-96] の 8 個、表示は絶対値の '12dB' '24dB' …（同 697）。select は周波数と同じ行に並ぶ（同 721-722）。",
+  "ours": "Band Count が 2..4 のスライダー、Slope1..3 が step 12 のスライダーで独立した行。shots-all/ChannelDividerPlugin.png。EffectCatalog.swift:95, 97, 99, 101。",
+  "fix": "Band Count はセグメント、Slope はメニューにして周波数と同じ行へ",
+  "severity": "medium"
+ },
+ {
+  "type": "ChannelDividerPlugin",
+  "name": "Channel Divider",
+  "kind": "落ちている",
+  "upstream": "channel_divider.js:750-752 の updateCrossoverControls が Freq2 を bc>=3、Freq3 を bc>=4 のときだけ通常表示にし、それ以外は opacity 0.5 に落とす。",
+  "ours": "Band Count が 2 でも Frequency2/Slope2/Frequency3/Slope3 が同じ濃さで全部出ている（shots-all/ChannelDividerPlugin.png）。",
+  "fix": "バンド数に足りない行は淡くする（か隠す）",
+  "severity": "medium"
+ },
+ {
+  "type": "ChannelDividerPlugin",
+  "name": "Channel Divider",
+  "kind": "名前",
+  "upstream": "channel_divider.js:713 のラベルは 'Freq 1 (Hz):' / 'Freq 2 (Hz):' / 'Freq 3 (Hz):'。スロープの select にはラベルが無い（同 687-706 は select 単体を返し、721-722 で同じ行に足すだけ）。",
+  "ours": "'Frequency1 (Hz)' 'Slope1 (dB/oct)' … と別ラベルの行になっている。EffectCatalog.swift:96-101 の label。数値欄が狭く 'Slope1' の値は '−24 dB/…' と切れている（shots-all/ChannelDividerPlugin.png）。",
+  "fix": "ラベルを Freq 1 (Hz) に合わせ、スロープは周波数行に添える",
+  "severity": "low"
+ },
+ {
+  "type": "StereoBalancePlugin",
+  "name": "Stereo Balance",
+  "kind": "単位・表記",
+  "upstream": "stereo_balance.js:78-82 は createParameterControl('Balance', -100, 100, 1, this.bl * 100, …, '%', 'bl', value => value * 100)。つまり -100..100 の整数を % 付きで見せ、モデルの -1..1 へ 100 で割って渡している。ラベルは plugin-base.js:1305 により 'Balance (%):'。",
+  "ours": "shots-all/StereoBalancePlugin.png のラベルは 'Balance'、値は '0.00'（単位なし）。EffectCatalog.swift:184 が min -1 / max 1 / step 0.01 / unit \"\"。",
+  "fix": "表示だけ 100 倍して % 付き整数にする",
+  "severity": "medium"
+ },
+ {
+  "type": "VolumePlugin",
+  "name": "Volume",
+  "kind": "単位・表記",
+  "upstream": "volume.js:76-79 の createParameterControl('Volume', -60, 24, 0.1, …, 'dB', 'vl')。plugin-base.js:1305 でラベルが 'Volume (dB):' になり、値は type=number の裸の数値欄（同 1318-1326）。書式は step から決まり、step 0.1 なので小数 1 桁（同 1378）。",
+  "ours": "shots-all/VolumePlugin.png はラベル 'Volume (dB)' に加えて数値欄が '0.00 dB' で dB が 2 回出る。小数も 2 桁。ParameterRow.swift:99-102 がラベルに ' (unit)' を足し、EffectSpec.swift:43-47 が値にも unit を足して |v|<10 なら %.2f にしている。",
+  "fix": "数値欄からは単位を外す（か step に合わせて桁を決める）",
+  "severity": "low"
+ },
+ {
+  "type": "MultiChannelPanelPlugin",
+  "name": "MultiChannel Panel",
+  "kind": "名前",
+  "upstream": "multi_channel_panel.js:893 の volumeLabel.textContent は 'Vol (dB):'（Delay は同 935 で 'Delay (ms):'）。",
+  "ours": "shots-all/MultiChannelPanelPlugin.png のラベルは 'Volume (dB)'。EffectCatalog.swift:149 の label が \"Volume\"。",
+  "fix": "ラベルを Vol (dB) にする",
+  "severity": "low"
+ },
+ {
+  "type": "MultiChannelPanelPlugin",
+  "name": "MultiChannel Panel",
+  "kind": "図が違う",
+  "upstream": "multi_channel_panel.js:1080-1092 はメーターの罫線を 3 dB ごとに引き、数字は 12 dB ごと、ただし 0 dB と下端 -96 dB は除く（`if (db % 12 === 0 && db !== 0 && db !== dbMin)`）。つまり出る数字は -84 -72 -60 -48 -36 -24 -12。",
+  "ours": "MultiChannelPanelView.swift:44 の ticks が [-96, -72, -48, -24, -12, 0]。shots-all/MultiChannelPanelPlugin.png も -96 と 0 が出て -84/-60/-36 が無い。3 dB の細かい罫線も無い。",
+  "fix": "目盛りを -84..-12 の 12 dB 刻みに直す",
+  "severity": "low"
+ },
+ {
+  "type": "MultiChannelPanelPlugin",
+  "name": "MultiChannel Panel",
+  "kind": "単位・表記",
+  "upstream": "multi_channel_panel.js:1096-1101 は全チャンネルのメーターに右詰めでピーク値 `peakLevelDb.toFixed(1) + ' dB'` を描く（本数による出し分けは無い）。",
+  "ours": "MultiChannelPanelView.swift:69 が showsReadout: r.peaks.count <= 4 で、5ch 以上では数値が消える。",
+  "fix": "本数によらずピーク値を出す",
+  "severity": "low"
+ },
+ {
+  "type": "IRReverbPlugin",
+  "kind": "図が無い",
+  "upstream": "Vendor/effetune/plugins/reverb/ir_reverb.js:1979-1987 が `createResponsiveGraph({ maxWidth: 760, aspectRatio: '3 / 1', ... onResize: () => this._drawEdcGraph() })` でEDC（エネルギー減衰）グラフを置く。描画は同ファイル:1787-1934。縦は 0〜-90 dB で罫線が 0/-30/-60/-90（1817-1824 の `for (const db of [0, -30, -60, -90])`）、横は秒で1秒ごとの目盛り（1834-1845）、包絡の塗り＋元IRの破線と現IRの実線（1886-1887 `drawLine(graph.original, ..., [5,5])` / `drawLine(graph.current, ..., [])`）、縦線マーカーは onset / cut / pre-delay / trim / rt60（1896-1902）。",
+  "ours": "shots-all/IRReverbPlugin.png にグラフは一切無い。Channel Mode から Pre Delay までのスライダーだけ。Sources/EffeTuneLive/Views/EffectViews.swift:16-42 の `types` に \"IRReverbPlugin\" が無く、汎用の ParameterRow だけで出ている。",
+  "fix": "IRReverbView を作り、EDCグラフ（0〜-90 dB × 時間秒、original破線/current実線、マーカー）を描く",
+  "severity": "high"
+ },
+ {
+  "type": "IRReverbPlugin",
+  "kind": "落ちている",
+  "upstream": "ir_reverb.js:1956 `importButton.textContent = this._t('irReverb.action.importFile', 'Import file…')`、:1960 `libraryButton.textContent = this._t('irReverb.action.chooseLibrary', 'Choose from library…')`。加えて:1963-1970 の status 行（`this._t('irReverb.status.importPrompt', 'Import an impulse response to use IR Reverb.')`）と:1972-1977 の metadata 行（中身は:1719-1741。ファイル名・秒数・ch数・トポロジ・有効/上限秒・レート変換・レイテンシ samples/ms・MiB）。",
+  "ours": "shots-all/IRReverbPlugin.png のカードに IR を読み込む口が無い。IRLibraryView 自体は Sources/EffeTuneLive/Views/IRLibraryView.swift にあり PipelineView.swift:33 の `case picker, settings, routing, presets, welcome, ir` と :84-85 `case .ir: IRLibraryView()` で受けているが、`sheet = .ir` を書いている箇所がソース全体に無い（PipelineView.swift:93,129,275,276,279-281 が `sheet = ` の全件）。PipelineView.swift:277 のコメントは「IR Library はここに出さない。IR Reverb のカードから開く」だが、そのカード側が未実装。",
+  "fix": "IR Reverb のカードに「Import file…／Choose from library…」相当のボタンを置いて `sheet = .ir` へ繋ぎ、状態行と metadata 行を足す",
+  "severity": "high"
+ },
+ {
+  "type": "IRReverbPlugin",
+  "kind": "落ちている",
+  "upstream": "ir_reverb.js:2035-2038 に Direct Cut（チェックボックス）、Cut Offset（ms, -20〜50, step 0.1）、Decay（%, 10〜400, step 1）、Trim（%, 1〜100, step 1）の4つがある。",
+  "ours": "画面にも定義にも無い。Sources/EffeTuneLive/Generated/EffectCatalog.swift:1343-1351 のパラメータは cm/lt/cr/dw/de/dl/pd の7個だけ。上流でもこの4つはDSPのフィールドではなくホスト側のIR加工用（Vendor/effetune/dsp/plugins/reverb/ir_reverb/params.json の fields にも無い）。",
+  "fix": "IR を読み込む側の設定として Direct Cut / Cut Offset / Decay / Trim を持たせ、IR 準備時に適用する",
+  "severity": "high"
+ },
+ {
+  "type": "IRReverbPlugin",
+  "kind": "単位・表記",
+  "upstream": "選択肢に表示名が付く。ir_reverb.js:1995-2001 Channel Mode = Auto / Mono / Independent / True Stereo / Diagonal Matrix、:2010-2016 Latency = Zero / '{count} samples'（128,256,512,1024）、:2017-2022 Convolution Rate = Auto / Full / Half / Quarter。",
+  "ours": "保存値がそのまま出る。shots-all/IRReverbPlugin.png は「auto」「128」「auto」。EffectCatalog.swift:1344-1346 の `.enumeration([\"auto\", \"mono\", \"indep\", \"true\", \"multi\"])` などを Views/ParameterRow.swift:57-60 が `Text(name)` でそのまま表示している。",
+  "fix": "enumeration に表示名を持たせ、Picker はそちらを出す",
+  "severity": "medium"
+ },
+ {
+  "type": "IRReverbPlugin",
+  "kind": "名前",
+  "upstream": "ir_reverb.js:2017 `'Convolution Rate'`、:2032 `createCheckboxControl(this._t('irReverb.parameter.dryEnabled', 'Dry'), ...)`。",
+  "ours": "EffectCatalog.swift:1346 が label: \"Conv Rate\"、:1348 が label: \"Dry Enabled\"。画面も「Conv Rate」「Dry Enabled」。",
+  "fix": "label を \"Convolution Rate\" と \"Dry\" に揃える",
+  "severity": "low"
+ },
+ {
+  "type": "IRReverbPlugin",
+  "kind": "落ちている",
+  "upstream": "Auto のとき実際に選ばれたモード／レートを右に出す。ir_reverb.js:2003-2007（Channel Mode の行に span を足す）、:2023-2027（Convolution Rate 側）、中身は:1765-1786 で `→ True Stereo` `→ Half` のように書く。",
+  "ours": "該当する表示が無い。auto のままだと何が効いているのか分からない。",
+  "fix": "Channel Mode / Conv Rate が auto のとき、解決後の値を副表示に出す",
+  "severity": "low"
+ },
+ {
+  "type": "DattorroPlateReverbPlugin",
+  "kind": "名前",
+  "upstream": "dattorro_plate_reverb.js:558 `'Input Diff 1'`、:559 `'Input Diff 2'`、:561 `'Decay Diff 1'`、:563 `'Mod Depth'`、:564 `'Mod Rate'`。",
+  "ours": "shots-all/DattorroPlateReverbPlugin.png は「Input Diffusion1」「Input Diffusion2」「Decay Diffusion1」「Modulation Depth (samples)」「Modulation Rate (Hz)」。出どころは EffectCatalog.swift:1302,1303,1305,1307,1308 の label。",
+  "fix": "label を上流の短い表記に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "DattorroPlateReverbPlugin",
+  "kind": "単位・表記",
+  "upstream": "Bandwidth は step 0.001 で既定 0.9995（dattorro_plate_reverb.js:557、既定値は:17 `this.bw = 0.9995`）、Damping も step 0.001 で既定 0.0005（:562、:22 `this.dp = 0.0005`）。plugin-base.js:1318-1324 の number 入力はその値をそのまま出す。",
+  "ours": "画面は「1.00」「0.00」。Sources/EffeTuneLive/DSP/EffectSpec.swift:44-47 が |v|<10 のとき `String(format: \"%.2f\", v)` 固定なので、0.001 刻みの3桁目以降が消える。既定値が上限/下限に張り付いて見える。",
+  "fix": "step から小数桁を決める（step 0.001 なら3〜4桁出す）",
+  "severity": "medium"
+ },
+ {
+  "type": "FDNReverbPlugin",
+  "kind": "名前",
+  "upstream": "fdn_reverb.js:427 `'HF Damp'`、:429 `'Mod Depth'`、:430 `'Mod Rate'`。",
+  "ours": "shots-all/FDNReverbPlugin.png は「High Frequency Damp (dB/s)」「Modulation Depth (ct)」「Modulation Rate (Hz)」。EffectCatalog.swift:1326,1328,1329 の label。",
+  "fix": "label を \"HF Damp\" / \"Mod Depth\" / \"Mod Rate\" に揃える",
+  "severity": "low"
+ },
+ {
+  "type": "RSReverbPlugin",
+  "kind": "名前",
+  "upstream": "rs_reverb.js:402 `'Pre-Delay'`（ハイフン入り）。",
+  "ours": "shots-all/RSReverbPlugin.png は「Pre Delay (ms)」。EffectCatalog.swift:1361 の label: \"Pre Delay\"。",
+  "fix": "label を \"Pre-Delay\" にする",
+  "severity": "low"
+ },
+ {
+  "type": "RSReverbPlugin",
+  "kind": "操作面が違う",
+  "upstream": "rs_reverb.js:408 で High Damp のスライダー刻みが 100（`createParameterControl('High Damp', 1000, 20000, 100, ...)`）。1000〜20000 を190段で触る。",
+  "ours": "EffectCatalog.swift:1367 が step 1.0（生成元の Vendor/effetune/dsp/plugins/reverb/rs_reverb/params.json の highDamp も step 1）。ParameterRow.swift:78-84 がその step をそのまま Slider に渡すので19000段になり、指で狙った値に止まらない。",
+  "fix": "High Damp の step を 100 にする",
+  "severity": "low"
+ },
+ {
+  "type": "DattorroPlateReverbPlugin",
+  "kind": "単位・表記",
+  "upstream": "plugin-base.js:1305 `labelEl.textContent = `${label}${unit ? ' (' + unit + ')' : ''}:`` の通り単位はラベル側だけで、数値欄（:1318-1325 の number 入力）は数字だけを持つ。",
+  "ours": "数値欄にも単位を入れている（EffectSpec.swift:48 `return unit.isEmpty ? s : \"\\(s) \\(unit)\"`）。欄幅は Views/Components.swift:16 の `valueWidth: CGFloat = 68` 固定なので長い単位が切れる。実物は Dattorro の Mod Depth が「1.00 sa…」、FDN の HF Damp が「6.00 dB…」、RS の Diffusion が「0.70 ra…」。",
+  "fix": "数値欄は数字だけにする（単位はラベルの (…) に任せる）",
+  "severity": "medium"
+ },
+ {
+  "type": "CrosstalkCancellationPlugin",
+  "kind": "落ちている",
+  "upstream": "Vendor/effetune/plugins/spatial/crosstalk_cancellation.js:731-763 の createUI が、測定の割り当て(_createMeasurementGrid、同693-727 で ll/lr/rl/rr の4つの select と Refresh measurements ボタン)に続けて Taps(同740 createSelectControl)、Regularization 0-100%(741-742)、Max Gain 0-24dB(743-744)、Freq Low 20-2000Hz 対数(745-746)、Freq High 1000-20000Hz 対数(747-748)、Direct Window 2-50ms(749-750)、Strength(751-752)、Output Gain(753-754)、Latency(755-757) と状態表示(759-768)を並べる",
+  "ours": "スクショで出ているのは Latency Mode / Filter Delay Samples / Strength / Output Gain の4本だけ。EffectCatalog.swift:1542-1554 にもこの4つしかない。測定の割り当て・Taps・Regularization・Max Gain・Freq Low/High・Direct Window・状態表示が無い",
+  "fix": "測定スロット4つと設計用の6パラメータ＋状態行を足す。params.json 側に無いなら生成元から",
+  "severity": "high"
+ },
+ {
+  "type": "CrosstalkCancellationPlugin",
+  "kind": "操作面が違う",
+  "upstream": "crosstalk_cancellation.js:57 `this.fd = this.tp / 2;` と同109 `fd: this.tp / 2` のとおり fd は Taps から算出される内部値で、createUI(731-763)に fd の操作は無い",
+  "ours": "「Filter Delay Samples」を 0-65536 のスライダーとして触らせている(EffectCatalog.swift:1550)。Taps が無いので独立に動かせてしまう",
+  "fix": "fd の行を消して Taps を出す。fd は tp/2 で従わせる",
+  "severity": "medium"
+ },
+ {
+  "type": "CrosstalkCancellationPlugin",
+  "kind": "名前",
+  "upstream": "crosstalk_cancellation.js:755-757 `createSelectControl('Latency', CROSSTALK_CANCELLATION_LATENCIES.map(value => ({ value, label: `${value} samples` })), ...)`。ラベルは Latency、選択肢は「128 samples」",
+  "ours": "「Latency Mode」で選択肢は「128」(EffectCatalog.swift:1548)",
+  "fix": "ラベルを Latency、選択肢を「<n> samples」に",
+  "severity": "low"
+ },
+ {
+  "type": "CrosstalkCancellationPlugin",
+  "kind": "並び順",
+  "upstream": "crosstalk_cancellation.js:755-757 で Latency は Output Gain の後、design セクションの最後",
+  "ours": "Latency Mode が先頭(EffectCatalog.swift:1548 が offset 0)",
+  "fix": "Latency を最後に回す",
+  "severity": "low"
+ },
+ {
+  "type": "CrossfeedFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "crossfeed_filter.js:178 `this.createLogarithmicParameterControl('LPF Freq', 100, 20000, 100, this.lf, ...)`。対数スライダー",
+  "ours": "汎用の線形スライダー(ParameterRow.swift:85 `Slider(value: binding, in: Double(lo)...Double(hi), step: stride)`)。既定の 700Hz でつまみが左端に張り付き、travel の大半が 5kHz より上に消える",
+  "fix": "log 指定を ETParam に持たせるか、専用行で対数にする",
+  "severity": "medium"
+ },
+ {
+  "type": "CrossfeedFilterPlugin",
+  "kind": "名前",
+  "upstream": "crossfeed_filter.js:178 のラベルは 'LPF Freq'",
+  "ours": "「Low Pass Frequency」(EffectCatalog.swift:1539)",
+  "fix": "LPF Freq に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "CrossfeedFilterPlugin",
+  "kind": "落ちている",
+  "upstream": "crossfeed_filter.js:1-14 で Subtle Blend / Vintage Receiver / Living Room Speakers の3つをシステムプリセットとして持ち、同17-22 の getSystemPresetGroups で出す(js/ui/pipeline/plugin-preset-dialog.js:50-51,268 が拾う)",
+  "ours": "アプリ側にシステムプリセットの入口が無い(Sources 配下に systemPreset に相当する実装なし)",
+  "fix": "⋯ メニューに3つのプリセットを足す。createUI の外の話なので後回しでよい",
+  "severity": "low"
+ },
+ {
+  "type": "MSMatrixPlugin",
+  "kind": "操作面が違う",
+  "upstream": "ms_matrix.js:142-147 `this.createRadioGroup('Mode', [{ label: 'Encode', value: '0' }, { label: 'Decode', value: '1' }], ...)`",
+  "ours": "0-1 のスライダーで数値欄に「0」と出るだけ。Encode/Decode の語が画面のどこにも無い(EffectCatalog.swift:1565 が .number(isInteger: true))",
+  "fix": "kind を .enumeration([\"Encode\",\"Decode\"]) にする",
+  "severity": "medium"
+ },
+ {
+  "type": "MSMatrixPlugin",
+  "kind": "操作面が違う",
+  "upstream": "ms_matrix.js:159-163 `this.createCheckboxControl('Swap L/R', this.sw === 1, ...)`。ラベルは Swap L/R のチェックボックス",
+  "ours": "「Swap」という 0-1 のスライダー(EffectCatalog.swift:1568)",
+  "fix": "kind を .toggle、ラベルを Swap L/R に",
+  "severity": "medium"
+ },
+ {
+  "type": "PhaseSelectEqPlugin",
+  "kind": "操作面が違う",
+  "upstream": "phase_select_eq.js:846-857 で渡り(outer)は相対量で触らせる。Low/High Frequency Transition は 0-10 の oct(846-851)、Low/High Phase Transition は 0-180 の °差(852-857)。周波数と位相の絶対値は Core Low/High Frequency(838-841)と Core Low/High Phase(842-845)だけ。バランスだけは Core と Outer の絶対値4本(858-869)",
+  "ours": "FREQUENCY / PHASE / BALANCE の3グループとも Outer Low・Core Low・Core High・Outer High の絶対値4本で、Hz と ° の渡りに oct / °差の行が無い(PhaseSelectEqView.swift:955-984)",
+  "fix": "Hz は oct、位相は °差の行に差し替える(内部は ofl/ofh/opl/oph のまま換算)",
+  "severity": "medium"
+ },
+ {
+  "type": "PhaseSelectEqPlugin",
+  "kind": "並び順",
+  "upstream": "phase_select_eq.js:801-827 でバンドのタブが先頭、次に数値の並び(832-869)、Graph の Phase/Balance ラジオ(874-878)、いちばん最後に図(889-902)",
+  "ours": "図が先で、Phase/Balance と Move/Resize の帯がその上、タブと数値が図の下(PhaseSelectEqView.swift:368-379)",
+  "fix": "合わせるなら図を最後に落とす。ただし縦1列だと図が見えなくなるので、意図的なら据え置き",
+  "severity": "low"
+ },
+ {
+  "type": "PhaseSelectEqPlugin",
+  "kind": "落ちている",
+  "upstream": "phase_select_eq.js:806-822 で各タブに Enable Band のチェックボックスが乗っていて、タブを選ばずに他バンドの入切ができる。タブの文字も `Band ${index + 1}`(同820)",
+  "ours": "タブは番号だけ(PhaseSelectEqView.swift:893 `Text(\"\\(slot + 1)\")`)、入切は選択中のバンドの Enabled トグル1本だけ(同911-913)",
+  "fix": "タブに入切のチェックを足す。文字は Band n",
+  "severity": "low"
+ },
+ {
+  "type": "PhaseSelectEqPlugin",
+  "kind": "単位・表記",
+  "upstream": "phase_select_eq.js:236-239 の位相軸の目盛りは '-180°' '-90°' '0°' '+90°' '+180°' と度記号つき",
+  "ours": "「-180」「-90」「0」「+90」「+180」(PhaseSelectEqView.swift:486-488)。バランス軸の 100:0 などは一致",
+  "fix": "目盛りの文字に ° を足す",
+  "severity": "low"
+ },
+ {
+  "type": "PhaseSelectEqPlugin",
+  "kind": "図が違う",
+  "upstream": "phase_select_eq.js:842-845 で Core Low Phase は 0-179、Core High Phase は 1-180 と端が1度ずれている(核を潰せない)",
+  "ours": "どちらも 0...180(PhaseSelectEqView.swift:972-978)",
+  "fix": "上限下限を 0-179 / 1-180 に",
+  "severity": "low"
+ },
+ {
+  "type": "CrossfeedFilterPlugin",
+  "kind": "単位・表記",
+  "upstream": "plugin-base.js:1378 `valueInput.value = numericValue.toFixed(step < 0.01 ? 3 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0)))` で桁数は step で決まる。Level は step 0.1 なので「-6.0」",
+  "ours": "桁数を値の大きさで決めている(EffectSpec.swift:44-47 `abs(v) >= 100 ? \"%.0f\" : abs(v) >= 10 ? \"%.1f\" : \"%.2f\"`)ので「-6.00」。同じ理由で MS Matrix の Mid/Side Gain が「0.00」(上流は 0.0)、Stereo Blend の Stereo が「60.0」(上流は 60)、Crosstalk の Strength が「70.0」(上流は 70)",
+  "fix": "format の桁数を step から引く。ParameterRow を使う型すべてに効く",
+  "severity": "low"
+ },
+ {
+  "type": "AutoFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/auto_filter.js:329-331 — `const lfo = this.md === 'LFO';` / `for (const key of ['rt', 'wf', 'sp']) this._uiControls[key].style.display = lfo ? '' : 'none';` / `for (const key of ['sn', 'at', 'rl', 'dr']) this._uiControls[key].style.display = lfo ? 'none' : '';`。LFO なら Rate/Waveform/Stereo Phase の3本だけ、Envelope なら Sensitivity/Attack/Release/Direction の4本だけが出る。",
+  "ours": "shots-all/AutoFilterPlugin.png は Mode=LFO なのに Sensitivity/Attack/Release/Direction が下に並んで見えている。EffectCardView.swift:42-46 が node.spec.params を ForEach でそのまま全部出しており、md を見る所が無い。",
+  "fix": "md の値で7本の行を出し分ける",
+  "severity": "high"
+ },
+ {
+  "type": "FrequencyShifterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/frequency_shifter.js:372-380 — `this._modeRows.shiftRow.hidden = this.md !== 'Shift';` `this._modeRows.carrierRow.hidden = this.md !== 'Ring Mod';` `const barber = this.md === 'Barber-pole';` `minimumRow/maximumRow/rateRow/directionRow.hidden = !barber;`。Shift のときに見えるのは Mode / Shift / Stereo Phase / Mix の4本だけ。",
+  "ours": "shots-all/FrequencyShifterPlugin.png は Mode=Shift なのに Carrier Frequency / Minimum Shift / Maximum Shift / Rate / Direction まで9本全部出ている。9本中5本が今のモードでは効かない行。",
+  "fix": "md の値で Shift / Ring Mod / Barber-pole の3組に出し分ける",
+  "severity": "high"
+ },
+ {
+  "type": "ChorusPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/chorus.js:275-280 — `voices.hidden = !['Chorus', 'Ensemble'].includes(this.md);` `spread.hidden = this.md === 'Chorus' || !this._channelSelectionHasPair();` `feedback.hidden = this.md !== 'Flanger';` `mix.hidden = this.md === 'Vibrato';`",
+  "ours": "shots-all/ChorusPlugin.png は Mode=Chorus なのに Stereo Spread と Feedback が出ている（上流はどちらもこのモードで hidden）。EffectCardView.swift:42-46 に出し分けが無い。",
+  "fix": "md の値で vc / ss / fb / mx を出し分ける",
+  "severity": "high"
+ },
+ {
+  "type": "PhaserPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/phaser.js:298-299 — `_syncVisibility() { if (this._directionRow) this._directionRow.hidden = this.md !== 'Barber-pole'; ...`",
+  "ours": "shots-all/PhaserPlugin.png は Mode=Classic なのに Direction (Up) が出ている。Classic では掃引方向が無いので上流では隠れている行。",
+  "fix": "md が Barber-pole のときだけ Direction を出す",
+  "severity": "high"
+ },
+ {
+  "type": "AutoFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/auto_filter.js:354,355,358,362,363 — lf/hf/rt/at/rl が createLogarithmicParameterControl（plugin-base.js:1341-1358 で 0-100 の位置を log10 で値に変換）。",
+  "ours": "5本ともリニアスライダー。shots-all/AutoFilterPlugin.png で Minimum Frequency 200 Hz (20-20000) のつまみが左端に張り付いている（対数なら 1/3 の位置）。EffectCatalog.swift の ETParam に対数の印が無く、ParameterRow.swift:78-85 が lo...hi をそのまま Slider に渡す。",
+  "fix": "ETParam に対数の印を足し、ParameterRow で log10 の写像を挟む",
+  "severity": "medium"
+ },
+ {
+  "type": "PhaserPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/phaser.js:323 (`createLogarithmicParameterControl('Rate', 0.05, 10, 0.01, ...)`) と :325 (`createLogarithmicParameterControl('Center Frequency', 80, 8000, 1, ...)`)",
+  "ours": "shots-all/PhaserPlugin.png で Rate 0.50 Hz が左端近く、Center Frequency 1000 Hz が約1割の位置（対数なら Rate 44%・Center 55% 付近）。どちらもリニア。",
+  "fix": "rt と cf を対数写像にする",
+  "severity": "medium"
+ },
+ {
+  "type": "FrequencyShifterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/frequency_shifter.js:345-346 (`createLogarithmicParameterControl('Carrier Frequency', 0.1, 10000, 0.1, ...)`) と :349-350 (`createLogarithmicParameterControl('Rate', 0.01, 2, 0.01, ...)`)",
+  "ours": "shots-all/FrequencyShifterPlugin.png で Carrier Frequency 440 Hz (0.1-10000) がほぼ左端。リニアのまま。",
+  "fix": "cf と rt を対数写像にする",
+  "severity": "medium"
+ },
+ {
+  "type": "ChorusPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/chorus.js:298 — `createLogarithmicParameterControl('Rate', 0.05, 10, 0.01, ...)`",
+  "ours": "shots-all/ChorusPlugin.png で Rate 0.80 Hz のつまみが左端寄り（対数なら約57%）。リニア。",
+  "fix": "rt を対数写像にする",
+  "severity": "medium"
+ },
+ {
+  "type": "AutoPanPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/auto_pan.js:205-206 — `this._uiControls.rt = this.createLogarithmicParameterControl('Rate', 0.05, 20, 0.01, this.rt, this.setRt.bind(this), 'Hz', 'rt');`",
+  "ours": "shots-all/AutoPanPlugin.png で Rate 0.35 Hz (0.05-20) がほぼ左端（対数なら約33%）。リニア。他の5本は上流と一致。",
+  "fix": "rt を対数写像にする",
+  "severity": "medium"
+ },
+ {
+  "type": "RotarySpeakerPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/rotary_speaker.js:312 — `this._uiControls.xo = this.createLogarithmicParameterControl('Crossover', 200, 2000, 1, this.xo, this.setXo.bind(this), 'Hz', 'xo');`",
+  "ours": "shots-all/RotarySpeakerPlugin.png で Crossover 800 Hz のつまみが約35%（対数なら60%）。リニア。並び順・名前・単位は他8本とも一致。",
+  "fix": "xo を対数写像にする",
+  "severity": "medium"
+ },
+ {
+  "type": "TremoloPlugin",
+  "kind": "並び順",
+  "upstream": "Vendor/effetune/plugins/modulation/tremolo.js:250-256 — Rate / Depth / **Ch Phase** / Randomness / Randomness Cutoff / Randomness Slope / Ch Sync の順に appendChild。Ch Phase は3番目。",
+  "ours": "shots-all/TremoloPlugin.png は Rate / Depth / Randomness / Randomness Cutoff / Randomness Slope / Channel Phase / Channel Sync。Channel Phase が6番目。EffectCatalog.swift の params は offset 順（cp は offset 5）で並べており、これが画面順になっている。",
+  "fix": "cp を Depth の次に出す（表示順を offset と切り離す）",
+  "severity": "medium"
+ },
+ {
+  "type": "WowFlutterPlugin",
+  "kind": "並び順",
+  "upstream": "Vendor/effetune/plugins/modulation/wow_flutter.js:326-332 — Rate / Depth / **Ch Phase** / Randomness / Randomness Cutoff / Randomness Slope / Ch Sync。Ch Phase は3番目。",
+  "ours": "shots-all/WowFlutterPlugin.png は Channel Phase が6番目（Tremolo と同じ並び）。",
+  "fix": "cp を Depth の次に出す",
+  "severity": "medium"
+ },
+ {
+  "type": "TremoloPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/modulation/tremolo.js:252 `createParameterControl('Ch Phase', -180, 180, 1, ..., 'Deg.', 'cp')` と :256 `createParameterControl('Ch Sync', 0, 100, 1, ..., '%', 'cs')`",
+  "ours": "画面は「Channel Phase (degrees)」「Channel Sync (%)」。EffectCatalog.swift の label が \"Channel Phase\" / \"Channel Sync\"、unit が \"degrees\"。上流は略称 Ch と単位 Deg.。",
+  "fix": "label を Ch Phase / Ch Sync、unit を Deg. に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "WowFlutterPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/modulation/wow_flutter.js:328 `createParameterControl('Ch Phase', -180, 180, 1, ..., 'Deg.', 'cp')` と :332 `createParameterControl('Ch Sync', 0, 100, 1, ..., '%', 'cs')`",
+  "ours": "画面は「Channel Phase (deg)」「Channel Sync (%)」。単位も Tremolo 側は degrees、Wow Flutter 側は deg とこちらの中でも揃っていない。",
+  "fix": "label を Ch Phase / Ch Sync、unit を Deg. に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "PitchShifterPlugin",
+  "kind": "名前",
+  "upstream": "Vendor/effetune/plugins/modulation/pitch_shifter.js:374 — `'XFade Time', 20, 40, 0.1, this.xf,`",
+  "ours": "shots-all/PitchShifterPlugin.png は「Crossfade Time (ms)」。EffectCatalog.swift の label が \"Crossfade Time\"。",
+  "fix": "label を XFade Time にする",
+  "severity": "low"
+ },
+ {
+  "type": "DopplerDistortionPlugin",
+  "kind": "単位・表記",
+  "upstream": "Vendor/effetune/plugins/modulation/doppler_distortion.js:130 — `createParameterControl('Damping Factor', 0.0, 50.0, 0.1, this.df, this.setDf.bind(this), 'N·s/m', 'df')`（中黒）",
+  "ours": "shots-all/DopplerDistortionPlugin.png は「Damping Factor (N*s/m)」。EffectCatalog.swift の unit が \"N*s/m\"。",
+  "fix": "unit を N·s/m にする",
+  "severity": "low"
+ },
+ {
+  "type": "DopplerDistortionPlugin",
+  "kind": "単位・表記",
+  "upstream": "Vendor/effetune/plugins/modulation/doppler_distortion.js:128 — `createParameterControl('Speaker Mass', 0.001, 0.5, 0.001, ...)`。plugin-base.js:1318-1325 の `valueInput.step = step` で数値欄が 0.001 刻みを表示する。",
+  "ours": "EffectSpec.swift:42-47 の format が値の大きさだけで桁を決める（`abs(v) >= 10 ? %.1f : %.2f`）ので小数2桁止まり。画面は「0.03 kg」で、0.001 刻みで動かしても表示が変わらない値域がある。",
+  "fix": "format の桁を step から決める",
+  "severity": "low"
+ },
+ {
+  "type": "FrequencyShifterPlugin",
+  "kind": "単位・表記",
+  "upstream": "Vendor/effetune/plugins/plugin-base.js:1305 — `labelEl.textContent = \\`${label}${unit ? ' (' + unit + ')' : ''}:\\`` で単位はラベル側だけ。:1318-1325 の数値欄は `type=\"number\"` で数値のみを持つ。",
+  "ours": "EffectSpec.swift:47 が `\"\\(s) \\(unit)\"` と数値欄にも単位を付け、Components.swift:16 の valueWidth=68 で切れる。shots-all/FrequencyShifterPlugin.png の「0.00 de…」、PhaserPlugin.png の「3.00 oc…」「90.0 de…」、TremoloPlugin.png の「0.00 de…」、PitchShifterPlugin.png / PitchShifterHQPlugin.png の「0 semit…」、DopplerDistortionPlugin.png の「8.00 N…」「1.50 N*…」。",
+  "fix": "数値欄からは単位を外す（ラベルに (単位) が既にある）",
+  "severity": "low"
+ },
+ {
+  "type": "PitchShifterHQPlugin",
+  "kind": "落ちている",
+  "upstream": "Vendor/effetune/plugins/modulation/pitch_shifter_hq.js:94 — `container.appendChild(this._createStatusElement());`。:62-67 の `_executionStatusText()` が bypassed のとき「This sample rate is not supported. Pitch Shifter HQ is bypassed. Audio remains unchanged.」等（:5-12 の PITCH_SHIFTER_HQ_BYPASS_REASONS）を出す。",
+  "ours": "shots-all/PitchShifterHQPlugin.png は Pitch Shift と Fine Tune の2本だけで、状態を知らせる行が無い。バイパスに落ちたときに黙って素通りになる。",
+  "fix": "バイパス理由を出す行を足す",
+  "severity": "low"
+ },
+ {
+  "type": "ChorusPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Vendor/effetune/plugins/modulation/chorus.js:296 — Mode は `createRadioGroup('Mode', CHORUS_MODES, ...)`（5択が全部見えるラジオ）。Vendor/effetune/plugins/modulation/phaser.js:321,335 も Mode と Direction が createRadioGroup。",
+  "ours": "shots-all/ChorusPlugin.png / PhaserPlugin.png ともメニュー型の Picker（ParameterRow.swift:52-65 の `.pickerStyle(.menu)`）で、開くまで選択肢が見えない。上流が createSelectControl を使っている Auto Filter / Frequency Shifter / Rotary Speaker とは扱いを分けている。",
+  "fix": "Chorus と Phaser の Mode・Direction をセグメント表示にする",
+  "severity": "low"
+ },
+ {
+  "type": "ChorusPlugin",
+  "kind": "落ちている",
+  "upstream": "Vendor/effetune/plugins/modulation/chorus.js:18 — `return [{ label: '', presets: CHORUS_SYSTEM_PRESETS.map(preset => ({ ...preset })) }];`（:2-9 に Classic Chorus / Stereo Chorus / Ensemble / Flanger / Jet Flanger / Vibrato の6本）。js/ui/pipeline/plugin-preset-dialog.js:268 がこれをプリセット一覧に出す。modulation では auto_filter / auto_pan / chorus / frequency_shifter / phaser / rotary_speaker / wow_flutter の7型が持っている。",
+  "ours": "EffectCardView.swift にプリセットの入口が無い（:195 に「プリセットの UI も出さない」と書いてある）。createUI の外の機能なので分類外かもしれない。",
+  "fix": "プリセットを出すなら型ごとの system preset を読む",
+  "severity": "low"
+ },
+ {
+  "type": "AutoLevelerPlugin",
+  "kind": "図が無い",
+  "upstream": "LUFS の時間履歴グラフを持つ。縦は -48〜0 dB（`for (let db = -42; db <= -6; db += 6)` auto_leveler.js:545、y は `height * (1 - (value + 48) / 48)` :604）、横は直近 1024/60 秒（`const AUTO_LEVELER_HISTORY_SECONDS = 1024 / 60;` :5）、1 秒ごとの縦目盛り。線は入力（graph-trace）と出力（text-primary）の 2 本 :616-618、右端に現在の出力 LUFS を `toFixed(1) + ' dB'` で書く :630。軸名は 'LUFS (dB)' :560 と 'Time' :562。createUI が `container.appendChild(graphContainer)` :671。",
+  "ours": "図が一切無い。ETEffectViews.types に AutoLevelerPlugin が無い（EffectViews.swift:16-46）ので、EffectCatalog の 7 パラメータが汎用スライダーで並ぶだけ。スクリーンショット shots-all/AutoLevelerPlugin.png もスライダー 7 本のみ。",
+  "fix": "AutoLevelerView を作り、入出力 LUFS の時間履歴（縦 -48〜0 dB / 6 dB 目盛り）を描く",
+  "severity": "high"
+ },
+ {
+  "type": "PowerAmpSagPlugin",
+  "kind": "図が無い",
+  "upstream": "グラフを 2 枚並べる。左が 'Input Envelope' 単位 %・範囲 0〜100・目盛り 10（power_amp_sag.js:446-459）、右が 'Gain Reduction' 単位 dB・範囲 -12〜+2・目盛り 2（:463-476）。どちらも横が時間の履歴で、1 秒ごとの縦目盛りと、右上に現在値 `currentValue.toFixed(1) + ' ' + unit` :587。createUI が 2 枚を graphContainer に入れて追加 :683-685。",
+  "ours": "図が無い。ETEffectViews.types に PowerAmpSagPlugin が無い（EffectViews.swift:16-46）。shots-all/PowerAmpSagPlugin.png はスライダー 3 本と Monoblock のトグルだけ。",
+  "fix": "PowerAmpSagView を作り、入力エンベロープ(%)とゲインリダクション(dB)の 2 枚を時間履歴で描く",
+  "severity": "high"
+ },
+ {
+  "type": "TransientShaperPlugin",
+  "kind": "図が無い",
+  "upstream": "適用ゲインの時間履歴グラフを持つ。縦は -6〜+6 dB（`for (let db = -4; db <= 4; db += 2)` transient_shaper.js:319、y は `height * (1 - (value + 6) / 12)` :367）、横は直近 1024/60 秒（:5）で 1 秒ごとの縦目盛り。軸名は 'Gain (dB)' :334 と 'Time' :338。createUI が graphContainer を追加 :420。",
+  "ours": "図が無い。ETEffectViews.types に TransientShaperPlugin が無い（EffectViews.swift:16-46）。shots-all/TransientShaperPlugin.png はスライダー 7 本のみ。",
+  "fix": "TransientShaperView を作り、ゲイン履歴（縦 -6〜+6 dB）を描く",
+  "severity": "high"
+ },
+ {
+  "type": "BrickwallLimiterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Oversampling は 1x / 2x / 4x / 8x の 4 択の select。`[1, 2, 4, 8].forEach(factor => { ... option.textContent = factor + 'x'; ...})` brickwall_limiter.js:878-883、ラベルは 'Oversampling:' :873。",
+  "ours": "連続スライダー 1〜8。EffectCatalog.swift:255 が `kind: .number(min: 1.0, max: 8.0, step: 0.0, unit: \"\", isInteger: true)` なので ParameterRow.swift:84-88 の step 無しスライダーになり、3 / 5 / 6 / 7 も選べる。値は「1」表示で x が付かない（shots-all/BrickwallLimiterPlugin.png）。",
+  "fix": "1/2/4/8 の 4 択（enumeration か Picker）にする",
+  "severity": "medium"
+ },
+ {
+  "type": "BrickwallLimiterPlugin",
+  "kind": "並び順",
+  "upstream": "Input Gain(:841) → Threshold(:847) → Margin(:853) → Release(:859) → Lookahead(:865) → Oversampling(:873) の順に appendChild。",
+  "ours": "Threshold → Release → Lookahead → Oversampling → Input Gain → Margin。EffectCatalog.swift:251-257 の params.json 由来の順をそのまま並べている（shots-all/BrickwallLimiterPlugin.png）。",
+  "fix": "createUI の順に並べ替える",
+  "severity": "medium"
+ },
+ {
+  "type": "BrickwallLimiterPlugin",
+  "kind": "その他",
+  "upstream": "Margin のスライダーは -1.0〜0.0、刻み 0.01。`'Margin', -1.0, 0.0, 0.01, this.sm` brickwall_limiter.js:853（内部の検証は -3.00〜0.00 :799 と広いが、画面に出しているのは -1〜0）。",
+  "ours": "-3.0〜0.0。EffectCatalog.swift:257 が params.json の min -3 を使っている。",
+  "fix": "画面上の下限を -1.0 に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "CompressorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Ratio は対数スライダー。`createLogarithmicParameterControl('Ratio', 0.5, 20, 0.01, ...)` compressor.js:797（plugin-base.js:1393-1420 が log10 で 0-100 に写す）。params.json 側も `\"automation\": {\"normalization\": \"log\"}`。",
+  "ours": "線形スライダー。EffectCatalog.swift:269 は範囲と刻みしか持たず、ParameterRow.swift:84-88 が線形の Slider を出す。既定の 2.00 がつまみ左端から 8% の位置に来る（上流なら約 38%）。shots-all/CompressorPlugin.png。",
+  "fix": "ETParamKind に対数フラグを足して対数スライダーにする",
+  "severity": "medium"
+ },
+ {
+  "type": "ExpanderPlugin",
+  "kind": "操作面が違う",
+  "upstream": "Ratio は対数スライダー。`createLogarithmicParameterControl('Ratio', 0.05, 20, 0.01, ...)` expander.js:754（「Logarithmic scale for ratio」とコメントもある）。",
+  "ours": "線形スライダー。EffectCatalog.swift:285 + ParameterRow.swift:84-88。2.00 が左端寄りに張り付く（shots-all/ExpanderPlugin.png）。",
+  "fix": "Compressor と同じく対数スライダーにする",
+  "severity": "medium"
+ },
+ {
+  "type": "CompressorPlugin",
+  "kind": "図が違う",
+  "upstream": "ゲインリダクションはグラフ内の右端に縦棒で出す。`const meterX = width - 32;` compressor.js:756、フルスケールは 60 dB（`Math.min(height, (Math.abs(clampedGr) / 60) * height)` :774）。ratio < 1 のときは +20 dB でクリップして下から上へ伸ばし、ratio > 1 では上から下へ（:764-785）。数値は出さない。",
+  "ours": "グラフの下に横棒。CompressorView.swift:52-59 が `range: 0...24, ticks: [0, 6, 12, 18, 24]` の MeterView を置く。向きの切り替えは無い。上流の 60 dB に対して 24 dB。",
+  "fix": "レンジを 0〜60 dB にし、ratio < 1 の向きも上流に合わせる",
+  "severity": "medium"
+ },
+ {
+  "type": "ExpanderPlugin",
+  "kind": "図が違う",
+  "upstream": "グラフ内の左端に縦棒。`ctx.fillRect(0, 0, meterWidth, boostHeight)` expander.js:742、フルスケール 60 dB（:732）。ratio < 1 は下から上、ratio > 1 は上から下（:735-744）。",
+  "ours": "グラフの下に横棒、`range: 0...24, ticks: [0, 6, 12, 18, 24]`（ExpanderView.swift:53-58）。向きの区別なし。",
+  "fix": "レンジを 0〜60 dB にし、ratio による向きも合わせる",
+  "severity": "medium"
+ },
+ {
+  "type": "CompressorPlugin / ExpanderPlugin / GatePlugin",
+  "kind": "図が違う",
+  "upstream": "棒の数値は画面に出さない。描くのは塗った矩形だけ（compressor.js:752-786 / expander.js:709-747 / gate.js:783-806 に fillText は無い）。さらに棒の値は平滑してから描き、0.01 dB 未満は 0 に落とす（compressor.js:585-598）。",
+  "ours": "グラフの上に生のテレメトリを文字で出す。CompressorView.swift:50 の `caption: \"GR \\(ETFormat.db($0))\"`、ExpanderView.swift:48、GateView.swift:50。無音のスクリーンショットで Gate が「GR 504.0 dB」、Expander が「GAIN CHANGE 96.0 dB」と出て棒も振り切っている。",
+  "fix": "数値のキャプションを外すか、上流と同じ平滑と 0 落としを通してから出す",
+  "severity": "medium"
+ },
+ {
+  "type": "AutoLevelerPlugin",
+  "kind": "単位・表記",
+  "upstream": "Target LUFS の単位は 'dB'。`createParameterControl('Target LUFS', -36, 0, 0.1, ..., 'dB', 'tg')` auto_leveler.js:648。ラベルは plugin-base.js:1302 の `${label} (${unit}):` で「Target LUFS (dB):」になる。",
+  "ours": "単位が「LUFS」。EffectCatalog.swift:235 が params.json の unit をそのまま使うので、ラベルが「Target Lufs (LUFS)」、値欄も「−18.0 L…」と桁溢れで切れる（shots-all/AutoLevelerPlugin.png）。",
+  "fix": "単位を dB にする（値欄の幅にも収まる）",
+  "severity": "medium"
+ },
+ {
+  "type": "AutoLevelerPlugin",
+  "kind": "名前",
+  "upstream": "'Target LUFS'(:648)、'Attack Time'(:652)、'Release Time'(:653)。",
+  "ours": "「Target Lufs」「Attack」「Release」。EffectCatalog.swift:235, 239, 240。",
+  "fix": "表示名を上流の文字列に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "PowerAmpSagPlugin",
+  "kind": "名前",
+  "upstream": "'Sensitivity'(power_amp_sag.js:609)、'Stability'(:619)、'Recovery Spd'(:629)。",
+  "ours": "「Sag Sensitivity」「Power Stability」「Recovery Speed」。EffectCatalog.swift:375-377。",
+  "fix": "表示名を上流に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "TransientShaperPlugin",
+  "kind": "名前",
+  "upstream": "'Smoothing'。`createParameterControl('Smoothing', 0.1, 20.0, 0.1, this.sm, ...)` transient_shaper.js:403。",
+  "ours": "「Gain Smoothing」。EffectCatalog.swift:395。",
+  "fix": "「Smoothing」にする",
+  "severity": "low"
+ },
+ {
+  "type": "CompressorPlugin / ExpanderPlugin / GatePlugin",
+  "kind": "図が違う",
+  "upstream": "軸に名前を書く。`ctx.fillText('in', width / 2, height - 5)` と回転させた 'out'（compressor.js:737,742 / expander.js:704,709 / gate.js:771,776）。格子のラベルも単位付きで `${db}dB`（compressor.js:688,691）。",
+  "ours": "軸名が無く、目盛りは「−48」のように数字だけ（shots-all の 3 枚、TransferCurveGraph.swift:134-141 の GraphCanvas）。",
+  "fix": "軸名 in / out を足し、目盛りに dB を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "CompressorPlugin / ExpanderPlugin / GatePlugin",
+  "kind": "図が違う",
+  "upstream": "1:1 の参照線は引かない。描くのは格子・伝達曲線・軸名だけ（compressor.js:672-744、expander.js:638-711、gate.js:686-778）。",
+  "ours": "入出力が等しい位置に点線の対角線を引く。TransferCurveGraph.swift:143-152（`showsUnity` の既定が true、:103）。",
+  "fix": "dynamics の 3 つは showsUnity: false にする",
+  "severity": "low"
+ },
+ {
+  "type": "CompressorPlugin / ExpanderPlugin / GatePlugin",
+  "kind": "並び順",
+  "upstream": "スライダーを 6 本すべて足してから、最後にグラフを足す。`container.appendChild(graphContainer)` は compressor.js:817 / expander.js:774 / gate.js:835 で、Threshold〜Gain の appendChild より後。",
+  "ours": "グラフが先、スライダーが後。CompressorView.swift:40-63、ExpanderView.swift:38-63、GateView.swift:40-63。",
+  "fix": "上流に揃えるならグラフを ForEach の後ろへ（他の画面も同じ作りなので、全体の方針として決める）",
+  "severity": "low"
+ },
+ {
+  "type": "CompressorPlugin / ExpanderPlugin / GatePlugin",
+  "kind": "単位・表記",
+  "upstream": "Ratio のラベルに単位が付く。Compressor / Expander は '1:'（compressor.js:797 / expander.js:754）、Gate は ':1'（gate.js:815）。plugin-base.js:1302 で「Ratio (1:):」のように出る。",
+  "ours": "「Ratio」だけ。EffectCatalog.swift:269, 285, 301 はいずれも `unit: \"\"`（shots-all の 3 枚）。",
+  "fix": "Ratio の単位を 1: / :1 にする",
+  "severity": "low"
+ },
+ {
+  "type": "CompressorPlugin / ExpanderPlugin / GatePlugin",
+  "kind": "図が違う",
+  "upstream": "グラフは正方形。`canvas.style.width = '200px'; canvas.style.height = '200px';`（compressor.js:807-808 / expander.js:764-765 / gate.js:825-826）で、入力軸と出力軸の目盛り間隔が等しく 45 度が 45 度に見える。",
+  "ours": "横長。高さは固定 170pt（GraphCanvas.swift:25）で幅は画面いっぱい。スクリーンショットで約 2:1、素通しの線が 45 度にならない。",
+  "fix": "伝達曲線の図は縦横比 1:1 にする",
+  "severity": "low"
+ },
+ {
+  "type": "ExciterPlugin",
+  "kind": "図が無い",
+  "upstream": "Vendor/effetune/plugins/saturation/exciter.js:443-465 で図を2枚作る。1枚目 `className: 'exciter-hpf-graph'` は HPF の周波数特性（同 231-260: x は 20-20000Hz の log、y は -60..+12dB、0dB 線だけ明るくする）、2枚目 `exciter-saturation-graph` は tanh の伝達曲線（同 327-390、x/y とも -1..1）。",
+  "ours": "図が1枚も無い。EffectViews.swift の `types` に \"ExciterPlugin\" が無く、汎用スライダーだけ。スクショもスライダー5本のみ。",
+  "fix": "tanh 側は SaturationShaperCurve を dr/bs/mx で流用、HPF 側は他の EQ 系と同じ周波数応答グラフを1枚足す",
+  "severity": "high"
+ },
+ {
+  "type": "ExciterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "exciter.js:404-414 — `slopes = [{0,'Off'},{1,'6dB/oct'},{2,'12dB/oct'}]` を `createSelectControl('HPF Slope', ...)` で選ばせる。",
+  "ours": "EffectCatalog.swift:1414 が `highPassSlope` を `.number(min:0, max:2, step:1, isInteger:true)` として持つので、ParameterRow の数値スライダーになる。スクショの表示は「High Pass Slope … 1」で、6dB/oct とは読めない。",
+  "fix": "カタログ側で hs を enumeration([\"Off\",\"6dB/oct\",\"12dB/oct\"]) にする",
+  "severity": "high"
+ },
+ {
+  "type": "ExciterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "exciter.js:398-401 — `createLogarithmicParameterControl('HPF Freq', 500, 10000, 10, ...)` で対数スライダー。",
+  "ours": "ParameterRow.swift:79-83 は常に `Slider(value:in:step:)` の線形。スクショでも 3000Hz のつまみが左から約29%（線形の 26% 相当。対数なら 60% の位置になる）。",
+  "fix": "kind に対数の印を持たせ、ParameterRow で log スケールを使う",
+  "severity": "medium"
+ },
+ {
+  "type": "ExciterPlugin",
+  "kind": "名前",
+  "upstream": "exciter.js:399「HPF Freq」、同 410「HPF Slope」。",
+  "ours": "「High Pass Frequency (Hz)」「High Pass Slope」（EffectCatalog.swift:1413-1414、params.json の name 由来）。",
+  "fix": "カタログの label を上流の表示名に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "SubSynthPlugin",
+  "kind": "図が無い",
+  "upstream": "Vendor/effetune/plugins/saturation/sub_synth.js:388-405 で `sub-synth-graph` を1枚置き、同 429-552 の drawGraph が x=5..1000Hz の log・y=-30..+6dB に、dry の HPF 応答と sub の LPF+HPF+Sub Level 応答の2本を引く。軸名は同 479-483 の「Frequency (Hz)」「Level (dB)」。",
+  "ours": "図が無い。EffectViews.swift の `types` に \"SubSynthPlugin\" が無く、スクショもスライダー8本のみ。",
+  "fix": "周波数応答グラフを1枚足し、dry と sub の2本を引く",
+  "severity": "high"
+ },
+ {
+  "type": "SubSynthPlugin",
+  "kind": "操作面が違う",
+  "upstream": "sub_synth.js:340-362 の createSlopeSelect が `[0,-6,-12,-18,-24]` を「Off / 6dB/oct / 12dB/oct / …」の select にして、周波数の行へ `subLpfRow.appendChild(...)`（同 371, 378, 386）で抱き合わせる。",
+  "ours": "傾きが独立したスライダー（EffectCatalog.swift:1489-1494 の `.number(min:-24, max:0, step:6, unit:\"dB/oct\")`）。スクショの値欄は「−12 dB/…」と切れていて、0 も「Off」でなく「0 dB/oct」と出る。",
+  "fix": "傾きを enumeration にして周波数の行と同じ段に入れ、0 は Off と表示する",
+  "severity": "medium"
+ },
+ {
+  "type": "SubSynthPlugin",
+  "kind": "並び順",
+  "upstream": "sub_synth.js:400-405 — Sub Level → Sub LPF → Sub HPF → Dry Level → Dry HPF → 図 の順で append。",
+  "ours": "カタログ順のまま Sub Level → Dry Level → Sub LPF → Sub HPF → Dry HPF（EffectCatalog.swift:1487-1495、スクショも同じ）。Dry Level が sub の2本より前に来る。",
+  "fix": "専用画面を作り、上流の順で並べる",
+  "severity": "medium"
+ },
+ {
+  "type": "SubSynthPlugin",
+  "kind": "操作面が違う",
+  "upstream": "sub_synth.js:366, 373, 381 — Sub LPF / Sub HPF / Dry HPF はいずれも `createLogarithmicParameterControl(..., 5, 400, 1, ...)`。",
+  "ours": "線形スライダー（ParameterRow.swift:79-83）。スクショで 160Hz のつまみが左から約41%（線形 39% 相当。対数なら 79%）。",
+  "fix": "Hz のこの3本を対数スライダーにする",
+  "severity": "medium"
+ },
+ {
+  "type": "SubSynthPlugin",
+  "kind": "名前",
+  "upstream": "sub_synth.js:366「Sub LPF」、373「Sub HPF」、381「Dry HPF」。",
+  "ours": "「Sub Low Pass Frequency」「Sub High Pass Frequency」「Dry High Pass Frequency」（EffectCatalog.swift:1489-1494）。",
+  "fix": "カタログの label を上流の表示名に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "BandwidthExtenderPlugin",
+  "kind": "操作面が違う",
+  "upstream": "bandwidth_extender.js:99-101 `_syncCutoffVisibility()` が `this._manualCutoffRow.hidden = this.cm !== 'Manual'`。createUI の最後（同 120）でも呼ぶので、既定の Auto では Manual Cutoff の行は出ない。",
+  "ours": "Cutoff Mode が Auto でも「Cutoff Frequency (Hz) 16000」の行が出ている（スクショ）。汎用スライダーは条件付きの出し分けを持たない。",
+  "fix": "cm が Manual のときだけ cf の行を出す",
+  "severity": "medium"
+ },
+ {
+  "type": "BandwidthExtenderPlugin",
+  "kind": "名前",
+  "upstream": "bandwidth_extender.js:112-113 のラジオは label が 'Cutoff'、同 116 の行は 'Manual Cutoff'。",
+  "ours": "「Cutoff Mode」「Cutoff Frequency」（EffectCatalog.swift:1382-1383）。ヘッダの副題も「Cutoff Mode Auto」。",
+  "fix": "label を Cutoff / Manual Cutoff にする",
+  "severity": "low"
+ },
+ {
+  "type": "BandwidthExtenderPlugin",
+  "kind": "落ちている",
+  "upstream": "bandwidth_extender.js:119 `container.appendChild(this._createStatusElement())`。バイパス時に同 76-80 の文（「This sample rate is not supported. Bandwidth Extender is bypassed. Audio remains unchanged.」など）を出す枠。",
+  "ours": "状態を出す枠が無い。",
+  "fix": "バイパス理由を出す1行を足す（出す状態が無ければ据え置きでよい）",
+  "severity": "low"
+ },
+ {
+  "type": "HardClippingPlugin",
+  "kind": "単位・表記",
+  "upstream": "hard_clipping.js:300-304 — `{value:'both', label:'Both Sides'}, {value:'positive', label:'Positive Only'}, {value:'negative', label:'Negative Only'}` で、画面に出るのは label 側。",
+  "ours": "スクショの Mode は「both」。EffectCatalog.swift:1429 が `.enumeration([\"both\",\"positive\",\"negative\"])` で、保存値をそのまま出している。ヘッダ副題も「Mode both」。",
+  "fix": "enumeration の表示名を Both Sides / Positive Only / Negative Only にする",
+  "severity": "medium"
+ },
+ {
+  "type": "HardClippingPlugin",
+  "kind": "並び順",
+  "upstream": "hard_clipping.js:289-345 — Threshold → Mode → 図 の順で append。",
+  "ours": "HardClippingView.swift:38-52 が図を先に置き、その下に Threshold と Mode。",
+  "fix": "図をパラメータの後ろへ移す",
+  "severity": "low"
+ },
+ {
+  "type": "SaturationPlugin",
+  "kind": "並び順",
+  "upstream": "saturation.js:214-241 — Drive → Bias → Mix → 図 → Gain の順。図は Mix と Gain の間。",
+  "ours": "SaturationView.swift:39-50 が図を先頭に置き、その下に Drive/Bias/Mix/Gain。",
+  "fix": "図を Mix と Gain の間へ移す",
+  "severity": "low"
+ },
+ {
+  "type": "HarmonicDistortionPlugin",
+  "kind": "名前",
+  "upstream": "harmonic_distortion.js:268-283 — 「2nd Harm」「3rd Harm」「4th Harm」「5th Harm」。",
+  "ours": "「Second Harmonic (%)」「Third Harmonic (%)」「Fourth Harmonic (%)」「Fifth Harmonic (%)」（スクショ、EffectCatalog.swift:1441-1444）。",
+  "fix": "カタログの label を上流の表示名に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "HarmonicDistortionPlugin",
+  "kind": "単位・表記",
+  "upstream": "harmonic_distortion.js:285-287 — `createParameterControl('Sensitivity', 0.1, 2.0, 0.01, this.sn, ..., 'x')` なので、plugin-base.js:1305 の書式で「Sensitivity (x):」と出る。",
+  "ours": "「Sensitivity」で単位なし、値欄も「0.50」（EffectCatalog.swift:1445 は unit: \"\"）。",
+  "fix": "sn の unit に x を入れる",
+  "severity": "low"
+ },
+ {
+  "type": "HarmonicDistortionPlugin",
+  "kind": "並び順",
+  "upstream": "harmonic_distortion.js:291-303 — 図は5本のスライダーの後ろ（一番下）。",
+  "ours": "HarmonicDistortionView.swift:34-44 が図を先頭に置く。",
+  "fix": "図をスライダーの後ろへ移す",
+  "severity": "low"
+ },
+ {
+  "type": "SaturationPlugin / HardClippingPlugin / HarmonicDistortionPlugin / DynamicSaturationPlugin（共通 SaturationShaperCurve）",
+  "kind": "図が違う",
+  "upstream": "4本とも軸の書き方が同じ。saturation.js:175-198（hard_clipping.js:217-250、harmonic_distortion.js:200-221、dynamic_saturation.js:256-278 も同文）で、下中央に「in」、左中央に回転させて「out」、格子の ±0.5 の位置に「-6dB」を4箇所。素通しの対角線は引いていない。",
+  "ours": "SaturationShaperCurve.swift:123-131 の amplitudeAxis が -1.0/-0.5/0/0.5/1.0 の数字目盛りで、in/out の軸名も -6dB の表記も無い。さらに同 63-68 で素通しの破線を追加している（スクショで対角の点線）。",
+  "fix": "据え置くなら理由をコメントのままにする。合わせるなら目盛りを -6dB 表記＋in/out の軸名にする",
+  "severity": "low"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "tube_simulator.js:7332-7396 `_createTabbedControls` が 24 個の操作を Input / Driver / Power / Transformer / Output の5タブに分け、role=tablist で1枚ずつ出す。",
+  "ours": "TubeSimulatorView.swift:679-688 の `parameters` が `ForEach(node.spec.params)` で 24 本を一列に並べる。画面上部の帯（Stage 1/Stage 2/Push/Pull）は図の面を選ぶもので、パラメータのタブではない。",
+  "fix": "上流の5タブと同じ区切りでパラメータを分ける",
+  "severity": "high"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "tube_simulator.js:6355-6362 `_syncPowerSectionVisibility` が、os==='Line' なら _powerRows を、os!=='Power' なら _ppRows（pt/pb/kr/st/zp）を、os!=='SingleEnded' なら _seRows（sd/sb/sr/sp）を hidden にする。",
+  "ours": "出し分けが無く、Push-Pull 用と SE 用が常に両方出る（TubeSimulatorView.swift:679-688 は全 params をそのまま並べる）。",
+  "fix": "os の値で pp 系 / se 系 / 変圧器系の行を出し分ける",
+  "severity": "high"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "tube_simulator.js:7345「Driver Type」、7353「Output Circuit」、7357「Power Tubes」、7358「Output B+」、7362「SE Triode」、7363「SE B+」、7364「SE Cathode Resistor」、7377「Push-Pull Primary」、7380「SE Primary」、7383「Assumed Speaker Load」、7395「Wet/Dry Mix」。",
+  "ours": "順に「Tube」「Output Stage」「Power Tube」「Power B Plus」「Se Tube」「Se B Plus」「Se Cathode Resistor」「Primary Impedance」「Se Primary Impedance」「Speaker Load」「Mix」（EffectCatalog.swift:1504-1526）。",
+  "fix": "カタログの label を上流の表示名に合わせる",
+  "severity": "medium"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "単位・表記",
+  "upstream": "tube_simulator.js:17-57 の TUBE_SIMULATOR_ENUM_ABI は values と labels を分けていて、画面に出るのは labels 側（同 7327-7330 の abiOptions）。st は「0% / 20% / 43%」、zp は「6.0 kΩ / 6.6 kΩ / 8.0 kΩ」、sl は「4 Ω / 8 Ω / 15 Ω / 16 Ω」、sp は「2.5 kΩ / …」、pt は「EL84 ×2 / …」、os は「Line / Push-Pull Power / SE Triode」。",
+  "ours": "EffectCatalog.swift:1513-1526 の enumeration が保存値そのもの（\"0\",\"20\",\"43\" / \"6.0\" / \"4\" / \"2.5\" / \"EL84\" / \"SingleEnded\"）で、Picker にそのまま出る。単位も桁の意味も画面から消えている。",
+  "fix": "enumeration に表示名の列を持たせ、Picker は labels を出す",
+  "severity": "medium"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "単位・表記",
+  "upstream": "tube_simulator.js:7336「Source Z」の unit は 'kΩ'、7359「Cathode Resistor」は 'Ω / valve'、7384「Actual Speaker Load」は 'Ω'。",
+  "ours": "「kOhm」「Ohm」（EffectCatalog.swift:1507-1520）。スクショでは値欄が狭く「10.0 kO…」と切れている。",
+  "fix": "unit を kΩ / Ω にする（値欄の幅も要確認）",
+  "severity": "low"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "並び順",
+  "upstream": "tube_simulator.js:7333-7396 のタブ内の順は Input(dr, iv, sz) / Driver(tp, bi, pv, su, nf) / Power(os, pt, pb, kr, sd, sb, sr) / Transformer(st, zp, sp, sl, rl) / Output(og, sg, ag, mx)。さらに 7506-7512 は「Settings first, then the read-outs」で、操作 → 図の面を選ぶ行 → 図 → 数値 → 状態 の順。",
+  "ours": "カタログ順（dr, tp, bi, pv, sz, su, og, mx, iv, nf, os, …）でそのまま並ぶ。スクショでも Output Trim と Mix が Input Reference・Negative Feedback より前。全体も TubeSimulatorView.swift:243-256 で 面の帯 → 図 → 数値 → 区切り → パラメータ の順。",
+  "fix": "タブ分けに合わせて並べ直し、図と数値をパラメータの後ろへ移す",
+  "severity": "medium"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "tube_simulator.js:7486-7497 が数値を12個出す（STAGE 1 BIAS / STAGE 2 BIAS / B+ / STAGE 1 PLATE − B+ SAG / STAGE 2 PLATE − B+ SAG / INPUT REFERENCE (0 dBFS) / STAGE 1 EXTERNAL INPUT (0 dBFS) / POWER LTP BALANCE / POWER B+ / SPEAKER OUTPUT (100 ms) / SPEAKER REAL POWER (100 ms) / TRANSFORMER FLUX）。",
+  "ours": "TubeSimulatorView.swift:583-612 は面ごとに 3〜5 個だけ（スクショの Pull では LTP BALANCE / POWER B+ / SPEAKER / REAL POWER / FLUX）。PLATE − B+ SAG 2本、INPUT REFERENCE、STAGE 1 EXTERNAL INPUT はどの面にも出ない。",
+  "fix": "欠けている4項目を足す（テレメトリからは引ける）",
+  "severity": "medium"
+ },
+ {
+  "type": "TubeSimulatorPlugin",
+  "kind": "図が違う",
+  "upstream": "tube_simulator.js:7115-7121 で x に「Vak (V)」、y に「Ia (mA)」の軸名を書く。面の選択は同 6315-6322 の Graph ラジオ3択（『Stage 1 / Stage 2』『Push / Pull』『SE Triode』）で、選んだ群の2枚を同 7091-7104 で横に並べて描く。",
+  "ours": "軸名が無く数字の目盛りだけ（TubeSimulatorView.swift:456-474。スクショの y は 103.0/77.3/… の mA 値、x は 0/82/165/247/330）。面の帯は Stage 1 / Stage 2 / Push / Pull の1枚ずつ（同 339-349）。1枚ずつにしたのは幅の都合で TubeSimulatorView.swift:15-16 に理由が書いてある。",
+  "fix": "軸名 Vak (V) / Ia (mA) を出す。面の分け方は据え置きでよい",
+  "severity": "low"
+ },
+ {
+  "type": "（共通）ParameterRow — saturation の全型",
+  "kind": "単位・表記",
+  "upstream": "plugin-base.js:1378 — 小数桁は step で決める：`toFixed(step < 0.01 ? 3 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0)))`。step=1 の Sub HPF は「5」、step=0.1 の 2nd Harm は「2.0」、step=1 の Cone Motion Mix は「20」。",
+  "ours": "EffectSpec.swift:44-47 が値の大きさで決める（|v|>=100 は 0 桁、>=10 は 1 桁、それ以外は 2 桁）。スクショでは「5.00 Hz」「2.00 %」「20.0 %」「1.50」。",
+  "fix": "format を step 基準にする",
+  "severity": "low"
+ },
+ {
+  "type": "NoteSpectrogramPlugin",
+  "name": "Note Spectrogram",
+  "kind": "落ちている",
+  "upstream": "createUI が表示専用の操作を5つ作る。note_spectrogram.js:711-714 `createRadioGroup('Color', MULTI_F0_COLORS, ...)`、:715-718 `'Pitch Resolution', MULTI_F0_RESOLUTIONS`（Semitone=1/12 Octave / High=1/60 Octave、定数は :24-27）、:719-722 `'Layout', MULTI_F0_LAYOUTS`（Vertical/Horizontal、:28）、:723-725 `createCheckboxControl('Volume', ...)`、:726-729 `createParameterControl('Time Span', 1, 10, 1, this.ts, ..., 's', 'ts')`。",
+  "ours": "3つのスライダーだけ（スクショ: Minimum Midi / Maximum Midi / Regular Candidates）。EffectCatalog.swift:29-33 の params が mn/mx/nc の3本で、cl・pr・ly・vl・ts は DSP のパラメータでないため params.json に無い。NoteSpectrogramView.swift:32 に「1/60オクターブの表示は作っていない」と書いてある。",
+  "fix": "表示専用の状態を View 側に @State で持ち、Picker/Toggle/スライダーを足す",
+  "severity": "high"
+ },
+ {
+  "type": "NoteSpectrogramPlugin",
+  "name": "Note Spectrogram",
+  "kind": "図が違う",
+  "upstream": "ロールの右に鍵盤を描く。note_spectrogram.js:1031-1032 で `gutter = MULTI_F0_HORIZONTAL_KEY_GUTTER_CSS_PX * dpr`（= 28*1.6 css px）と `blackKeyDepth`、:1033 `rollWidth = width - gutter`。:1126-1150 が白鍵を confidence で光らせながら `fillRect(rollWidth, ...)`、:1166-1178 が黒鍵、:1202 以降で鍵の上に `C{octave}` の字を置く。",
+  "ours": "鍵盤は無く、左の軸に音名の字だけ。NoteSpectrogramView.swift:81-83 で `ETAxis.linear(..., label: { ETNoteBand.name(...) })`、:85 の insets leading 30。スクショでは C2〜C6 のラベルが左に並ぶだけ。",
+  "fix": "右に鍵盤の帯を描き、最新列の confidence で塗る",
+  "severity": "high"
+ },
+ {
+  "type": "NoteSpectrogramPlugin",
+  "name": "Note Spectrogram",
+  "kind": "名前",
+  "upstream": "note_spectrogram.js:734-735 `createNoteRangeControl('Lowest Note', this.mn, ...)`、:741-742 `'Highest Note', this.mx`。値の欄は音名で出す（:675 `valueInput.value = multiF0NoteName(value)`、:693 も同じ）。",
+  "ours": "「Minimum Midi」「Maximum Midi」で、値は生の MIDI 番号（スクショ: 28 / 91）。EffectCatalog.swift:30-31 の label が \"Minimum Midi\" / \"Maximum Midi\"。",
+  "fix": "label を Lowest Note / Highest Note にし、値の表示を音名へ",
+  "severity": "medium"
+ },
+ {
+  "type": "NoteSpectrogramPlugin",
+  "name": "Note Spectrogram",
+  "kind": "図が違う",
+  "upstream": "横の罫を C と F の2種類で引く。note_spectrogram.js:1188-1202、`for (let midi = 24; ...)` の中で `if (!isC && midi % 12 !== 5) continue;` とし、C は `graph-grid-strong`、F は `graph-grid-subtle`（:1196-1197）。",
+  "ours": "C だけ。NoteSpectrogramView.swift:190-196 `noteTicks` が `range.filter { $0 % 12 == 0 }`。スクショの横罫も C の位置だけ。",
+  "fix": "F（midi%12==5）の罫を細い線で足す",
+  "severity": "medium"
+ },
+ {
+  "type": "NoteSpectrogramPlugin",
+  "name": "Note Spectrogram",
+  "kind": "名前",
+  "upstream": "note_spectrogram.js:730-733 `createParameterControl('Regular Note Limit', 1, 16, 1, this.nc, ..., 'notes', 'nc')`。単位は notes。",
+  "ours": "「Regular Candidates」で単位無し（スクショ: 8）。EffectCatalog.swift:32 の label \"Regular Candidates\"、unit \"\"。",
+  "fix": "label を Regular Note Limit、unit を notes に",
+  "severity": "low"
+ },
+ {
+  "type": "NoteSpectrogramPlugin",
+  "name": "Note Spectrogram",
+  "kind": "並び順",
+  "upstream": "note_spectrogram.js:748-755 の appendChild の順が Color → Pitch Resolution → Layout → Volume → Time Span → Regular Note Limit → Lowest Note → Highest Note。",
+  "ours": "Minimum Midi → Maximum Midi → Regular Candidates。NoteSpectrogramView.swift:67 が `node.spec.params` をそのまま並べ、EffectCatalog.swift:30-32 の順が mn/mx/nc。",
+  "fix": "nc を mn/mx より前に",
+  "severity": "low"
+ },
+ {
+  "type": "OscilloscopePlugin",
+  "name": "Oscilloscope",
+  "kind": "単位・表記",
+  "upstream": "どちらも ms のつまみ。oscilloscope.js:213-223 `createParameterControl('Display Time', 1, 100, 1, (this.displayTime * 1000).toFixed(0), ..., 'ms', 'displayTime', (value) => value * 1000)`、:319-328 `'Holdoff', 0.1, 10, 0.1, (this.holdoff * 1000).toFixed(1), ..., 'ms'`。コメントも :221 / :326 に「The widget is in ms while the model holds seconds」。",
+  "ours": "秒のまま。スクショで「Display Time (s) = 0.01 s」「Holdoff (s) = 0.00 s」。既定の holdoff は 0.0001 s なので小数2桁では 0.00 s に潰れて値が読めない。EffectCatalog.swift:43,47 の unit が \"s\"。",
+  "fix": "この2本だけ ms 表示にする（値を1000倍、unit を ms）",
+  "severity": "high"
+ },
+ {
+  "type": "OscilloscopePlugin",
+  "name": "Oscilloscope",
+  "kind": "並び順",
+  "upstream": "時間の区切りは狭いとき5。oscilloscope.js:905 `const timeDivisions = isNarrow ? 5 : 10;`（isNarrow は :828 の `graphCssWidth < 500`）。ラベルは内側だけで単位つき（:912-917 `if (i !== 0 && i !== timeDivisions)` … `ctx.fillText(t_ms.toFixed(2) + ' ms', ...)`）。",
+  "ours": "4区切り。OscilloscopeView.swift:63 `private static let timeDivisions = 4` で、コメントは「oscilloscope.js:903 の isNarrow 側」と書いてあるが該当行は 905 で値は 5。ラベルは両端も出し単位なし（:176-184、スクショ: 0.0 / 2.5 / 5.0 / 7.5 / 10.0）。",
+  "fix": "timeDivisions を 5 にし、両端のラベルを落として \" ms\" を付ける",
+  "severity": "medium"
+ },
+ {
+  "type": "OscilloscopePlugin",
+  "name": "Oscilloscope",
+  "kind": "落ちている",
+  "upstream": "軸の名前を描く。oscilloscope.js:925 `ctx.fillText('Time (ms)', ...)`、:929 回転して `ctx.fillText('Amplitude', 0, 0)`。",
+  "ours": "軸の名前は無い（スクショに該当の字が無い）。OscilloscopeView.swift:80-84 の GraphCanvas は軸の ticks だけ渡している。",
+  "fix": "軸の名前を図の下と左に出す",
+  "severity": "low"
+ },
+ {
+  "type": "OscilloscopePlugin",
+  "name": "Oscilloscope",
+  "kind": "図が違う",
+  "upstream": "drawWaveform（oscilloscope.js:824-956）が描くのは 背景・振幅の罫と数字・時間の罫と数字・軸名・波形だけ。triggerLevel はこの範囲に一度も出てこない。",
+  "ours": "トリガの高さに破線を1本引く。OscilloscopeView.swift:90-97。",
+  "fix": "上流に合わせるなら消す。残すなら意図的な追加として記録",
+  "severity": "low"
+ },
+ {
+  "type": "SpectrogramPlugin",
+  "name": "Spectrogram",
+  "kind": "落ちている",
+  "upstream": "spectrogram.js:670-678 `createRadioGroup('Frequency Scale', [{value:'log',label:'Log'},{value:'linear',label:'Linear'}], this.sc, ...)`。linear を選んだときの行の読み替え表は :15-22 の `SPECTROGRAM_LINEAR_TO_CANONICAL_ROW`。",
+  "ours": "切り替えは無く対数固定。SpectrogramView.swift:71 `y: .frequency(20, 40000)`。EffectCatalog.swift:59-62 の params は dr/pt の2本のみ。",
+  "fix": "log/linear の Picker を足し、linear のときは行を引き伸ばし直す",
+  "severity": "high"
+ },
+ {
+  "type": "SpectrogramPlugin",
+  "name": "Spectrogram",
+  "kind": "名前",
+  "upstream": "spectrogram.js:633 `this.createParameterControl('DB Range', -144, -48, 1, this.dr, ..., 'dB', 'dr')`。",
+  "ours": "「D B Range (dB)」（スクショ）。EffectCatalog.swift:60 の label が \"D B Range\" で、params.json の name `dBRange` を camelCase で割った結果そのまま。",
+  "fix": "label を \"DB Range\" に直す（生成側の分割の例外に入れる）",
+  "severity": "medium"
+ },
+ {
+  "type": "SpectrogramPlugin",
+  "name": "Spectrogram",
+  "kind": "単位・表記",
+  "upstream": "つまみは指数 8〜14 だが、数値の欄には FFT 点数を出す。spectrogram.js:645 `pointsValue.value = 1 << this.pt;`、:648 `pointsValue.value = 1 << value;`（min/max も `1 << 8` / `1 << 14`）。",
+  "ours": "指数をそのまま出す（スクショ: Points = 12）。EffectCatalog.swift:61 は min 8 max 14 の整数。",
+  "fix": "値の欄だけ 1<<pt を表示する",
+  "severity": "medium"
+ },
+ {
+  "type": "SpectrogramPlugin",
+  "name": "Spectrogram",
+  "kind": "図が違う",
+  "upstream": "7段の色表で塗る。spectrogram.js:23-31 `SPECTROGRAM_COLOR_STOPS` が黒→青→シアン→緑→黄→赤→白、:32 `SPECTROGRAM_COLOR_BRIGHTNESS = 0.75`。",
+  "ours": "色を持たず、alpha だけの画像で型を抜いて単色の tint を流し込む。SpectrogramView.swift:29 のコメントと :80-89（`layer.clipToLayer` → `layer.fill(Path(plot.rect), with: ETGraphShading.curve)`）。",
+  "fix": "intensity を7段の色表に通して CGImage を RGBA で作る",
+  "severity": "medium"
+ },
+ {
+  "type": "SpectrogramPlugin",
+  "name": "Spectrogram",
+  "kind": "落ちている",
+  "upstream": "下端に1秒ごとの印を打つ。spectrogram.js:1031-1042、`for (let second = firstSecond; second <= lastSecond; second++)` で `moveTo(x, targetHeight - 16*dpr)` から下端まで。",
+  "ours": "横軸に印は無く、見出しに範囲の秒数を出すだけ（スクショ: 「80 col · 2.9 s · FFT 4096」）。SpectrogramView.swift:36-38 に理由が書いてある（列の間隔が一定でないため）。",
+  "fix": "列の時刻を持っているので、1秒境界の位置に短い縦線を打つ",
+  "severity": "low"
+ },
+ {
+  "type": "SpectrumAnalyzerPlugin",
+  "name": "Spectrum Analyzer",
+  "kind": "落ちている",
+  "upstream": "spectrum_analyzer.js:510-519 `createRadioGroup('Frequency Scale', [{value:'log',label:'Log'},{value:'linear',label:'Linear'}], this.sc, ...)` を container に足している。",
+  "ours": "切り替えは無く対数固定。SpectrumAnalyzerView.swift:66 `frequencyRange: Self.displayFloor...r.displayTop` を SpectrumGraph に渡すだけ。EffectCatalog.swift:71-74 の params は dr/pt の2本。",
+  "fix": "log/linear の Picker を足して軸の取り方を切り替える",
+  "severity": "high"
+ },
+ {
+  "type": "SpectrumAnalyzerPlugin",
+  "name": "Spectrum Analyzer",
+  "kind": "名前",
+  "upstream": "spectrum_analyzer.js:466 `this.createParameterControl('DB Range', -144, -48, 1, this.dr, ..., 'dB', 'dr')`。",
+  "ours": "「D B Range (dB)」（スクショ）。EffectCatalog.swift:72 の label が \"D B Range\"。",
+  "fix": "Spectrogram と同じ直し方",
+  "severity": "medium"
+ },
+ {
+  "type": "SpectrumAnalyzerPlugin",
+  "name": "Spectrum Analyzer",
+  "kind": "単位・表記",
+  "upstream": "spectrum_analyzer.js:479 `pointsValue.value = 1 << this.pt;`、:483 `pointsValue.value = 1 << value;`。数値の欄は FFT 点数（既定 4096）。",
+  "ours": "指数をそのまま（スクショ: Points = 12）。",
+  "fix": "値の欄だけ 1<<pt を表示する",
+  "severity": "medium"
+ },
+ {
+  "type": "SpectrumAnalyzerPlugin",
+  "name": "Spectrum Analyzer",
+  "kind": "単位・表記",
+  "upstream": "dB の罫は狭いとき24刻みで、両端は字を出さず単位を付ける。spectrum_analyzer.js:732-742、`const dbStep = isNarrow ? 24 : 12;` … `if (db !== 0 && db !== this.dr)` … `ctx.fillText(`${db}dB`, ...)`。周波数は狭いとき :705 の `[20, 100, 1000, 10000, 20000]` で、:722 の `freq !== minDisplayFreq && freq !== maxDisplayFreq` により内側だけ。",
+  "ours": "dB は 0 / -24 / -48 / -72 / -96 を全部出して単位なし、周波数は 20 / 100 / 1k / 10k / 40k で両端も出す（スクショ）。",
+  "fix": "両端のラベルを落とし、dB 側に単位を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "SpectrumAnalyzerPlugin",
+  "name": "Spectrum Analyzer",
+  "kind": "落ちている",
+  "upstream": "spectrum_analyzer.js:747 `ctx.fillText('Frequency (Hz)', width / 2, ...)`、:750 回転して `ctx.fillText('Level (dB)', 0, 0)`。",
+  "ours": "軸の名前は無い（スクショ）。",
+  "fix": "軸の名前を足す",
+  "severity": "low"
+ },
+ {
+  "type": "SpectrumAnalyzerPlugin",
+  "name": "Spectrum Analyzer",
+  "kind": "図が違う",
+  "upstream": "横軸は標本化周波数に関係なく常に 40kHz まで。spectrum_analyzer.js:680 `const minDisplayFreq = SPECTRUM_MIN_DISPLAY_FREQ;`、:683 `const maxDisplayFreq = SPECTRUM_MAX_DISPLAY_FREQ;`（定数は :10 で 40000）。",
+  "ours": "Nyquist で止める。SpectrumAnalyzerView.swift:110-112 `max(200, min(SpectrumAnalyzerView.displayCeiling, sampleRate * 0.5))`。:46-49 に意図的と書いてある。スクショは 96kHz なので 40k で一致しているが、48kHz なら 24k で切れる。",
+  "fix": "上流に合わせるなら 40000 固定にする",
+  "severity": "low"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "図が違う",
+  "upstream": "相関と左右差はゴニオメーターと同じ1枚の正方形キャンバスの縁に描く。stereo_meter.js:692-700 が相関を左端の縦棒（`fillRect(0, centerY - corrBarHeight, barThickness, corrBarHeight)`）、:720-731 が左右差を下端の横棒（`energyBarY = height - barThickness`）。",
+  "ours": "別々の widget を縦に3つ並べる。StereoMeterView.swift:56-71（goniometer → peakMeter → CORR の ETStereoBipolarBar → BALANCE の ETStereoBipolarBar）。スクショもその通り。",
+  "fix": "相関を図の左端の縦棒、左右差を下端の横棒として同じ図の中に入れる",
+  "severity": "medium"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "図が違う",
+  "upstream": "Window の長さぶんの標本を全部打ち、古いものから新しいものへ256段で色を変える。stereo_meter.js:584-588 `const samplesNeeded = Math.ceil(this.windowTime * this.sampleRate);` から輪を遡り、:601-603 `const intensity = samplesNeeded > 1 ? (i / (samplesNeeded - 1)) : 0;` で 256 の bucket に振り、:608-618 で bucket ごとに塗る。色表は :528-535。",
+  "ours": "いま来た枠の中身（約1/30秒）だけを4段の不透明度で打つ。StereoMeterView.swift:31 のコメントと :163-183（`groups` が4本、:180 `context.opacity = 0.35 + 0.65 * Double(group) / 3`）。Window のつまみは相関と左右差にしか効かない（:32-33）。",
+  "fix": "1秒ぶんの輪を View 側に持ち、Window の長さだけ遡って描く",
+  "severity": "medium"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "単位・表記",
+  "upstream": "stereo_meter.js:208-214 `this.createParameterControl('Window', 10, 1000, 1, (this.windowTime * 1000).toFixed(0), (value) => this.setWindowTime(value / 1000), 'ms', 'windowTime', (value) => value * 1000)`。名前は Window、単位は ms、範囲 10〜1000。",
+  "ours": "「Window Time (s)」で 0.10 s（スクショ）。",
+  "fix": "label を Window、表示を ms に",
+  "severity": "medium"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "名前",
+  "upstream": "stereo_meter.js:755 `ctx.fillText('LR Balance', width / 2, height - dpr)`、:759 回転して `ctx.fillText('LR Correlation', 0, -3 * dpr)`。",
+  "ours": "「CORR」「BALANCE」。StereoMeterView.swift:60 と :66 の title、:97-98 の readout も \"CORR\" / \"BAL\"。",
+  "fix": "LR Correlation / LR Balance に揃える",
+  "severity": "low"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "単位・表記",
+  "upstream": "相関の目盛りは3本だけ。stereo_meter.js:707 `const correlationTicks = [0.5, 0, -0.5];`。左右差は :737 `const energyTicks = [-12, -6, 0, 6, 12];` で、字は :748 `ctx.fillText(tick.toString() + 'dB', ...)` と単位つき。",
+  "ours": "相関は -1 / -0.5 / 0 / 0.5 / 1 の5本（StereoMeterView.swift:63）、左右差は同じ5値だが単位なし（:70 `tickLabel: { \"\\(Int($0))\" }`）。スクショも同じ。",
+  "fix": "相関の目盛りを3本に、左右差の字に dB を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "図が違う",
+  "upstream": "図は正方形。stereo_meter.js:217-219 `this.createResponsiveGraph({ maxWidth: 480, aspectRatio: '1 / 1', ... })`。",
+  "ours": "カードの幅いっぱいで高さ 200 の横長。StereoMeterView.swift:95 `height: 200`。ひし形は `min(rect.width, rect.height)` で決まる（:111-112）ので、左右に大きく空きが出る。スクショでも空白が目立つ。",
+  "fix": "図の枠を正方形にする",
+  "severity": "low"
+ },
+ {
+  "type": "StereoMeterPlugin",
+  "name": "Stereo Meter",
+  "kind": "図が違う",
+  "upstream": "peakL / peakR はテレメトリから読むだけで描かない。stereo_meter.js:377-394 が読み :393-394 で返すが、drawMeter（:510-761）に peakL / peakR は一度も出てこない。",
+  "ours": "L/R のピークメーターを図の下に足している。StereoMeterView.swift:59 と :230-236。スクショの「L −96.0 dB / R −96.0 dB」の帯。",
+  "fix": "上流に合わせるなら消す。残すなら意図的な追加として記録",
+  "severity": "low"
+ },
+ {
+  "type": "LevelMeterPlugin",
+  "name": "Level Meter",
+  "kind": "図が違う",
+  "upstream": "棒はレベルで色が変わる。level_meter.js:515-520 の gradient が -96〜-12 で緑 `#008000`、-12〜-6 でオリーブ `#808000`、-6〜0 で暗赤 `#800000`。",
+  "ours": "単色。MeterView.swift:140-141 で `ETGraphShading.curve` を流すだけ。",
+  "fix": "-12 / -6 を境にした3色のグラデーションにする",
+  "severity": "medium"
+ },
+ {
+  "type": "LevelMeterPlugin",
+  "name": "Level Meter",
+  "kind": "単位・表記",
+  "upstream": "目盛りは狭いとき24dBごと、両端は字を出さない。level_meter.js:400-402 `const isNarrow = this.graphCssWidth < 500; const gridStep = isNarrow ? 6 : 3; const labelStep = isNarrow ? 24 : 12;`、:420 `if (db % labelStep === 0 && db !== 0 && db !== this.dbStart)`。結果として出る字は -72 / -48 / -24 の3つ、罫は6dBごと。",
+  "ours": "-96 / -72 / -48 / -24 / -12 / 0 の6つを全部出し、罫もその位置だけ。LevelMeterView.swift:47 `static let ticks: [Double] = [-96, -72, -48, -24, -12, 0]`、MeterView.swift:214-217。スクショも同じ。",
+  "fix": "ticks を -72/-48/-24 にし、罫を6dB刻みで別に引く",
+  "severity": "low"
+ },
+ {
+  "type": "LevelMeterPlugin",
+  "name": "Level Meter",
+  "kind": "単位・表記",
+  "upstream": "無音の数字は -144.0 dB。level_meter.js:129 `return 20 * Math.log10(amplitude < 1e-8 ? 1e-8 : amplitude);` で -160 が出て、:278 `const clampedFallingLevel = fallingLevel < -144 ? -144 : fallingLevel;` により lv / pl は -144 で止まる。:552 `const peakText = peakLevel.toFixed(1) + ' dB';`。",
+  "ours": "-96.0 dB（スクショ）。LevelMeterView.swift:110 `ETdB.fromAmplitude(r.peaks[ch], floor: Self.floorDB)` の floorDB が :43 で -96。",
+  "fix": "数字を出すときの床だけ -144 にする（棒の範囲は -96 のまま）",
+  "severity": "low"
+ },
+ {
+  "type": "LevelMeterPlugin",
+  "name": "Level Meter",
+  "kind": "操作面が違う",
+  "upstream": "数字は棒の中に右詰めで置く。level_meter.js:547-555、`if (numDrawableChannels <= 4)` の中で `ctx.textAlign = 'right'` にして `ctx.fillText(peakText, this.canvasWidth - (10 * dpr), y + channelHeight / 2 + ...)`。",
+  "ours": "図の外（上）に段ごとに並べる。MeterView.swift:220-224 の readout、:10 に「値は棒の中に書かない（指や棒で隠れる）」と理由が書いてある。スクショの「L −96.0 dB  R −96.0 dB」。",
+  "fix": "触る画面としての意図的な違い。直すなら棒の中へ戻す",
+  "severity": "low"
+ },
+ {
+  "type": "LevelMeterPlugin",
+  "name": "Level Meter",
+  "kind": "図が違う",
+  "upstream": "OVERLOAD は図の真ん中で点滅する赤いバッジ。level_meter.js:369-373 で div を作り、level_meter.css の `.overload-indicator` が `top: 50%; left: 50%; transform: translate(-50%, -50%);`、`background-color: var(--et-danger)`、`animation: blink 0.5s infinite`。",
+  "ours": "見出しの右端に出る tint 色のカプセルで、点滅しない。LevelMeterView.swift:69-77（`.background(.tint, in: .capsule)`）。",
+  "fix": "図の中央に重ね、赤にして点滅させる",
+  "severity": "low"
+ },
+ {
+  "type": "AMRadioSimulatorPlugin",
+  "kind": "図が無い",
+  "upstream": "am_radio_simulator.js:2203 `const graph = this.createResponsiveGraph({ maxWidth: 1024, aspectRatio: '16 / 1', mobileAspectRatio: '3 / 1', className: 'am-radio-simulator-hud' ... })` — 受信機 HUD を常時アニメーションで描く。2213-2225 でその上に STEREO ランプ（`stereoLamp.className = 'am-radio-simulator-stereo-lamp'`）を重ねる。",
+  "ours": "スクショは Radio トグルからスライダーが並ぶだけ。HUD もランプも無い。EffectViews.swift の types に AMRadioSimulatorPlugin が無く汎用スライダーのみ。",
+  "fix": "AMRadioSimulatorView を作って drawHud 相当のキャンバスと STEREO ランプを置く",
+  "severity": "high"
+ },
+ {
+  "type": "AMRadioSimulatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "am_radio_simulator.js:2129-2166 タブ 4 枚（Station / Path / Receiver / Output）。`const definitions = [{ id: 'station', label: 'Station', ...}, { id: 'path', ...}, { id: 'receiver', ...}, { id: 'output', ...}]`",
+  "ours": "21 パラメータが 1 本の縦リスト。スクショは Tx Bandwidth から If Bandwidth まで途切れずに続き、Agc Speed でまだ画面外。",
+  "fix": "Station/Path/Receiver/Output のタブで分ける",
+  "severity": "medium"
+ },
+ {
+  "type": "AMRadioSimulatorPlugin",
+  "kind": "図が違う",
+  "upstream": "am_radio_simulator.js:2148 `createLogarithmicParameterControl('Fading Speed', 0.05, 2, 0.01, ...)`、2157 `createLogarithmicParameterControl('Detector RC', 20, 500, 1, ...)`、2149 `_createZeroAwareLogControl('Static', 100, ...)`（2087: `slider.value = current <= 0 ? '0' : String(1 + 999 * Math.log(current / floor) / Math.log(max / floor))`、floor=0.001）",
+  "ours": "3 本とも ParameterRow のリニア Slider。スクショで Fading Speed 0.15 Hz（範囲 0.05-2）も Static Rate 0.30 /s（範囲 0-100）もつまみが左端に張り付いている。",
+  "fix": "対数スライダーと 0 対応対数スライダーを ParameterRow に足して、この 3 本で使う",
+  "severity": "medium"
+ },
+ {
+  "type": "AMRadioSimulatorPlugin",
+  "kind": "並び順",
+  "upstream": "am_radio_simulator.js:2138 Stereo Mode は Station タブの 2 番目（Radio の次、TX Bandwidth の前）。2162 `createRadioGroup('Speaker', ['Small', 'Table', 'Off'], ...)`",
+  "ours": "EffectCatalog.swift で stereoMode は offset 5、Compression の後ろ。スクショでも Compression → Stereo Mode の順。Speaker の選択肢は `[\"Off\", \"Small\", \"Table\"]` で上流と逆向き。",
+  "fix": "params の並びを上流のタブ内順に直し、Speaker の enum を Small/Table/Off にする",
+  "severity": "low"
+ },
+ {
+  "type": "AMRadioSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "am_radio_simulator.js:2140 'TX Bandwidth' / 2141 'Pre-emphasis' / 2149 'Static' / 2151 'Interf. Offset' / 2155 'IF Bandwidth' / 2156 'AGC Speed' / 2157 'Detector RC' 単位 'µs' / 2159 'Hum Freq'",
+  "ours": "Tx Bandwidth / Pre Emphasis / Static Rate / Interference Offset / If Bandwidth / Agc Speed / Detector Rc (us) / Hum Frequency（スクショと EffectCatalog.swift の label）。camelCase を機械的に単語分割していて頭字語が潰れている。",
+  "fix": "label を上流の表示名で上書きする",
+  "severity": "low"
+ },
+ {
+  "type": "SWRadioSimulatorPlugin",
+  "kind": "図が無い",
+  "upstream": "sw_radio_simulator.js:1999 `const graph = this.createResponsiveGraph({ maxWidth: 1024, aspectRatio: '16 / 1', mobileAspectRatio: '3 / 1', className: 'sw-radio-simulator-hud' ... })`、2008 `this.hudCanvas.setAttribute('aria-label', 'Shortwave radio receiver status')`",
+  "ours": "HUD 無し。スライダーだけ。",
+  "fix": "SWRadioSimulatorView に受信機 HUD を足す",
+  "severity": "high"
+ },
+ {
+  "type": "SWRadioSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "sw_radio_simulator.js:1897-1899 `content.appendChild(this.createParameterControl('Fading', 0, 100, 1, this.sk, ...))` — SW では sk の表示名は 'Fading'。AM の同じキーは 'Skywave'（am_radio_simulator.js:2147）で、上流はわざと呼び分けている。",
+  "ours": "スクショは「Skywave (%) 55.0 %」。AM のラベルを SW にも流用している。ほかに TX Bandwidth→Tx Bandwidth、Pre-emphasis→Pre Emphasis、Static→Static Rate、Interf. Offset→Interference Offset、IF Bandwidth→If Bandwidth、AGC Speed→Agc Speed、Detector RC(µs)→Detector Rc(us)、Hum Freq→Hum Frequency、BFO Offset→Bfo Offset。",
+  "fix": "SW の sk を Fading にし、残りも上流の表示名に合わせる",
+  "severity": "medium"
+ },
+ {
+  "type": "SWRadioSimulatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "sw_radio_simulator.js:1883-1953 タブ 5 枚（Station / Propagation / Tuning / Receiver / Output）",
+  "ours": "24 パラメータが 1 本の縦リスト。",
+  "fix": "上流と同じ 5 タブに分ける",
+  "severity": "medium"
+ },
+ {
+  "type": "SWRadioSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "sw_radio_simulator.js:1856-1862 `_syncModeDependentControls() { const ssb = this.mo !== 'AM'; this._setRowDisabled(this.bfoRow, !ssb); this._setRowDisabled(this.detectorRow, ssb); this._setRowDisabled(this.detectorRcRow, ssb); ... }` — Mode=AM なら BFO Offset を、SSB なら Detector と Detector RC を無効化する。",
+  "ours": "Mode に関係なく Detector / Detector Rc / Bfo Offset が全部触れる。スクショでも Mode 既定 AM のまま Detector が通常表示。",
+  "fix": "mode を見て該当行を disabled にする",
+  "severity": "medium"
+ },
+ {
+  "type": "SWRadioSimulatorPlugin",
+  "kind": "図が違う",
+  "upstream": "sw_radio_simulator.js:1901 `createLogarithmicParameterControl('Fading Speed', 0.1, 10, 0.01, ...)`、1903 `createLogarithmicParameterControl('Delay Spread', 0.2, 8, 0.01, ...)`、1909 `createLogarithmicParameterControl('Interf. Offset', 0.1, 10, 0.01, ...)`、1905 `_createZeroAwareLogControl('Static', 100, ...)`",
+  "ours": "4 本ともリニア Slider。スクショで Fading Speed 0.50 Hz も Static Rate 2.00 /s もつまみが左端。",
+  "fix": "対数スライダーに替える",
+  "severity": "medium"
+ },
+ {
+  "type": "SWRadioSimulatorPlugin",
+  "kind": "並び順",
+  "upstream": "sw_radio_simulator.js:1915 Mode（AM/USB/LSB）が Tuning タブの先頭、1922 BFO Offset が Tuning の次、1927 IF Bandwidth がその後。",
+  "ours": "EffectCatalog.swift で mode は offset 22、bfoOffset は offset 23。Mix のさらに後ろ、リストの最後尾に 2 つ並ぶ。",
+  "fix": "mode / bfoOffset を tuning / ifBandwidth の直前へ移す",
+  "severity": "low"
+ },
+ {
+  "type": "FMRadioSimulatorPlugin",
+  "kind": "図が無い",
+  "upstream": "fm_radio_simulator.js:1263 `const graph = this.createResponsiveGraph({ maxWidth: 1024, aspectRatio: '5 / 1', mobileAspectRatio: '2.5 / 1', className: 'fm-radio-simulator-hud' ... })`、1276-1283 その下に状態テキスト（'Waiting for audio. Start playback to view the receiver status.' など）",
+  "ours": "HUD も状態テキストも無い。スクショは Radio から Mix までスライダーのみ。",
+  "fix": "FMRadioSimulatorView に受信機 HUD と状態行を足す",
+  "severity": "high"
+ },
+ {
+  "type": "FMRadioSimulatorPlugin",
+  "kind": "図が違う",
+  "upstream": "fm_radio_simulator.js:1251 `createLogarithmicParameterControl('Path Delay', 0.5, 50, 0.01, this.dl, ..., 'µs', 'dl')`",
+  "ours": "リニア Slider。スクショの Path Delay 5.00 us は 0.5-50 の左寄り。",
+  "fix": "対数スライダーにする",
+  "severity": "medium"
+ },
+ {
+  "type": "FMRadioSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "fm_radio_simulator.js:1247 'IF Band' / 1257 'Output' / 1244 単位 'dBµV' / 1252 単位 'µs' / 1238-1240 `createRadioGroup('Emphasis', [{ value: '50', label: '50 µs' }, { value: '75', label: '75 µs' }], ...)`",
+  "ours": "ifBandwidth (kHz) / Output Gain (dB) / dBuV / us / Emphasis の選択肢は「50」「75」だけ（スクショと EffectCatalog.swift）。ifBandwidth は camelCase が生のまま出ている。",
+  "fix": "label を上流の表示名にし、Emphasis の選択肢に µs を付ける",
+  "severity": "medium"
+ },
+ {
+  "type": "VinylSimulatorPlugin",
+  "kind": "図が無い",
+  "upstream": "vinyl_simulator.js:1596 `const graph = this.createResponsiveGraph({ maxWidth: 1024, aspectRatio: '7 / 1', mobileAspectRatio: '3 / 1', className: 'vinyl-simulator-hud' ... })`、1603 `this.hudCanvas.setAttribute('aria-label', 'Vinyl playback physics status')`、1608-1615 状態テキスト",
+  "ours": "HUD も状態行も無い。",
+  "fix": "VinylSimulatorView に再生物理 HUD と状態行を足す",
+  "severity": "high"
+ },
+ {
+  "type": "VinylSimulatorPlugin",
+  "kind": "図が違う",
+  "upstream": "vinyl_simulator.js:1529 `createLogarithmicParameterControl('Roughness', 0.1, 100, 0.01, ...)`、1530 `_createZeroAwareLogControl('Dust', 10000, ...)`、1531 `_createZeroAwareLogControl('Static', 10000, ...)`、1532 `_createZeroAwareLogControl('Scratch', 1000, ...)`",
+  "ours": "4 本ともリニア。Dust Rate 既定 2.0 で範囲 0-10000、Static Rate 既定 0.08 で範囲 0-10000、Scratch Rate 既定 0 で範囲 0-1000（EffectCatalog.swift）。スクショでも 3 本ともつまみが左端に潰れていて、実質つまみで動かせない。",
+  "fix": "対数／0 対応対数スライダーにする",
+  "severity": "high"
+ },
+ {
+  "type": "VinylSimulatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "vinyl_simulator.js:1517-1556 タブ 4 枚（Cutting / Record / Stylus / Output）",
+  "ours": "20 パラメータが 1 本の縦リスト。",
+  "fix": "上流と同じ 4 タブに分ける",
+  "severity": "medium"
+ },
+ {
+  "type": "VinylSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "vinyl_simulator.js:1479-1482 `_syncScanRadiusControl() { if (!this.scanRadiusRow) return; const disabled = this.sh === 'Spherical'; ... }` — Shape が Spherical のとき Scan Radius を無効化する（行は 1540 で作られる）。",
+  "ours": "Stylus Shape に関係なく Scan Radius が常に触れる。",
+  "fix": "stylusShape が Spherical のとき scanRadius を disabled にする",
+  "severity": "medium"
+ },
+ {
+  "type": "VinylSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "vinyl_simulator.js:1520 'HF Cutoff' / 1538 'Shape' / 1530 'Dust' / 1531 'Static' / 1532 'Scratch' / 1539-1540 単位 'µm' / 1547 単位 'ζ'",
+  "ours": "highFrequencyCutoff (Hz) / Stylus Shape / Dust Rate / Static Rate / Scratch Rate / (um) / (zeta)（スクショと EffectCatalog.swift）。highFrequencyCutoff は camelCase が生のまま。",
+  "fix": "label と単位を上流の表示にする",
+  "severity": "medium"
+ },
+ {
+  "type": "DSD64IMDSimulatorPlugin",
+  "kind": "図が無い",
+  "upstream": "dsd64_imd_simulator.js:760 `meterTitle.textContent = 'Term Contribution (dBFS RMS)'`（-120〜0 dB の 5 本バー Additive/Attached/Cross/Total IMD/Output、836-837）、779 `tcTitle.textContent = 'Analog Transfer Curve'`（1:1）、798 `dfTitle.textContent = 'Difference-Frequency (ref. 96 kHz)'`（2:1）。3 枚とも createResponsiveGraph で作る。",
+  "ours": "スクショは Amount から Output Trim までスライダー 12 本だけ。図は 1 枚も無い。",
+  "fix": "DSD64IMDSimulatorView に 3 枚のグラフを足す",
+  "severity": "high"
+ },
+ {
+  "type": "DSD64IMDSimulatorPlugin",
+  "kind": "並び順",
+  "upstream": "dsd64_imd_simulator.js:741-746 の順は Signal Coupling → IMD Path HPF → Scratch Tone → Noise Texture → Cross Sideband → Output Trim",
+  "ours": "Signal Coupling → Scratch Tone → Noise Texture → Cross Sideband → Imd Path Hpf → Output Trim（スクショ）。imdPathHpf が offset 10 で 2 つ後ろに落ちている。",
+  "fix": "imdPathHpf を signalCoupling と scratchTone の間に戻す",
+  "severity": "low"
+ },
+ {
+  "type": "DSD64IMDSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "dsd64_imd_simulator.js:524 `labelEl.textContent = 'Dry-Wet:'`、741 'IMD Path HPF'",
+  "ours": "Dry Wet (%) / Imd Path Hpf (kHz)（スクショ）。",
+  "fix": "label を Dry-Wet / IMD Path HPF にする",
+  "severity": "low"
+ },
+ {
+  "type": "DSD64IMDSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "dsd64_imd_simulator.js:727-731 `this.errorEl = document.createElement('div'); this.errorEl.className = 'dsd64-imd-error'; ... this._updateErrorUI();` — 88.2 kHz 未満のときに赤い警告バナーを出す（プラグイン説明も 'requires 88.2 kHz or higher'）。",
+  "ours": "警告バナーに相当するものが無い。（撮影時は 96k なので画面上は出ない状態）",
+  "fix": "サンプルレートが足りないときの警告行を足す",
+  "severity": "low"
+ },
+ {
+  "type": "DigitalErrorEmulatorPlugin",
+  "kind": "名前",
+  "upstream": "digital_error_emulator.js:1016-1024 `createSelectControl('Mode', modeOrder.map(modeId => ({ value: modeId, label: this.MODE_DEFINITIONS[modeId].name })), ...)` — 表示は 26-40 行の名前、例えば \"10A\" は 'CD Audio — CIRC Error Correction (Interpolated)'、\"5A\" は 'Dante / AES67 / AVB — UDP Drop (64 samp)'。",
+  "ours": "スクショのピッカーは「10A」。EffectCatalog.swift の enum も `[\"1\", \"2A\", ... \"10\", \"10A\"]` で ID しか無く、何のモードか画面から分からない。",
+  "fix": "enum の表示名を MODE_DEFINITIONS の name にする",
+  "severity": "high"
+ },
+ {
+  "type": "DigitalErrorEmulatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "digital_error_emulator.js:1026-1033 `createRadioGroup('Fs (kHz)', this.REFERENCE_FS_KHZ_VALUES.map(...), this.rf, ...)` — 42 行の `[44.1, 48, 88.2, 96, 176.4, 192]` の 6 択ラジオ。",
+  "ours": "「referenceSampleRate (kHz)」の連続スライダー（min 44.1 / max 192 / step 0.1、EffectCatalog.swift）。63.7 kHz のような存在しない値を選べる。",
+  "fix": "6 値の列挙（セグメント or ピッカー）に変える。ラベルも Fs (kHz) へ",
+  "severity": "high"
+ },
+ {
+  "type": "DigitalErrorEmulatorPlugin",
+  "kind": "単位・表記",
+  "upstream": "digital_error_emulator.js:1010-1012 `createParameterControl('Bit Error Rate', -12, -2, 0.2, this.be, ..., '10^x', 'be')` — ラベルは「Bit Error Rate (10^x):」で、-6 が 10^-6 の意味だと分かる。",
+  "ours": "「bitErrorRate」、単位なし、値は「−6.00」だけ（スクショ）。指数だと読み取れない。step も 0.001 で上流の 0.2 と違う。",
+  "fix": "label を Bit Error Rate、unit を 10^x、step を 0.2 にする",
+  "severity": "medium"
+ },
+ {
+  "type": "SimpleJitterPlugin",
+  "kind": "単位・表記",
+  "upstream": "simple_jitter.js:203-215 `getDisplayValue()` が `0.001 * Math.pow(10, this.rj / 20)` を ps / ns / µs / ms に換算して小数 3 桁で出す。スライダー 0-200 の生値は画面に出ない（180 行 `jitterValue.textContent = this.getDisplayValue()`）。",
+  "ours": "スクショは「rmsJitterNanoseconds  100」。生の 100 をそのまま出していて、ラベルが ns と言っているのに実際は 100 ns（0.001×10^5）に相当する対数目盛りの生値。数字の意味が違う。",
+  "fix": "0.001×10^(v/20) を計算して ps/ns/µs/ms を付けて出す",
+  "severity": "high"
+ },
+ {
+  "type": "SimpleJitterPlugin",
+  "kind": "名前",
+  "upstream": "simple_jitter.js:160 `jitterLabel.textContent = 'RMS Jitter:';`",
+  "ours": "「rmsJitterNanoseconds」（スクショ、EffectCatalog.swift の label も同じ）。",
+  "fix": "label を RMS Jitter にする",
+  "severity": "low"
+ },
+ {
+  "type": "MP3CodecSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "mp3_codec_simulator.js:167-170 Bitrate の選択肢は Codec Rate で切り替わる（`this.cr === '22.05 kHz (MPEG-2)' ? MP3_CODEC_SIMULATOR_MPEG2_BITRATES : MP3_CODEC_SIMULATOR_MPEG1_BITRATES`）。MPEG-2 側は 7-9 行の 32〜160 の 8 択だけ。179 行の `_syncBitrateOptions()` が cr 変更のたびに作り直す。",
+  "ours": "EffectCatalog.swift の bitrate は常に 32〜320 の 12 択固定。MPEG-2 を選んでも 192/224/256/320 が選べてしまう。",
+  "fix": "codecRate に応じて bitrate の選択肢を絞る",
+  "severity": "medium"
+ },
+ {
+  "type": "MP3CodecSimulatorPlugin",
+  "kind": "単位・表記",
+  "upstream": "mp3_codec_simulator.js:128 `static _bitrateOptions(values) { return values.map(value => ({ value, label: `${value} kbit/s` })); }`",
+  "ours": "スクショの Bitrate は「64」。単位が無い。",
+  "fix": "enum の表示に kbit/s を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "MP3CodecSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "mp3_codec_simulator.js:202 `'Output', -24, 12, 0.1, this.og, ...`",
+  "ours": "「Output Gain (dB)」（スクショ）。",
+  "fix": "label を Output にする",
+  "severity": "low"
+ },
+ {
+  "type": "BluetoothSBCSimulatorPlugin",
+  "kind": "落ちている",
+  "upstream": "bluetooth_sbc_simulator.js:203-217 読み取り専用の Bitrate 行。`bitrateLabel.textContent = 'Bitrate:'` と `<output>` に 186 行の `return `${(bitsPerSecond / 1000).toFixed(1)} kbit/s`` を出す。Bitpool / Channel Mode / Blocks の組み合わせが何 kbit/s になるかを見せる行。",
+  "ours": "スクショに Bitrate 行が無い。Bitpool 35 が何 kbit/s か分からない。",
+  "fix": "bitpool/channelMode/blocks から算出した kbit/s の読み取り行を足す",
+  "severity": "medium"
+ },
+ {
+  "type": "BluetoothSBCSimulatorPlugin",
+  "kind": "並び順",
+  "upstream": "bluetooth_sbc_simulator.js:192-227 の順は Bitpool → Channel Mode → Blocks → Bitrate(読み取り) → Packet Loss → Output → Mix",
+  "ours": "Bitpool → Channel Mode → Blocks → Output Gain → Mix → Packet Loss（スクショ）。packetLoss が offset 5 で最後尾。",
+  "fix": "packetLoss を blocks と outputGain の間に移す",
+  "severity": "low"
+ },
+ {
+  "type": "BluetoothSBCSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "bluetooth_sbc_simulator.js:224 `'Output', -24, 12, 0.1, this.og, ...`",
+  "ours": "「Output Gain (dB)」（スクショ）。",
+  "fix": "label を Output にする",
+  "severity": "low"
+ },
+ {
+  "type": "G726ADPCMSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "g726_adpcm_simulator.js:113-115 `'Bit Error Rate', -6, -2, 0.1, this.re, value => this.setParameters({ re: value }), '10^x', 're'`、107 `'Output', -24, 12, 0.1, this.og, ...`",
+  "ours": "「radioBitErrorRate」単位なし値「−6.00」、「Output Gain (dB)」（スクショ）。指数表記だと読めない。",
+  "fix": "label を Bit Error Rate / Output、unit を 10^x にする",
+  "severity": "medium"
+ },
+ {
+  "type": "G726ADPCMSimulatorPlugin",
+  "kind": "単位・表記",
+  "upstream": "g726_adpcm_simulator.js:103-105 `createSelectControl('Bitrate', G726_ADPCM_SIMULATOR_BITRATES.map(value => ({ value, label: `${value} kbit/s` })), ...)`",
+  "ours": "スクショの Bitrate は「32」。単位が無い。",
+  "fix": "enum の表示に kbit/s を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "GSMFullRateSimulatorPlugin",
+  "kind": "操作面が違う",
+  "upstream": "gsm_full_rate_simulator.js:102-104 `createRadioGroup('Transcodes', GSM_FULL_RATE_SIMULATOR_TRANSCODES, String(this.tc), ...)` — 4 行目の `['1', '2', '3']` の 3 択ラジオ。",
+  "ours": "min 1 / max 3 / step 1 のスライダー（スクショ、EffectCatalog.swift は isInteger の number）。3 択のためにスライダーを使っている。",
+  "fix": "3 択の列挙（セグメント）にする",
+  "severity": "low"
+ },
+ {
+  "type": "GSMFullRateSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "gsm_full_rate_simulator.js:112 `'C/I', 4, 30, 0.1, this.ci, ...`、106 `'Output', -24, 12, 0.1, this.og, ...`",
+  "ours": "「Carrier To Interference (dB)」「Output Gain (dB)」（スクショ）。",
+  "fix": "label を C/I と Output にする",
+  "severity": "medium"
+ },
+ {
+  "type": "MDSimulatorPlugin",
+  "kind": "名前",
+  "upstream": "md_simulator.js:103 `'Output', -24, 12, 0.1, this.og, ...`",
+  "ours": "「Output Gain (dB)」（スクショ）。ほかは Mode の選択肢も並びも単位も一致。",
+  "fix": "label を Output にする",
+  "severity": "low"
+ },
+ {
+  "type": "CassetteArtifactsPlugin",
+  "kind": "落ちている",
+  "upstream": "cassette_artifacts.js:3381-3390 パネル末尾の status 行。3228-3251 の `_statusText()` が `Record Level +9.0 dB → tape peak +9.0 dB re 250 nWb/m at 0 dBFS in · Wow/Flutter Base 0.200% → …% at 1 7/8 ips · Hiss Base -60.5 dB re 250 nWb/m → … dBFS, Type I, Dolby B` を組み立てる。Base 値と Type/NR を効かせた実効値の対応を示す唯一の場所。",
+  "ours": "スクショは Mix スライダーで終わり。status 行が無い。テープ速度もどこにも出ない。",
+  "fix": "パネル末尾に実効値の 1 行を足す",
+  "severity": "medium"
+ },
+ {
+  "type": "CassetteArtifactsPlugin",
+  "kind": "単位・表記",
+  "upstream": "plugin-base.js:1304 `labelEl.textContent = `${label}${unit ? ' (' + unit + ')' : ''}:`;` — 単位はラベルにだけ付き、数値入力は数字だけを出す。",
+  "ours": "EffectSpec.swift:44 の format が数値欄にも単位を足し、Components.swift:16 の幅 68pt に収まらない。スクショでは Hiss「−60.5 d…」、Dropouts「2.00 ev…」、Azimuth「2.00 ar…」と 3 つとも切れている。同じ切れ方が TapeArtifacts の Hiss、DSD64 の Ultrasonic Level、FM の Signal でも起きている。",
+  "fix": "数値欄は数字だけにして、単位はラベル側だけに出す",
+  "severity": "medium"
+ },
+ {
+  "type": "CassetteArtifactsPlugin",
+  "kind": "名前",
+  "upstream": "cassette_artifacts.js:3353 `createParameterControl('Wow/Flutter', 0, 1, 0.001, ...)`",
+  "ours": "「Wow Flutter (%)」（スクショ）。",
+  "fix": "label を Wow/Flutter にする",
+  "severity": "low"
+ },
+ {
+  "type": "TapeArtifactsPlugin",
+  "kind": "落ちている",
+  "upstream": "tape_artifacts.js:1395-1401 パネル末尾の status 行（`status.className = 'tape-artifacts-status'` … `status.textContent = this._statusText()`）。Speed / Tape / Record Level を効かせた Wow/Flutter と Hiss の実効値を出す。",
+  "ours": "スクショは Mix スライダーで終わり。status 行が無い。",
+  "fix": "パネル末尾に実効値の 1 行を足す",
+  "severity": "medium"
+ },
+ {
+  "type": "TapeArtifactsPlugin",
+  "kind": "単位・表記",
+  "upstream": "tape_artifacts.js:1370-1374 `createRadioGroup('Speed', [{ value: '7.5', label: '7.5 ips' }, { value: '15', label: '15 ips' }, { value: '30', label: '30 ips' }], ...)`",
+  "ours": "スクショの Speed は「15」。ips が無く、何の 15 か分からない。",
+  "fix": "enum の表示に ips を付ける",
+  "severity": "low"
+ },
+ {
+  "type": "TapeArtifactsPlugin",
+  "kind": "名前",
+  "upstream": "tape_artifacts.js:1383 `createParameterControl('Wow/Flutter', 0, 1, 0.001, ...)`",
+  "ours": "「Wow Flutter (%)」（スクショ）。",
+  "fix": "label を Wow/Flutter にする",
+  "severity": "low"
+ },
+ {
+  "type": "VinylArtifactsPlugin",
+  "kind": "名前",
+  "upstream": "vinyl_artifacts.js:449 'Pops/min' / 451 'Crackles/min' / 453 'Hiss' / 454 'Rumble' / 456 'Noise Tone'",
+  "ours": "Pops Per Minute / Crackles Per Minute / Hiss Level / Rumble Level / Noise Profile（スクショ）。Noise Tone → Noise Profile は言葉が変わってしまっている。",
+  "fix": "label を上流の表示名にする",
+  "severity": "medium"
+ },
+ {
+  "type": "VinylArtifactsPlugin",
+  "kind": "操作面が違う",
+  "upstream": "vinyl_artifacts.js:451 `createParameterControl('Crackles/min', 0, 2000, 10, ...)` — 刻みは 10。",
+  "ours": "EffectCatalog.swift の cracklesPerMinute は step 1.0。0-2000 を 1 刻みで、スライダーでは狙った値に置けない。",
+  "fix": "step を 10 にする",
+  "severity": "low"
+ },
+ {
+  "type": "BitCrusherPlugin",
+  "kind": "名前",
+  "upstream": "bit_crusher.js:235 `tpdfLabel.textContent = 'TPDF Dither:'`、253 'ZOH Frequency'、265 'Random Seed'",
+  "ours": "Tpdf Dither / Zoh Frequency (Hz) / Seed（スクショ）。頭字語が潰れ、Random Seed は Seed に縮んでいる。",
+  "fix": "label を TPDF Dither / ZOH Frequency / Random Seed にする",
+  "severity": "low"
+ },
+ {
+  "type": "NoiseBlenderPlugin",
+  "kind": "名前",
+  "upstream": "noise_blender.js:278 `label.appendChild(document.createTextNode(type.charAt(0).toUpperCase() + type.slice(1)));` — 表示は White / Pink / Brown。",
+  "ours": "スクショのピッカーは「pink」。EffectCatalog.swift の enum が `[\"white\", \"pink\", \"brown\"]` で小文字のまま。ヘッダのサブタイトルも「Noise Type pink」。",
+  "fix": "enum の表示を White / Pink / Brown にする",
+  "severity": "low"
+ },
+ {
+  "type": "HumGeneratorPlugin",
+  "kind": "名前",
+  "upstream": "hum_generator.js:357 `typeLabel.textContent = 'Type:';`",
+  "ours": "「Hum Type」（スクショ、ヘッダも「Hum Type Standard」）。ほかは並び・単位・範囲とも一致。",
+  "fix": "label を Type にする",
+  "severity": "low"
+ },
+ {
+  "type": "BandPassFilterPlugin",
+  "kind": "図が無い",
+  "upstream": "plugins/eq/band_pass_filter.js:329 で createResponsiveGraph、drawGraph は 391-460。横軸は 10Hz–40kHz の対数（391-392 `const minFreqLog = Math.log10(10); const maxFreqLog = Math.log10(40000);`）、縦軸は -60〜+12dB（415 `const dbRange = [-60, 12];`）、グリッドは 20..20k（401）と -60..0（418）。曲線は HPF と LPF の実係数から合成（444-447）",
+  "ours": "スクショに図は無い。EffectViews.swift の types に BandPassFilterPlugin が無いので ParameterRow のスライダー4本だけ",
+  "fix": "周波数応答の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "BandPassFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "band_pass_filter.js:340,352 `createLogarithmicParameterControl(\"HPF\", 10, 40000, 1, ...)` / 同 \"LPF\"。スロープは同じ行に置く select で、312 `const slopes = [0, -12, -24, -36, -48];`、316 `option.textContent = slope === 0 ? \"Off\" : `${Math.abs(slope)}dB/oct`;`",
+  "ours": "行は4本に分かれる。周波数は線形スライダー（ParameterRow.swift:79-84 の Slider、in: lo...hi）なので 1000Hz が左端 2% の位置。スロープもスライダーで、値欄は負のまま「-24 dB/…」と切れている（EffectCatalog.swift:483-484、unit \"dB/oct\"）",
+  "fix": "周波数を対数に、スロープは Off/12/24/36/48dB/oct の選択に",
+  "severity": "medium"
+ },
+ {
+  "type": "CombFilterPlugin",
+  "kind": "図が無い",
+  "upstream": "comb_filter.js:173 createResponsiveGraph。drawGraph の横軸は 1Hz–40kHz の対数（301 `Math.log10(freq) - Math.log10(1)) / (Math.log10(40000) - Math.log10(1))`、目盛り 2,5,10,...,20k は 298）、縦軸 ±24dB（311-313）。サンプルレートが届くと描き直す（121-129）",
+  "ours": "図は無い。専用画面が無く ParameterRow だけ",
+  "fix": "櫛の応答の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "CombFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "comb_filter.js:197-226 で Comb Type は「Feedback」「Feedforward」の2択ラジオ。周波数は 176 `createLogarithmicParameterControl(\"Fundamental Frequency\", 20, 20000, ...)`",
+  "ours": "Comb Type は Picker で、表示が生の値「ff」（EffectCatalog.swift:498 の enumeration([\"fb\",\"ff\"])）。周波数は線形スライダーで 440Hz が左端",
+  "fix": "enum の表示名を Feedback/Feedforward に、周波数を対数に",
+  "severity": "medium"
+ },
+ {
+  "type": "CombFilterPlugin",
+  "kind": "並び順",
+  "upstream": "comb_filter.js:261-264 `container.appendChild(freqRow); container.appendChild(combTypeRow); container.appendChild(feedbackRow); container.appendChild(mixRow);` で Comb Type は2番目。名前は 253 `createParameterControl(\"Dry-Wet Mix\", ...)`",
+  "ours": "Fundamental Frequency → Feedback Gain → Dry Wet Mix → Comb Type。Comb Type が最後で、名前は「Dry Wet Mix」（ハイフン無し）",
+  "fix": "Comb Type を2番目へ、表示名に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "HiPassFilterPlugin",
+  "kind": "図が無い",
+  "upstream": "hi_pass_filter.js:382 createResponsiveGraph。横軸 10Hz–40kHz 対数（430-431）、縦軸 -60〜+12dB（454）",
+  "ours": "図は無い。Frequency と Slope のスライダー2本だけ",
+  "fix": "周波数応答の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "HiPassFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "hi_pass_filter.js:394 `createLogarithmicParameterControl(\"Frequency\", 10, 40000, 1, ...)` に 365 `const slopes = [0, -12, -24, -36, -48, -60, -72, -84, -96];` の select を同じ行へ。0 は \"Off\"、他は絶対値で \"96dB/oct\"",
+  "ours": "周波数は線形スライダーで 1000Hz が左端。スロープもスライダーで「-24 dB/…」と負のまま切れる（EffectCatalog.swift:552-553）",
+  "fix": "周波数を対数に、スロープを選択に",
+  "severity": "medium"
+ },
+ {
+  "type": "LoPassFilterPlugin",
+  "kind": "図が無い",
+  "upstream": "lo_pass_filter.js:382 createResponsiveGraph。横軸 10Hz–40kHz 対数（430-431）、縦軸 -60〜+12dB（454）",
+  "ours": "図は無い。Hi Pass Filter と同じ画面",
+  "fix": "周波数応答の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "LoPassFilterPlugin",
+  "kind": "操作面が違う",
+  "upstream": "lo_pass_filter.js:394 対数の Frequency 行＋365 のスロープ select（0=Off、-12〜-96 を絶対値表示）",
+  "ours": "線形スライダーの Frequency と、負値のまま切れる Slope スライダー（EffectCatalog.swift:564-565）",
+  "fix": "周波数を対数に、スロープを選択に",
+  "severity": "medium"
+ },
+ {
+  "type": "NarrowRangePlugin",
+  "kind": "図が無い",
+  "upstream": "narrow_range.js:470 createResponsiveGraph。横軸 20Hz–40kHz 対数（518）、縦軸 -30〜+6dB（529-531 `const dBs = [-30,-24,-18,-12,-6,0]; y = height * (1 - (db + 30) / 36);`）",
+  "ours": "図は無い。スライダー4本だけ",
+  "fix": "周波数応答の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "NarrowRangePlugin",
+  "kind": "操作面が違う",
+  "upstream": "narrow_range.js:456,462 `createLogarithmicParameterControl(\"HPF Freq\", 20, 4000, 1, ...)` / `(\"LPF Freq\", 200, 40000, 100, ...)`、スロープは 440 `const slopes = [0, -6, -12, -18, -24, -30, -36, -42, -48];` の select を同じ行に",
+  "ours": "「High Pass Frequency (Hz)」「Low Pass Frequency (Hz)」の線形スライダーと、独立した Slope スライダー（「-24 dB/…」表示）の4本",
+  "fix": "周波数を対数に、スロープを Off 付きの選択に、名前を HPF Freq / LPF Freq に",
+  "severity": "medium"
+ },
+ {
+  "type": "TiltEQPlugin",
+  "kind": "単位・表記",
+  "upstream": "tilt_eq.js:246 `pivotLabel.textContent = 'Pivot Freq (Hz):';`、数値欄は Hz（262-265 `pivotHzInput.min = 20; pivotHzInput.max = 20000; pivotHzInput.value = Math.round(Math.exp(this.f0));`）。スライダーは log 値 3.0–9.9 で step 0.01（224-228）",
+  "ours": "「pivotFrequency」という名前で、値欄は log 値の 6.91、単位なし。刻みは 1.0（EffectCatalog.swift:622、出所は dsp/plugins/eq/tilt_eq/params.json の publicName と step:1）。1000Hz 前後の設定が e 倍刻みでしか動かない",
+  "fix": "表示を exp() して Hz に、刻みを 0.01 に、名前を Pivot Freq (Hz) に",
+  "severity": "high"
+ },
+ {
+  "type": "TiltEQPlugin",
+  "kind": "図が無い",
+  "upstream": "tilt_eq.js:269 createResponsiveGraph。横軸 20Hz–20kHz 対数（396）、縦軸 ±24dB（411-412）、ピボット位置に縦線（561）",
+  "ours": "図は無い。スライダー2本だけ",
+  "fix": "傾きの曲線とピボット線を足す",
+  "severity": "high"
+ },
+ {
+  "type": "ToneControlPlugin",
+  "kind": "図が無い",
+  "upstream": "tone_control.js:308 createResponsiveGraph。横軸 20Hz–20kHz 対数（398）、縦軸 ±24dB（410-411 `const dBs = [-24,-18,-12,-6,0,6,12,18,24]; y = height * (1 - (db + 24) / 48);`）",
+  "ours": "図は無い。Bass / Mid / Treble のスライダー3本だけ",
+  "fix": "3バンドの合成応答の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "ToneControlPlugin",
+  "kind": "落ちている",
+  "upstream": "tone_control.js:338-340 `resetButton.className = 'eq-reset-button'; resetButton.textContent = 'Reset';` を図の上に置き、押すと3つとも 0dB へ",
+  "ours": "Reset は無い",
+  "fix": "Reset ボタンを足す",
+  "severity": "low"
+ },
+ {
+  "type": "LoudnessEqualizerPlugin",
+  "kind": "図が無い",
+  "upstream": "loudness_equalizer.js:337 createResponsiveGraph。横軸 20Hz–20kHz 対数（421）、縦軸 -6〜+18dB（434-435 `const dBs = [-6,0,6,12,18]; y = height * (1 - (db + 6) / 24);`）",
+  "ours": "図は無い。スライダー8本だけ",
+  "fix": "補正曲線の図を足す",
+  "severity": "high"
+ },
+ {
+  "type": "LoudnessEqualizerPlugin",
+  "kind": "並び順",
+  "upstream": "loudness_equalizer.js:356-386 の順に Average SPL → Relative Volume → Low Freq → Low Gain → Low Q → High Freq → High Gain → High Q",
+  "ours": "Average Spl → Relative Volume → Low Gain → Low Frequency → Low Q → High Q → High Gain → High Frequency（低域は Freq と Gain が逆、高域は3つとも逆順）",
+  "fix": "上流の順に並べ替える",
+  "severity": "medium"
+ },
+ {
+  "type": "LoudnessEqualizerPlugin",
+  "kind": "名前",
+  "upstream": "loudness_equalizer.js:357 'Average SPL'、365 'Low Freq'、377 'High Freq'",
+  "ours": "「Average Spl」「Low Frequency」「High Frequency」（EffectCatalog.swift:576,579,583。params.json の name からの自動生成）",
+  "fix": "表示名を上流に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "GroupDelayEqPlugin",
+  "kind": "落ちている",
+  "upstream": "group_delay_eq.js:2-18 の 15 バンド（25Hz〜16kHz）それぞれに縦スライダー、ms 表示、位相角表示を作り（566-599）、Target/Realized の凡例つきグラフ（606-625）、Reset（629-631）、状態行（639-656）を置く",
+  "ours": "Latency Mode と Filter Delay Samples の2つだけ。バンドも図も無い。しかも 5Band FIR PEQ / Group Delay PEQ / Room EQ と違って「なぜ図が無いか」の説明パネルも無いので、ただ空に見える（EffectViews.swift の types に GroupDelayEqPlugin が無い）",
+  "fix": "せめて他の FIR 系と同じ説明パネルを出す。バンドを触らせるなら設計側の移植が要る",
+  "severity": "high"
+ },
+ {
+  "type": "GroupDelayEqPlugin",
+  "kind": "操作面が違う",
+  "upstream": "group_delay_eq.js:538-552 は select が2つ、Taps（4096/8192/16384/32768、21 行目 TAPS_CHOICES）と Latency（546-550 `label: `${value} samples``）。fd は画面に出ない内部値",
+  "ours": "Taps は無い。Latency は「Latency Mode」という名前で選択肢が「128」の裸の数字、代わりに上流が出さない Filter Delay Samples がスライダーで出ている（EffectCatalog.swift:528-529）。5Band FIR PEQ / Group Delay PEQ / Room EQ も同じ形（同 454-455, 540-541, 604-605）。上流では fd は派生値（five_band_fir_peq.js:96-103 `fd: this.pm === 'min' ? 0 : this.tp / 2`）",
+  "fix": "Latency の表記を「128 samples」に、Filter Delay Samples は隠すか読み取り専用に",
+  "severity": "medium"
+ },
+ {
+  "type": "FiveBandDynamicEQ",
+  "kind": "操作面が違う",
+  "upstream": "five_band_dynamic_eq.js:877-882 Frequency はスライダー 0..1 を log 変換（`_sliderToLogFreq`）、同 903-910 Ratio も log 変換（`_sliderToRatio`、スライダーは -100..200）、971-977 SC Freq. も同じ",
+  "ours": "どれも線形。スクショでは 1000Hz がスライダーの左 10%、Ratio 2.00 が左端（FiveBandDynamicEQView.swift のスライダー行）",
+  "fix": "Frequency / SC Freq / Ratio を対数（Ratio は上流の変換式）に",
+  "severity": "medium"
+ },
+ {
+  "type": "FiveBandDynamicEQ",
+  "kind": "名前",
+  "upstream": "five_band_dynamic_eq.js:913 'Knee Width (dB)'、971 'SC Freq. (Hz)'、981 'SC Q'",
+  "ours": "「Knee (dB)」「Sidechain Frequency (Hz)」「Sidechain Q」（EffectCatalog.swift:439,442,443）",
+  "fix": "表示名を上流に合わせる",
+  "severity": "low"
+ },
+ {
+  "type": "FiveBandDynamicEQ",
+  "kind": "その他",
+  "upstream": "five_band_dynamic_eq.js:913 Knee Width は 0..30、919 Attack は 0.1..200",
+  "ours": "Knee は 0..10、Attack は 0.1..100（EffectCatalog.swift:439-440。出所は dsp/plugins/eq/five_band_dynamic_eq/params.json の min/max）。上流で作れる設定の上半分に手が届かない",
+  "fix": "params.json の max をどちらに合わせるか決める（view 側では直らない）",
+  "severity": "low"
+ },
+ {
+  "type": "FiveBandPEQPlugin",
+  "kind": "並び順",
+  "upstream": "five_band_peq.js:622-624 `bandControls.appendChild(labelContainer); bandControls.appendChild(typeRow); bandControls.appendChild(qRow); bandControls.appendChild(freqRow); bandControls.appendChild(gainRow);` で Type → Q → Freq → Gain",
+  "ours": "Type → Freq → Gain → Q（FiveBandPEQView.swift:443-458）。15Band PEQ 側は上流も Type → Freq → Gain → Q（fifteen_band_peq.js:747,792,824,861）なので、食い違うのは 5Band だけ",
+  "fix": "5Band だけ Q を Type の直後へ。または上流の不揃いと見て据え置き",
+  "severity": "low"
+ },
+ {
+  "type": "FifteenBandPEQPlugin",
+  "kind": "落ちている",
+  "upstream": "fifteen_band_peq.js:476-478 の Import ボタン（.txt の EQ 設定読み込み、`fileInput.accept = '.txt'`）と 498-501 の Inverse ボタンが図の右上に並ぶ",
+  "ours": "Import は無い（FifteenBandPEQView.swift:17 に「web にあって、ここに無いもの: Import」と自覚あり）。反転ボタンの名前も「Invert Gains」で上流は「Inverse」（同 400）",
+  "fix": "名前を Inverse に。Import はファイル取り込みの口が要る",
+  "severity": "low"
+ },
+ {
+  "type": "EarphoneCableSimPlugin",
+  "kind": "名前",
+  "upstream": "earphone_cable_sim.js:579-583 は 'Output Z'/'Cable R'/'Cable L'/'Voice Coil L'/'Base Z' で単位は 'Ω'・'µH'・'mH'。共振の行は 635-637 `mkRow('Freq (Hz):', ...)`、`mkRow('Q:', ...)`、`mkRow('Peak Z (Ω):', ...)`",
+  "ours": "「Output Impedance (ohm)」「Cable Resistance (ohm)」「Cable Inductance (uH)」「Voice Coil Inductance (mH)」「Base Impedance (ohm)」、共振は「Resonance Frequency」「Resonance Q」「Resonance Impedance」（EffectCatalog.swift:505-513）。単位は Ω が ohm、µH が uH",
+  "fix": "表示名と単位記号を上流に合わせる",
+  "severity": "low"
+ }
+]

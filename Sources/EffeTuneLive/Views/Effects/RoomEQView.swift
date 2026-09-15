@@ -62,6 +62,6 @@ struct RoomEQView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+        .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 }

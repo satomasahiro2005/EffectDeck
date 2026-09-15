@@ -138,7 +138,7 @@ struct MultiChannelPanelView: View {
                                 .frame(minWidth: 30, minHeight: 26)
                                 .background(channel == ch
                                             ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                            in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
@@ -180,7 +180,7 @@ struct MultiChannelPanelView: View {
                 .padding(.horizontal, wide ? 10 : 0)
                 .frame(minWidth: wide ? 0 : 34, minHeight: 28)
                 .background(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                            in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
     }

@@ -18,6 +18,7 @@ enum ETEffectViews {
         "DynamicSaturationPlugin",
         "EarphoneCableSimPlugin",
         "ExpanderPlugin",
+        "FifteenBandGEQPlugin",
         "FifteenBandPEQPlugin",
         "FiveBandDynamicEQ",
         "FiveBandFIRPEQPlugin",
@@ -27,7 +28,12 @@ enum ETEffectViews {
         "HardClippingPlugin",
         "HarmonicDistortionPlugin",
         "LevelMeterPlugin",
+        "MultibandSaturationPlugin",
+        "ModalResonatorPlugin",
         "MultiChannelPanelPlugin",
+        "MultibandTransientPlugin",
+        "MultibandExpanderPlugin",
+        "MultibandCompressorPlugin",
         "NoteSpectrogramPlugin",
         "OscilloscopePlugin",
         "PhaseSelectEqPlugin",
@@ -52,6 +58,8 @@ enum ETEffectViews {
             EarphoneCableSimView(index: index, node: node, dsp: dsp)
         case "ExpanderPlugin":
             ExpanderView(index: index, node: node, dsp: dsp)
+        case "FifteenBandGEQPlugin":
+            FifteenBandGEQView(index: index, node: node, dsp: dsp)
         case "FifteenBandPEQPlugin":
             FifteenBandPEQView(index: index, node: node, dsp: dsp)
         case "FiveBandDynamicEQ":
@@ -70,8 +78,18 @@ enum ETEffectViews {
             HarmonicDistortionView(index: index, node: node, dsp: dsp)
         case "LevelMeterPlugin":
             LevelMeterView(index: index, node: node, dsp: dsp)
+        case "MultibandSaturationPlugin":
+            MultibandSaturationView(index: index, node: node, dsp: dsp)
+        case "ModalResonatorPlugin":
+            ModalResonatorView(index: index, node: node, dsp: dsp)
         case "MultiChannelPanelPlugin":
             MultiChannelPanelView(index: index, node: node, dsp: dsp)
+        case "MultibandTransientPlugin":
+            MultibandTransientView(index: index, node: node, dsp: dsp)
+        case "MultibandExpanderPlugin":
+            MultibandExpanderView(index: index, node: node, dsp: dsp)
+        case "MultibandCompressorPlugin":
+            MultibandCompressorView(index: index, node: node, dsp: dsp)
         case "NoteSpectrogramPlugin":
             NoteSpectrogramView(index: index, node: node, dsp: dsp)
         case "OscilloscopePlugin":

@@ -115,6 +115,21 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         routingManager.activatedDevice(device, session: session)
     }
 
+    /// **2 回目以降が繋がらない原因はここではない。** 先に EffeTuneDriver.m の
+    /// publishWithDeviceUID: にある長いコメントを読むこと。要点だけ書くと、
+    /// 失敗は audiomxd の
+    ///   customEndpoint_Activate: VA port type 'rstm' already connected;
+    ///     skipping port-publication wait
+    /// で決まっていて、この行が出るのは activateDevice が届く 4ms 前
+    /// （dev.log 2026-09-16 02:40:01.489240 / 02:40:01.493678）。
+    /// つまり Swift 側で何を呼ぼうと結果は動かない。効くのは
+    /// 「前回の publish が残した rstm ポートを次の activate までに消す」ことだけで、
+    /// それは unpublish の中でやっている。
+    ///
+    /// 下の foundDevice はドキュメントの言う口ではない（updateDevices が正しい）。
+    /// stopDeviceDiscovery の lostDevice も同じく doc に無い。どちらも直す価値はあるが、
+    /// gate の分岐とは別の話なので、unpublish の結果を 1 往復見てから触ること。
+    /// 同時に変えると、どちらが効いたのか分からなくなる。
     func deactivateDevice(_ device: MediaOutputDevice, session: MediaOutputSession) {
         log.notice("deactivateDevice")
         reportTimer?.invalidate()

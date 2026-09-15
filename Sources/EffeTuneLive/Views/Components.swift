@@ -2,13 +2,12 @@
 //  画面の部品と寸法。色はまだ決めていないので、ここでは持たない。
 //  いまはシステムの意味づけ（primary / secondary / tint）に任せてある。
 //
-//  角丸は器に追従させる。iOS 26 以降の concentric がそれを担う。
+//  角丸は数値で持つ。
 //
-//  ただし concentric は「一番近い器の丸みから、そこまでの距面を引いた値」。
-//  器を名乗らないと画面そのものが器になり、深い位置の小さな部品は
-//  引き算の結果 0 になって角が消える。実際これで消えていた。
-//  そこで Card が containerShape で器を名乗り、中の部品はそこから引く。
-//  さらに minimum を付けて、どんな場所でも 0 には落ちないようにしてある。
+//  iOS 26 の concentric（器の丸みに追従させる）を一度入れたが、
+//  器から遠い小さな部品では引き算の結果 0 になり、
+//  minimum を付けても実機で角が消えていた。
+//  見た目が先なので、値は cardRadius / innerRadius の 2 つだけに寄せてある。
 
 import SwiftUI
 
@@ -20,12 +19,15 @@ enum ETMetrics {
     /// 見た目はこれより小さくてよいが、当たり判定はここまで広げる。
     static let hitTarget: CGFloat = 44
     /// カードの丸み。**ここだけが数値を持つ。**
-    /// 中の部品はこれから concentric で引くので、変えるのはこの 1 行。
+    /// 外枠の丸み。
     static let cardRadius: CGFloat = 16
-    /// 内側の部品の丸みの下限。器から遠いところでも角を残す。
-    /// concentric(minimum:) は CGFloat ではなく Edge.Corner.Style を取る。
-    @available(iOS 26.0, *)
-    static let innerMinRadius: Edge.Corner.Style = .fixed(8)
+    /// 内側の部品の丸み。
+    ///
+    /// concentric をやめて数値で持っている。
+    /// 器の丸みに追従させるのが筋だが、器から遠い小さな部品では
+    /// 引き算の結果 0 になり、minimum を付けても実機で角が消えていた。
+    /// 見た目が先なので数値にしてある。変えるのはこの 1 行。
+    static let innerRadius: CGFloat = 8
 }
 
 /// エフェクトの入切。EffeTune は各エフェクトの頭に ON のバッジを置いている。
@@ -53,7 +55,7 @@ struct ValueBox: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-            .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 }
 

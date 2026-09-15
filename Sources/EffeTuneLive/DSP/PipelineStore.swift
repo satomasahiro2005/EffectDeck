@@ -17,7 +17,13 @@
 //    - パラメータのキーは params.json の `key`（`vl` など）。C++ のメンバ名ではない
 //    - `inputBus` / `outputBus` / `channel` は null のとき**キーごと出さない**
 //
-//  出典: js/utils/serialization-utils.js:13-106
+//  Section も同じ形で入る。表示名は "Section"、パラメータはセクション名の `cm` ひとつ:
+//      ショート  { "cm": "Drums", "nm": "Section", "en": true }
+//      ロング    { "name": "Section", "enabled": true, "parameters": { "cm": "Drums" } }
+//  上流は `cm` を常に書く（plugins/control/section.js の getParameters）ので、
+//  空でもキーごと落とさない。ib/ob/ch は Section が持たないので出ない。
+//
+//  出典: js/utils/serialization-utils.js:13-106、plugins/control/section.js
 
 import Foundation
 import os
@@ -61,6 +67,8 @@ enum PipelineStore {
     /// 配列は EffeTune 側の持ち方に合わせきれていないので、いまは先頭だけ書く
     /// （読み込み側も同じ扱いなので往復はする）。
     private static func parameters(of node: EffeTuneDSP.Node) -> [String: Any] {
+        // Section は ETParam を持たない。名前は Node 側の文字列なのでここで出す。
+        if node.isSection { return [ETSection.commentKey: node.sectionName] }
         var o: [String: Any] = [:]
         for p in node.spec.params {
             guard node.values.indices.contains(p.offset) else { continue }
@@ -100,6 +108,8 @@ enum PipelineStore {
         var inputBus: UInt8
         var outputBus: UInt8
         var channelSpec: Int8
+        /// Section の名前（`cm`）。Section 以外では空。
+        var sectionName: String = ""
     }
 
     /// ロングでもショートでも受ける。根が配列ならショート、
@@ -120,14 +130,30 @@ enum PipelineStore {
         for entry in list {
             let isLong = entry["name"] != nil
             let name = (entry["name"] ?? entry["nm"]) as? String ?? ""
-            guard let spec = byName[name] else {
-                log.notice("知らないエフェクト \(name, privacy: .public)")
-                continue
-            }
 
             let params: [String: Any] = isLong
                 ? (entry["parameters"] as? [String: Any] ?? [:])
                 : entry
+
+            // Section はカーネルが無いので catalog に載っていない。名前で拾う。
+            // ここで落とすと、web 版で作った鎖を取り込んだときに区切りだけ消えて
+            // 配下が別のセクションに繰り上がる（次の Section まで、が変わる）。
+            if name == ETSection.name {
+                out.append(Loaded(
+                    spec: ETSection.spec,
+                    values: [],
+                    enabled: (entry["enabled"] ?? entry["en"]) as? Bool ?? true,
+                    inputBus: 0,
+                    outputBus: 0,
+                    channelSpec: -1,
+                    sectionName: params[ETSection.commentKey] as? String ?? ""))
+                continue
+            }
+
+            guard let spec = byName[name] else {
+                log.notice("知らないエフェクト \(name, privacy: .public)")
+                continue
+            }
 
             var values = spec.defaults
             for p in spec.params {

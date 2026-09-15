@@ -70,7 +70,7 @@ private struct RoutingRow: View {
                 Text(node.spec.name)
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
-                if !node.isDefaultRouting {
+                if !node.isDefaultRouting || node.isGated {
                     Text(ETRouting.badge(node))
                         .font(.system(size: 11, design: .monospaced))
                         .padding(.horizontal, 7)
@@ -131,7 +131,7 @@ private struct RoutingRow: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
         }
     }
 }

@@ -257,8 +257,8 @@ private struct PEQ15SliderRow: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
-                    .overlay(ConcentricRectangle(corners: .concentric(minimum: ETMetrics.innerMinRadius)).stroke(.tint, lineWidth: 1))
+                    .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: 1))
                     .submitLabel(.done)
                     .onSubmit { commit() }
             } else {
@@ -436,7 +436,7 @@ struct FifteenBandPEQView: View {
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(minWidth: 34, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                            in: .rect(corners: .concentric(minimum: ETMetrics.innerMinRadius)))
+                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)
         }
         .buttonStyle(.plain)

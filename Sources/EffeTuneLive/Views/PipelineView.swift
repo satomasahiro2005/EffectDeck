@@ -6,21 +6,49 @@
 //    - 再生の開始/停止は持たない。拡張が繋がったら自分で鳴らし始める。
 //      鎖を切りたいときは頭の ON を切る（素通しになる）
 //    - レベルメーターは下の帯に置かない。要る人は Level Meter を鎖に入れる
+//    - Section を畳むと配下の**行ごと**消える。上流はパラメータの表示を畳むだけで
+//      行は残る（js/ui/pipeline/pipeline-item-builder.js:795-836）。
+//      横に並べられない幅なので、ここだけ変えてある
 
+import Combine
 import SwiftUI
 
 struct PipelineView: View {
-    @StateObject private var io = AudioIO.shared
+    /// **io は観測しない。@StateObject にしてはいけない。**
+    ///
+    /// tick() が 3.3Hz、pollTelemetry() が 30Hz で回る。観測すると
+    /// AudioIO が publish するたびに body ごと作り直され、作り直されている間
+    /// Menu は提示を終えられない。実機で ⋯ が "Loading…" のまま固まり、
+    /// XCUITest で exists=true / enabled=true / hittable=false になっていたのがこれ。
+    /// 画面に要る 3 つの値だけを、下で publisher から @State へ写す。
+    private let io = AudioIO.shared
     @StateObject private var dsp = EffeTuneDSP.shared
-    @State private var showPicker = false
-    @State private var showSettings = false
-    @State private var showRouting = false
-    @State private var showPresets = false
+
+    /// 出しているシート。
+    ///
+    /// 同じビューに .sheet を何枚も積むと、後から付けたものが効かなくなる。
+    /// 実機で ⋯ の項目が全部押せなくなったのがそれ。ひとつにまとめる。
+    /// ツールバーを別の型へ出したので、その型からも見えるところに置く。
+    enum Sheet: String, Identifiable {
+        case picker, settings, routing, presets, welcome, ir
+        var id: String { rawValue }
+    }
+
+    @State private var sheet: Sheet?
     @AppStorage("welcome.seen") private var welcomeSeen = false
-    @State private var showWelcome = false
-    @State private var showIR = false
     /// 畳んだものだけを覚える。既定は開いた状態。
-    @State private var collapsed: Set<UUID> = []
+    /// Section もここに入る。Section の場合は自分のパラメータではなく、
+    /// 配下の行が消える（下の rows）。
+    /// 開いている段。**既定は畳んだ状態**なので、ここに入っているものだけが開く。
+    /// 以前は逆（既定で開く）だったが、段が増えると一覧として使えなくなる。
+    @State private var expanded: Set<UUID> = []
+
+
+    /// io から写した値。AudioIO.tick() が同じ値の代入をやめたので、
+    /// ここへ届くのは本当に変わったときだけ。初期値は onAppear で合わせる。
+    @State private var running = false
+    @State private var hasPeer = false
+    @State private var processingRate: Double = 48000
 
     /// 図を動かすための速い方。DSP が 30Hz で吐いているのでそれに合わせる。
     private let fast = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
@@ -29,106 +57,68 @@ struct PipelineView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                pipelineHeader
-                chainList
-            }
-            .navigationTitle("EffeTune Live")
+            chainList
+                // 撮影のときだけ iPhone の幅に絞る。
+                // iPad で撮るのは高さが要るからで、幅まで iPad になると
+                // 実機の見え方にならない。
+                .frame(maxWidth: ETScreenshotSeed.requested == nil
+                                 ? .infinity : ETScreenshotSeed.phoneWidth)
+                .frame(maxWidth: .infinity)
+            // タイトルは出さない。アプリの中でアプリ名を読む人は居ないし、
+            // その 1 行ぶん鎖が見える。
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showPicker = true } label: { Image(systemName: "plus") }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { showPresets = true } label: {
-                            Label("Presets…", systemImage: "square.stack")
-                        }
-                        Button { showRouting = true } label: {
-                            Label("Routing…", systemImage: "arrow.triangle.branch")
-                        }
-                        .disabled(dsp.chain.isEmpty)
-                        Button { showIR = true } label: {
-                            Label("IR Library…", systemImage: "waveform")
-                        }
-                        Divider()
-                        Button { showSettings = true } label: {
-                            Label("Settings…", systemImage: "gearshape")
-                        }
-                        Button { showWelcome = true } label: {
-                            Label("How it works", systemImage: "questionmark.circle")
-                        }
-                        Divider()
-                        Button(role: .destructive) { dsp.clear() } label: {
-                            Label("Remove All", systemImage: "trash")
-                        }
-                        .disabled(dsp.chain.isEmpty)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
+            .toolbar { PipelineToolbar(sheet: $sheet, dsp: dsp, io: io) }
+            .sheet(item: $sheet) { which in
+                switch which {
+                case .picker:
+                    EffectPickerView { spec in dsp.add(spec) }
+                case .settings:
+                    SettingsView(io: io)
+                case .routing:
+                    RoutingView(dsp: dsp)
+                case .presets:
+                    PresetsView(dsp: dsp)
+                case .welcome:
+                    WelcomeView(io: io)
+                case .ir:
+                    IRLibraryView()
                 }
             }
-            .sheet(isPresented: $showPicker) {
-                EffectPickerView { spec in
-                    dsp.add(spec)
-                }
+            .onChange(of: sheet) { old, now in
+                if old == .welcome && now == nil { welcomeSeen = true }
             }
-            .sheet(isPresented: $showSettings) { SettingsView(io: io) }
-            .sheet(isPresented: $showRouting) { RoutingView(dsp: dsp) }
-            .sheet(isPresented: $showPresets) { PresetsView(dsp: dsp) }
-            .sheet(isPresented: $showWelcome, onDismiss: { welcomeSeen = true }) {
-                WelcomeView(io: io)
-            }
-            .sheet(isPresented: $showIR) { IRLibraryView() }
             .onAppear {
                 // 画面を撮るときは案内を出さない。後ろが見えなくなるので。
-                if !welcomeSeen && ETScreenshotSeed.requested == nil { showWelcome = true }
+                if !welcomeSeen && ETScreenshotSeed.requested == nil { sheet = .welcome }
+                // 画面を撮るときは全部開く。既定は畳んだ状態なので、
+                // そのままだと中身が写らない。
+                if ETScreenshotSeed.requested != nil {
+                    expanded = Set(dsp.chain.map(\.id))
+                }
+                // 写した値の初期合わせ。購読の初回配信に頼らない。
+                running = io.running
+                hasPeer = io.hasPeer
+                processingRate = io.processingRate
             }
         }
         .onReceive(fast) { _ in io.pollTelemetry() }
         .onReceive(slow) { _ in io.tick() }
-    }
-
-    /// EffeTune の「ON  Effect Pipeline    96000 Hz」の帯にあたるもの。
-    /// ナビゲーションの見出しが「EffeTune Live」なので、ここで名前をもう一度出さない。
-    /// 鎖が空のときは出すものが無いので、帯ごと畳む。
-    @ViewBuilder
-    private var pipelineHeader: some View {
-        if !dsp.chain.isEmpty {
-            HStack(spacing: 10) {
-                Button {
-                    dsp.bypass.toggle()
-                } label: {
-                    PowerBadge(isOn: !dsp.bypass)
-                }
-                .buttonStyle(.plain)
-
-                Text(dsp.bypass ? "Bypassed"
-                                : "\(dsp.chain.count) effect\(dsp.chain.count == 1 ? "" : "s")")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                if io.running {
-                    Text("\(Int(io.processingRate / 1000)) kHz")
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
+        // io を丸ごと観測せず、要る値だけを写す。
+        .onReceive(io.$running) { running = $0 }
+        .onReceive(io.$hasPeer) { hasPeer = $0 }
+        .onReceive(io.$processingRate) { processingRate = $0 }
     }
 
     private var chainList: some View {
+
         List {
             ClipboardBanner(dsp: dsp)
                 .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
 
-            if !io.hasPeer {
+            if !hasPeer {
                 ConnectBanner()
                     .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 8, trailing: 14))
                     .listRowSeparator(.hidden)
@@ -136,31 +126,164 @@ struct PipelineView: View {
             }
 
             if dsp.chain.isEmpty {
-                EmptyChainRow { showPicker = true }
+                EmptyChainRow { sheet = .picker }
                     .listRowInsets(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 14))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(Array(dsp.chain.enumerated()), id: \.element.id) { index, node in
+                ForEach(rows) { row in
                     EffectCardView(
-                        index: index,
-                        node: node,
+                        index: row.index,
+                        node: row.node,
                         dsp: dsp,
-                        isExpanded: !collapsed.contains(node.id),
+                        isExpanded: expanded.contains(row.node.id),
                         toggleExpanded: {
-                            if collapsed.contains(node.id) { collapsed.remove(node.id) }
-                            else { collapsed.insert(node.id) }
+                            if expanded.contains(row.node.id) { expanded.remove(row.node.id) }
+                            else { expanded.insert(row.node.id) }
                         })
                         .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
+                        .id(row.node.id)
                 }
-                .onDelete { dsp.remove(at: $0) }
-                .onMove { dsp.move(from: $0, to: $1) }
+                .onDelete { offsets in
+                    dsp.remove(at: chainIndices(of: offsets))
+                }
+                .onMove { source, destination in
+                    move(source, to: destination)
+                }
             }
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 0)
+    }
+
+    // MARK: - 行の組み立て
+
+    /// 画面に出す 1 行。落とす行があるので、鎖の中の位置を一緒に持つ。
+    /// EffectCardView は index で dsp を触る（setValue など）ため、
+    /// ここがずれると別のエフェクトを書き換える。
+    private struct Row: Identifiable {
+        let index: Int
+        let node: EffeTuneDSP.Node
+        var id: UUID { node.id }
+    }
+
+    /// 畳んでいる Section の配下を落としたもの。
+    ///
+    /// 隠す範囲は Section の次から、次の Section の手前まで。上流が音を止める
+    /// 範囲と同じ区切り方にしてある（js/audio/dsp-pipeline-descriptor.js:190-201、
+    /// 区切りは入れ子にならず、次の Section に当たったらそこで切り替わる）。
+    private var rows: [Row] {
+        let types = dsp.chain.map(\.spec.type)
+        var hidden: Set<Int> = []
+        for i in dsp.chain.indices
+        where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
+            hidden.formUnion(ETSection.range(after: i, types: types))
+        }
+        return dsp.chain.indices
+            .filter { !hidden.contains($0) }
+            .map { Row(index: $0, node: dsp.chain[$0]) }
+    }
+
+    /// 帯に出す本数。Section は音を触らないので数に入れない。
+    private var effectCount: Int {
+        dsp.chain.filter { !$0.isSection }.count
+    }
+
+    /// 画面の行番号を鎖の位置へ戻す。
+    private func chainIndices(of offsets: IndexSet) -> IndexSet {
+        let visible = rows
+        return IndexSet(offsets.compactMap { visible.indices.contains($0) ? visible[$0].index : nil })
+    }
+
+    /// 長押しで動かしたときの置き換え。
+    ///
+    /// 畳んでいる Section を動かすときは、隠れている配下も一緒に運ぶ。
+    /// 見えていないものを置き去りにすると、開くまで気づけないため。
+    /// 開いている Section は行 1 つだけ動く（上流の普通のドラッグと同じ。
+    /// 範囲ごと動かすのは上流でも Shift+Click の側で、
+    /// js/ui/pipeline/pipeline-section-handler.js:78-186 がそれ）。
+    private func move(_ source: IndexSet, to destination: Int) {
+        let visible = rows
+        let types = dsp.chain.map(\.spec.type)
+
+        var moving = IndexSet()
+        var dragged: Set<UUID> = []      // 掴んだ行だけ。連れて行く配下は入れない
+        for offset in source {
+            guard visible.indices.contains(offset) else { continue }
+            let i = visible[offset].index
+            moving.insert(i)
+            dragged.insert(visible[offset].node.id)
+            if visible[offset].node.isSection && !expanded.contains(visible[offset].node.id) {
+                moving.formUnion(IndexSet(integersIn: ETSection.range(after: i, types: types)))
+            }
+        }
+        guard !moving.isEmpty else { return }
+
+        let target = visible.indices.contains(destination) ? visible[destination].index
+                                                           : dsp.chain.count
+        dsp.move(from: moving, to: target)
+        reveal(dragged)
+    }
+
+    /// 掴んだ行が畳んだ Section の中に入ったら、その Section を開く。
+    ///
+    /// 畳んだ Section の下へ落とすと配下に入る。隠す範囲に入った以上そのままでは
+    /// 行が消え、どこへ行ったのか分からなくなる。上流は行が残るので起きない。
+    /// 連れて行った配下は対象にしない。Section ごと動かしたときに、
+    /// 畳んだままにしていたものが勝手に開いてしまうため。
+    private func reveal(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        let types = dsp.chain.map(\.spec.type)
+        for i in dsp.chain.indices
+        where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
+            let inside = ETSection.range(after: i, types: types)
+            if inside.contains(where: { ids.contains(dsp.chain[$0].id) }) {
+                expanded.insert(dsp.chain[i].id)
+            }
+        }
+    }
+}
+
+/// ツールバー。開いている Menu を守るために、本体から切り離してある。
+///
+/// 中身は sheet の指定しか要らない。親の body が別の理由（鎖の編集など）で
+/// 作り直されても、渡す値が同じなら SwiftUI はここを評価し直さないので、
+/// 提示の途中の Menu が作り直されずに済む。io は一切読まない。
+private struct PipelineToolbar: ToolbarContent {
+    @Binding var sheet: PipelineView.Sheet?
+    @ObservedObject var dsp: EffeTuneDSP
+    let io: AudioIO
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            // 鎖ごとの入切。帯を無くしたのでここへ。
+            Toggle("Effects", isOn: Binding(get: { !dsp.bypass },
+                                            set: { dsp.bypass = !$0 }))
+                .toggleStyle(.power)
+                .labelsHidden()
+                .scaleEffect(0.7, anchor: .center)
+                .accessibilityLabel("Effect pipeline")
+        }
+        ToolbarItem(placement: .principal) {
+            // 帯を 1 行使うのをやめて、ナビゲーションの中に入れた。
+            // 観測するのはこのビューだけ。
+            LiveStatusStrip(io: io)
+        }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button("Presets", systemImage: "square.stack") { sheet = .presets }
+            Button("Add Effect", systemImage: "plus") { sheet = .picker }
+            // IR Library はここに出さない。IR Reverb のカードから開く。
+            Menu {
+                Button("Settings", systemImage: "gearshape") { sheet = .settings }
+                Button("Routing", systemImage: "arrow.triangle.branch") { sheet = .routing }
+                Button("How it works", systemImage: "questionmark.circle") { sheet = .welcome }
+            } label: {
+                Label("More", systemImage: "ellipsis")
+            }
+            .accessibilityIdentifier("moreMenu")
+        }
     }
 }
 
