@@ -261,26 +261,27 @@ final class AudioIO: ObservableObject {
         let prefs = Preferences.shared
         let session = AVAudioSession.sharedInstance()
         do {
-            // **試作（ios-audio-tap/MediaDeviceDSP/Player/PlayerApp.swift:92）と同じ形に戻してある。**
-            // あちらは実機で「別アプリが内蔵スピーカーを掴んだまま、
-            // 他アプリが EffeTune へ流す」が成立していた。
+            // .playAndRecord は既定で Bluetooth の出力を候補から外す。
+            // .allowBluetoothA2DP を足さないとワイヤレスイヤホンへ出せない
+            // （.allowBluetooth だけだと HFP のモノラルに落ちる）。
             //
-            // 違っていたのは 2 点。
-            // ・.allowBluetoothA2DP を足していた。BT の出力を候補に入れると、
-            //   仮想デバイス（RemoteStreaming で名乗る）へセッションが追従する。
-            //   実機のログで `tick out=EffeTune ovr=true`、つまり
-            //   override を当てても出力先が戻らない状態になっていた。
-            // ・overrideOutputAudioPort を条件付きにしていた。試作は無条件。
-            //
-            // 代償として BT イヤホンが候補に出なくなる。
-            // 無音で暴走するよりはよいと判断している。
+            // 一度これを外していた。帰還ループの犯人だと疑ったから。
+            // 真犯人は AVRoutePickerView を画面に置いていたことで、
+            // このアプリが共有の出力コンテキストへ参加してしまっていた。
+            // ピッカーを外して解決したので、BT も override も戻す。
             try session.setCategory(.playAndRecord, mode: .default,
-                                    options: [.defaultToSpeaker, .mixWithOthers])
+                                    options: [.defaultToSpeaker, .mixWithOthers,
+                                              .allowBluetoothA2DP])
             try session.setPreferredSampleRate(48000)
             try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
-            try session.overrideOutputAudioPort(.speaker)
-            overriding = true
+            // 出力先はシステムに任せる。
+            // .speaker を無条件に当てると、イヤホンを繋いでいても
+            // 内蔵スピーカーから鳴る。
+            // 仮想デバイスへ引きずられていないかは
+            // refreshRoute() の loopback で見て、Settings に出す。
+            try session.overrideOutputAudioPort(.none)
+            overriding = false
 
 
             // このアプリの音がどこへ出ているか。

@@ -114,10 +114,17 @@ struct EffectCardView: View {
             }
 
             if hasBody {
+                // **印であって押し所ではない。**
+                // 押すのは行そのもの（下の onTapGesture）。
+                // 矢印にも当たり判定があると、行の手つきと取り合って
+                // 押せたり押せなかったりに見える。しかも文字を押すのと
+                // 結果が同じなので、分ける意味が無い。
                 Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
 
             Menu {

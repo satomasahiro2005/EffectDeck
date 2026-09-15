@@ -14,8 +14,8 @@ struct LiveStatusStrip: View {
     var body: some View {
         if io.running {
             HStack(spacing: 8) {
-                Text("\(Int(io.processingRate / 1000))k")
-                    .frame(width: 26, alignment: .trailing)
+                Text("\(Int(io.processingRate / 1000)) kHz")
+                    .frame(width: 46, alignment: .trailing)
                 // link + dsp。足すと出るまでの遅れ。
                 // どちらが増えたのかが分かるように足し算のまま出す。
                 Text("\(linkMs)+\(dspMs)ms")
