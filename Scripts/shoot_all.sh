@@ -34,8 +34,15 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
     python3 "$NS/embed_models.py" "$NS/$m.json" Generated/note-models --target macho >/dev/null 2>&1
   done
   python3 Tools/gen_version.py 2>&1 | tail -1
-  xcodegen generate --spec project.yml 2>&1 | tail -1
-  /usr/bin/xcodebuild -project EffeTuneLive.xcodeproj -scheme EffeTuneLive \
+  # 拡張を外した仕様で建てる。MediaDevice.framework はシミュレータに無いので、
+  # 拡張を含むスキームは Unable to resolve module dependency で必ず落ちる。
+  # 画面を撮るのに拡張は要らない（音が来ないだけで画面は同じものが出る）。
+  python3 Tools/gen_sim_spec.py 2>&1 | tail -1
+  xcodegen generate --spec project-sim.yml 2>&1 | tail -1
+  # 前の成果物は消す。残っていると建てそこねても古いものが撮れてしまう。
+  # 100 枚まるごと古いビルドの画面だった回がある。
+  rm -rf "$ROOT/out-sim"
+  /usr/bin/xcodebuild -project EffeTuneLiveSim.xcodeproj -scheme EffeTuneLive \
     -configuration Debug -sdk iphonesimulator -arch arm64 \
     CONFIGURATION_BUILD_DIR="$ROOT/out-sim" build 2>&1 \
     | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -5
@@ -58,8 +65,10 @@ mkdir -p "$OUT"
 n=0
 for t in $TYPES; do
   xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
-  xcrun simctl launch "$DEV" "$APPID" -ETSeed "$t" >/dev/null 2>&1
-  sleep 4
+  # -ETMock 1 で作り物の音を流す。無いとメーターも図も
+  # 「Waiting for audio」のままで、カードの半分が見られない。
+  xcrun simctl launch "$DEV" "$APPID" -ETSeed "$t" -ETMock 1 >/dev/null 2>&1
+  sleep "${WAIT:-2}"
   xcrun simctl io "$DEV" screenshot "$OUT/$t.png" >/dev/null 2>&1
   n=$((n + 1))
   echo "  $t"

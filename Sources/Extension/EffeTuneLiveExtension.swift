@@ -55,6 +55,10 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
 
     /// 本体（EffeTuneLive）の ETLinkReceiver が bind している口。
     /// Sources/Shared/LocalLink.h:23-24 の ET_LINK_PORT / ET_LINK_HOST と同じもの。
+    /// 数字を写さずマクロを引くのは、片方だけ変えられるのを防ぐため。
+    /// ET_LINK_PORT は bridging header 経由（Extension-Bridging-Header.h:2）。
+    /// もし `cannot find 'ET_LINK_PORT' in scope` で止まったら 47101 を直に書く。
+    /// ビルドしていないのでここだけは確かめていない。
     static let linkEndpoint: NWEndpoint = .hostPort(
         host: .ipv4(.loopback),
         port: NWEndpoint.Port(rawValue: UInt16(ET_LINK_PORT)) ?? 47101
@@ -65,7 +69,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     /// ここが 127.0.0.1:**0** になっていた。選ぶと 1.5 秒でスピーカーへ戻る症状で、
     /// こちら側に見つかった欠陥はこれだけ。
     ///
-    /// 前は LocalEndpoint.shared.endpoints() を渡していた。拡張の中で NWListener を立てて
+    /// 前は LocalEndpoint.swift（削除済み）が拡張の中で NWListener を立てて
     /// 実ポートを渡す設計だが、拡張は待ち受けを禁じられている:
     ///   et.log:3419 kernel(Sandbox) Sandbox: EffeTuneLiveExtension(564)
     ///               deny(1) network-bind local:*:0
@@ -73,7 +77,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     ///               error: Operation not permitted
     /// 拡張プロセス 13 本すべてで同じ（`grep -c 'deny(1) network-bind'` = 13 /
     /// `grep -c 'listener ready port='` = 0 / `grep -c 'ポートが確定しなかった'` = 13）。
-    /// port が nil のまま LocalEndpoint.swift:87 の fallback
+    /// port が nil のまま、あちらの fallback
     ///   `.hostPort(host: .ipv4(.loopback), port: .any)`
     /// に落ちる。`NWEndpoint.Port.any` は 0 番。
     ///
@@ -95,7 +99,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     /// AVOutputContextDeviceConnectionFailureReasonMDERouteRevertedToLocal であること。
     /// 切る判断そのものは audiomxd の中で、述語は Notice レベルに出ない。
     ///
-    /// LocalEndpoint を呼ばなくなるので、LocalEndpoint.swift:63-66 の
+    /// 待ち受けを立てなくなるので、あちらにあった
     /// 「ポートが確定するまで 1 秒待つ」sleep も走らない。listener が必ず失敗するので
     /// 毎回まるまる 1 秒 MainActor を止めていた（startDeviceDiscovery は
     /// MediaDevice.swiftinterface 上 @MainActor）。実測で activateDeviceWithDescription の
@@ -107,6 +111,26 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     /// GOT 0x1e00ea930（kFigEndpointType_ThirdParty）から取って固定で書き込む。
     /// canGroupWithCurrentlyActivatedDevices も deviceType も volumeControl も
     /// この判定には入らない。同時に動かすと次の et.log でどれが効いたか読めなくなる。
+    ///
+    /// **直ったかどうかを見る行**（新しい et.log に対して、上から順に）:
+    ///   1. `grep 'deny(1) network-bind' et.log` が 0 件。前は 13 件。
+    ///      `grep 'ポートが確定しなかった'` も 0 件（前は 13 件）。
+    ///      ここが残っていれば、まだどこかで待ち受けを立てている。
+    ///   2. `grep 'endpoints=' et.log` に 127.0.0.1:47101 が出る。
+    ///      前は 13 回とも `endpoints=<private>` で中身が読めなかった（et.log:3883 ほか）。
+    ///      0 を名乗っていた事実はコードの経路からしか言えていなかったので、
+    ///      修正前の形を確かめたければ先にこの 1 行だけ入れて 1 往復録ること。
+    ///   3. `grep 'because a different endpoint got picked' et.log` が 0 件。前は 13 件。
+    ///      `grep 'MDERouteRevertedToLocal'` も 0 件（前は 52 件）。
+    ///   4. `customEndpoint_finishActivation` の 1.5 秒後に何も起きない。
+    ///      前は 12 サイクル全部で 1.484〜1.553 秒後に切られていた。
+    ///   5. activateDeviceWithDescription の XPC 到着から `activateDevice features=` まで
+    ///      数十 ms。前は 379ms(pid 573) / 632ms(pid 583)。
+    ///
+    /// 3 が消えず 1 と 2 だけ直るなら、0 番は原因ではなかったということ。そのときは
+    /// 所見の「次の一手」どおり Debug レベルで録り直す:
+    ///   log stream --device --level debug --predicate 'subsystem == "com.apple.coremedia"
+    ///     AND (eventMessage CONTAINS "FigRoutingManager" OR eventMessage CONTAINS "customEndpoint")'
     private lazy var localDevice: MediaOutputDevice? = {
         let eps: [NWEndpoint] = [Self.linkEndpoint]
         // privacy: .public にしないと <private> で潰れる。直ったかどうかはこの行で見る。
@@ -117,8 +141,16 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
             capabilities: [.realtimeAudioStreaming],
             canGroupWithCurrentlyActivatedDevices: false,
             deviceType: .hifiSpeaker,
-            volumeControl: .relative,
-            canMute: true,
+            // **音量はこちらで持たない。**
+            // .relative だと Now Playing（ロック画面やコントロールセンター）に
+            // + と − のボタンが出る。押されると setVolume が来て、
+            // こちらが掛けた減衰と、鎖に入れた Volume と、端末の音量とで
+            // 三重に掛かる。選択肢は none / absolute / relative の 3 つで、
+            // none にするとボタンごと出なくなる（MediaDevice.swiftinterface:125-128）。
+            // 音量は鎖の Volume か端末の音量ボタンで変える。
+            // canMute も同じ理由で外す。鎖の頭の電源を切れば素通しになる。
+            volumeControl: .none,
+            canMute: false,
             requiredNetworkEndpoints: eps,
             txtRecords: [],
             supportsSimultaneousSessions: false
@@ -200,30 +232,28 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         }
     }
 
-    // MARK: - 音量
+    // MARK: - 音量（持たない）
+    //
+    // volumeControl: .none / canMute: false にしてあるので、これらは呼ばれない。
+    // それでも protocol の要件なので残す。**中身は空にしてある。**
+    // 万一システムが呼んでも、ドライバの減衰を動かさない。
+    // 動かすと、鎖の Volume と端末の音量と合わせて三重に掛かる。
 
     func setVolume(_ volume: Float, for device: MediaOutputDevice) {
-        EffeTuneDriver.shared.volume = volume
+        log.notice("setVolume が来た（volumeControl は .none のはず）v=\(volume)")
     }
 
-    func volume(for device: MediaOutputDevice) -> Float {
-        EffeTuneDriver.shared.volume
-    }
+    func volume(for device: MediaOutputDevice) -> Float { 1.0 }
 
     func changeVolume(by increments: Int, for device: MediaOutputDevice) {
-        let step: Float = 1.0 / 16.0
-        let v = EffeTuneDriver.shared.volume + Float(increments) * step
-        EffeTuneDriver.shared.volume = min(max(v, 0), 1)
-        if let d = localDevice { routingManager.volumeChanged(for: d) }
+        log.notice("changeVolume が来た（volumeControl は .none のはず）d=\(increments)")
     }
 
     func muteDevice(_ device: MediaOutputDevice) {
-        EffeTuneDriver.shared.muted.toggle()
+        log.notice("muteDevice が来た（canMute は false のはず）")
     }
 
-    func isDeviceMuted(_ device: MediaOutputDevice) -> Bool {
-        EffeTuneDriver.shared.muted
-    }
+    func isDeviceMuted(_ device: MediaOutputDevice) -> Bool { false }
 
     // MARK: - URL 再生（使わない）
 

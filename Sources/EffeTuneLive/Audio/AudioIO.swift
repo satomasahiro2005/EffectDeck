@@ -36,6 +36,10 @@ private final class RenderState {
     var gate = PowerGate()
     var resting = false
 
+    /// 撮影用の作り物の信号。-ETMock 1 のときだけ入る。
+    /// 実機では常に nil なので、音のスレッドでは nil 判定 1 回ぶんしか増えない。
+    var mock: ETMockSource?
+
     private var timebase = mach_timebase_info_data_t()
 
     init(capacity: Int, sampleRate: Double, factor: Int) {
@@ -53,6 +57,7 @@ private final class RenderState {
         if factor > 1 {
             resampler = ETResampler_Create(UInt32(factor), 2, UInt32(capacity))
         }
+        if ETMockSource.enabled { mock = ETMockSource(sampleRate: sampleRate) }
     }
 
     deinit {
@@ -339,7 +344,13 @@ final class AudioIO: ObservableObject {
             let f = state.factor
 
             // 1. リンクから受ける（インターリーブ・48kHz）
-            _ = ETLinkReceiver.shared.readInterleaved(state.interleaved, frames: UInt32(n))
+            //    撮影のときはリンクの代わりに作り物を流す。シミュレータには
+            //    拡張が無く、そのままだと止まった画面しか撮れないため。
+            if let mock = state.mock {
+                mock.fill(state.interleaved, frames: n)
+            } else {
+                _ = ETLinkReceiver.shared.readInterleaved(state.interleaved, frames: UInt32(n))
+            }
 
             // 2. プレーナへ並べ替える。
             //    EffeTune のカーネルは offset = channel * frame_count で読む。
@@ -496,7 +507,9 @@ final class AudioIO: ObservableObject {
         let nowListening = ETLinkReceiver.shared.listening
         if listening != nowListening { listening = nowListening }
 
-        let nowPeer = ETLinkReceiver.shared.hasPeer
+        // 撮影のときは繋がっている扱いにする。そうしないと
+        // 「No audio yet」の帯が出たままで、鳴っている画面が撮れない。
+        let nowPeer = ETLinkReceiver.shared.hasPeer || ETMockSource.enabled
         if hasPeer != nowPeer { hasPeer = nowPeer }
 
         let nowReceived = ETLinkReceiver.shared.receivedFrames

@@ -35,6 +35,10 @@ struct PipelineView: View {
     }
 
     @State private var sheet: Sheet?
+    /// 「Reset Pipeline」の確認を出しているか。
+    /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
+    /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
+    @State private var confirmingReset = false
     @AppStorage("welcome.seen") private var welcomeSeen = false
     /// 開いている段。中身は EffeTuneDSP が持っている（足す・入れ替えるを握っているのが
     /// あちらで、端末に残すのも persist() なので）。Section もここに入り、
@@ -69,7 +73,8 @@ struct PipelineView: View {
             // その 1 行ぶん鎖が見える。
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { PipelineToolbar(sheet: $sheet, dsp: dsp, io: io, hasPeer: hasPeer) }
+            .toolbar { PipelineToolbar(sheet: $sheet, confirmingReset: $confirmingReset,
+                                       dsp: dsp, io: io, hasPeer: hasPeer) }
             .sheet(item: $sheet) { which in
                 switch which {
                 case .picker:
@@ -86,12 +91,27 @@ struct PipelineView: View {
                     IRLibraryView()
                 }
             }
+            // 鎖ごと捨てるのは 1 本ずつのスワイプ削除と違って取り消せないので、
+            // ⋯ から直接は走らせず一度確かめる。シートと違って重ねても
+            // 潰し合わないので、上の .sheet とは別に付けてある。
+            .confirmationDialog("Reset Pipeline?",
+                                isPresented: $confirmingReset,
+                                titleVisibility: .visible) {
+                Button("Reset Pipeline", role: .destructive) { dsp.resetToDefault() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Removes every effect and leaves a single Level Meter.")
+            }
             .onChange(of: sheet) { old, now in
                 if old == .welcome && now == nil { welcomeSeen = true }
             }
             .onAppear {
                 // 画面を撮るときは案内を出さない。後ろが見えなくなるので。
                 if !welcomeSeen && ETScreenshotSeed.requested == nil { sheet = .welcome }
+                // 撮るシートを指定されていればそれを出す。
+                if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name) {
+                    sheet = which
+                }
                 // 写した値の初期合わせ。購読の初回配信に頼らない。
                 running = io.running
                 hasPeer = io.hasPeer
@@ -249,6 +269,8 @@ struct PipelineView: View {
 /// 提示の途中の Menu が作り直されずに済む。io は一切読まない。
 private struct PipelineToolbar: ToolbarContent {
     @Binding var sheet: PipelineView.Sheet?
+    /// 立てると親が確認を出す。ここで出せないのは ToolbarContent が View でないから。
+    @Binding var confirmingReset: Bool
     @ObservedObject var dsp: EffeTuneDSP
     let io: AudioIO
     /// 拡張が繋がっているか。繋がっていないあいだマスターを沈める。
@@ -287,6 +309,20 @@ private struct PipelineToolbar: ToolbarContent {
                 Button("Settings", systemImage: "gearshape") { sheet = .settings }
                 Button("Routing", systemImage: "arrow.triangle.branch") { sheet = .routing }
                 Button("How it works", systemImage: "questionmark.circle") { sheet = .welcome }
+                Divider()
+                // 上流に鎖を空にする操作は無く、既定を組む所を
+                // 「Initialize default plugins」と呼んでいる（js/app.js:1061）。
+                // 戻す先が空ではなく既定なので、Clear ではなく
+                // 上流の Reset Audio / Reset Zoom と同じ Reset に寄せた。
+                //
+                // 押した時点では何もしない。走らせるのは親の確認を通ってから。
+                Button(role: .destructive) {
+                    confirmingReset = true
+                } label: {
+                    Label("Reset Pipeline", systemImage: "trash")
+                }
+                // 既に Level Meter 1 本なら押しても何も変わらない。
+                .disabled(dsp.isDefaultChain)
             } label: {
                 Label("More", systemImage: "ellipsis")
             }

@@ -106,6 +106,10 @@ final class EffeTuneDSP: ObservableObject {
     private static let telemetryRingBytes: UInt32 = 256 * 1024
     private static let telemetryHz: Float = 60
 
+    /// 何も無いときに置く 1 本。restore() の既定と resetToDefault() が同じものを
+    /// 指すように、型名はここだけに書く。
+    private static let defaultType = "LevelMeterPlugin"
+
     private init() {}
 
     // MARK: - 用意
@@ -263,7 +267,7 @@ final class EffeTuneDSP: ObservableObject {
             restoring = false
             publish()
         } else if !PipelineStore.hasSaved {
-            if let meter = ETCatalog.first(where: { $0.type == "LevelMeterPlugin" }) {
+            if let meter = ETCatalog.first(where: { $0.type == Self.defaultType }) {
                 add(meter)
             }
         }
@@ -280,6 +284,42 @@ final class EffeTuneDSP: ObservableObject {
         restoring = false
         for item in items { append(item) }
         publish()
+        retire(doomed)
+    }
+
+    /// いま並んでいるのが既定そのもの（Level Meter 1 本）か。
+    /// 画面で「戻す」を押せなくするのに使う。型名を画面側に持たせないため、
+    /// 何が既定かの判断はここに置く。
+    var isDefaultChain: Bool {
+        chain.count == 1 && chain[0].spec.type == Self.defaultType
+    }
+
+    /// 鎖を捨てて、初めて起動したときと同じ Level Meter 1 本へ戻す。
+    ///
+    /// 1 本ずつ消す remove(at:) しか無いと、10 本並んだ鎖を畳むのに 10 回スワイプする。
+    /// 空にせず Level Meter を 1 本置くのは restore() の既定と同じ理由で、
+    /// 音が来ているかどうかが分かる 1 本だけは残すため。
+    ///
+    /// instance の後始末は replaceChain と同じ順にしてある。先に番号を控えて、
+    /// 鎖を組み直して publish() を通したあとで retire() へ渡す。publish より先に
+    /// 壊すと、音のスレッドがまだ読んでいる古い descriptor の指す先が消える。
+    func resetToDefault() {
+        guard ready else { return }
+        let doomed = chain.map(\.instance).filter { $0 != 0 }
+        chain.removeAll()
+        // 前の鎖の id は残っていても指す先が無いので捨てる（replaceChain と同じ）。
+        restoring = true
+        expanded.removeAll()
+        restoring = false
+        if let meter = ETCatalog.first(where: { $0.type == Self.defaultType }) {
+            appendSpec(meter)
+        }
+        publish()
+        // 置いた 1 本は開く。replaceChain が全部畳むのは 10 本以上並ぶと
+        // 一覧として読めなくなるからで、1 本しか無いならその理由が無い。
+        // publish() のあとに入れるのは add(_:) と同じで、didSet の persistExpanded に
+        // 確定した鎖の位置を書かせるため。
+        if let id = chain.last?.id { expanded.insert(id) }
         retire(doomed)
     }
 
