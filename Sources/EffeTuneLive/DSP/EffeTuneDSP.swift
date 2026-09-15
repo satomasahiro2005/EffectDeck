@@ -60,7 +60,7 @@ final class EffeTuneDSP: ObservableObject {
 
     /// 可視化の値を貯める輪の大きさと、1 秒あたりに出す回数。
     private static let telemetryRingBytes: UInt32 = 256 * 1024
-    private static let telemetryHz: Float = 30
+    private static let telemetryHz: Float = 60
 
     private init() {}
 

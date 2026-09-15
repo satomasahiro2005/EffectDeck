@@ -18,9 +18,13 @@ struct PipelineView: View {
     @State private var showPresets = false
     @AppStorage("welcome.seen") private var welcomeSeen = false
     @State private var showWelcome = false
+    @State private var showIR = false
     @State private var expanded: Set<UUID> = []
 
-    private let timer = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
+    /// 図を動かすための速い方。DSP が 30Hz で吐いているのでそれに合わせる。
+    private let fast = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+    /// 状態の見直し。ルートの問い合わせなど重いものはこちら。
+    private let slow = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
@@ -51,9 +55,11 @@ struct PipelineView: View {
             .sheet(isPresented: $showWelcome, onDismiss: { welcomeSeen = true }) {
                 WelcomeView(io: io)
             }
+            .sheet(isPresented: $showIR) { IRLibraryView() }
             .onAppear { if !welcomeSeen { showWelcome = true } }
         }
-        .onReceive(timer) { _ in io.tick() }
+        .onReceive(fast) { _ in io.pollTelemetry() }
+        .onReceive(slow) { _ in io.tick() }
     }
 
     /// EffeTune の「ON  Effect Pipeline    96000 Hz」の帯。
@@ -84,6 +90,9 @@ struct PipelineView: View {
                     Label("Routing…", systemImage: "arrow.triangle.branch")
                 }
                 .disabled(dsp.chain.isEmpty)
+                Button { showIR = true } label: {
+                    Label("IR Library…", systemImage: "waveform")
+                }
                 Divider()
                 Button { showWelcome = true } label: {
                     Label("How it works", systemImage: "questionmark.circle")

@@ -13,6 +13,8 @@
 //  iPhone へ移すにあたって変えたところ:
 //    - 取っ手が多すぎて指で選び分けられないので、辺の取っ手を落として「角 8 個」だけにした。
 //      角は横と縦の境目を同時に動かすので、辺の取っ手にできることは角でも全部できる。
+//      位相 0°で左右の四角がくっついたときの割り取っ手（同 1267 split）だけは、
+//      それが無いと中央を開けられないので残してある。
 //    - 当たり判定の半径をやめ、いちばん近い角が必ず選ばれるようにした（外さない）。
 //      FrequencyResponseGraph と同じ考え方。
 //    - 「範囲ごと動かす」と「角を動かす」が同じ面で当たると指では見分けられないので、
@@ -294,8 +296,9 @@ private struct ETPhaseSegment {
 private struct ETPhaseHandle: Identifiable {
     let id: String
     let isOuter: Bool
-    let horizontal: ETPhaseEdge
-    let frequency: ETPhaseEdge
+    /// 動かす境目。片方だけの取っ手（位相 0 の割り取っ手）は nil が入る。
+    let horizontal: ETPhaseEdge?
+    let frequency: ETPhaseEdge?
     /// 位相表示の左右。-1 か +1。バランス表示では +1。
     let side: Double
     let x: Double         // 表示座標の値
@@ -642,6 +645,14 @@ struct PhaseSelectEqView: View {
                 }
             }
         }
+        // 核の下側が 0°のときは左右の四角がくっついていて、真ん中に境目が無い。
+        // web は そこに割り取っ手（js:1267 の split）を置いて中央を開けられるようにしている。
+        // 指では左右どちらへ引いたかを見分ける意味が薄いので、右へ引くと開く形にした。
+        if axisMode == .phase && r.pl == 0 {
+            out.append(ETPhaseHandle(id: "split", isOuter: false,
+                                     horizontal: .low, frequency: nil,
+                                     side: 1, x: 0, hz: (r.fl * r.fh).squareRoot()))
+        }
         return out
     }
 
@@ -679,7 +690,16 @@ struct PhaseSelectEqView: View {
 
         for handle in handles(r) {
             let pt = plot.clampedPoint(handle.x, handle.hz)
-            if handle.isOuter {
+            if handle.id == "split" {
+                // 割り取っ手は菱形。角の丸・四角と見分けがつくように（web も形を変えている）。
+                var diamond = Path()
+                diamond.move(to: CGPoint(x: pt.x, y: pt.y - 7))
+                diamond.addLine(to: CGPoint(x: pt.x + 7, y: pt.y))
+                diamond.addLine(to: CGPoint(x: pt.x, y: pt.y + 7))
+                diamond.addLine(to: CGPoint(x: pt.x - 7, y: pt.y))
+                diamond.closeSubpath()
+                context.fill(diamond, with: ETGraphShading.curve)
+            } else if handle.isOuter {
                 context.stroke(Path(CGRect(x: pt.x - 5, y: pt.y - 5, width: 10, height: 10)),
                                with: ETGraphShading.curve, lineWidth: 2)
             } else {
@@ -778,28 +798,32 @@ struct PhaseSelectEqView: View {
             r.ofh *= fittedRatio
 
         case .resize(let handle):
-            if axisMode == .phase {
-                let onSide = handle.side < 0 ? min(horizontal, 0) : max(horizontal, 0)
-                let absolute = abs(onSide)
-                if handle.isOuter {
-                    if handle.horizontal == .low { r.opl = absolute } else { r.oph = absolute }
+            if let edge = handle.horizontal {
+                if axisMode == .phase {
+                    let onSide = handle.side < 0 ? min(horizontal, 0) : max(horizontal, 0)
+                    let absolute = abs(onSide)
+                    if handle.isOuter {
+                        if edge == .low { r.opl = absolute } else { r.oph = absolute }
+                    } else {
+                        ETPhaseMath.applyCoreBoundary(&r, original: original, axis: .phase,
+                                                      edge: edge, value: absolute, c)
+                    }
                 } else {
-                    ETPhaseMath.applyCoreBoundary(&r, original: original, axis: .phase,
-                                                  edge: handle.horizontal, value: absolute, c)
-                }
-            } else {
-                if handle.isOuter {
-                    if handle.horizontal == .low { r.obl = horizontal } else { r.obh = horizontal }
-                } else {
-                    ETPhaseMath.applyCoreBoundary(&r, original: original, axis: .balance,
-                                                  edge: handle.horizontal, value: horizontal, c)
+                    if handle.isOuter {
+                        if edge == .low { r.obl = horizontal } else { r.obh = horizontal }
+                    } else {
+                        ETPhaseMath.applyCoreBoundary(&r, original: original, axis: .balance,
+                                                      edge: edge, value: horizontal, c)
+                    }
                 }
             }
-            if handle.isOuter {
-                if handle.frequency == .low { r.ofl = frequency } else { r.ofh = frequency }
-            } else {
-                ETPhaseMath.applyCoreBoundary(&r, original: original, axis: .frequency,
-                                              edge: handle.frequency, value: frequency, c)
+            if let edge = handle.frequency {
+                if handle.isOuter {
+                    if edge == .low { r.ofl = frequency } else { r.ofh = frequency }
+                } else {
+                    ETPhaseMath.applyCoreBoundary(&r, original: original, axis: .frequency,
+                                                  edge: edge, value: frequency, c)
+                }
             }
         }
 

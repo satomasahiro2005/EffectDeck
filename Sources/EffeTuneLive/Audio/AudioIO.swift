@@ -277,13 +277,21 @@ final class AudioIO: ObservableObject {
         NowPlaying.stop()
     }
 
+    /// 描画用の値だけを速く取る。図が滑らかに動くのはこちらの速さで決まる。
+    /// DSP は 30Hz で吐いているので、それに合わせる。
+    /// 重い問い合わせ（ルートやセッション）はここでやらない。
+    func pollTelemetry() {
+        Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine)
+        level = render?.meter ?? 0
+    }
+
+    /// 状態の見直し。重いものはこちら。
     func tick() {
         ticks += 1
         followPeer()
         if ticks % 20 == 0 {
             log.notice("tick applied=\(self.applied) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) load=\(self.load)")
         }
-        Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine)
         route = routeNow()
         level = render?.meter ?? 0
         applied = Int(render?.applied ?? 0)
