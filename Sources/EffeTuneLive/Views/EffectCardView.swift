@@ -21,12 +21,19 @@ struct EffectCardView: View {
         Card {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                if isExpanded && !node.spec.params.isEmpty {
+                if isExpanded && hasBody {
                     Divider().padding(.horizontal, ETMetrics.cardPadding)
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(node.spec.params) { param in
-                            ParameterRow(param: param, nodeIndex: index,
-                                         values: node.values, dsp: dsp)
+                    Group {
+                        if ETEffectViews.has(node.spec.type) {
+                            // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
+                            ETEffectViews.view(index: index, node: node, dsp: dsp)
+                        } else {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(node.spec.params) { param in
+                                    ParameterRow(param: param, nodeIndex: index,
+                                                 values: node.values, dsp: dsp)
+                                }
+                            }
                         }
                     }
                     .padding(ETMetrics.cardPadding)
@@ -67,7 +74,7 @@ struct EffectCardView: View {
                     .foregroundStyle(.white)
             }
 
-            if !node.spec.params.isEmpty {
+            if hasBody {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -103,9 +110,14 @@ struct EffectCardView: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture {
-            guard !node.spec.params.isEmpty else { return }
+            guard hasBody else { return }
             withAnimation(.snappy(duration: 0.2)) { toggleExpanded() }
         }
+    }
+
+    /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
+    private var hasBody: Bool {
+        !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。

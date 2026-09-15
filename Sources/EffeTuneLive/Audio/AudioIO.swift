@@ -31,6 +31,8 @@ private final class RenderState {
     var applied: UInt32 = 0
     var elapsed: Double = 0
     var load: Double = 0
+    var gate = PowerGate()
+    var resting = false
 
     private var timebase = mach_timebase_info_data_t()
 
@@ -91,6 +93,8 @@ final class AudioIO: ObservableObject {
     @Published var blockFrames: Int = 0
     /// リサンプラが増やす遅延（入力レートのサンプル数）。
     @Published var resamplerLatency: Int = 0
+    /// 無音で休んでいるか。
+    @Published var resting = false
 
     private var ticks = 0
 
@@ -98,6 +102,8 @@ final class AudioIO: ObservableObject {
         // 拡張はいつ繋いでくるか分からないので、起動と同時に待ち受ける。
         _ = ETLinkReceiver.shared.start()
         Preferences.shared.onAudioChange = { [weak self] in self?.rebuild() }
+        // ロック画面の再生/一時停止は、曲ではなく鎖の入切に割り当てる。
+        NowPlaying.start { on in EffeTuneDSP.shared.bypass = !on }
     }
 
     /// 音の経路に関わる設定が変わったら組み直す。一瞬切れる。
@@ -158,6 +164,8 @@ final class AudioIO: ObservableObject {
         let sr = session.sampleRate > 0 ? session.sampleRate : 48000
         let factor = Int(prefs.processingRate.factor)
         let state = RenderState(capacity: Self.capacity, sampleRate: sr, factor: factor)
+        state.gate.idleSeconds = prefs.powerMode.idleSeconds
+        state.gate.thresholdLinear = Float(pow(10.0, prefs.silenceThresholdDb / 20.0))
         render = state
 
         EffeTuneDSP.shared.prepare(sampleRate: sr * Double(factor), maxChannels: 2,
@@ -182,9 +190,20 @@ final class AudioIO: ObservableObject {
                 p[n + i] = s[i * 2 + 1]
             }
 
-            // 3. 本線のバスへ書いて、鎖を通して、読み戻す。
+            // 3. 無音が続いていたら鎖を通さない。
+            //    無音に何を掛けても無音なので、聞こえ方は変わらない。
+            //    セッションは手放さない。手放すと出力先が戻ってしまう。
+            var inPeak: Float = 0
+            for i in 0..<(n * 2) {
+                let a = abs(p[i])
+                if a > inPeak { inPeak = a }
+            }
+            let awake = state.gate.update(peak: inPeak, seconds: Double(n) / state.sampleRate)
+            state.resting = !awake
+
+            // 4. 本線のバスへ書いて、鎖を通して、読み戻す。
             //    バスの置き場は engine が持っているので、そこへ直接書く。
-            if let main = ETPipeline_MainBus() {
+            if awake, let main = ETPipeline_MainBus() {
                 if f > 1, let rs = state.resampler {
                     ETResampler_Up(rs, p, main, UInt32(n))
                     state.applied = ETPipeline_Process(2, UInt32(n * f), state.elapsed)
@@ -199,7 +218,7 @@ final class AudioIO: ObservableObject {
             }
             state.elapsed += Double(n) / state.sampleRate
 
-            // 4. 出力へ書く
+            // 5. 出力へ書く
             var peak: Float = 0
             let l = abl[0].mData!.assumingMemoryBound(to: Float.self)
             let r = abl.count > 1 ? abl[1].mData!.assumingMemoryBound(to: Float.self) : l
@@ -240,6 +259,7 @@ final class AudioIO: ObservableObject {
         resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
         status = "Running"
         route = routeNow()
+        updateNowPlaying()
         log.notice("start sr=\(sr) x\(factor) route=\(self.route, privacy: .public)")
     }
 
@@ -254,6 +274,7 @@ final class AudioIO: ObservableObject {
         running = false
         level = 0
         status = "Stopped"
+        NowPlaying.stop()
     }
 
     func tick() {
@@ -267,12 +288,26 @@ final class AudioIO: ObservableObject {
         level = render?.meter ?? 0
         applied = Int(render?.applied ?? 0)
         load = render?.load ?? 0
+        resting = render?.resting ?? false
+        updateNowPlaying()
         listening = ETLinkReceiver.shared.listening
         hasPeer = ETLinkReceiver.shared.hasPeer
         received = ETLinkReceiver.shared.receivedFrames
         bufferedFrames = ETLinkReceiver.shared.bufferedFrames
         let session = AVAudioSession.sharedInstance()
         blockFrames = Int((session.ioBufferDuration * session.sampleRate).rounded())
+    }
+
+    private var lastNowPlaying: (Bool, Bool, Int) = (false, false, -1)
+
+    /// 変わったときだけ出す。毎回書き換えるとロック画面がちらつく。
+    private func updateNowPlaying() {
+        let active = !EffeTuneDSP.shared.bypass && applied > 0
+        let count = applied
+        let now = (running, active, count)
+        guard now != lastNowPlaying else { return }
+        lastNowPlaying = now
+        NowPlaying.update(running: running, active: active, count: count)
     }
 
     private func routeNow() -> String {

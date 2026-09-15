@@ -8,7 +8,7 @@
 //                                           バンドの値ではない
 //    plugins/eq/group_delay_peq.js:279      js/group-delay-peq/designer.js を読み込み
 //    plugins/eq/group_delay_peq.js:335-355  設計して _stageDesign でアセットへ
-//    dsp/plugins/eq/group_delay_peq/params.json:6-12
+//    dsp/plugins/eq/group_delay_peq/params.json:5-11
 //                                           fields は latencyMode と filterDelaySamples の 2 つ。
 //                                           群遅延の形は assets（ET_ASSET_F32_MULTICH）
 //
@@ -23,16 +23,16 @@
 //        delayToY(ms)     = 50 - ms / scale.range * 50
 //        yToDelay(percent) = (50 - percent) / 50 * scale.range
 //
-//  範囲は固定ではなく、いまの設定に合わせて広がる（同 976-987）。
+//  範囲は固定ではなく、いまの設定に合わせて広がる（同 975-987）。
 //  GRID_STEPS_MS = [0.5, 1, 2, 5, 10, 20, 25, 50, 100] から
 //  「step * 5 >= peak」を満たす最初の step を選び、range = step * 5。
 //  peak は「全バンドの delayMs（切ってあるものも含む）」と target 曲線と realized 曲線の
 //  絶対値の最大で、下限は MINIMUM_GRAPH_RANGE_MS = 5 ms（同 32）。
 //  横軸は 10Hz〜40kHz の対数（同 36 GRAPH_FREQUENCY_RANGE, 943-948 freqToX）。
 //
-//  目標曲線の式は js/group-delay-peq/design-core.js:74-113 の BAND_SHAPES にある。
+//  目標曲線の式は js/group-delay-peq/design-core.js:75-118 の BAND_SHAPES にある。
 //  pk は log2 軸のガウス、ls/hs はロジスティック、fl は 2 次の群遅延を正規化したもの。
-//  掴んで動かすのは周波数と delayMs の 2 つ（同 js 1210-1235）。
+//  掴んで動かすのは周波数と delayMs の 2 つ（同 js:1211-1235）。
 //
 //  ここまで分かっていても、いまは値の置き場所が無いので描かない。
 
@@ -44,7 +44,6 @@ struct GroupDelayPEQView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    /// EffectCardView が params を並べている VStack と同じ形。外側の padding は持たない。
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             notice
@@ -53,6 +52,8 @@ struct GroupDelayPEQView: View {
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
         }
+        .padding(.horizontal, ETMetrics.cardPadding)
+        .padding(.bottom, ETMetrics.cardPadding)
     }
 
     private var notice: some View {

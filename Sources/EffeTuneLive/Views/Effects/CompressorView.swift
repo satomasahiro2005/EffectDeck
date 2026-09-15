@@ -15,10 +15,10 @@
 //    枠の種類 2（gainReduction）・版 1・ペイロード 4 バイト
 //    書く側 dsp/plugins/dynamics/compressor/dynamics_common.h:46-51
 //      payload[0..3] = f32 amount_db（0 以上の大きさ。符号は乗らない）
-//    読む側 plugins/dynamics/compressor.js:528-543
+//    読む側 plugins/dynamics/compressor.js:528-540
 //      byteLength === 4 と getFloat32(0, true) >= 0 を確かめている
-//  値は kernel.cpp:117 の maximum_reduction、そのブロック・全チャンネルで
-//  最も深く削れた量。web 版はこれを平滑してから棒に描くが（compressor.js:560-598）、
+//  値は kernel.cpp:123 の maximum_reduction、そのブロック・全チャンネルで
+//  最も深く削れた量。web 版はこれを平滑してから棒に描くが（compressor.js:564-600）、
 //  こちらは DSP が出したそのままを出す。
 
 import SwiftUI
@@ -83,7 +83,7 @@ enum CompressorCurve {
     static func output(input: Double, threshold: Double, ratio: Double,
                        knee: Double, makeup: Double) -> Double {
         let difference = input - threshold
-        // kernel.cpp:101 と同じ。ratio == 1 のときだけ 0 に落とす。
+        // kernel.cpp:97 と同じ。ratio == 1 のときだけ 0 に落とす。
         let inverseRatio = ratio == 1 ? 0 : 1 - 1 / ratio
 
         var reduction = 0.0

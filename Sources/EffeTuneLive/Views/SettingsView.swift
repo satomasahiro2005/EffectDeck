@@ -43,6 +43,16 @@ struct SettingsView: View {
                     Text(l.label).tag(l)
                 }
             }
+            Picker("Power saving", selection: $prefs.powerMode) {
+                ForEach(ETPowerMode.allCases) { m in
+                    Text(m.label).tag(m)
+                }
+            }
+            if prefs.powerMode != .continuous {
+                LabeledContent("Silence below") {
+                    Text("\(Int(prefs.silenceThresholdDb)) dB").foregroundStyle(.secondary)
+                }
+            }
             Toggle("Keep screen awake", isOn: $prefs.keepScreenAwake)
         } header: {
             Text("Audio")
@@ -74,7 +84,10 @@ struct SettingsView: View {
 
     private var loadSection: some View {
         Section {
-            LabeledContent("DSP", value: String(format: "%.0f %%", io.load * 100))
+            LabeledContent("DSP") {
+                Text(io.resting ? "resting" : String(format: "%.0f %%", io.load * 100))
+                    .foregroundStyle(io.resting ? .secondary : .primary)
+            }
             LabeledContent("Effects running", value: "\(io.applied) of \(dsp.chain.count)")
             LabeledContent("Block", value: io.blockFrames > 0 ? "\(io.blockFrames) samples" : "—")
             LabeledContent("Queued from Bridge", value: queued)

@@ -170,6 +170,16 @@ final class EffeTuneDSP: ObservableObject {
         }
     }
 
+    /// 鎖をまるごと入れ替える。共有リンクやプリセットの取り込みで使う。
+    func replaceChain(with items: [PipelineStore.Loaded]) {
+        guard ready else { return }
+        let doomed = chain.map(\.instance).filter { $0 != 0 }
+        chain.removeAll()
+        for item in items { append(item) }
+        publish()
+        retire(doomed)
+    }
+
     private func append(_ item: PipelineStore.Loaded) {
         var node = Node(spec: item.spec, values: item.values)
         node.enabled = item.enabled

@@ -15,6 +15,7 @@ struct PipelineView: View {
     @State private var showPicker = false
     @State private var showSettings = false
     @State private var showRouting = false
+    @State private var showPresets = false
     @State private var expanded: Set<UUID> = []
 
     private let timer = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
@@ -44,6 +45,7 @@ struct PipelineView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView(io: io) }
             .sheet(isPresented: $showRouting) { RoutingView(dsp: dsp) }
+            .sheet(isPresented: $showPresets) { PresetsView(dsp: dsp) }
         }
         .onReceive(timer) { _ in io.tick() }
     }
@@ -69,6 +71,9 @@ struct PipelineView: View {
                 .foregroundStyle(.secondary)
 
             Menu {
+                Button { showPresets = true } label: {
+                    Label("Presets…", systemImage: "square.stack")
+                }
                 Button { showRouting = true } label: {
                     Label("Routing…", systemImage: "arrow.triangle.branch")
                 }

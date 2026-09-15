@@ -3,22 +3,22 @@
 //
 //  Compressor と枠は同じだが、効くのが下側なので曲線は左端が垂れる。
 //  式は web 版と同じ:
-//    plugins/dynamics/expander.js:660-688（描く側）
-//    dsp/plugins/dynamics/expander/kernel.cpp:69-88（音を作る側）
-//  kernel の expansion_slope = ratio - 1 が js の (ratio - 1) と同じもの。
-//  knee の中は js:679-682 と kernel:83-86 が同じ二次式（下側の直線に
+//    plugins/dynamics/expander.js:661-688（描く側）
+//    dsp/plugins/dynamics/expander/kernel.cpp:69-92（音を作る側）
+//  kernel の expansion_slope（同 71 行）= ratio - 1 が js の (ratio - 1) と同じもの。
+//  knee の中は js:679-682 と kernel:82-85 が同じ二次式（下側の直線に
 //  (1 - t)^2 を掛ける）。
 //
-//  範囲は入力 -60〜0 dB、出力も -60〜0 dB（expander.js:689 の (db+60)/60）。
+//  範囲は入力 -60〜0 dB、出力も -60〜0 dB（expander.js:690 の (db+60)/60）。
 //
 //  テレメトリは Compressor と同じ枠を使う。
 //    枠の種類 2（gainReduction）・版 1・ペイロード 4 バイト
 //    書く側 dsp/plugins/dynamics/compressor/dynamics_common.h:46-51 を
 //           expander/kernel.cpp:105-109 が呼んでいる
 //    読む側 plugins/dynamics/expander.js:485-497
-//  ただし中身は kernel.cpp:88-100 の maximum_boost、つまり「掛けた量の大きさ」で
-//  符号が無い。ratio > 1 なら下を削った量、ratio < 1 なら持ち上げた量。
-//  どちらか判らないので、表示も大きさだけにしてある。
+//  ただし中身は kernel.cpp:101 の maximum_boost、つまり「掛けた量の大きさ」で
+//  符号が無い（同 89-92 行で abs を取っている）。ratio > 1 なら下を削った量、
+//  ratio < 1 なら持ち上げた量。どちらか判らないので、表示も大きさだけにしてある。
 
 import SwiftUI
 
@@ -48,7 +48,9 @@ struct ExpanderView: View {
                 caption: amount.map { "GAIN CHANGE \(ETFormat.db($0))" } ?? "GAIN CHANGE —")
 
             if let amount {
-                MeterView(channels: [ETMeterChannel(id: 0, label: "EXP", levelDB: amount)],
+                // 段の名前は枠の左 16pt の余白に入るので 2 文字まで。
+                // GB は web 版の変数名（expander.js:15 の this.gb = gain boost）から。
+                MeterView(channels: [ETMeterChannel(id: 0, label: "GB", levelDB: amount)],
                           range: 0...24,
                           ticks: [0, 6, 12, 18, 24],
                           holdsPeak: false,
@@ -74,7 +76,7 @@ struct ExpanderView: View {
 
 // MARK: - 曲線の式
 
-/// expander.js:660-688 と kernel.cpp:69-88 をそのまま写したもの。
+/// expander.js:661-688 と kernel.cpp:69-92 をそのまま写したもの。
 enum ExpanderCurve {
 
     static func output(input: Double, threshold: Double, ratio: Double,
@@ -94,7 +96,7 @@ enum ExpanderCurve {
             boost = belowKnee * (1 - position) * (1 - position)
         }
 
-        // expander.js:685-686 の clamp。
+        // expander.js:685-687 の clamp。
         let total = min(max(boost + makeup, -60), 20)
         return input + total
     }

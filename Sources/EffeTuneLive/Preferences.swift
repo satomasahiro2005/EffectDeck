@@ -82,6 +82,13 @@ final class Preferences: ObservableObject {
     @Published var latency: ETLatency {
         didSet { save(latency.rawValue, "pref.latency"); onAudioChange?() }
     }
+    @Published var powerMode: ETPowerMode {
+        didSet { save(powerMode.rawValue, "pref.power"); onAudioChange?() }
+    }
+    /// 無音と見なす大きさ。EffeTune の Silence threshold と同じ。
+    @Published var silenceThresholdDb: Double {
+        didSet { save(silenceThresholdDb, "pref.silence"); onAudioChange?() }
+    }
     @Published var keepScreenAwake: Bool {
         didSet {
             save(keepScreenAwake, "pref.awake")
@@ -96,6 +103,8 @@ final class Preferences: ObservableObject {
         let d = UserDefaults.standard
         processingRate = ETProcessingRate(rawValue: d.object(forKey: "pref.rate") as? Int ?? 96000) ?? .r96
         latency = ETLatency(rawValue: d.string(forKey: "pref.latency") ?? "") ?? .interactive
+        powerMode = ETPowerMode(rawValue: d.string(forKey: "pref.power") ?? "") ?? .balanced
+        silenceThresholdDb = d.object(forKey: "pref.silence") as? Double ?? -80
         keepScreenAwake = d.object(forKey: "pref.awake") as? Bool ?? false
     }
 

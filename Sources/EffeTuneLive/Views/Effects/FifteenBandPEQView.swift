@@ -1,26 +1,28 @@
-//  FiveBandPEQView.swift
-//  5Band PEQ。web 版（Vendor/effetune/plugins/eq/five_band_peq.js）と同じ作りにしてある。
-//  25 本のスライダーは出さない。図の印を掴んで周波数とゲインを動かし、
-//  型と Q だけを下の一枚に出す。
+//  FifteenBandPEQView.swift
+//  15Band PEQ。web 版（Vendor/effetune/plugins/eq/fifteen_band_peq.js）と同じで、
+//  75 本のスライダーは出さない。図の印を掴んで動かし、型と Q だけを下の一枚に出す。
 //
 //  曲線は params から引く。テレメトリは使わない
-//  （dsp/plugins/eq/five_band_peq/kernel.cpp は何も書き出していない）。
-//  1 本ぶんの式は web 版の calculateBandResponse（five_band_peq.js:820-854）と同じで、
-//  係数の作り方は音が通る側（dsp/plugins/eq/five_band_peq/peq_coefficients.h:12-147）に揃えた。
+//  （dsp/plugins/eq/fifteen_band_peq/kernel.cpp は何も書き出していない）。
+//  1 本ぶんの式は web 版の calculateBandResponse（fifteen_band_peq.js:1098-1132）と同じで、
+//  係数の作り方は音が通る側（dsp/plugins/eq/five_band_peq/peq_coefficients.h:12-147。
+//  15Band の kernel.cpp も同じヘッダを使っている）に揃えた。
 //
-//  web 版との違い:
-//    - 横軸は 20Hz〜20kHz。web は 10Hz〜40kHz（同 716 行 freqToX）だが、
-//      外側はパラメータの範囲外で掴めない帯になるので、iPhone の幅では詰めた。
-//    - Q はホイール（PeqMarkerWheel）が使えないので、選んだバンドのスライダーにした。
-//      web もバンドの操作列に同じスライダーを置いている（同 537-549 行）。
-//    - バンドの入切は web の右クリック（同 478-482 行）に当たるものが無いので、ON バッジにした。
+//  印が 15 個あるので、掴む側に 3 つ足してある:
+//    - 図を掴むと、最も近い印が選ばれて下の一枚がそのバンドに移る
+//      （web も携帯では同じ。fifteen_band_peq.js:399-428 の getNearestBandIndexForGraphPoint）
+//    - 下の番号の帯で直に選べる。選んだ番号は勝手に見える位置まで送る
+//    - 選んでいる 1 本だけ、合成曲線の脇に破線で出す
+//
+//  web にあって、ここに無いもの: Import（.txt の EQ 設定の読み込み）。
+//  ファイルを開く口がまだ無いので付けていない。Inverse は付けた。
 
 import SwiftUI
 import Foundation
 
 // MARK: - バンド 1 本ぶん
 
-private struct PEQ5Band {
+private struct PEQ15Band {
     var frequency: Double
     var gain: Double
     var q: Double
@@ -31,9 +33,9 @@ private struct PEQ5Band {
 
 // MARK: - 曲線の式
 
-private enum PEQ5Math {
+private enum PEQ15Math {
 
-    /// five_band_peq.js:12-21 の FILTER_TYPES と同じ並び。字は画面用に伸ばしてある。
+    /// fifteen_band_peq.js:22-31 の FILTER_TYPES と同じ並び。字は画面用に伸ばしてある。
     static let typeNames = ["Peaking", "Low Pass", "High Pass", "Low Shelf",
                             "High Shelf", "Band Pass", "Notch", "All Pass"]
 
@@ -45,7 +47,7 @@ private enum PEQ5Math {
         type == 1 || type == 2 || type == 5 || type == 6 || type == 7
     }
 
-    /// シェルフだけ Q の上限が 2（five_band_peq.js:296-299 / peq_coefficients.h:33）。
+    /// シェルフだけ Q の上限が 2（fifteen_band_peq.js:317-320 / peq_coefficients.h:33）。
     static func maximumQ(_ type: Int) -> Double { isShelf(type) ? 2 : 10 }
 
     struct Coefficients {
@@ -57,7 +59,7 @@ private enum PEQ5Math {
     }
 
     /// 1 本ぶんの係数。素通しなら nil。
-    static func coefficients(_ band: PEQ5Band, sampleRate: Double) -> Coefficients? {
+    static func coefficients(_ band: PEQ15Band, sampleRate: Double) -> Coefficients? {
         guard band.enabled, sampleRate > 0 else { return nil }
         let type = band.type
         // 0.01dB 未満は素通し（peq_coefficients.h:29-31）。
@@ -165,7 +167,7 @@ private enum PEQ5Math {
                             a1: a1 * inverse, a2: a2 * inverse)
     }
 
-    /// |H(e^jw)| を dB で。five_band_peq.js:846-853 と同じ。
+    /// |H(e^jw)| を dB で。fifteen_band_peq.js:1124-1131 と同じ。
     /// 20*log10(sqrt(num/den)) は 10*log10(num/den) と同じなので平方根は取らない。
     static func magnitudeDB(_ c: Coefficients, w: Double) -> Double {
         let cw = cos(w)
@@ -186,8 +188,8 @@ private enum PEQ5Math {
 
 // MARK: - packed float 配列での位置
 
-/// 名前は params.json と dsp/generated/cpp/FiveBandPEQPluginParams.h で揃っている。
-private struct PEQ5Layout {
+/// 名前は params.json と dsp/generated/cpp/FifteenBandPEQPluginParams.h で揃っている。
+private struct PEQ15Layout {
     let frequency: Int
     let gain: Int
     let q: Int
@@ -203,19 +205,18 @@ private struct PEQ5Layout {
             counts[p.name] = p.count
         }
         frequency = offsets["frequency"] ?? 0
-        gain = offsets["gain"] ?? 5
-        q = offsets["q"] ?? 10
-        type = offsets["filterType"] ?? 15
-        enabled = offsets["bandEnabled"] ?? 20
-        count = counts["frequency"] ?? 5
+        gain = offsets["gain"] ?? 15
+        q = offsets["q"] ?? 30
+        type = offsets["filterType"] ?? 45
+        enabled = offsets["bandEnabled"] ?? 60
+        count = counts["frequency"] ?? 15
     }
 }
 
 // MARK: - 値の行
 
-/// 名前・数値欄・スライダーの 2 段。ParameterRow と同じ形だが、
-/// 触る先が「選んでいるバンド」なので別に持っている。
-private struct PEQ5SliderRow: View {
+/// 名前・数値欄・スライダーの 2 段。触る先が「選んでいるバンド」なので ParameterRow は使えない。
+private struct PEQ15SliderRow: View {
     let title: String
     let value: Double
     let range: ClosedRange<Double>
@@ -306,7 +307,7 @@ private struct PEQ5SliderRow: View {
 
 // MARK: - 本体
 
-struct FiveBandPEQView: View {
+struct FifteenBandPEQView: View {
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
@@ -316,9 +317,10 @@ struct FiveBandPEQView: View {
 
     /// 生成されたカタログは配列の既定値を拾えていない
     /// （Tools/gen_catalog.py:101 で list を float に直せず 0 になる）。
-    /// 全部 0Hz のままだと印が左端に重なるので、web 版の初期値
-    /// （five_band_peq.js:3-9）を最初の 1 回だけ入れる。
-    private static let initialFrequencies: [Float] = [100, 316, 1000, 3160, 10000]
+    /// 全部 0Hz のままだと印が左端に 15 個重なるので、web 版の初期値
+    /// （fifteen_band_peq.js:3-19）を最初の 1 回だけ入れる。
+    private static let initialFrequencies: [Float] = [25, 40, 63, 100, 160, 250, 400, 630,
+                                                      1000, 1600, 2500, 4000, 6300, 10000, 16000]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -341,32 +343,32 @@ struct FiveBandPEQView: View {
             frequencyRange: 20...20000,
             decibelRange: -20...20,
             decibelStep: 6,
-            height: ETGraphMetrics.height,
-            caption: "Drag a marker — across for frequency, up for gain",
+            height: 190,
+            caption: "Drag the nearest marker, or pick a band below",
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
             onMarkerSelected: { selected = $0 })
     }
 
     /// 合成した特性と、選んでいるバンド 1 本ぶん。
+    /// 15 本ぶんを全部薄く重ねると図が埋まるので、内訳は選んでいる 1 本だけにしてある。
     private var curves: [ETFrequencyCurve] {
         let rate = sampleRate
-        let designed = bands.enumerated().compactMap { pair -> (Int, PEQ5Math.Coefficients)? in
-            guard let c = PEQ5Math.coefficients(pair.element, sampleRate: rate) else { return nil }
+        let designed = bands.enumerated().compactMap { pair -> (Int, PEQ15Math.Coefficients)? in
+            guard let c = PEQ15Math.coefficients(pair.element, sampleRate: rate) else { return nil }
             return (pair.offset, c)
         }
         var result: [ETFrequencyCurve] = []
-        // 選んでいる 1 本。合成が平らでも、いま何を触っているかが見えるように。
         if designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
             let c = picked.1
             result.append(ETFrequencyCurve.sampled(id: "band", count: 160,
                                                    width: 1, dashed: true, subdued: true) { hz in
-                PEQ5Math.magnitudeDB(c, w: hz * 2 * Double.pi / rate)
+                PEQ15Math.magnitudeDB(c, w: hz * 2 * Double.pi / rate)
             })
         }
         result.append(ETFrequencyCurve.sampled(id: "sum", count: 220) { hz in
             let w = hz * 2 * Double.pi / rate
             var total = 0.0
-            for entry in designed { total += PEQ5Math.magnitudeDB(entry.1, w: w) }
+            for entry in designed { total += PEQ15Math.magnitudeDB(entry.1, w: w) }
             return total
         })
         return result
@@ -380,7 +382,7 @@ struct FiveBandPEQView: View {
     }
 
     /// 印を動かすと、web と同じく周波数とゲインが同時に変わる
-    /// （five_band_peq.js:942-946 の setBand）。
+    /// （fifteen_band_peq.js:1218-1222 の setBand）。
     private func move(_ i: Int, hz: Double, db: Double) {
         let l = layout
         guard i >= 0, i < l.count else { return }
@@ -391,9 +393,36 @@ struct FiveBandPEQView: View {
     // MARK: バンドを選ぶ帯
 
     private var bandStrip: some View {
-        HStack(spacing: 6) {
-            ForEach(Array(0..<layout.count), id: \.self) { i in
-                chip(i)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("BANDS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button("Invert Gains") { invertGains() }
+                    .font(.system(size: 12))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+            }
+            numbers
+        }
+    }
+
+    /// 15 個は横に収まらないので送る。選んだ番号は見える位置まで自分で寄せる
+    /// （図を掴んで選ばれたときも同じ）。
+    private var numbers: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(Array(0..<layout.count), id: \.self) { i in
+                        chip(i).id(i)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+            .onChange(of: selected) { _, new in
+                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
             }
         }
     }
@@ -408,7 +437,7 @@ struct FiveBandPEQView: View {
                 .font(.system(size: 13, weight: isPicked ? .bold : .regular))
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
-                .frame(maxWidth: .infinity, minHeight: 30)
+                .frame(minWidth: 34, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: RoundedRectangle(cornerRadius: 6))
                 .opacity(isOn ? 1 : 0.45)
@@ -430,8 +459,8 @@ struct FiveBandPEQView: View {
 
                 Picker("", selection: Binding(get: { current.type },
                                               set: { setType($0) })) {
-                    ForEach(Array(PEQ5Math.typeNames.indices), id: \.self) { i in
-                        Text(PEQ5Math.typeNames[i]).tag(i)
+                    ForEach(Array(PEQ15Math.typeNames.indices), id: \.self) { i in
+                        Text(PEQ15Math.typeNames[i]).tag(i)
                     }
                 }
                 .pickerStyle(.menu)
@@ -446,48 +475,56 @@ struct FiveBandPEQView: View {
                 .buttonStyle(.plain)
             }
 
-            PEQ5SliderRow(title: "Freq", value: current.frequency, range: 20...20000,
-                          logarithmic: true, decimals: 0, unit: "Hz") { v in
+            PEQ15SliderRow(title: "Freq", value: current.frequency, range: 20...20000,
+                           logarithmic: true, decimals: 0, unit: "Hz") { v in
                 dsp.setValue(Float(v), at: index, offset: l.frequency + selected)
             }
 
-            PEQ5SliderRow(title: "Gain", value: current.gain, range: -20...20,
-                          logarithmic: false, decimals: 1, unit: "dB") { v in
+            PEQ15SliderRow(title: "Gain", value: current.gain, range: -20...20,
+                           logarithmic: false, decimals: 1, unit: "dB") { v in
                 dsp.setValue(Float(v), at: index, offset: l.gain + selected)
             }
-            .opacity(PEQ5Math.ignoresGain(current.type) ? 0.5 : 1)
+            .opacity(PEQ15Math.ignoresGain(current.type) ? 0.5 : 1)
 
-            PEQ5SliderRow(title: "Q", value: current.q,
-                          range: 0.1...PEQ5Math.maximumQ(current.type),
-                          logarithmic: false, decimals: 2, unit: "") { v in
+            PEQ15SliderRow(title: "Q", value: current.q,
+                           range: 0.1...PEQ15Math.maximumQ(current.type),
+                           logarithmic: false, decimals: 2, unit: "") { v in
                 dsp.setValue(Float(v), at: index, offset: l.q + selected)
             }
         }
     }
 
-    /// 型を変えたら、シェルフのときだけ Q を 2 に丸める（five_band_peq.js:301-307）。
+    /// 型を変えたら、シェルフのときだけ Q を 2 に丸める（fifteen_band_peq.js:761-766）。
     private func setType(_ newType: Int) {
         let l = layout
         dsp.setValue(Float(newType), at: index, offset: l.type + selected)
-        if PEQ5Math.isShelf(newType), band(selected).q > 2 {
+        if PEQ15Math.isShelf(newType), band(selected).q > 2 {
             dsp.setValue(2, at: index, offset: l.q + selected)
+        }
+    }
+
+    /// web の Inverse ボタン（fifteen_band_peq.js:345-355）。全バンドのゲインの符号を返す。
+    private func invertGains() {
+        let l = layout
+        for i in 0..<l.count {
+            dsp.setValue(-value(l.gain + i), at: index, offset: l.gain + i)
         }
     }
 
     // MARK: 値の出し入れ
 
-    private var layout: PEQ5Layout { PEQ5Layout(node.spec) }
+    private var layout: PEQ15Layout { PEQ15Layout(node.spec) }
 
-    private var bands: [PEQ5Band] { (0..<layout.count).map { band($0) } }
+    private var bands: [PEQ15Band] { (0..<layout.count).map { band($0) } }
 
-    private func band(_ i: Int) -> PEQ5Band {
+    private func band(_ i: Int) -> PEQ15Band {
         let l = layout
-        return PEQ5Band(frequency: Double(value(l.frequency + i)),
-                        gain: Double(value(l.gain + i)),
-                        q: Double(value(l.q + i)),
-                        type: min(max(Int(value(l.type + i).rounded()), 0),
-                                  PEQ5Math.typeNames.count - 1),
-                        enabled: value(l.enabled + i) >= 0.5)
+        return PEQ15Band(frequency: Double(value(l.frequency + i)),
+                         gain: Double(value(l.gain + i)),
+                         q: Double(value(l.q + i)),
+                         type: min(max(Int(value(l.type + i).rounded()), 0),
+                                   PEQ15Math.typeNames.count - 1),
+                         enabled: value(l.enabled + i) >= 0.5)
     }
 
     private func value(_ offset: Int) -> Float {
@@ -495,7 +532,7 @@ struct FiveBandPEQView: View {
     }
 
     /// 音が通るレート。EffeTune は _sampleRate をそのまま曲線に使っている
-    /// （five_band_peq.js:821。届く前は 96000）。こちらは実際に DSP を回しているレートを見る。
+    /// （fifteen_band_peq.js:1099）。こちらは実際に DSP を回しているレートを見る。
     private var sampleRate: Double {
         let rate = AudioIO.shared.processingRate
         return rate > 0 ? rate : 96000

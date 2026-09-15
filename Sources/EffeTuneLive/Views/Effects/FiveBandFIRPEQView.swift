@@ -10,7 +10,7 @@
 //                                             lt / fd / dy / gn の 4 つだけ
 //    plugins/eq/five_band_fir_peq.js:230-236  designer.js を読み込み
 //    plugins/eq/five_band_fir_peq.js:264-281  設計して _stageDesign でアセットへ
-//    dsp/plugins/eq/five_band_fir_peq/params.json:6-12
+//    dsp/plugins/eq/five_band_fir_peq/params.json:5-11
 //                                             fields は latencyMode と filterDelaySamples の 2 つ。
 //                                             バンドは assets（ET_ASSET_F32_MULTICH, 32MiB）
 //
@@ -34,8 +34,6 @@ struct FiveBandFIRPEQView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    /// EffectCardView が params を並べている VStack と同じ形にしてある。
-    /// 外側の padding は入れない（置き換える側が持っている）。
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             notice
@@ -44,6 +42,8 @@ struct FiveBandFIRPEQView: View {
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
         }
+        .padding(.horizontal, ETMetrics.cardPadding)
+        .padding(.bottom, ETMetrics.cardPadding)
     }
 
     /// 画面の中でも「なぜ曲線が無いのか」が分かるようにしておく。

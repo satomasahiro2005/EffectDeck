@@ -3,13 +3,13 @@
 //
 //  Compressor / Expander と違って軸が -96〜0 dB。しきい値の下限が -96 dB
 //  （dsp/plugins/dynamics/gate/params.json の threshold）なので、
-//  web 版も 96 dB で描いている（plugins/dynamics/gate.js:701-702, 733, 755）。
+//  web 版も 96 dB で描いている（plugins/dynamics/gate.js:701-702, 735, 756）。
 //  格子は web 版が -72/-48/-24 の 3 本。ここは 24 dB ごとに取って
 //  -96/-72/-48/-24/0 の 5 本にしてある（端の 2 本が増えるだけ）。
 //
 //  式:
-//    plugins/dynamics/gate.js:733-752（描く側）
-//    dsp/plugins/dynamics/gate/kernel.cpp:70-86（音を作る側）
+//    plugins/dynamics/gate.js:735-753（描く側）
+//    dsp/plugins/dynamics/gate/kernel.cpp:71-86（音を作る側）
 //  Compressor と向きが逆で、差は threshold - input。下へ行くほど深くなる。
 //  kernel は ratio_slope = ratio - 1 が 0 以下のとき何もしない。
 //  js は ratio === 1 を先に弾く。同じ意味になるので js の形で書いてある。
@@ -19,7 +19,7 @@
 //    書く側 dsp/plugins/dynamics/compressor/dynamics_common.h:46-51 を
 //           gate/kernel.cpp:108-112 が呼んでいる
 //      値は kernel.cpp:104 の maximum_reduction（0 以上）
-//    読む側 plugins/dynamics/gate.js:575-590
+//    読む側 plugins/dynamics/gate.js:575-587
 //  Gate は ratio 100 まで取れるので削れる量が大きい。棒の目盛りは 60 dB。
 
 import SwiftUI
@@ -76,7 +76,7 @@ struct GateView: View {
 
 // MARK: - 曲線の式
 
-/// gate.js:733-752 と kernel.cpp:70-86 をそのまま写したもの。
+/// gate.js:735-753 と kernel.cpp:71-86 をそのまま写したもの。
 enum GateCurve {
 
     static func output(input: Double, threshold: Double, ratio: Double,

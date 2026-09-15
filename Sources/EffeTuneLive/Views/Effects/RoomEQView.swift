@@ -11,7 +11,7 @@
 //    plugins/eq/room_eq.js:929         this.measurementId（測定の id。DSP へは行かない）
 //    plugins/eq/room_eq.js:1075-1083   _packedParameters() が DSP へ渡すのは
 //                                      lt / fd / gn / dy の 4 つだけ
-//    dsp/plugins/eq/room_eq/params.json:6-13
+//    dsp/plugins/eq/room_eq/params.json:5-13
 //                                      fields はその 4 つ。補正そのものは assets
 //                                      （ET_ASSET_F32_MULTICH, 32MiB）
 //
@@ -37,7 +37,6 @@ struct RoomEQView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    /// EffectCardView が params を並べている VStack と同じ形。外側の padding は持たない。
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             notice
@@ -46,6 +45,8 @@ struct RoomEQView: View {
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
         }
+        .padding(.horizontal, ETMetrics.cardPadding)
+        .padding(.bottom, ETMetrics.cardPadding)
     }
 
     private var notice: some View {
