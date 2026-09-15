@@ -219,12 +219,24 @@ final class AudioIO: ObservableObject {
 
     /// **拡張が繋がる前から鳴らしておく。**
     ///
-    /// 以前は peer が立ってから start() していたが、それだと鷶と卵になる。
+    /// 以前は peer が立ってから start() していたが、それだと鶏と卵になる。
     /// UIBackgroundModes の audio は「実際に鳴らしている間」だけアプリを生かす。
-    /// 鳴らしていないと背景で止められ、127.0.0.1:47101 が受け付けなくなる。
-    /// すると拡張は ECONNREFUSED で繋げず、システムは 1.5 秒で諾めて
-    /// Unable to Connect になる。実機のログで確かめた形:
-    ///   ET connect 失敗 errno=61 → 受信 frames=36864 接続=false → deactivation request
+    /// 鳴らしていないと背景で止められ、127.0.0.1:47101 が受け付けなくなる:
+    ///   et.log:49001 04:29:50.925840 EffeTuneLiveExtension[587] ET connect 失敗 errno=61
+    ///   et.log:51268 04:29:51.934152 受信 frames=39936 接続=false 送信=0
+    /// 拡張が requiredNetworkEndpoints として名乗るのもこの 47101 なので
+    /// （Sources/Extension/EffeTuneLiveExtension.swift の linkEndpoint）、
+    /// ここが止まると名乗った口が実在しなくなる。
+    ///
+    /// **訂正。** ここには「繋がらないからシステムが 1.5 秒で諦めて Unable to Connect に
+    /// なる」と書いてあったが、違う。本体が居ない区間——04:29:47.817036 の
+    /// destroy_session(EffeTune Live(530)) から 04:30:25.812872 の create_session まで
+    /// ——でも endpoint は同じように切られている:
+    ///   et.log:51269 04:29:52.648007 / et.log:56349 04:29:57.736604
+    ///     FigRoutingManagerDeactivateEndpointFromPickedContexts ... a different endpoint got picked
+    /// finishActivation からの差は接続=false の回で 1.520 / 1.520 / 1.519 / 1.553 / 1.522、
+    /// 接続=true の回で 1.533 / 1.504 / 1.541 / 1.517 / 1.499 / 1.528 / 1.484。区別がつかない。
+    /// TCP の成否は切断の条件に入っていない。AudioIO は引き金ではないので触らない。
     ///
     /// なので、繋がっていなくても無音を出し続ける。
     /// PowerGate が休むので演算はほぼ使わないし、.mixWithOthers なので

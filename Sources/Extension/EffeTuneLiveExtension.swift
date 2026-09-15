@@ -53,12 +53,64 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いのが元。
     static let deviceUUID = UUID(uuidString: "6E656D75-7400-4E00-A000-000000000001")!
 
+    /// 本体（EffeTuneLive）の ETLinkReceiver が bind している口。
+    /// Sources/Shared/LocalLink.h:23-24 の ET_LINK_PORT / ET_LINK_HOST と同じもの。
+    static let linkEndpoint: NWEndpoint = .hostPort(
+        host: .ipv4(.loopback),
+        port: NWEndpoint.Port(rawValue: UInt16(ET_LINK_PORT)) ?? 47101
+    )
+
+    /// **requiredNetworkEndpoints には実在して到達できる口を渡す。**
+    ///
+    /// ここが 127.0.0.1:**0** になっていた。選ぶと 1.5 秒でスピーカーへ戻る症状で、
+    /// こちら側に見つかった欠陥はこれだけ。
+    ///
+    /// 前は LocalEndpoint.shared.endpoints() を渡していた。拡張の中で NWListener を立てて
+    /// 実ポートを渡す設計だが、拡張は待ち受けを禁じられている:
+    ///   et.log:3419 kernel(Sandbox) Sandbox: EffeTuneLiveExtension(564)
+    ///               deny(1) network-bind local:*:0
+    ///   et.log:3422 nw_listener_set_state_on_queue [L1] waiting -> failed,
+    ///               error: Operation not permitted
+    /// 拡張プロセス 13 本すべてで同じ（`grep -c 'deny(1) network-bind'` = 13 /
+    /// `grep -c 'listener ready port='` = 0 / `grep -c 'ポートが確定しなかった'` = 13）。
+    /// port が nil のまま LocalEndpoint.swift:87 の fallback
+    ///   `.hostPort(host: .ipv4(.loopback), port: .any)`
+    /// に落ちる。`NWEndpoint.Port.any` は 0 番。
+    ///
+    /// 名乗った口はシステムが持ち回って方針の許可に使う。MediaExperience
+    /// (iOS 27.0 24A435) の実体:
+    ///   -[MXSystemCastingExtensionInstance activateDeviceWithDescription:withNWEndpoints:
+    ///     isMirroring:completionHandler:]  ← et.log:908 ほか 13 本
+    ///   -[MDENetworkPolicyEngine promoteAssertion:toAccessNWEndpointsOverLAN:]
+    ///     (0x1ae93b578)
+    ///
+    /// 127.0.0.1:47101 なら実在していて、拡張から実際に繋がっている:
+    ///   et.log:9681 EffeTuneLiveExtension[564] ET connect 成功 port=47101（7 回）
+    ///   et.log:65193 EffeTune Live[601] ET receiver 待ち受け開始 port=47101
+    ///   Sources/Shared/LocalLink.m:285-300（本体側の bind/listen）
+    /// 音はこの口を通らない（AudioServerPlugIn 経由で来る）。名乗るためだけに使う。
+    ///
+    /// **確かめていないこと**: 0 番が revert の原因だと書いてある行は無い。確定は
+    /// (a) 13/13 で 0 番を名乗っていたこと (b) 失敗理由が et.log:1168
+    /// AVOutputContextDeviceConnectionFailureReasonMDERouteRevertedToLocal であること。
+    /// 切る判断そのものは audiomxd の中で、述語は Notice レベルに出ない。
+    ///
+    /// LocalEndpoint を呼ばなくなるので、LocalEndpoint.swift:63-66 の
+    /// 「ポートが確定するまで 1 秒待つ」sleep も走らない。listener が必ず失敗するので
+    /// 毎回まるまる 1 秒 MainActor を止めていた（startDeviceDiscovery は
+    /// MediaDevice.swiftinterface 上 @MainActor）。実測で activateDeviceWithDescription の
+    /// XPC 到着から activateDevice の実行まで pid 573 で 379ms、pid 583 で 632ms。
+    ///
+    /// 他の引数は動かしていない。切る側が読むのは kFigEndpointProperty_Type だけで
+    /// （_FigRoutingManagerIsEndpointOfType 0x1ae833c14 → 1ae833cbc CFEqual）、
+    /// その type は _FigCustomEndpointCreateEndpointWithExtensionDevice 1ae922b6c-b74 が
+    /// GOT 0x1e00ea930（kFigEndpointType_ThirdParty）から取って固定で書き込む。
+    /// canGroupWithCurrentlyActivatedDevices も deviceType も volumeControl も
+    /// この判定には入らない。同時に動かすと次の et.log でどれが効いたか読めなくなる。
     private lazy var localDevice: MediaOutputDevice? = {
-        // requiredNetworkEndpoints は必須引数で init も failable。
-        // この API はネットワーク上の受信機を想定しているので、
-        // ダミーではなく実際に listen しているソケットのエンドポイントを渡す。
-        let eps = LocalEndpoint.shared.endpoints()
-        log.notice("endpoints=\(eps.map { $0.debugDescription }.joined(separator: ","))")
+        let eps: [NWEndpoint] = [Self.linkEndpoint]
+        // privacy: .public にしないと <private> で潰れる。直ったかどうかはこの行で見る。
+        log.notice("endpoints=\(eps.map { $0.debugDescription }.joined(separator: ","), privacy: .public)")
         return MediaOutputDevice(
             id: Self.deviceUUID,
             displayName: "EffeTune",
@@ -83,7 +135,9 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
             routingManager.discoveryFailed(MediaDeviceError(.discoveryFailed))
             return
         }
-        log.notice("startDeviceDiscovery -> foundDevice \(dev.description)")
+        // ここも privacy: .public。今までの et.log は 13 回とも <private> で潰れていて
+        // （et.log:3884 / 8408 / 15627 …）、何を名乗ったのかログから読めなかった。
+        log.notice("startDeviceDiscovery -> foundDevice \(dev.description, privacy: .public)")
         routingManager.foundDevice(dev)
     }
 
