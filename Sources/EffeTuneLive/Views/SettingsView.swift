@@ -43,17 +43,6 @@ struct SettingsView: View {
                     Text(l.label).tag(l)
                 }
             }
-            Picker("Output", selection: $prefs.outputRoute) {
-                ForEach(ETOutputRoute.allCases) { o in
-                    Text(o.label).tag(o)
-                }
-            }
-            LabeledContent("Route to") {
-                HStack(spacing: 8) {
-                    Text(io.route).foregroundStyle(.secondary).lineLimit(1)
-                    RoutePicker().frame(width: 30, height: 30)
-                }
-            }
             Toggle("Keep screen awake", isOn: $prefs.keepScreenAwake)
         } header: {
             Text("Audio")
@@ -71,7 +60,7 @@ struct SettingsView: View {
             }
             LabeledContent("Incoming", value: "48 kHz · 32-bit float · 2 ch")
             LabeledContent("Processing", value: "\(Int(io.processingRate / 1000)) kHz")
-            LabeledContent("Output", value: io.running ? "\(Int(io.sampleRate / 1000)) kHz · \(io.route)" : "—")
+            LabeledContent("Going to", value: io.running ? io.route : "—")
         } header: {
             Text("Signal")
         } footer: {

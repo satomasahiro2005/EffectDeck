@@ -71,21 +71,6 @@ enum ETLatency: String, CaseIterable, Identifiable {
     }
 }
 
-/// 出力先の決め方。
-enum ETOutputRoute: String, CaseIterable, Identifiable {
-    case followSystem
-    case speaker
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .followSystem: return "Follow route"
-        case .speaker:      return "Built-in speaker"
-        }
-    }
-}
-
 @MainActor
 final class Preferences: ObservableObject {
 
@@ -96,9 +81,6 @@ final class Preferences: ObservableObject {
     }
     @Published var latency: ETLatency {
         didSet { save(latency.rawValue, "pref.latency"); onAudioChange?() }
-    }
-    @Published var outputRoute: ETOutputRoute {
-        didSet { save(outputRoute.rawValue, "pref.output"); onAudioChange?() }
     }
     @Published var keepScreenAwake: Bool {
         didSet {
@@ -114,7 +96,6 @@ final class Preferences: ObservableObject {
         let d = UserDefaults.standard
         processingRate = ETProcessingRate(rawValue: d.object(forKey: "pref.rate") as? Int ?? 96000) ?? .r96
         latency = ETLatency(rawValue: d.string(forKey: "pref.latency") ?? "") ?? .interactive
-        outputRoute = ETOutputRoute(rawValue: d.string(forKey: "pref.output") ?? "") ?? .followSystem
         keepScreenAwake = d.object(forKey: "pref.awake") as? Bool ?? false
     }
 

@@ -14,6 +14,7 @@ struct PipelineView: View {
     @StateObject private var dsp = EffeTuneDSP.shared
     @State private var showPicker = false
     @State private var showSettings = false
+    @State private var showRouting = false
     @State private var expanded: Set<UUID> = []
 
     private let timer = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
@@ -42,6 +43,7 @@ struct PipelineView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView(io: io) }
+            .sheet(isPresented: $showRouting) { RoutingView(dsp: dsp) }
         }
         .onReceive(timer) { _ in io.tick() }
     }
@@ -65,6 +67,20 @@ struct PipelineView: View {
             Text(io.running ? "\(Int(io.sampleRate)) Hz" : "—")
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(.secondary)
+
+            Menu {
+                Button { showRouting = true } label: {
+                    Label("Routing…", systemImage: "arrow.triangle.branch")
+                }
+                .disabled(dsp.chain.isEmpty)
+                Button(role: .destructive) { dsp.clear() } label: {
+                    Label("Remove All", systemImage: "trash")
+                }
+                .disabled(dsp.chain.isEmpty)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 16))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

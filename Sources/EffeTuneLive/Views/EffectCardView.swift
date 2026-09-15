@@ -56,6 +56,17 @@ struct EffectCardView: View {
 
             Spacer(minLength: 4)
 
+            // 既定（0→0 の All）から外れたものだけ出す。
+            // 普通の鎖は一直線なので、普段は何も出ない。
+            if !node.isDefaultRouting {
+                Text(ETRouting.badge(node))
+                    .font(.system(size: 10, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.tint, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+
             if !node.spec.params.isEmpty {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .semibold))

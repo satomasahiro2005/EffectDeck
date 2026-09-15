@@ -139,13 +139,15 @@ final class AudioIO: ObservableObject {
             try session.setPreferredSampleRate(48000)
             try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
-            // イヤホンを挿しているのに内蔵スピーカーへ流すのは間違い。
-            // 明示の override は「常にスピーカー」を選んだときだけ掛ける。
-            if prefs.outputRoute == .speaker {
-                try session.overrideOutputAudioPort(.speaker)
-            } else {
-                try session.overrideOutputAudioPort(.none)
-            }
+            // 出力先はシステムに任せる。こちらから指定しない。
+            //
+            // 普通のアプリに「自分だけの出力先」を選ぶ手段は無い。
+            // AVRoutePickerView はシステムのルートピッカーそのもので、
+            // Spotify が出しているのと同じ画面。そこで選ぶと、Spotify が
+            // MediaDevice で EffeTune へ向けていたアプリごとの上書きまで外れる。
+            // overrideOutputAudioPort も同じ理由で使わない。
+            // イヤホンを繋いでいるのにスピーカーから鳴る事故も、これで起きない。
+            try session.overrideOutputAudioPort(.none)
         } catch {
             let ns = error as NSError
             status = "Audio session failed: \(ns.domain) \(ns.code)"

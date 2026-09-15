@@ -121,10 +121,13 @@ def main():
                     swift_str(unit), "true" if kind == "int" else "false")
 
             label = f.get("publicName") or camel_to_words(mname)
+            # 保存形式は params.json の key を使う。無ければメンバ名で代用する。
+            key = f.get("key") or mname
             params.append(
-                "        ETParam(name: %s, label: %s, kind: %s, defaultValue: %r, "
+                "        ETParam(name: %s, key: %s, label: %s, kind: %s, defaultValue: %r, "
                 "offset: %d, count: %d)"
-                % (swift_str(mname), swift_str(label), kind_swift, dv_f, offset, mcount))
+                % (swift_str(mname), swift_str(key), swift_str(label),
+                   kind_swift, dv_f, offset, mcount))
             defaults.extend([dv_f] * mcount)
             offset += mcount
 

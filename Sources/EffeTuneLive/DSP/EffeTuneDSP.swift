@@ -32,11 +32,11 @@ final class EffeTuneDSP: ObservableObject {
         // 普通の使い方では全部 0→0 の All なので、既定から外れたものだけ画面に出す。
         var inputBus: UInt8 = 0
         var outputBus: UInt8 = 0
-        var channelSpec: Int8 = -2      // ET_CHANNEL_ALL
+        var channelSpec: Int8 = -1      // Stereo。EffeTune の既定に合わせてある
         var sectionGate: UInt8 = 1
 
         var isDefaultRouting: Bool {
-            inputBus == 0 && outputBus == 0 && channelSpec == -2 && sectionGate == 1
+            inputBus == 0 && outputBus == 0 && channelSpec == -1 && sectionGate == 1
         }
     }
 

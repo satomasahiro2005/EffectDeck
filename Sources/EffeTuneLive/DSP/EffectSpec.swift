@@ -18,6 +18,9 @@ enum ETParamKind {
 
 struct ETParam: Identifiable {
     let name: String        // params.json の名前。ヘッダのメンバ名と同じ
+    /// 保存形式で使う短い名前（`vl` など）。EffeTune のプリセットはこちらを書く。
+    /// 2 文字とは限らない（Stereo Blend は `stereo`）。
+    let key: String
     let label: String       // 画面に出す名前
     let kind: ETParamKind
     let defaultValue: Float
