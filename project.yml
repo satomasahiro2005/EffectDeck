@@ -1,0 +1,120 @@
+name: EffeTuneLive
+options:
+  bundleIdPrefix: ai.nemut
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: C82ST8T9MN
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CLANG_ENABLE_OBJC_ARC: YES
+    TARGETED_DEVICE_FAMILY: "1,2"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+# EffeTune の DSP コアは host-neutral な C++20 なので、そのまま arm64 で建つ。
+# WASM を経由しない。include の場所だけ揃えれば通る（実機向けに 75/75 確認済み）。
+dspSettings: &dspSettings
+  CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+  CLANG_CXX_LIBRARY: "libc++"
+  GCC_OPTIMIZATION_LEVEL: "s"
+  HEADER_SEARCH_PATHS:
+    - $(SRCROOT)/Vendor/effetune/dsp/include
+    - $(SRCROOT)/Vendor/effetune/dsp
+    - $(SRCROOT)/Vendor/effetune/dsp/generated/cpp
+    - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
+    - $(SRCROOT)/Vendor/effetune/dsp/vendor/pffft/include/pffft
+    - $(SRCROOT)/Generated/note-models
+
+targets:
+
+  # ------------------------------------------------------------------
+  # 本体。UI・DSP・スピーカー出力。ユーザーが開くのはこれ。
+  # 拡張を同梱していないので音を出せる。
+  # ------------------------------------------------------------------
+  EffeTuneLive:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/EffeTuneLive
+      - path: Sources/Shared
+      # EffeTune の DSP コア。移植せずそのまま積む。
+      # params.json や *.f32（照合用の波形）まで拾うとリソースとして
+      # 束ねようとして衝突するので、ソースだけを名指しで入れる。
+      - path: Vendor/effetune/dsp/core
+        includes: ["**/*.cpp", "**/*.h"]
+        excludes: ["**/*test*.cpp"]
+      - path: Vendor/effetune/dsp/plugins
+        includes: ["**/*.cpp", "**/*.h"]
+        excludes: ["**/*test*.cpp"]
+      - path: Vendor/effetune/dsp/vendor/pffft/src
+        includes: ["**/*.c", "**/*.h"]
+        excludes: ["**/*test*"]
+      # Note Spectrogram はモデルを実行ファイルへ埋め込む。
+      # Scripts/build.sh が embed_models.py を走らせてここへ吐く。
+      - path: Generated/note-models
+        includes: ["**/*.S", "**/*.h"]
+    settings:
+      base:
+        <<: *dspSettings
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.player
+        PRODUCT_NAME: EffeTune Live
+        INFOPLIST_FILE: Sources/EffeTuneLive/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLive/EffeTuneLive.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/EffeTuneLive/EffeTuneLive-Bridging-Header.h
+    dependencies:
+      - sdk: AVFoundation.framework
+
+  # ------------------------------------------------------------------
+  # 入れ物。Media Device Extension を運ぶためだけに在る。
+  # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否されるので、
+  # ここに UI も DSP も置けない。だからアプリが 2 本要る。
+  # ------------------------------------------------------------------
+  EffeTuneLiveBridge:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/EffeTuneLiveBridge
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune
+        PRODUCT_NAME: EffeTune Live Bridge
+        INFOPLIST_FILE: Sources/EffeTuneLiveBridge/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLiveBridge/EffeTuneLiveBridge.entitlements
+    dependencies:
+      - target: EffeTuneLiveExtension
+        embed: true
+        codeSign: true
+
+  # ------------------------------------------------------------------
+  # Media Device Extension。ルートピッカーに EffeTune を1台出し、
+  # 選ばれたら他アプリの PCM を受け取って本体へ送る。
+  # ------------------------------------------------------------------
+  EffeTuneLiveExtension:
+    type: extensionkit-extension
+    platform: iOS
+    sources:
+      - path: Sources/Extension
+      # 拡張は DSP コアを積まないので ETChain は渡さない（et_* が未解決になる）
+      - path: Sources/Shared/LocalLink.h
+      - path: Sources/Shared/LocalLink.m
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.extension
+        PRODUCT_NAME: EffeTuneLiveExtension
+        INFOPLIST_FILE: Sources/Extension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/Extension/Extension.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Extension/Extension-Bridging-Header.h
+    dependencies:
+      - sdk: MediaDevice.framework
+      - sdk: CoreAudio.framework
+      - sdk: AudioToolbox.framework
+      - sdk: AVFoundation.framework
+      - sdk: Network.framework
+      - sdk: ExtensionFoundation.framework

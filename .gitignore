@@ -1,0 +1,11 @@
+build/
+out/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.ipa
+*.dSYM/
+*.log
+.DS_Store
+Generated/note-models/

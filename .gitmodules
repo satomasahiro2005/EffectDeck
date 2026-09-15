@@ -1,0 +1,3 @@
+[submodule "Vendor/effetune"]
+	path = Vendor/effetune
+	url = https://github.com/Frieve-A/effetune
