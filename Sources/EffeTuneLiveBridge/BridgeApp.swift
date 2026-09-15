@@ -1,88 +1,54 @@
 //  BridgeApp.swift
-//  EffeTune Bridge — Media Device Extension を運ぶためだけのアプリ。
+//  EffeTune Live Bridge — Media Device Extension を運ぶためだけのアプリ。
 //
 //  拡張を同梱したアプリは AVAudioSession を開けない（'!pla'）。
 //  だからここに UI も DSP も置けない。音は EffeTune Live が出す。
-//  ユーザーはこれを入れておくだけでよく、開く必要は無い。
-//
-//  下の SpeakerProbe は、その「開けない」を実機で確かめるために残してある。
+//  ユーザーはこれを入れておくだけでよく、普段は開かない。
 
 import SwiftUI
-import AVFoundation
-import AVKit
 
 @main
 struct EffeTuneLiveBridgeApp: App {
     var body: some Scene {
-        WindowGroup { StatusView() }
+        WindowGroup { BridgeView() }
     }
 }
 
-struct StatusView: View {
-    @StateObject private var probe = SpeakerProbe.shared
-    @State private var route = "-"
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
+struct BridgeView: View {
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("EffeTune Live Bridge").font(.largeTitle.bold())
+        VStack(spacing: 18) {
+            Spacer()
 
-                Text("""
-                     確かめること
+            Image(systemName: "airplayaudio")
+                .font(.system(size: 46))
+                .foregroundStyle(.tint)
 
-                     1. 何かのアプリで音を鳴らす
-                     2. 下のボタンか、コントロールセンターの出力先で「EffeTune」を選ぶ
-                        → 音が消えれば、システムの出力がこちらへ移っている
-                     3. このアプリに戻って、下の4つを順に押す
-                        → 440Hz が聞こえたやり方が、加工後の音を返せる経路
-                     """)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Text("EffeTune Live Bridge")
+                .font(.title2.bold())
 
-                GroupBox("いまの出力ルート") {
-                    Text(route)
-                        .font(.system(.footnote, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            Text("""
+                 This app carries the audio device that shows up in Control Center. \
+                 Keep it installed and leave it alone — there is nothing to do here.
+                 """)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
 
-                RoutePickerView().frame(height: 44)
+            Spacer()
 
-                VStack(spacing: 8) {
-                    Button("① playAndRecord + defaultToSpeaker + override(.speaker)") {
-                        probe.play(mode: 0)
-                    }
-                    Button("② playAndRecord + defaultToSpeaker") { probe.play(mode: 1) }
-                    Button("③ playback + mixWithOthers") { probe.play(mode: 2) }
-                    Button("④ playback") { probe.play(mode: 3) }
-                    Button("停止") { probe.stop() }.tint(.red)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .frame(maxWidth: .infinity)
-
-                GroupBox("結果") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(probe.status).font(.footnote)
-                        Text("再生時のルート: \(probe.route)")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Play something in another app", systemImage: "1.circle")
+                Label("Pick EffeTune as the output in Control Center", systemImage: "2.circle")
+                Label("Open EffeTune Live", systemImage: "3.circle")
             }
-            .padding()
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 24)
+            .padding(.bottom, 28)
         }
-        .onReceive(timer) { _ in route = probe.routeNow() }
     }
-}
-
-/// システムのルートピッカー。
-struct RoutePickerView: UIViewRepresentable {
-    func makeUIView(context: Context) -> AVRoutePickerView {
-        let v = AVRoutePickerView()
-        v.prioritizesVideoDevices = false
-        return v
-    }
-    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }

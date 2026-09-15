@@ -130,8 +130,12 @@ final class AudioIO: ObservableObject {
         let prefs = Preferences.shared
         let session = AVAudioSession.sharedInstance()
         do {
+            // .playAndRecord は既定で Bluetooth の出力を候補から外す。
+            // .allowBluetoothA2DP を足さないとワイヤレスイヤホンへ出せない
+            // （足さずに .allowBluetooth だけだと HFP のモノラルに落ちる）。
             try session.setCategory(.playAndRecord, mode: .default,
-                                    options: [.defaultToSpeaker, .mixWithOthers])
+                                    options: [.defaultToSpeaker, .mixWithOthers,
+                                              .allowBluetoothA2DP, .allowAirPlay])
             try session.setPreferredSampleRate(48000)
             try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
@@ -176,14 +180,20 @@ final class AudioIO: ObservableObject {
                 p[n + i] = s[i * 2 + 1]
             }
 
-            // 3. 要るなら上げて、鎖を通して、戻す
-            if f > 1, let rs = state.resampler {
-                let hi = state.hi
-                ETResampler_Up(rs, p, hi, UInt32(n))
-                state.applied = ETChain_Process(hi, 2, UInt32(n * f), state.elapsed)
-                ETResampler_Down(rs, hi, p, UInt32(n))
+            // 3. 本線のバスへ書いて、鎖を通して、読み戻す。
+            //    バスの置き場は engine が持っているので、そこへ直接書く。
+            if let main = ETPipeline_MainBus() {
+                if f > 1, let rs = state.resampler {
+                    ETResampler_Up(rs, p, main, UInt32(n))
+                    state.applied = ETPipeline_Process(2, UInt32(n * f), state.elapsed)
+                    ETResampler_Down(rs, main, p, UInt32(n))
+                } else {
+                    main.update(from: p, count: n * 2)
+                    state.applied = ETPipeline_Process(2, UInt32(n), state.elapsed)
+                    p.update(from: main, count: n * 2)
+                }
             } else {
-                state.applied = ETChain_Process(p, 2, UInt32(n), state.elapsed)
+                state.applied = 0
             }
             state.elapsed += Double(n) / state.sampleRate
 

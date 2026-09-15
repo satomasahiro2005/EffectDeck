@@ -27,6 +27,17 @@ final class EffeTuneDSP: ObservableObject {
         var instance: UInt32 = 0
         /// 描画用の値がどのエフェクトから出たかを見分ける番号。
         var tapId: UInt32 = 0
+
+        // --- 鎖の形 ---
+        // 普通の使い方では全部 0→0 の All なので、既定から外れたものだけ画面に出す。
+        var inputBus: UInt8 = 0
+        var outputBus: UInt8 = 0
+        var channelSpec: Int8 = -2      // ET_CHANNEL_ALL
+        var sectionGate: UInt8 = 1
+
+        var isDefaultRouting: Bool {
+            inputBus == 0 && outputBus == 0 && channelSpec == -2 && sectionGate == 1
+        }
     }
 
     static let shared = EffeTuneDSP()
@@ -35,7 +46,7 @@ final class EffeTuneDSP: ObservableObject {
 
     @Published private(set) var chain: [Node] = []
     @Published private(set) var ready = false
-    @Published var bypass = false { didSet { ETChain_SetBypass(bypass ? 1 : 0) } }
+    @Published var bypass = false { didSet { ETPipeline_SetBypass(bypass ? 1 : 0) } }
 
     /// テレメトリを読むのに要るので外へ出す。
     private(set) var engine: UInt32 = 0
@@ -65,7 +76,7 @@ final class EffeTuneDSP: ObservableObject {
                 log.error("et_engine_create が 0 を返した")
                 return
             }
-            ETChain_SetEngine(engine)
+            ETPipeline_SetEngine(engine)
             buildKernelIndex()
         }
 
@@ -204,21 +215,39 @@ final class EffeTuneDSP: ObservableObject {
 
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
-        let ids = chain.filter { $0.enabled && $0.instance != 0 }.map(\.instance)
-        ids.withUnsafeBufferPointer { ETChain_Publish($0.baseAddress, UInt32($0.count)) }
-        log.notice("publish count=\(ids.count) ids=\(ids.map(String.init).joined(separator: ","), privacy: .public)")
+        let nodes = chain.filter { $0.instance != 0 }.map { n in
+            ETPipeNode(instance: n.instance,
+                       enabled: n.enabled ? 1 : 0,
+                       inputBus: n.inputBus,
+                       outputBus: n.outputBus,
+                       channelSpec: n.channelSpec,
+                       sectionGate: n.sectionGate)
+        }
+        nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
+        log.notice("publish nodes=\(nodes.count)")
+    }
+
+    /// 鎖の形を変える。既定は 0→0 の All。
+    func setRouting(at index: Int, inputBus: UInt8? = nil, outputBus: UInt8? = nil,
+                    channelSpec: Int8? = nil, sectionGate: UInt8? = nil) {
+        guard chain.indices.contains(index) else { return }
+        if let v = inputBus    { chain[index].inputBus = v }
+        if let v = outputBus   { chain[index].outputBus = v }
+        if let v = channelSpec { chain[index].channelSpec = v }
+        if let v = sectionGate { chain[index].sectionGate = v }
+        publish()
     }
 
     /// 外した instance を、音のスレッドが読み終えてから壊す。
     private func retire(_ instances: [UInt32]) {
         guard !instances.isEmpty, engine != 0 else { return }
         let engine = self.engine
-        let mark = ETChain_ProcessCount()
+        let mark = ETPipeline_ProcessCount()
         Task.detached(priority: .utility) {
             // 音のスレッドが 2 周するのを待つ。鳴っていなければ待っても進まないので、
             // 0.5 秒で諦めて壊す（鳴っていない＝誰も読んでいない）。
             let deadline = Date().addingTimeInterval(0.5)
-            while ETChain_ProcessCount() < mark + 2 && Date() < deadline {
+            while ETPipeline_ProcessCount() < mark + 2 && Date() < deadline {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
             for i in instances { et_instance_destroy(engine, i) }

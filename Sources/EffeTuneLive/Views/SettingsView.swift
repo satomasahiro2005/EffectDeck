@@ -48,6 +48,12 @@ struct SettingsView: View {
                     Text(o.label).tag(o)
                 }
             }
+            LabeledContent("Route to") {
+                HStack(spacing: 8) {
+                    Text(io.route).foregroundStyle(.secondary).lineLimit(1)
+                    RoutePicker().frame(width: 30, height: 30)
+                }
+            }
             Toggle("Keep screen awake", isOn: $prefs.keepScreenAwake)
         } header: {
             Text("Audio")
