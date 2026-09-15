@@ -49,6 +49,15 @@
 //    processingChannels = 4〜16 の偶数（kernel.cpp:323-325）
 //    footprintBytes     = AssetUpload の見積り（JS も同じ式：fir_crossover.js:299-307）
 //
+//  --- いまの app では鳴らない ---
+//  帯ごとにステレオ 1 対を吐くので、出口が 4 チャンネル以上ないと成り立たない。
+//  カーネルも channelCount == 2 のときは何もせずに戻る（kernel.cpp:105-106）。
+//  この app は et_engine_prepare に maxChannels=2 を渡し（AudioIO.swift:110,178）、
+//  ETPipeline_Process にも 2 を渡している（AudioIO.swift:216,220）ので、
+//  いまの状態だと begin が必ず弾かれる（kernel.cpp:325 の processingChannels > max_channels_）。
+//  そこは engine の用意のしかたの問題なので、ここでは触らず .unavailable として画面に出す。
+//  文言は JS の _settleUnavailable（fir_crossover.js:248-250）と同じにしてある。
+//
 //  --- 重さの扱い ---
 //  JS は Worker へ出している（designer.js）。taps は最大 131072 で、
 //  FFT は 262144 点を帯ごとに 3 回。これは音のスレッドどころか UI スレッドでも
@@ -514,13 +523,16 @@ private struct FIRCrossoverStaged: Sendable {
 /// 送り込みだけは UI スレッドで行う。AssetUpload がそのあいだ bypass を上げるので、
 /// 音のスレッドは engine に触らない。
 @MainActor
-final class FIRCrossoverController: ObservableObject {
+final class FIRCrossoverDesigner: ObservableObject {
 
     /// 送り先。
     struct Target: Equatable, Sendable {
         var engine: UInt32
         var instance: UInt32
-        /// engine の sampleRate。カーネルはこれと同じ整数がペイロードに入っているかを見る。
+        /// **et_engine_prepare へ渡した値**。カーネルはこれと同じ整数が
+        /// ペイロードの +12 に入っているかを見る（kernel.cpp:345）。
+        /// この app は倍率を掛けて渡している（AudioIO.swift:178 の `sr * Double(factor)`）ので、
+        /// 機器の sampleRate をそのまま入れると commit が通らない。
         var sampleRate: Double
         /// この instance が処理するチャンネル数。4〜16 の偶数でないと成り立たない。
         var processingChannels: Int

@@ -56,6 +56,12 @@ static pthread_mutex_t  gStateMutex = PTHREAD_MUTEX_INITIALIZER;
 static UInt32           gRefCount   = 1;
 static CFStringRef      gDeviceUID  = NULL;   // MediaOutputDevice.id と同じ文字列
 static Boolean          gRegistered = false;  // CoreAudio への登録はプロセスに1回だけ
+// デバイスが生きているか。
+//
+// **初期値は true。** false から始めると、システムがデバイスを調べに来た時点で
+// 「生きていない」と答えてしまい、接続待ちのまま終わらない。
+// 名乗っている間は生きている扱いにして、離れたときだけ落とす。
+static Boolean          gAlive      = true;
 static Boolean          gIORunning  = false;
 static UInt64           gIOCount    = 0;
 
@@ -421,7 +427,7 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                     *outDataSize = sizeof(AudioObjectID);
                     return noErr;
                 case kAudioDevicePropertyClockDomain:       PUT(UInt32, 0);
-                case kAudioDevicePropertyDeviceIsAlive:     PUT(UInt32, 1);
+                case kAudioDevicePropertyDeviceIsAlive:     PUT(UInt32, gAlive ? 1 : 0);
                 case kAudioDevicePropertyDeviceIsRunning:   PUT(UInt32, gIORunning ? 1 : 0);
                 case kAudioDevicePropertyDeviceCanBeDefaultDevice:       PUT(UInt32, 1);
                 case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: PUT(UInt32, 1);
@@ -774,6 +780,17 @@ static OSStatus ET_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID de
         os_log_error(gLog, "audio server との接続が切れた");
     });
     if (st == noErr) gRegistered = true;
+    if (gRegistered) {
+        // 生きている状態にして、変わったことをホストへ知らせる。
+        gAlive = true;
+        if (gHost && gHost->PropertiesChanged) {
+            const AudioObjectPropertyAddress addr = {
+                kAudioDevicePropertyDeviceIsAlive,
+                kAudioObjectPropertyScopeGlobal,
+                kAudioObjectPropertyElementMain };
+            gHost->PropertiesChanged(gHost, kObjectID_Device, 1, &addr);
+        }
+    }
     os_log(gLog, "RegisterMediaDeviceExtension uid=%{public}@ -> %d", uid, (int)st);
     return st;
 }
@@ -783,6 +800,22 @@ static OSStatus ET_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID de
 /// Unregister が無い）ので、捨てた時点でこのプロセスでは二度と出せなくなる。
 - (void)unpublish {
     gHandler = nil;
+
+    // 生きていないことにして知らせる。
+    // これをやらないとシステムは port を掴んだままになり、
+    // 次に同じ UID で名乗ったとき「もう繋がっている」と判断されて、
+    // 誰も IO を出さないまま "Unable to Connect" になる。
+    // 登録そのものを解除する手段は無い（対になる API が存在しない）ので、
+    // 生存の知らせで手放してもらう。
+    gAlive = false;
+    gIORunning = false;
+    if (gHost && gHost->PropertiesChanged) {
+        const AudioObjectPropertyAddress addr = {
+            kAudioDevicePropertyDeviceIsAlive,
+            kAudioObjectPropertyScopeGlobal,
+            kAudioObjectPropertyElementMain };
+        gHost->PropertiesChanged(gHost, kObjectID_Device, 1, &addr);
+    }
     os_log(gLog, "unpublish frames=%llu registered=%d",
            (unsigned long long)gIOCount, (int)gRegistered);
 }

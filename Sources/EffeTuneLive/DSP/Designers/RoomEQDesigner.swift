@@ -53,6 +53,7 @@
 //  --- 数の扱い ---
 //  JS の Number は double。途中は Double、カーネルへ渡す直前に Float へ落とす。
 
+import Combine
 import Foundation
 import os
 
@@ -1170,7 +1171,42 @@ private extension RoomEQDesigner {
     }
 }
 
+// MARK: - ETEffect のパラメータとの行き来
+
 extension RoomEQDesigner {
+
+    /// ETEffect の値の並びでの位置。Generated/EffectCatalog.swift:606-612。
+    enum ParameterOffset {
+        static let latencyMode = 0
+        static let filterDelaySamples = 1
+        static let channelDelay = 2
+        static let outputGain = 3
+    }
+
+    /// latencyMode は列挙の**番号**で入っている（0→"0"、1→"128"、2→"256"…）。
+    /// カーネルの headBlock は中身のほうの数なので、ここで読み替える。
+    /// EffectCatalog.swift:607 と dsp/plugins/eq/room_eq/params.json:8。
+    static func latencyMode(fromParameterValue value: Float) -> UInt32 {
+        let index = Int(value.rounded())
+        guard index >= 0, index < allowedLatencyModes.count else { return 128 }
+        return allowedLatencyModes[index]
+    }
+
+    static func parameterValue(forLatencyMode mode: UInt32) -> Float {
+        Float(allowedLatencyModes.firstIndex(of: mode) ?? 1)
+    }
+
+    /// 設計が決めた遅延をパラメータの並びへ書く。**送り込む前に呼ぶこと**
+    /// （カーネルは begin の時点の fd を読む。kernel.cpp:232-233）。
+    /// channelDelay と outputGain は触らない。あれは利用者の設定。
+    static func applyLatency(_ design: RoomEQDesign,
+                             latencyMode: UInt32,
+                             to values: inout [Float]) {
+        guard values.count > ParameterOffset.filterDelaySamples else { return }
+        values[ParameterOffset.latencyMode] = parameterValue(forLatencyMode: latencyMode)
+        values[ParameterOffset.filterDelaySamples] = Float(design.filterDelaySamples)
+    }
+
     /// JS の Math.round。0.5 は常に大きい方へ行く（Swift の rounded() は
     /// 負の 0.5 で向きが違う）。
     static func jsRound(_ value: Double) -> Int {

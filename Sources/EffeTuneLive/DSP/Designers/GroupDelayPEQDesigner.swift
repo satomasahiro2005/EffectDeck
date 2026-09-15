@@ -55,7 +55,8 @@
 //
 //  --- 重さ ---
 //  JS は Worker でやっている（js/group-delay-peq/design-worker.js）。理由は重いから。
-//  32768 タップだと 65536 点の実数 FFT を、投影 12 回ぶんで最大 25 回まわす。
+//  32768 タップだと 65536 点の実数 FFT を、投影 12 回ぶん（前進と逆で 24 回）＋
+//  最初の逆変換 1 回＋測定の 2 回で、最大 27 回まわす。
 //  ここも同じ扱いにして Task.detached へ出す。音のスレッドでは絶対にやらない。
 //
 //  --- 数の扱い ---
@@ -160,6 +161,19 @@ struct GroupDelayPEQSettings: Equatable, Sendable {
         latencySamples + taps / 2
     }
 
+    /// 資産の headBlock。0/128/256/512/1024 のどれかでないとカーネルに弾かれる
+    /// （kernel.cpp:270-271）。外れていたら既定の 128 に寄せる。
+    var headBlock: UInt32 {
+        GroupDelayPEQDesignCore.latencyChoices.contains(latencySamples)
+            ? UInt32(latencySamples)
+            : 128
+    }
+
+    /// begin へ渡すチャンネル数。1〜16 の外は engine が受け取らない（engine.cpp:495-499）。
+    var assetProcessingChannels: UInt32 {
+        UInt32(min(max(processingChannels, 1), 16))
+    }
+
     /// 限界を超えている遅延を切る。タップ数やレートを変えたときに呼ぶ
     /// （group_delay_peq.js:147-154 の _clampDelaysToLimit）。
     func clampingDelaysToLimit() -> GroupDelayPEQSettings {
@@ -188,7 +202,7 @@ struct GroupDelayPEQSettings: Equatable, Sendable {
     /// （js の selectedIrChannelCount, ir-plugin-contract.js:26-39 に当たる）。
     ///   -2 = All → engine のチャンネル数 / -1 = Stereo → 2
     ///   0〜15 = 1 本だけ → 1 / 16〜23 = 対 → 2
-    static func processingChannels(channelSpec: Int8, engineChannels: Int = 2) -> Int {
+    static func routedChannels(channelSpec: Int8, engineChannels: Int = 2) -> Int {
         switch channelSpec {
         case -2: return engineChannels
         case -1: return 2
@@ -646,13 +660,14 @@ enum GroupDelayPEQDesignCore {
         }
 
         let frequencies = responseFrequencies(sampleRate: sampleRate)
-        var targetMs = [Double](repeating: 0, count: frequencies.count)
+        // 名前は targetMs だが、同じ名前の static func を隠さないように別名にしてある。
+        var targetValues = [Double](repeating: 0, count: frequencies.count)
         var realizedMs = [Double](repeating: 0, count: frequencies.count)
         let millisecondsPerSample = 1000 / sampleRate
         var rippleDb = 0.0
         for point in 0..<frequencies.count {
             let frequency = frequencies[point]
-            targetMs[point] = target.curve.value(at: frequency)
+            targetValues[point] = target.curve.value(at: frequency)
             let realized = sampleAtFrequency(delaySamples,
                                              frequency: frequency,
                                              size: size,
@@ -670,7 +685,7 @@ enum GroupDelayPEQDesignCore {
         }
 
         let response = GroupDelayPEQDesign.Response(frequencies: frequencies,
-                                                    targetMs: targetMs,
+                                                    targetMs: targetValues,
                                                     realizedMs: realizedMs)
         return Measured(rippleDb: rippleDb, response: response)
     }
@@ -757,9 +772,11 @@ final class GroupDelayPEQDesigner: ObservableObject {
     @Published private(set) var settings: GroupDelayPEQSettings
 
     private let log = Logger(subsystem: "ai.nemut.effetune", category: "gdpeq")
+    private static let kernelType = "GroupDelayPEQPlugin"
     private let slot: UInt32 = 0
 
-    private var engine: UInt32 = 0
+    /// engine は用意し直すと番号が変わる（EffeTuneDSP.prepare）。控えずに毎回引く。
+    private var engine: UInt32 { EffeTuneDSP.shared.engine }
     private var instance: UInt32 = 0
     /// 鎖での位置。パラメータを入れるのと、送った後に publish し直すのに要る。
     private var nodeIndex: Int?
@@ -778,8 +795,9 @@ final class GroupDelayPEQDesigner: ObservableObject {
     // MARK: 繋ぐ
 
     /// instance に繋ぐ。鎖に足した直後と、engine を用意し直した後に呼ぶ。
-    func attach(engine: UInt32, instance: UInt32, nodeIndex: Int?) {
-        self.engine = engine
+    /// DSP がまだ用意できていない（engine が 0）ときは何もしないので、
+    /// 用意できてからもう一度呼ぶ。
+    func attach(instance: UInt32, nodeIndex: Int?) {
         self.instance = instance
         self.nodeIndex = nodeIndex
         guard engine != 0, instance != 0 else {
@@ -796,10 +814,13 @@ final class GroupDelayPEQDesigner: ObservableObject {
         designWork?.cancel()
         work = nil
         designWork = nil
-        engine = 0
+        if engine != 0, instance != 0 {
+            AssetUpload.clear(engine: engine, instance: instance, slot: slot)
+        }
         instance = 0
         nodeIndex = nil
         stagedSettings = nil
+        design = nil
         status = .detached
     }
 
@@ -810,6 +831,9 @@ final class GroupDelayPEQDesigner: ObservableObject {
     func update(_ next: GroupDelayPEQSettings, debounce: TimeInterval = 0.15) {
         let previous = settings
         settings = next
+        // 同じものを送り直さない。送り込んでいるあいだ鎖は素通しになるので、
+        // 何も変わっていないのに送ると音が途切れるだけになる。
+        if next == previous && stagedSettings == next { return }
         if design != nil && next.requiresRedesign(comparedTo: previous) {
             design = nil
         }
@@ -949,9 +973,9 @@ final class GroupDelayPEQDesigner: ObservableObject {
                                  channels: [design.ir],
                                  sampleRate: Int(settings.sampleRate.rounded()),
                                  topology: .mono,
-                                 headBlock: UInt32(settings.latencySamples),
+                                 headBlock: settings.headBlock,
                                  rateDivider: 1,
-                                 processingChannels: UInt32(settings.processingChannels))
+                                 processingChannels: settings.assetProcessingChannels)
         } catch {
             guard self.generation == generation else { return }
             log.error("送り込めない \(String(describing: error), privacy: .public)")
@@ -1001,18 +1025,42 @@ final class GroupDelayPEQDesigner: ObservableObject {
     /// lt は選択肢の添字（dsp-params.generated.js:676 が indexOf を取っている）、
     /// fd はタップ数の半分（group_delay_peq.js:161-167）。
     private func pushParameters(_ settings: GroupDelayPEQSettings) {
-        guard let index = nodeIndex else { return }
-        let dsp = EffeTuneDSP.shared
-        if let latency = GroupDelayPEQDesignCore.latencyChoices.firstIndex(of: settings.latencySamples) {
-            dsp.setValue(Float(latency), at: index, offset: 0)
+        let latencyIndex = Float(
+            GroupDelayPEQDesignCore.latencyChoices.firstIndex(of: settings.latencySamples) ?? 1
+        )
+        let filterDelay = Float(settings.taps / 2)
+
+        // 鎖に並んでいるなら、そちらの控えも一緒に直す。
+        if let index = currentNodeIndex {
+            EffeTuneDSP.shared.setValue(latencyIndex, at: index, offset: 0)
+            EffeTuneDSP.shared.setValue(filterDelay, at: index, offset: 1)
+            return
         }
-        dsp.setValue(Float(settings.taps / 2), at: index, offset: 1)
+        // 鎖に無い instance（まだ publish していないなど）へは直に入れる。
+        // ここを飛ばすと fd が既定の 8192 のままになり、taps が 16384 以外のときに
+        // 申告する遅延がずれる。
+        guard let spec = ETCatalog.first(where: { $0.type == Self.kernelType }) else { return }
+        let packed: [Float] = [latencyIndex, filterDelay]
+        _ = packed.withUnsafeBufferPointer {
+            et_instance_set_params(engine, instance, $0.baseAddress,
+                                   UInt32(spec.floatCount), spec.paramsHash, 0)
+        }
+    }
+
+    /// 鎖での位置。並べ替えで添字がずれるので、instance で引き直してから使う。
+    private var currentNodeIndex: Int? {
+        let chain = EffeTuneDSP.shared.chain
+        if let index = nodeIndex, chain.indices.contains(index),
+           chain[index].instance == instance {
+            return index
+        }
+        return chain.firstIndex { $0.instance == instance }
     }
 
     /// 鎖を publish し直す。EffeTuneDSP に publish だけを呼ぶ口が無いので、
     /// 何も変えない setRouting で代えている（中で publish している）。
     private func republishChain() {
-        guard let index = nodeIndex else { return }
+        guard let index = currentNodeIndex else { return }
         EffeTuneDSP.shared.setRouting(at: index)
     }
 }

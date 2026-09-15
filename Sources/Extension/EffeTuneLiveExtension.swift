@@ -42,18 +42,16 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     private var reportTimer: Timer?
 
     /// デバイスの id。AudioServerPlugIn の kAudioDevicePropertyDeviceUID と一致させる。
-    /// **プロセスごとに作り直す。** 固定値にしてはいけない。
     ///
-    /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いので、
-    /// 登録した VA port は audiomxd 側に残り続ける。拡張のプロセスは deactivate の
-    /// あと落とされるため、次に選ばれたときは別のプロセスが名乗ることになる。
-    /// そこで UID が同じだと、死んだ port（conn:1 quies:1 rout:0）に衝突して
-    /// 「もう繋がっている」と判断され、誰も IO を出さないまま
-    /// "Unable to Connect" になる。実機で出し入れを繰り返して確認した。
+    /// **固定値でなければならない。** 一度プロセスごとに作り直してみたが、
+    /// 探索と有効化が別プロセスで走ることがあるため、一覧に出したデバイスと
+    /// ドライバが名乗るデバイスが食い違い、ルートピッカーに 2 つ出て
+    /// どちらも繋がらなくなった。
     ///
-    /// 毎回違う UID にすれば衝突しない。引き換えに、システムから見ると
-    /// 起動のたびに別の機器に見える。
-    static let deviceUUID = UUID()
+    /// 引き換えに、古い登録が audiomxd に残ったままだと同じ UID の死んだ port
+    /// （conn:1 quies:1 rout:0）に衝突する。そうなると端末の再起動でしか消えない。
+    /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いのが元。
+    static let deviceUUID = UUID(uuidString: "6E656D75-7400-4E00-A000-000000000001")!
 
     private lazy var localDevice: MediaOutputDevice? = {
         // requiredNetworkEndpoints は必須引数で init も failable。
@@ -125,13 +123,8 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         ETLinkSender.shared.stop()
         EffeTuneDriver.shared.unpublish()
 
-        // 再生を止めて EffeTune から離れたあと、ルートピッカーに戻ってこないことがある。
-        // discovery が動いたままでも、システム側はこのデバイスを一度手放している。
-        // もう一度名乗り直して選べる状態に戻す。
-        if let dev = localDevice {
-            log.info("deactivate 後に再度 foundDevice")
-            routingManager.foundDevice(dev)
-        }
+        // ここで foundDevice を呼び直さない。呼ぶとルートピッカーに同じものが
+        // 二重に出ることがある。離れたあとの再探索はシステムが自分でやる。
     }
 
     // MARK: - 音量

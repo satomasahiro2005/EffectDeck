@@ -604,7 +604,8 @@ enum CrosstalkCancellationDesigner {
                                                sampleRate: Double,
                                                fftSize: Int,
                                                delaySeconds: Double,
-                                               smoothingOctaves: Double = complexSmoothingOctaves) throws -> Spectrum {
+                                               smoothingOctaves: Double
+                                                   = CrosstalkCancellationDesigner.complexSmoothingOctaves) throws -> Spectrum {
         let length = fftSize / 2 + 1
         guard fftSize >= 2, (fftSize & (fftSize - 1)) == 0,
               sampleRate.isFinite, sampleRate > 0,
@@ -956,6 +957,7 @@ enum CrosstalkCancellationDesigner {
     static let latencyModeHeadBlocks: [UInt32] = [0, 128, 256, 512, 1024]
 
     static func headBlock(forLatencyMode value: Float) -> UInt32 {
+        guard value.isFinite, value >= 0, value < 16 else { return 128 }
         let index = Int(value.rounded())
         return latencyModeHeadBlocks.indices.contains(index) ? latencyModeHeadBlocks[index] : 128
     }
@@ -1021,6 +1023,8 @@ final class CrosstalkCancellationController: ObservableObject {
 
     /// 送り込みまで終わった注文。同じものが来たら何もしない。
     private var applied: Order?
+    /// いま設計している注文。
+    private var inFlight: Order?
     private var running: Task<Void, Never>?
     // 走っている 1 本ぶんの後始末。Task の中へ閉じ込めると @Sendable の
     // 捕まえ方がうるさくなるので、MainActor の持ち物として置いておく。
@@ -1050,12 +1054,14 @@ final class CrosstalkCancellationController: ObservableObject {
         // （kernel.cpp:263）。倍率つきで動いているときは倍率込みの値。
         var resolved = config
         let engineRate = AudioIO.shared.processingRate
-        if engineRate > 0 { resolved.sampleRate = Int(engineRate.rounded()) }
+        if engineRate.isFinite, engineRate > 0, engineRate < 1_000_000 {
+            resolved.sampleRate = Int(engineRate.rounded())
+        }
 
         var latencyMode: Float = 1          // params.json の既定は添字 1（= 128）
-        if let index = offset(ofParam: "latencyMode", in: node.spec),
-           node.values.indices.contains(index) {
-            latencyMode = node.values[index]
+        if let slot = paramOffset(named: "latencyMode", in: node.spec),
+           node.values.indices.contains(slot) {
+            latencyMode = node.values[slot]
         }
         let headBlock = CrosstalkCancellationDesigner.headBlock(forLatencyMode: latencyMode)
 
@@ -1099,10 +1105,14 @@ final class CrosstalkCancellationController: ObservableObject {
                           config: config.normalized(),
                           sources: sources)
         if !force, applied == order, phase == .sent { return }
+        // 同じ注文が走っている最中なら触らない。触ると待ち時間が伸び続けて
+        // いつまでも始まらない。
+        if !force, inFlight == order, phase.isBusy { return }
 
         running?.cancel()
         self.beforeSend = beforeSend
         self.afterSend = afterSend
+        inFlight = order
         phase = .designing
         running = Task { [weak self] in
             try? await Task.sleep(nanoseconds: Self.debounceNanoseconds)
@@ -1134,16 +1144,16 @@ final class CrosstalkCancellationController: ObservableObject {
                     self.applied = order
                     self.phase = .sent
                     self.afterSend?()
-                    Self.log.notice("""
-                        送り込み済み instance=\(instance) taps=\(design.config.taps) \
-                        fft=\(design.diagnostics.fftSize) gain=\(design.diagnostics.maxGainDb)dB
-                        """)
+                    let taps = design.config.taps
+                    let gain = design.diagnostics.maxGainDb
+                    Self.log.notice("送り込み済み instance=\(instance) taps=\(taps) gain=\(gain)dB")
                 } catch {
                     self.applied = nil
                     self.phase = .failed(error.localizedDescription)
                     Self.log.error("送り込みに失敗 \(String(describing: error))")
                 }
             }
+            self.inFlight = nil
         }
     }
 
@@ -1152,6 +1162,7 @@ final class CrosstalkCancellationController: ObservableObject {
         running?.cancel()
         running = nil
         applied = nil
+        inFlight = nil
         beforeSend = nil
         afterSend = nil
         diagnostics = nil
@@ -1171,7 +1182,7 @@ final class CrosstalkCancellationController: ObservableObject {
     private static func designOffThread(order: Order) async -> Result<Design, DesignError> {
         let config = order.config
         let sources = order.sources
-        return await Task.detached(priority: .userInitiated) { () -> Result<Design, DesignError> in
+        return await Task.detached(priority: .userInitiated) { () async -> Result<Design, DesignError> in
             do {
                 return .success(try CrosstalkCancellationDesigner.design(config: config,
                                                                          sources: sources))
@@ -1190,10 +1201,10 @@ final class CrosstalkCancellationController: ObservableObject {
     private func pushFilterDelay(_ config: Config, instance: UInt32) {
         let dsp = EffeTuneDSP.shared
         guard let index = dsp.chain.firstIndex(where: { $0.instance == instance }),
-              let offset = offset(ofParam: "filterDelaySamples", in: dsp.chain[index].spec) else {
+              let slot = paramOffset(named: "filterDelaySamples", in: dsp.chain[index].spec) else {
             return
         }
-        dsp.setValue(Float(config.filterDelaySamples), at: index, offset: offset)
+        dsp.setValue(Float(config.filterDelaySamples), at: index, offset: slot)
     }
 
     /// commit で instance の遅延が変わるので、鎖を組み直させる。
@@ -1206,7 +1217,8 @@ final class CrosstalkCancellationController: ObservableObject {
         dsp.setRouting(at: index)
     }
 
-    private func offset(ofParam name: String, in spec: ETEffect) -> Int? {
+    /// params.json の名前から packed float 配列での位置を引く。
+    private func paramOffset(named name: String, in spec: ETEffect) -> Int? {
         spec.params.first { $0.name == name }?.offset
     }
 }
