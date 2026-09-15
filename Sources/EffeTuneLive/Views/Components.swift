@@ -1,12 +1,14 @@
 //  Components.swift
-//  画面の部品と寸法だけ。色はまだ決めていないので、ここでは持たない。
+//  画面の部品と寸法。色はまだ決めていないので、ここでは持たない。
 //  いまはシステムの意味づけ（primary / secondary / tint）に任せてある。
-//  配色を入れるときはこのファイルに 1 か所だけ足せば済むようにしておく。
+//
+//  角丸を数値で決めない。iOS 26 以降は親の器の丸みに内側が追従する作りになっていて、
+//  ConcentricRectangle がそれを担う。RoundedRectangle(cornerRadius: 10) のように
+//  自分で決め打ちすると、器の中で丸みが揃わず古く見える。
 
 import SwiftUI
 
 enum ETMetrics {
-    static let radius: CGFloat = 10
     static let cardPadding: CGFloat = 14
     static let valueWidth: CGFloat = 68
     static let controlHeight: CGFloat = 30
@@ -20,10 +22,10 @@ struct PowerBadge: View {
         Text("ON")
             .font(.system(size: 11, weight: .heavy))
             .tracking(0.5)
-            .foregroundStyle(isOn ? Color.white : .secondary)
+            .foregroundStyle(isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
             .frame(width: 42, height: 26)
             .background(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                        in: RoundedRectangle(cornerRadius: 5))
+                        in: .capsule)
     }
 }
 
@@ -37,17 +39,17 @@ struct ValueBox: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            .background(.quaternary, in: .rect(corners: .concentric))
     }
 }
 
-/// エフェクト 1 個ぶんの枠。
+/// エフェクト 1 個ぶんの枠。丸みは器に追従させる。
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ETMetrics.radius))
+            .background(.regularMaterial, in: .rect(corners: .concentric))
     }
 }
 

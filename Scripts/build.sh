@@ -28,14 +28,27 @@ build_one() {
     | tail -25
 }
 
+# 入れ替えは上書きで行う。
+#
+# 消してから入れ直すと、拡張が audiomxd に登録した VA port が古いまま残る。
+# AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無く、
+# デバイスの UID を固定にしてある（MediaOutputDevice.id と一致させる必要がある）ため、
+# 入れ替えのたびに同じ UID の死んだ port が積み上がる。
+# そうなると新しい activate が「もう繋がっている」と判断されて素通りし、
+# 誰も IO を出さないまま "Unable to Connect" になる。端末の再起動でしか消えない。
+#
+# 拡張の中身を変えて反映されないときだけ CLEAN=1 を付ける。
+# そのときは入れ直したあと端末を再起動すること。
 install_one() {
   [ -d "$1" ] || { echo "!! $1 が無い"; return 1; }
   [ -n "${DEV_ID:-}" ] || { echo "-- 実機が見つからないので $2 は入れない"; return 0; }
-  xcrun devicectl device uninstall app --device "$DEV_ID" "$2" >/dev/null 2>&1
-  sleep 1
+  if [ "${CLEAN:-0}" = "1" ]; then
+    echo "--- uninstall $2（このあと端末を再起動すること） ---"
+    xcrun devicectl device uninstall app --device "$DEV_ID" "$2" >/dev/null 2>&1
+    sleep 1
+  fi
   echo "--- install $2 ---"
-  xcrun devicectl device install app --device "$DEV_ID" "$1" 2>&1 \
-    | grep -E "App installed|bundleID|error" | head -5
+  xcrun devicectl device install app --device "$DEV_ID" "$1" 2>&1     | grep -E "App installed|bundleID|error" | head -5
 }
 
 {

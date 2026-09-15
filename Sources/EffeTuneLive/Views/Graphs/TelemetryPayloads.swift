@@ -110,7 +110,7 @@ struct ETPayload {
     /// 飛び飛びに読む。{peak, rms} が交互に並ぶような並びから片方だけ取るとき。
     /// stride と lane はバイトでなく Float の個数で数える。
     func floats(at offset: Int, count n: Int, stride: Int, lane: Int = 0) -> [Float]? {
-        guard n >= 0, stride > 0, lane >= 0, lane < stride else { return nil }
+        guard offset >= 0, n >= 0, stride > 0, lane >= 0, lane < stride else { return nil }
         guard n > 0 else { return [] }
         let last = offset + ((n - 1) * stride + lane) * 4
         guard fits(last, 4) else { return nil }

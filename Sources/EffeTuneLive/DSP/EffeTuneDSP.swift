@@ -91,6 +91,7 @@ final class EffeTuneDSP: ObservableObject {
         ready = true
         et_engine_set_telemetry_rate(engine, Self.telemetryHz)
         Telemetry.shared.clear()
+        restore()
         log.notice("DSP ready sr=\(sampleRate) engine=\(self.engine) kinds=\(self.available.count) abi=\(et_abi_version())")
 
         // 用意し直したので、いま並んでいるものを作り直す。
@@ -147,6 +148,36 @@ final class EffeTuneDSP: ObservableObject {
     func setEnabled(_ enabled: Bool, at index: Int) {
         guard chain.indices.contains(index) else { return }
         chain[index].enabled = enabled
+        publish()
+    }
+
+    /// 端末に残す。次の起動で同じ鎖が出る。
+    private func persist() {
+        PipelineStore.saveLast(chain)
+    }
+
+    /// 起動時に呼ぶ。前回の鎖が残っていればそれを、無ければ既定を組む。
+    /// 既定に Level Meter を 1 つ置いているのは、音が来ているかどうかが
+    /// 一目で分かるようにするため。下の帯にメーターを置かない代わり。
+    func restore() {
+        guard ready, chain.isEmpty else { return }
+        if let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty {
+            for item in saved { append(item) }
+        } else if !PipelineStore.hasSaved {
+            if let meter = ETCatalog.first(where: { $0.type == "LevelMeterPlugin" }) {
+                add(meter)
+            }
+        }
+    }
+
+    private func append(_ item: PipelineStore.Loaded) {
+        var node = Node(spec: item.spec, values: item.values)
+        node.enabled = item.enabled
+        node.inputBus = item.inputBus
+        node.outputBus = item.outputBus
+        node.channelSpec = item.channelSpec
+        guard instantiate(&node) else { return }
+        chain.append(node)
         publish()
     }
 
@@ -225,6 +256,7 @@ final class EffeTuneDSP: ObservableObject {
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         log.notice("publish nodes=\(nodes.count)")
+        persist()
     }
 
     /// 鎖の形を変える。既定は 0→0 の All。

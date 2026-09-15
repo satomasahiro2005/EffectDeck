@@ -91,8 +91,8 @@ struct ParameterRow: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(.tint, lineWidth: 1))
+                    .background(.quaternary, in: .rect(corners: .concentric))
+                    .overlay(ConcentricRectangle().stroke(.tint, lineWidth: 1))
                     .submitLabel(.done)
                     .onSubmit { commit() }
             } else {
@@ -142,7 +142,7 @@ struct ParameterRow: View {
                                 .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                                 .frame(minWidth: 30, minHeight: 26)
                                 .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                            in: RoundedRectangle(cornerRadius: 5))
+                                            in: .rect(corners: .concentric))
                         }
                         .buttonStyle(.plain)
                     }

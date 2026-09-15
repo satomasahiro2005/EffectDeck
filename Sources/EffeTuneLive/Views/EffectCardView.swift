@@ -63,7 +63,7 @@ struct EffectCardView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.tint, in: Capsule())
+                    .background(.tint, in: .capsule)
                     .foregroundStyle(.white)
             }
 

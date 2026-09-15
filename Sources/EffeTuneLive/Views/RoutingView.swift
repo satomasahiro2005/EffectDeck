@@ -75,7 +75,7 @@ private struct RoutingRow: View {
                         .font(.system(size: 11, design: .monospaced))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(.tint, in: Capsule())
+                        .background(.tint, in: .capsule)
                         .foregroundStyle(.white)
                 }
             }
@@ -131,7 +131,7 @@ private struct RoutingRow: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            .background(.quaternary, in: .rect(corners: .concentric))
         }
     }
 }

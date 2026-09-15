@@ -71,7 +71,7 @@ struct EffectPickerView: View {
                                 .padding(.vertical, 7)
                                 .background(category == name ? AnyShapeStyle(.tint)
                                                              : AnyShapeStyle(.quaternary),
-                                            in: Capsule())
+                                            in: .capsule)
                         }
                         .buttonStyle(.plain)
                         .id(name)
@@ -129,7 +129,7 @@ struct EffectPickerView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(.quaternary, in: Capsule())
+                            .background(.quaternary, in: .capsule)
                     }
                 }
                 if !effect.about.isEmpty {
