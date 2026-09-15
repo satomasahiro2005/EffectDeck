@@ -569,7 +569,8 @@ struct TubeSimulatorView: View {
         case .pushPull:    tube = choice("pt")
         case .singleEnded: tube = choice("sd")
         }
-        return "\(panel.title) · \(tube) · L filled / R outlined"
+        // 尾の印の見分け方も一緒に出す（左は塗り丸、右は抜き四角）。
+        return "\(panel.title) · \(tube) · L ● / R □"
     }
 
     // MARK: 数値

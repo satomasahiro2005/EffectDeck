@@ -832,8 +832,8 @@ struct PhaseSelectEqView: View {
         if axisMode == .balance {
             let limited = r.opl != 0 || r.pl != 0 || r.ph != 180 || r.oph != 180
             guard limited else { return "Band \(band + 1) · Phase full range" }
-            return String(format: "Band %d · P %.0f°›%.0f–%.0f°›%.0f°",
-                          band + 1, r.opl, r.pl, r.ph, r.oph)
+            return "Band \(band + 1) · P "
+                + String(format: "%.0f°›%.0f–%.0f°›%.0f°", r.opl, r.pl, r.ph, r.oph)
         }
         let limited = r.obl != -100 || r.bl != -100 || r.bh != 100 || r.obh != 100
         guard limited else { return "Band \(band + 1) · Balance full range" }
@@ -910,10 +910,25 @@ struct PhaseSelectEqView: View {
     }
 
     private var boundaryRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            frequencyRows
+            phaseRows
+            balanceRows
+        }
+        .padding(.top, 4)
+    }
+
+    private func groupHeading(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+    }
+
+    private var frequencyRows: some View {
         let r = region(band)
         return VStack(alignment: .leading, spacing: 8) {
-            Text("FREQUENCY").font(.system(size: 9, weight: .semibold))
-                .tracking(0.6).foregroundStyle(.secondary)
+            groupHeading("FREQUENCY")
             ETPhaseSliderRow(label: "Outer Low", unit: "Hz", value: r.ofl,
                              range: 20...40000, step: 1, logarithmic: true) { setOuter(\.ofl, $0) }
             ETPhaseSliderRow(label: "Core Low", unit: "Hz", value: r.fl,
@@ -922,9 +937,13 @@ struct PhaseSelectEqView: View {
                              range: 20...40000, step: 1, logarithmic: true) { core(.frequency, .high, $0) }
             ETPhaseSliderRow(label: "Outer High", unit: "Hz", value: r.ofh,
                              range: 20...40000, step: 1, logarithmic: true) { setOuter(\.ofh, $0) }
+        }
+    }
 
-            Text("PHASE").font(.system(size: 9, weight: .semibold))
-                .tracking(0.6).foregroundStyle(.secondary)
+    private var phaseRows: some View {
+        let r = region(band)
+        return VStack(alignment: .leading, spacing: 8) {
+            groupHeading("PHASE")
             ETPhaseSliderRow(label: "Outer Low", unit: "°", value: r.opl,
                              range: 0...180, step: 1, logarithmic: false) { setOuter(\.opl, $0) }
             ETPhaseSliderRow(label: "Core Low", unit: "°", value: r.pl,
@@ -933,9 +952,13 @@ struct PhaseSelectEqView: View {
                              range: 0...180, step: 1, logarithmic: false) { core(.phase, .high, $0) }
             ETPhaseSliderRow(label: "Outer High", unit: "°", value: r.oph,
                              range: 0...180, step: 1, logarithmic: false) { setOuter(\.oph, $0) }
+        }
+    }
 
-            Text("BALANCE").font(.system(size: 9, weight: .semibold))
-                .tracking(0.6).foregroundStyle(.secondary)
+    private var balanceRows: some View {
+        let r = region(band)
+        return VStack(alignment: .leading, spacing: 8) {
+            groupHeading("BALANCE")
             ETPhaseSliderRow(label: "Outer Low", unit: "%", value: r.obl,
                              range: -100...100, step: 0.1, logarithmic: false) { setOuter(\.obl, $0) }
             ETPhaseSliderRow(label: "Core Low", unit: "%", value: r.bl,
@@ -945,7 +968,6 @@ struct PhaseSelectEqView: View {
             ETPhaseSliderRow(label: "Outer High", unit: "%", value: r.obh,
                              range: -100...100, step: 0.1, logarithmic: false) { setOuter(\.obh, $0) }
         }
-        .padding(.top, 4)
     }
 
     /// 渡り（outer）だけを動かす。並びは normalized が整える。

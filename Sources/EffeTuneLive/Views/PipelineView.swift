@@ -16,6 +16,8 @@ struct PipelineView: View {
     @State private var showSettings = false
     @State private var showRouting = false
     @State private var showPresets = false
+    @AppStorage("welcome.seen") private var welcomeSeen = false
+    @State private var showWelcome = false
     @State private var expanded: Set<UUID> = []
 
     private let timer = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
@@ -46,6 +48,10 @@ struct PipelineView: View {
             .sheet(isPresented: $showSettings) { SettingsView(io: io) }
             .sheet(isPresented: $showRouting) { RoutingView(dsp: dsp) }
             .sheet(isPresented: $showPresets) { PresetsView(dsp: dsp) }
+            .sheet(isPresented: $showWelcome, onDismiss: { welcomeSeen = true }) {
+                WelcomeView(io: io)
+            }
+            .onAppear { if !welcomeSeen { showWelcome = true } }
         }
         .onReceive(timer) { _ in io.tick() }
     }
@@ -78,6 +84,10 @@ struct PipelineView: View {
                     Label("Routing…", systemImage: "arrow.triangle.branch")
                 }
                 .disabled(dsp.chain.isEmpty)
+                Divider()
+                Button { showWelcome = true } label: {
+                    Label("How it works", systemImage: "questionmark.circle")
+                }
                 Button(role: .destructive) { dsp.clear() } label: {
                     Label("Remove All", systemImage: "trash")
                 }
