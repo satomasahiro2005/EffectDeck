@@ -45,6 +45,15 @@ struct FiveBandDynamicEQView: View {
     private static let highHz: Double = 40000
     private static let samples = 192
 
+    /// 生成されたカタログは配列の既定値を拾えていない（Tools/gen_catalog.py が list を
+    /// float に直せず 0 を入れる）。frequency と sidechainFrequency が 0 のままだと
+    /// 図が平らなまま何も出ず、スライダーも範囲（20Hz〜）の外から始まる。
+    /// web 版の初期値（five_band_dynamic_eq.js:11 の [100, 300, 1000, 3000, 10000]。
+    /// scf は同 22 行で f と同じ値）を最初の 1 回だけ入れる。
+    /// enabled と threshold には触らない。あれは音が変わる
+    /// （web の既定は en が Band 3 だけ、th が -18 - 3i）。
+    private static let initialFrequencies: [Float] = [100, 300, 1000, 3000, 10000]
+
     var body: some View {
         // 曲線を引く閉包へ self を渡さないよう、要る値だけ控える。
         let bands = (0..<Self.bandCount).map { setting($0) }
@@ -173,7 +182,7 @@ struct FiveBandDynamicEQView: View {
                     .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                     .frame(maxWidth: .infinity, minHeight: 34)
                     .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                in: RoundedRectangle(cornerRadius: 6))
+                                in: .rect(corners: .concentric))
                     .opacity(bands[i].enabled ? 1 : 0.45)
                 }
                 .buttonStyle(.plain)
@@ -382,7 +391,7 @@ struct DynamicEQParameterRow: View {
                         value: Binding(get: { Double(value) },
                                        set: { set(isInteger ? Float($0.rounded()) : Float($0)) }),
                         in: Double(lo)...Double(hi),
-                        step: step > 0 ? Double(step) : (isInteger ? 1 : 0))
+                        step: step > 0 ? Double(step) : (isInteger ? 1 : 0.0001))
                 }
             }
         }
@@ -404,8 +413,8 @@ struct DynamicEQParameterRow: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(.tint, lineWidth: 1))
+                    .background(.quaternary, in: .rect(corners: .concentric))
+                    .overlay(ConcentricRectangle().stroke(.tint, lineWidth: 1))
                     .submitLabel(.done)
                     .onSubmit { commit() }
             } else {

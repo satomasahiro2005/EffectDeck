@@ -43,7 +43,7 @@ struct StereoMeterView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     /// 角度ごとのピーク（stereo_meter.js:6）。
     private static let envelopeBins = 360

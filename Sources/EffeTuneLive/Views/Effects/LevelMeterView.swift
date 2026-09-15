@@ -32,7 +32,7 @@ struct LevelMeterView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     /// 棒の値。dB。枠が来るたびに落としながら追いかける（level_meter.js:277-279）。
     @State private var bars: [Int: Double] = [:]

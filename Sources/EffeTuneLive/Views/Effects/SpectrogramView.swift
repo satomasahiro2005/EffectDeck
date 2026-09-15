@@ -30,8 +30,9 @@
 //
 //  取りこぼしについて。DSP は貯まった列を writeTelemetry で全部吐く
 //  （kernel.cpp:218-226）が、Telemetry は tap と種類ごとに最新の 1 枠しか残さない
-//  （Telemetry.swift の poll）。読み出しは PipelineView の 0.3 秒ごとの tick なので、
-//  実際に帯へ入るのは 1 回につき 1 列だけになる。図は間引かれた時間軸になり、
+//  （Telemetry.swift の poll）。読み出しは PipelineView の 1/30 秒ごとの pollTelemetry で、
+//  DSP が吐くのは 60Hz（EffeTuneDSP.telemetryHz）なので、読むたびに残っているのは
+//  最後の 1 列だけ。実際に帯へ入るのも 1 回につき 1 列になる。図は間引かれた時間軸になり、
 //  列の幅は一定の時間を表さない。そのため横軸には目盛りを置かず、
 //  いま見えている範囲が何秒ぶんかを見出しに出している。
 
@@ -45,7 +46,7 @@ struct SpectrogramView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
     @StateObject private var band = ETSpectrogramBand()
 
     @State private var probe: ETSpectrogramProbe?

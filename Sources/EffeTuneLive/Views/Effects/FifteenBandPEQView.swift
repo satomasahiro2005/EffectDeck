@@ -257,8 +257,8 @@ private struct PEQ15SliderRow: View {
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(.tint, lineWidth: 1))
+                    .background(.quaternary, in: .rect(corners: .concentric))
+                    .overlay(ConcentricRectangle().stroke(.tint, lineWidth: 1))
                     .submitLabel(.done)
                     .onSubmit { commit() }
             } else {
@@ -329,9 +329,6 @@ struct FifteenBandPEQView: View {
             Divider()
             bandPanel
         }
-        .padding(.horizontal, ETMetrics.cardPadding)
-        .padding(.bottom, ETMetrics.cardPadding)
-        .onAppear { seedFrequenciesIfNeeded() }
     }
 
     // MARK: 図
@@ -439,7 +436,7 @@ struct FifteenBandPEQView: View {
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(minWidth: 34, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                            in: RoundedRectangle(cornerRadius: 6))
+                            in: .rect(corners: .concentric))
                 .opacity(isOn ? 1 : 0.45)
         }
         .buttonStyle(.plain)
@@ -538,12 +535,4 @@ struct FifteenBandPEQView: View {
         return rate > 0 ? rate : 96000
     }
 
-    private func seedFrequenciesIfNeeded() {
-        let l = layout
-        // 20Hz がパラメータの下限なので、下回っていれば「まだ入っていない」と分かる。
-        guard (0..<l.count).allSatisfy({ value(l.frequency + $0) < 20 }) else { return }
-        for i in 0..<min(l.count, Self.initialFrequencies.count) {
-            dsp.setValue(Self.initialFrequencies[i], at: index, offset: l.frequency + i)
-        }
-    }
 }

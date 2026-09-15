@@ -220,7 +220,7 @@ struct TubeSimulatorView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     /// 選んでいる面。使えなくなったときは resolvedPanel が拾い直す。
     @State private var panelID: String?

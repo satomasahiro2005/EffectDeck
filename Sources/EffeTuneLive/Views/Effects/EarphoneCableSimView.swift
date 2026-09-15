@@ -129,8 +129,6 @@ struct EarphoneCableSimView: View {
 
             resonanceSection
         }
-        .padding(.horizontal, ETMetrics.cardPadding)
-        .padding(.bottom, ETMetrics.cardPadding)
         .onAppear { seedResonancesIfNeeded() }
     }
 
@@ -363,9 +361,9 @@ struct EarphoneCableSimView: View {
                             .frame(minWidth: 30, minHeight: 26)
                             .background(slot == i ? AnyShapeStyle(.tint)
                                                   : AnyShapeStyle(.quaternary),
-                                        in: RoundedRectangle(cornerRadius: 5))
+                                        in: .rect(corners: .concentric))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 5)
+                                ConcentricRectangle()
                                     .stroke(.tint, lineWidth: isSlotEnabled(i) ? 1 : 0))
                     }
                     .buttonStyle(.plain)

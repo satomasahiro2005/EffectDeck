@@ -13,9 +13,12 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT="$PWD"
 LOG="$ROOT/build.log"
 
+# 実機だけを探す。シミュレータが起きていると devicectl はそれも connected として
+# 並べるので、最後の列（Reality）が physical のものに絞る。
 find_device() {
-  xcrun devicectl list devices 2>/dev/null \
-    | awk '/connected/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{4}/) { print $i; exit } }'
+  xcrun devicectl list devices 2>/dev/null     | awk '/connected/ && $NF == "physical" {
+             for (i = 1; i <= NF; i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{4}/) { print $i; exit }
+           }'
 }
 
 build_one() {

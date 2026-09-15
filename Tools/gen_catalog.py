@@ -120,6 +120,23 @@ def main():
                     float(lo), float(hi), float(step or 0),
                     swift_str(unit), "true" if kind == "int" else "false")
 
+            # 配列のパラメータは default も配列で来る（バンドごとの周波数など）。
+            # そのまま float() に掛けると落ちて 0 になり、既定値が全部消える。
+            dv_list = None
+            if isinstance(dv, list):
+                dv_list = dv
+                dv = dv[0] if dv else 0
+                if kind == "enum":
+                    values = f.get("values", [])
+                    dv_f = float(values.index(dv)) if dv in values else 0.0
+                elif kind == "bool":
+                    dv_f = 1.0 if dv is True else 0.0
+                else:
+                    try:
+                        dv_f = float(dv)
+                    except (TypeError, ValueError):
+                        dv_f = 0.0
+
             label = f.get("publicName") or camel_to_words(mname)
             # 保存形式は params.json の key を使う。無ければメンバ名で代用する。
             key = f.get("key") or mname
@@ -128,7 +145,24 @@ def main():
                 "offset: %d, count: %d)"
                 % (swift_str(mname), swift_str(key), swift_str(label),
                    kind_swift, dv_f, offset, mcount))
-            defaults.extend([dv_f] * mcount)
+            if dv_list is not None:
+                # 要素ごとに違う既定値を持つ。足りない分は先頭で埋める。
+                vals = []
+                for i in range(mcount):
+                    raw = dv_list[i] if i < len(dv_list) else (dv_list[0] if dv_list else 0)
+                    if kind == "enum":
+                        values = f.get("values", [])
+                        vals.append(float(values.index(raw)) if raw in values else 0.0)
+                    elif kind == "bool":
+                        vals.append(1.0 if raw is True else 0.0)
+                    else:
+                        try:
+                            vals.append(float(raw))
+                        except (TypeError, ValueError):
+                            vals.append(0.0)
+                defaults.extend(vals)
+            else:
+                defaults.extend([dv_f] * mcount)
             offset += mcount
 
         if offset != float_count:

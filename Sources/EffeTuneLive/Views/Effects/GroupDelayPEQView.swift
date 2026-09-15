@@ -52,8 +52,6 @@ struct GroupDelayPEQView: View {
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
         }
-        .padding(.horizontal, ETMetrics.cardPadding)
-        .padding(.bottom, ETMetrics.cardPadding)
     }
 
     private var notice: some View {
@@ -71,6 +69,6 @@ struct GroupDelayPEQView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary, in: .rect(corners: .concentric))
     }
 }

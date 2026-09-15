@@ -62,11 +62,18 @@ struct ParameterRow: View {
                     valueField
                 }
                 if hi > lo {
-                    Slider(
-                        value: Binding(get: { Double(value) },
-                                       set: { set(isInteger ? Float($0.rounded()) : Float($0)) }),
-                        in: Double(lo)...Double(hi),
-                        step: step > 0 ? Double(step) : (isInteger ? 1 : 0))
+                    // step に 0 を渡すと Slider は落ちる。刻みが無いものは
+                    // step を取らない方を使う。params.json に step が無い
+                    // パラメータがあるので、ここを分けないと開いた瞬間に死ぬ。
+                    let stride = step > 0 ? Double(step) : (isInteger ? 1 : 0)
+                    let binding = Binding(
+                        get: { Double(value) },
+                        set: { set(isInteger ? Float($0.rounded()) : Float($0)) })
+                    if stride > 0 {
+                        Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
+                    } else {
+                        Slider(value: binding, in: Double(lo)...Double(hi))
+                    }
                 }
             }
         }

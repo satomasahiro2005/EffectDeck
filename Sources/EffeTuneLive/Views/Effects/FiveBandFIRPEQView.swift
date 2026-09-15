@@ -42,8 +42,6 @@ struct FiveBandFIRPEQView: View {
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
         }
-        .padding(.horizontal, ETMetrics.cardPadding)
-        .padding(.bottom, ETMetrics.cardPadding)
     }
 
     /// 画面の中でも「なぜ曲線が無いのか」が分かるようにしておく。
@@ -63,6 +61,6 @@ struct FiveBandFIRPEQView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary, in: .rect(corners: .concentric))
     }
 }

@@ -53,7 +53,7 @@ struct OscilloscopeView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     @State private var probe: ETScopeProbe?
 

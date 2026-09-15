@@ -102,6 +102,13 @@ final class AudioIO: ObservableObject {
         // 拡張はいつ繋いでくるか分からないので、起動と同時に待ち受ける。
         _ = ETLinkReceiver.shared.start()
         Preferences.shared.onAudioChange = { [weak self] in self?.rebuild() }
+
+        // DSP のエンジンは音と関係なく用意しておく。
+        // 音が来るまで待っていると、その間エフェクトを足しても作れず一覧に出ない。
+        // 実際のレートが分かったら start() で用意し直す。
+        let factor = Double(Preferences.shared.processingRate.factor)
+        EffeTuneDSP.shared.prepare(sampleRate: 48000 * factor, maxChannels: 2,
+                                   maxFrames: UInt32(Double(Self.capacity) * factor))
         // ロック画面の再生/一時停止は、曲ではなく鎖の入切に割り当てる。
         NowPlaying.start { on in EffeTuneDSP.shared.bypass = !on }
     }

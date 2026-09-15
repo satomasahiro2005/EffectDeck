@@ -30,7 +30,7 @@ struct MultiChannelPanelView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     /// いま触っているチャンネル。16 本ぶんのつまみを縦に並べない。
     @State private var strip = 0
@@ -201,7 +201,7 @@ struct MultiChannelPanelView: View {
                 Slider(value: Binding(get: { Double(value(offset)) },
                                       set: { apply(param.offset, Float($0), channel: channel) }),
                        in: Double(lo)...Double(hi),
-                       step: step > 0 ? Double(step) : 0)
+                       step: step > 0 ? Double(step) : 0.0001)
             }
         }
     }

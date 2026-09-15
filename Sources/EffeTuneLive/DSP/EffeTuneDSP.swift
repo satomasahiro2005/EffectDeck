@@ -161,6 +161,15 @@ final class EffeTuneDSP: ObservableObject {
     /// 一目で分かるようにするため。下の帯にメーターを置かない代わり。
     func restore() {
         guard ready, chain.isEmpty else { return }
+
+        // シミュレータで画面を見るときだけ、起動の引数で鎖を仕込む。
+        if let seed = ETScreenshotSeed.requested {
+            for type in seed {
+                if let spec = ETCatalog.first(where: { $0.type == type }) { add(spec) }
+            }
+            return
+        }
+
         if let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty {
             for item in saved { append(item) }
         } else if !PipelineStore.hasSaved {

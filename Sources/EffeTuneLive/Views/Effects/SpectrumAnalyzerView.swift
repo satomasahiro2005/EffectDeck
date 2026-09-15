@@ -41,7 +41,7 @@ struct SpectrumAnalyzerView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     /// 表示する周波数の上限。web 版は 40kHz まで引いている
     /// （spectrum_analyzer.js:10 の SPECTRUM_MAX_DISPLAY_FREQ）が、

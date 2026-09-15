@@ -63,3 +63,22 @@ extension String {
         }
     }
 }
+
+/// 刻みが 0 のときに落ちない Slider。
+///
+/// SwiftUI の Slider(value:in:step:) は step が 0 だと落ちる。
+/// params.json に step を持たないパラメータがあるので、そのまま渡すと
+/// カードを開いた瞬間に死ぬ。刻みが無いものは step を取らない方を使う。
+struct ETSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double = 0
+
+    var body: some View {
+        if step > 0 {
+            Slider(value: $value, in: range, step: step)
+        } else {
+            Slider(value: $value, in: range)
+        }
+    }
+}

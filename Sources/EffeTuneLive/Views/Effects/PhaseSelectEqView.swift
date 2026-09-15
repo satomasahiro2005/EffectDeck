@@ -335,7 +335,7 @@ struct PhaseSelectEqView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
 
     enum AxisMode: String, CaseIterable { case phase, balance }
     enum DragMode: String, CaseIterable { case move, resize }
@@ -896,7 +896,7 @@ struct PhaseSelectEqView: View {
                                                       : AnyShapeStyle(.secondary))
                         .frame(maxWidth: .infinity, minHeight: 28)
                         .background(band == slot ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                    in: RoundedRectangle(cornerRadius: 5))
+                                    in: .rect(corners: .concentric))
                         // 切ってあるバンドは薄く。
                         .opacity(region(slot).enabled ? 1 : 0.45)
                 }

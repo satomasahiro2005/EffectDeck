@@ -42,8 +42,18 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     private var reportTimer: Timer?
 
     /// デバイスの id。AudioServerPlugIn の kAudioDevicePropertyDeviceUID と一致させる。
-    /// 起動のたびに変わらないよう固定値にしてある。
-    static let deviceUUID = UUID(uuidString: "6E656D75-7400-4E00-A000-000000000001")!
+    /// **プロセスごとに作り直す。** 固定値にしてはいけない。
+    ///
+    /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いので、
+    /// 登録した VA port は audiomxd 側に残り続ける。拡張のプロセスは deactivate の
+    /// あと落とされるため、次に選ばれたときは別のプロセスが名乗ることになる。
+    /// そこで UID が同じだと、死んだ port（conn:1 quies:1 rout:0）に衝突して
+    /// 「もう繋がっている」と判断され、誰も IO を出さないまま
+    /// "Unable to Connect" になる。実機で出し入れを繰り返して確認した。
+    ///
+    /// 毎回違う UID にすれば衝突しない。引き換えに、システムから見ると
+    /// 起動のたびに別の機器に見える。
+    static let deviceUUID = UUID()
 
     private lazy var localDevice: MediaOutputDevice? = {
         // requiredNetworkEndpoints は必須引数で init も failable。

@@ -38,7 +38,9 @@
 //
 //  取りこぼしについて。DSP は貯まった枠を writeTelemetry で全部吐く（kernel.cpp:165-172）
 //  が、Telemetry は tap と種類ごとに最新の 1 枠しか残さない。読み出しは
-//  PipelineView の 0.3 秒ごとの tick なので、実際に帯へ入るのは 1 回につき 1 列だけになる。
+//  PipelineView の 1/30 秒ごとの pollTelemetry で、DSP が吐くのは 60Hz
+//  （EffeTuneDSP.telemetryHz）。読むたびに残っているのは最後の 1 枠だけなので、
+//  実際に帯へ入るのも 1 回につき 1 列になる。
 //  横軸の目盛りを置かず、見えている範囲が何秒ぶんかだけを見出しに出しているのはそのため。
 
 import SwiftUI
@@ -51,7 +53,7 @@ struct NoteSpectrogramView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var telemetry = Telemetry.shared
+    @ObservedObject private var telemetry = Telemetry.shared
     @StateObject private var band = ETNoteBand()
 
     @State private var probe: ETNoteProbe?
