@@ -177,8 +177,14 @@ final class AudioIO: ObservableObject {
         // userInfo は Sendable ではないので、ブロックの中で数に落としてから渡す。
         observers.append(nc.addObserver(
             forName: AVAudioSession.routeChangeNotification,
-            object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.refreshRoute() }
+            object: nil, queue: .main) { [weak self] note in
+                // **理由を落とさない。**
+                // tick は約 6 秒おきなので、EffeTune を指している 1.5 秒の窓が
+                // まるごと映らない。実際 2026-09-16 の 1 往復では tick が
+                // 一度も out=EffeTune を捉えず、recv だけが 146432 で止まった。
+                // 通知で撃てば窓の長さごと取れる。
+                let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 99
+                Task { @MainActor in self?.refreshRoute(reason: reason) }
             })
 
         observers.append(nc.addObserver(
@@ -555,7 +561,21 @@ final class AudioIO: ObservableObject {
         // 撮影のときは繋がっている扱いにする。そうしないと
         // 「No audio yet」の帯が出たままで、鳴っている画面が撮れない。
         let nowPeer = ETLinkReceiver.shared.hasPeer || ETMockSource.enabled
-        if hasPeer != nowPeer { hasPeer = nowPeer }
+        if hasPeer != nowPeer {
+            // **繋ぎ目そのものを撃つ。**
+            // tick は 20 ブロックに 1 回（約 6 秒）なので、1.5 秒しか続かない
+            // 接続はまるごと飛ぶ。2026-09-16 の 1 往復では tick が一度も
+            // peer=true を捉えず、recv の増分（73728 と 72704 フレーム
+            // ＝ 1.536 秒と 1.515 秒）だけが 2 回の接続の痕跡だった。
+            // 立ち上がりと立ち下がりを時刻つきで出せば、窓の長さが直に読める。
+            let up = ProcessInfo.processInfo.systemUptime
+            let line = String(format: "peer %@ t=%.3f recv=%llu",
+                              nowPeer ? "up" : "down", up,
+                              ETLinkReceiver.shared.receivedFrames)
+            log.notice("\(line, privacy: .public)")
+            if ETConsoleLog.on { print(line) }
+            hasPeer = nowPeer
+        }
 
         let nowReceived = ETLinkReceiver.shared.receivedFrames
         if received != nowReceived { received = nowReceived }
@@ -663,17 +683,35 @@ final class AudioIO: ObservableObject {
     /// routeChangeNotification も購読していなかった。
     /// そのため Settings の警告は起動直後にしか当たらず、走っている間に
     /// 出力先が EffeTune へ移っても（レベルが上がり続ける状態）気づけなかった。
-    private func refreshRoute() {
+    /// - Parameter reason: `AVAudioSessionRouteChangeReasonKey` の生値。
+    ///   通知以外から呼ぶときは 99（＝通知ではない）。
+    private func refreshRoute(reason: UInt = 99) {
         // 走っている途中で出力先が仮想デバイスへ移ることがある。
         // （他のアプリがルートピッカーで EffeTune を選んだときなど）
         // そのときも当て直す。
-        if running { escapeVirtualDevice(AVAudioSession.sharedInstance()) }
+        let sess = AVAudioSession.sharedInstance()
+        if running { escapeVirtualDevice(sess) }
 
-        let outs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let outs = sess.currentRoute.outputs
         let names = outs.map(\.portName).joined(separator: ", ")
 
         let nowRoute = outs.isEmpty ? "no output" : names
-        if route != nowRoute { route = nowRoute }
+        if route != nowRoute {
+            // **経路が変わった瞬間を時刻つきで残す。**
+            // tick（約 6 秒）では 1.5 秒で戻される往復が映らない。
+            // reason は override(1) / categoryChange(3) / routeConfigurationChange(8)
+            // などの生値。誰の都合で戻されたのかが、これで初めて区別できる。
+            let up = ProcessInfo.processInfo.systemUptime
+            let ports = outs.map(\.portType.rawValue).joined(separator: "+")
+            let line = String(format: "route t=%.3f reason=%llu out=%@ ports=%@ rsp=%ld ovr=%@ recv=%llu",
+                              up, UInt64(reason), nowRoute, ports,
+                              Int(sess.routeSharingPolicy.rawValue),
+                              overriding ? "true" : "false",
+                              ETLinkReceiver.shared.receivedFrames)
+            log.notice("\(line, privacy: .public)")
+            if ETConsoleLog.on { print(line) }
+            route = nowRoute
+        }
 
         let nowOutput = names.isEmpty ? "—" : names
         if outputRoute != nowOutput { outputRoute = nowOutput }
