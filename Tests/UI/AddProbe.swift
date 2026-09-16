@@ -45,7 +45,10 @@ final class AddProbe: XCTestCase {
         let beforeChain = value(app, "chain") ?? -1
         print("PROBE ADD before active=\(before) chain=\(beforeChain) label=\(diag.label)")
 
-        let add = app.buttons["Add Effect"]
+        // **ツールバーの方を名指しする。** 同じラベルのボタンが 2 つある
+        // （PipelineView.swift:429 のツールバーと :553 の空状態の行）。
+        // `-ETSeed none` だと空状態の行が必ず出るので毎回衝突して tap できない。
+        let add = app.navigationBars.buttons["Add Effect"]
         XCTAssertTrue(add.waitForExistence(timeout: 20), "Add Effect が出ない")
         add.tap()
 
@@ -54,7 +57,12 @@ final class AddProbe: XCTestCase {
             search.tap()
             search.typeText("Volume")
         }
-        let pick = app.buttons["Volume"].firstMatch
+        // **前方一致で引く。** ピッカーの行は Button の中に Text が 3 枚
+        // （名前・カテゴリ・説明）入っていて、ラベルが合成される:
+        //   "Volume, Basics, Adjusts the volume of the audio signal"
+        // 完全一致では引けない（実測）。
+        let pick = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH[c] %@", "Volume")).firstMatch
         XCTAssertTrue(pick.waitForExistence(timeout: 10), "ピッカーに Volume が出ない")
         pick.tap()
 
@@ -88,7 +96,10 @@ final class AddProbe: XCTestCase {
         XCTAssertTrue(diag.waitForExistence(timeout: 30), "diag が出ない")
         let beforeChain = value(app, "chain") ?? -1
 
-        let add = app.buttons["Add Effect"]
+        // **ツールバーの方を名指しする。** 同じラベルのボタンが 2 つある
+        // （PipelineView.swift:429 のツールバーと :553 の空状態の行）。
+        // `-ETSeed none` だと空状態の行が必ず出るので毎回衝突して tap できない。
+        let add = app.navigationBars.buttons["Add Effect"]
         XCTAssertTrue(add.waitForExistence(timeout: 20), "Add Effect が出ない")
         add.tap()
         let search = app.searchFields.firstMatch
@@ -96,7 +107,12 @@ final class AddProbe: XCTestCase {
             search.tap()
             search.typeText("Volume")
         }
-        let pick = app.buttons["Volume"].firstMatch
+        // **前方一致で引く。** ピッカーの行は Button の中に Text が 3 枚
+        // （名前・カテゴリ・説明）入っていて、ラベルが合成される:
+        //   "Volume, Basics, Adjusts the volume of the audio signal"
+        // 完全一致では引けない（実測）。
+        let pick = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH[c] %@", "Volume")).firstMatch
         XCTAssertTrue(pick.waitForExistence(timeout: 10), "ピッカーに Volume が出ない")
         pick.tap()
 
