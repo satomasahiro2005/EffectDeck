@@ -4,12 +4,17 @@
 
 <img src="docs/shot.png" width="300" alt="EffeTune Live">
 
-It takes the audio other apps are playing, runs it through EffeTune's effects, and sends
+It takes the audio another app is playing, runs it through EffeTune's effects, and sends
 it to the built-in speaker. No virtual cable, no input device to configure. Pick
 **EffeTune** as the output in Control Center and that is the whole setup.
 
+**It works with apps that show up as Now Playing**, the ones with a transport in Control
+Center. That is a necessary condition, not a sufficient one: some of those are still
+turned away (see below). Apps that make sound without a Now Playing session, games among
+them, are not offered the route at all. A game was tried and the route never moved.
+
 ```
-Spotify / YouTube / games
+Spotify / a podcast app / Safari
   ↓ pick EffeTune as the output in Control Center
 extension (Media Device Extension)   ← receives
   ↓ 127.0.0.1:47101
