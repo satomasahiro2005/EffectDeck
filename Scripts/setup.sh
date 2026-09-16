@@ -18,6 +18,10 @@ fi
 echo "--- エフェクトのカタログを作る ---"
 python3 Tools/gen_catalog.py 2>&1 | tail -5
 python3 Tools/gen_presets.py 2>&1 | tail -1
+# カードごとの出荷時プリセット。**node が要る**（Tube Simulator のグループだけ
+# 静的な表ではなく組み立てなので、評価しないと取れない）。無ければ飛ばして、
+# 追跡してある Generated/EffectPresets.swift をそのまま使う。
+python3 Tools/gen_effect_presets.py 2>&1 | tail -1
 python3 Tools/gen_licenses.py 2>&1 | tail -1
 
 echo "--- Note Spectrogram のモデルを埋め込む ---"

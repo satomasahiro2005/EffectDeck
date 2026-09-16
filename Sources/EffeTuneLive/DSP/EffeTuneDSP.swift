@@ -592,6 +592,24 @@ final class EffeTuneDSP: ObservableObject {
         persistSoon()
     }
 
+    /// パラメータをまとめて差し替える。プリセットの適用はここを通る。
+    ///
+    /// setValue を回すと et_instance_set_params を値の数だけ撃つことになる
+    /// （Tube Simulator なら 24 回）。値はどれも同じ instance の同じ配列へ入るので、
+    /// 1 回で渡す。
+    ///
+    /// **長さが違う配列は受けない。** pushParams は spec.floatCount を渡していて
+    /// 配列の長さを見ないので（:703-711）、短いものを入れると確保していない先を
+    /// 読ませることになる。
+    func setValues(_ values: [Float], at index: Int) {
+        guard chain.indices.contains(index),
+              values.count == chain[index].values.count else { return }
+        chain[index].values = values
+        pushParams(chain[index])
+        // setValue と同じ理由で publish() は通さず、端末にだけ残す。
+        persistSoon()
+    }
+
     func resetParams(at index: Int) {
         guard chain.indices.contains(index) else { return }
         chain[index].values = chain[index].spec.defaults

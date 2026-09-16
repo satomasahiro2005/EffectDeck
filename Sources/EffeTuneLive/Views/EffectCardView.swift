@@ -31,6 +31,15 @@ struct EffectCardView: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
 
+    /// エフェクト 1 個ぶんのプリセットを出しているか。
+    ///
+    /// **PipelineView ではなくここが出す。** あちらの sheet は private で、
+    /// どのカードから開いたかを運ぶ口も無い（IRReverbView.swift:30-32 と同じ理由）。
+    /// カードごとに .sheet が並ぶことになるが、このビューが持つ提示はこれ 1 枚だけ。
+    /// 重なって出なくなるのは同じビューに何枚も積んだときで、
+    /// 別の行に 1 枚ずつあるのは別の話（PresetsView.swift:145-148 の踏み方）。
+    @State private var showingPresets = false
+
     var body: some View {
         if node.isSection {
             SectionCardView(index: index, node: node, dsp: dsp,
@@ -80,6 +89,9 @@ struct EffectCardView: View {
             }
         }
         .opacity(isMuted ? 0.55 : 1)
+        .sheet(isPresented: $showingPresets) {
+            EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
+        }
     }
 
     /// 音が通らない状態か。自分の入切と、上にある Section の入切の両方で決まる。
@@ -165,6 +177,13 @@ struct EffectCardView: View {
             }
 
             Menu {
+                // 上流もカードの頭に置いていて、並びは routing → preset → reset
+                // （js/ui/pipeline/pipeline-item-builder.js:133-145）。絵もしおり
+                // （:360 の SVG は bookmark の d）。**Reset Parameters とは別の口。**
+                // あちらは既定へ戻すもので、プリセットの一覧に混ぜない。
+                Button { showingPresets = true } label: {
+                    Label("Effect Presets", systemImage: "bookmark")
+                }
                 Button { dsp.resetParams(at: index) } label: {
                     Label("Reset Parameters", systemImage: "arrow.counterclockwise")
                 }
