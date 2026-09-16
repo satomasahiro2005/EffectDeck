@@ -32,7 +32,7 @@
       "versions": [
         {
           "version": "2.9.0",
-          "buildVersion": "7",
+          "buildVersion": "10",
           "date": "2026-09-16",
           "localizedDescription": "First release.",
           "downloadURL": "https://nemut.ai/effetune-live/adp/manifest.json",
