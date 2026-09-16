@@ -76,6 +76,10 @@ enum ETScreenshotSeed {
         case "saturation": return ["SaturationPlugin"]
         case "meter":      return ["LevelMeterPlugin"]
         case "spectrum":   return ["SpectrumAnalyzerPlugin"]
+        // PEQ の図に重ねるスペクトラム。Analyzer を **PEQ の前**に置くと入口側になる
+        // （ETSpectrumOverlayFinder.source が入口を先に見る）。
+        // 波形のボタンを押すまで重ならないので、撮るときは 1 度押す。
+        case "peq-spectrum": return ["SpectrumAnalyzerPlugin", "FiveBandPEQPlugin"]
         case "chain":      return ["VolumePlugin", "ToneControlPlugin",
                                    "CompressorPlugin", "RSReverbPlugin"]
         // 店頭用。型だけでは既定値のままで、つまみが全部真ん中に並んで

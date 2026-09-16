@@ -119,6 +119,13 @@ struct FrequencyResponseGraph: View {
     var decibelStep: Double
     var height: CGFloat
     var caption: String?
+    /// 図に重ねるスペクトラムの tap 番号。nil なら重ねない（既定）。
+    ///
+    /// 上流はホストのループが段の前後で音を横取りして描いている
+    /// （plugins/audio-processor.js:5142,5275）。その口が dsp/include/effetune/abi.h に
+    /// 無いので、こちらは隣に置かれた Spectrum Analyzer の tap を借りる。
+    /// 探し方は ETSpectrumOverlayFinder、描くのは SpectrumOverlayLayer。
+    var spectrumTap: UInt32?
     /// 印を動かしたとき。(印の id, 周波数, dB)。両方が同時に動く。
     var onMarkerChanged: ((Int, Double, Double) -> Void)?
     var onMarkerSelected: ((Int) -> Void)?
@@ -133,6 +140,7 @@ struct FrequencyResponseGraph: View {
          decibelStep: Double = 6,
          height: CGFloat = ETGraphMetrics.height,
          caption: String? = nil,
+         spectrumTap: UInt32? = nil,
          onMarkerChanged: ((Int, Double, Double) -> Void)? = nil,
          onMarkerSelected: ((Int) -> Void)? = nil) {
         self.curves = curves
@@ -142,6 +150,7 @@ struct FrequencyResponseGraph: View {
         self.decibelStep = decibelStep
         self.height = height
         self.caption = caption
+        self.spectrumTap = spectrumTap
         self.onMarkerChanged = onMarkerChanged
         self.onMarkerSelected = onMarkerSelected
     }
@@ -182,6 +191,15 @@ struct FrequencyResponseGraph: View {
             },
             overlay: { plot in
                 ZStack {
+                    // 重ねるスペクトラム。**曲線の上**に出る。
+                    // 上流も PEQ の曲線の上に 0.85 で重ねている
+                    // （spectrum-overlay.css:15 の z-index: 2）。
+                    // Telemetry を観測するのはこの層の中だけ。ここより外で観測すると
+                    // 30Hz で body が回り、掴んでいる印と下のつまみが固まる。
+                    if let spectrumTap {
+                        SpectrumOverlayLayer(tapId: spectrumTap, plot: plot)
+                    }
+
                     // 指を受ける面。印より下に置く（印は当たり判定を持たない）。
                     // 印が無いときは面を置かない。置くと一覧の縦スクロールを食う。
                     if !markers.isEmpty {

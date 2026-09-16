@@ -58,6 +58,10 @@ enum ETGraphShading {
     static var axis: GraphicsContext.Shading { .style(.tertiary) }
     static var curve: GraphicsContext.Shading { .style(.tint) }
     static var muted: GraphicsContext.Shading { .style(.secondary) }
+    /// 図に重ねるスペクトラムの線。上流の --et-graph-overlay-after は
+    /// アクセント色の 55%（effetune-theme.css:95）。canvas 側の 0.85
+    /// （spectrum-overlay.css:16）は描く側が context.opacity で掛ける。
+    static var overlay: GraphicsContext.Shading { .style(AnyShapeStyle(.tint).opacity(0.55)) }
 }
 
 // MARK: - 軸
