@@ -4,15 +4,14 @@
 
 <img src="docs/shot.png" width="300" alt="EffeTune Live">
 
-It takes the audio another app is playing, runs it through EffeTune's effects, and sends
-it to the built-in speaker. No virtual cable, no input device to configure. Pick
-**EffeTune** as the output in Control Center and that is the whole setup.
+**Effects for any player on your phone.** Anything with a transport in Control Center,
+the Now Playing kind, goes through the chain: it takes that audio, runs it through
+EffeTune's effects, and sends it to the built-in speaker. No virtual cable, no input
+device to configure. Pick **EffeTune** as the output in Control Center and that is the
+whole setup.
 
-**It is not a system-wide effect.** It takes the one session that shows up as Now Playing,
-the one with a transport in Control Center. Apps that make sound without one, games among
-them, route around it: EffeTune stays selected as the output and their sound keeps coming
-out of the speaker, untouched. Being a Now Playing app is necessary but not sufficient,
-and the next section is about the rest of it.
+Whether a given player keeps the route is a separate matter, and the next section is
+about that.
 
 ```
 Spotify / a podcast app / Safari
