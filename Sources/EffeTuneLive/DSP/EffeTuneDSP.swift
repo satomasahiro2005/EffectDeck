@@ -394,26 +394,82 @@ final class EffeTuneDSP: ObservableObject {
         log.notice("\(line, privacy: .public)")
         if ETConsoleLog.on { print(line) }
         for i in chain.indices where !chain[i].irId.isEmpty {
-            let node = chain[i]
-            guard node.instance != 0 else { continue }
-            let line = ETIRLoader.reload(irId: node.irId,
-                              engine: engine,
-                              instance: node.instance,
-                              processingRate: sampleRate,
-                              routedChannels: node.channelSpec == -1 || node.channelSpec == -2
-                                  || (17...23).contains(node.channelSpec) ? 2 : 1,
-                              channelMode: Self.choice("cm", of: node),
-                              latency: Self.choice("lt", of: node),
-                              convolutionRate: Self.choice("cr", of: node))
-            if let line {
-                assetInfo[node.id] = line
-                if ETConsoleLog.on { print("reloadAssets 入れた \(line)") }
-            } else if ETConsoleLog.on {
-                print("reloadAssets 入らない irId=\(node.irId) instance=\(node.instance)")
-            }
+            reloadAsset(at: i)
         }
         // 組み直しは ETIRLoader.load が送るたびにやっている
         // （素材が入って初めてカーネルがその段を有効と数えるため）。
+    }
+
+    /// 1 段だけ入れ直す。
+    ///
+    /// 送れたら、そのときの 1 行（「4ch True Stereo / 48000 Hz / 1.23 s」）を
+    /// `assetInfo` に残す。カードはそれを読む。
+    @discardableResult
+    func reloadAsset(at index: Int) -> Bool {
+        guard chain.indices.contains(index) else { return false }
+        let node = chain[index]
+        guard !node.irId.isEmpty, node.instance != 0 else { return false }
+        let line = ETIRLoader.reload(irId: node.irId,
+                                     engine: engine,
+                                     instance: node.instance,
+                                     processingRate: sampleRate,
+                                     routedChannels: Self.routedChannels(of: node),
+                                     channelMode: Self.choice("cm", of: node),
+                                     latency: Self.choice("lt", of: node),
+                                     convolutionRate: Self.choice("cr", of: node))
+        if let line {
+            assetInfo[node.id] = line
+            if ETConsoleLog.on { print("reloadAsset 入れた \(line)") }
+        } else if ETConsoleLog.on {
+            print("reloadAsset 入らない irId=\(node.irId) instance=\(node.instance)")
+        }
+        return line != nil
+    }
+
+    /// この段が実際に処理する幅。descriptor の channelSpec から出す。
+    /// 既定（Stereo）と All と組の指定は 2、単独のチャンネルは 1。
+    static func routedChannels(of node: Node) -> Int {
+        switch node.channelSpec {
+        case -1, -2:  return 2
+        case 17...23: return 2
+        default:      return 1
+        }
+    }
+
+    /// 資産を送り直さないと効かない値。
+    ///
+    /// カーネルはこの 3 つを読まない（ir_reverb/kernel.cpp が params_ から
+    /// 読むのは preDelay と wetLevel と dry だけ）。畳み込みの形は
+    /// beginAsset に渡す AssetBeginInfo で決まるので、選び直したら送り直す。
+    private static let assetConfigKeys: Set<String> = ["cm", "lt", "cr"]
+
+    /// その段で、資産を送り直さないと効かない値の位置。
+    private static func assetConfigOffsets(of node: Node) -> Set<Int> {
+        guard !node.irId.isEmpty else { return [] }
+        return Set(node.spec.params.filter { assetConfigKeys.contains($0.key) }
+                                   .map(\.offset))
+    }
+
+    /// その段がいま名乗っている遅れ（標本）。abi.h:125。
+    private func instanceLatency(of node: Node) -> UInt32 {
+        guard engine != 0, node.instance != 0 else { return 0 }
+        return et_instance_latency(engine, node.instance)
+    }
+
+    /// パラメータを渡したあとの後始末。
+    ///
+    /// **鎖を組み直さないと遅延は動かない。** et_pipeline_latency が返すのは
+    /// engine が覚えている値で、書くのは et_pipeline_configure のときだけ
+    /// （engine.cpp:706）。値を渡しただけでは帯の Fx も、並列に走る段との
+    /// 位置合わせも古いままになる。
+    private func settleAfterParams(at index: Int, changed offset: Int, before: UInt32) {
+        guard chain.indices.contains(index) else { return }
+        if Self.assetConfigOffsets(of: chain[index]).contains(offset) {
+            // 送り直すと ETIRLoader.load の中で組み直される。
+            reloadAsset(at: index)
+        } else if instanceLatency(of: chain[index]) != before {
+            republish(reason: "遅延が変わった")
+        }
     }
 
     /// 選択肢の param から、いま選ばれている綴りを引く。
@@ -587,7 +643,9 @@ final class EffeTuneDSP: ObservableObject {
         guard chain.indices.contains(index),
               chain[index].values.indices.contains(offset) else { return }
         chain[index].values[offset] = value
+        let before = instanceLatency(of: chain[index])
         pushParams(chain[index])
+        settleAfterParams(at: index, changed: offset, before: before)
         // publish() は通さない。descriptor に載るのは並びと入切と鎖の形だけで、
         // 値は pushParams が instance へ直に渡している。
         // ただし端末には残す。残さないと、次に鎖を足す/消す/動かすまで
@@ -597,8 +655,16 @@ final class EffeTuneDSP: ObservableObject {
 
     func resetParams(at index: Int) {
         guard chain.indices.contains(index) else { return }
+        let before = instanceLatency(of: chain[index])
         chain[index].values = chain[index].spec.defaults
         pushParams(chain[index])
+        // 既定へ戻すと選択肢も戻る。資産の解決に使う値がその中にあるので、
+        // 1 つ変えたときと同じ後始末をする。
+        if !chain[index].irId.isEmpty {
+            reloadAsset(at: index)
+        } else if instanceLatency(of: chain[index]) != before {
+            republish(reason: "遅延が変わった")
+        }
         persistSoon()
     }
 
@@ -805,7 +871,7 @@ final class EffeTuneDSP: ObservableObject {
     /// descriptor だけ出し直す。端末には書かない。
     /// retire が壊したあとに pipeline_configured_ を立て直すためのもので、
     /// 鎖の中身は変わっていないので保存する理由が無い。
-    func republish() {
+    func republish(reason: String = "壊したので組み直した") {
         guard engine != 0 else { return }
         let nodes = chain.filter { $0.instance != 0 }.map { n in
             ETPipeNode(instance: n.instance,
@@ -816,7 +882,7 @@ final class EffeTuneDSP: ObservableObject {
                        sectionGate: n.sectionGate)
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
-        let line = "republish nodes=\(nodes.count) （壊したので組み直した）"
+        let line = "republish nodes=\(nodes.count) （\(reason)）"
         log.notice("\(line, privacy: .public)")
         if ETConsoleLog.on { print(line) }
     }

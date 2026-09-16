@@ -192,15 +192,10 @@ struct IRReverbView: View {
         return options.indices.contains(n) ? options[n] : "auto"
     }
 
-    /// このエフェクトが処理する幅。descriptor の channelSpec から出す。
-    /// 既定（Stereo）と All と組の指定は 2、単独のチャンネルは 1。
-    private var routedChannels: Int {
-        switch node.channelSpec {
-        case -1, -2: return 2
-        case 17...23: return 2
-        default: return 1
-        }
-    }
+    /// このエフェクトが処理する幅。
+    /// 入れ直す側（EffeTuneDSP.reloadAsset）と同じ数え方でないと、
+    /// 開き直したときに別の形で送り込むことになる。
+    private var routedChannels: Int { EffeTuneDSP.routedChannels(of: node) }
 
     /// 読んで、解決して、送る。失敗したら理由をカードに出す。
     /// 通ったら鍵を段に残す。**そうしないと開き直したときに素通しへ戻る。**
