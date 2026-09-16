@@ -2,9 +2,15 @@
   "name": "nemut.ai",
   "subtitle": "EffeTune for iOS",
   "description": "EffeTune Live brings the EffeTune effect chain to iOS. Pick it as your output and every app's sound runs through your chain before it reaches the speaker. No virtual cable, no setup.",
+  "iconURL": "https://nemut.ai/effetune-live/source-icon.png",
+  "headerURL": "https://nemut.ai/effetune-live/shot1.png",
   "website": "https://nemut.ai",
+  "fediUsername": "nemutai",
   "tintColor": "#3B82F6",
   "nsfw": false,
+  "featuredApps": [
+    "ai.nemut.effetune"
+  ],
   "apps": [
     {
       "name": "EffeTune Live",
@@ -18,6 +24,8 @@
       "category": "utilities",
       "screenshots": [
         "https://nemut.ai/effetune-live/shot1.png",
+        "https://nemut.ai/effetune-live/shot-cc1.png",
+        "https://nemut.ai/effetune-live/shot-cc2.png",
         "https://nemut.ai/effetune-live/shot2.png",
         "https://nemut.ai/effetune-live/shot3.png"
       ],
