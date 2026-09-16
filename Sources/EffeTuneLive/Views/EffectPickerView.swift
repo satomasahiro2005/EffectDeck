@@ -74,6 +74,10 @@ struct EffectPickerView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
+            // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
+            // 落とす先が画面に無くなる。上半分に鎖を残す。
+            .presentationDetents([.medium, .large])
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
     }
 
@@ -192,5 +196,9 @@ struct EffectPickerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
+        // **つまんで鎖へ落とせる。** 運ぶのは型の文字列だけ。
+        // 受けるのは PipelineView の段で、落ちた所へ差し込む。
+        // 押して足すのは今までどおり末尾。
+        .draggable(effect.type)
     }
 }

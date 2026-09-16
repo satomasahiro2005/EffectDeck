@@ -189,10 +189,8 @@ struct PipelineView: View {
                         node: row.node,
                         dsp: dsp,
                         isExpanded: expanded.contains(row.node.id),
-                        toggleExpanded: {
-                            if expanded.contains(row.node.id) { expanded.remove(row.node.id) }
-                            else { expanded.insert(row.node.id) }
-                        },
+                        isCollapsedFully: dsp.collapsedFully.contains(row.node.id),
+                        toggleExpanded: { cycle(row.node) },
                         // 隣は鎖の隣ではなく**画面の隣**。畳んだ Section の配下と
                         // 入れ替わって行が消えないように、ドラッグと同じ道を通す。
                         moveUp: { moveRow(row.visible, to: row.visible - 1) },
@@ -207,27 +205,18 @@ struct PipelineView: View {
                         .swipeActions(edge: .trailing) {
                             Button("Delete", role: .destructive) { remove(row.node.id) }
                         }
-                        // **長押しで位置を選んでから足す。**
-                        // ピッカーはシートなので、そこから背後の鎖へ
-                        // ドラッグで落とすことはできない（前面が覆っている）。
-                        // 位置を先に決めて、ピッカーはその位置を持って開く。
-                        .contextMenu {
-                            Button {
-                                insertAt = row.index
-                                sheet = .picker
-                            } label: {
-                                Label("Insert Above", systemImage: "arrow.up.to.line")
-                            }
-                            Button {
-                                insertAt = row.index + 1
-                                sheet = .picker
-                            } label: {
-                                Label("Insert Below", systemImage: "arrow.down.to.line")
-                            }
-                            Divider()
-                            Button(role: .destructive) { remove(row.node.id) } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
+                        // **ピッカーからつまんだものを受ける。**
+                        // カードには何も足さない。落ちたときだけ効く。
+                        // 落とした段の手前に入れる（上流の並べ替えと同じ向き）。
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let type = items.first,
+                                  let spec = EffeTuneDSP.spec(forType: type) else { return false }
+                            dsp.add(spec, at: row.index)
+                            // **落ちたらシートを閉じる。**
+                            // 開いたままだと、足したものを見るのに自分で
+                            // 下ろさないといけない。
+                            sheet = nil
+                            return true
                         }
                 }
                 .onMove { source, destination in
@@ -248,7 +237,7 @@ struct PipelineView: View {
     /// ここがずれると別のエフェクトを書き換える。
     private struct Row: Identifiable {
         /// 画面の何行目か。⋯ の Move Up / Move Down が使う。
-        /// List の onMove が渡してくる数と同じ数え方（鎖の添字ではない）。
+    /// List の onMove が渡してくる数と同じ数え方（鎖の添字ではない）。
         let visible: Int
         let index: Int
         let node: EffeTuneDSP.Node
@@ -339,6 +328,33 @@ struct PipelineView: View {
     /// 開いている Section は行 1 つだけ動く（上流の普通のドラッグと同じ。
     /// 範囲ごと動かすのは上流でも Shift+Click の側で、
     /// js/ui/pipeline/pipeline-section-handler.js:78-186 がそれ）。
+    /// カードの開閉を回す。
+    ///
+    ///   開く（パラメータ＋図） → 図だけ → 畳む → 開く …
+    ///
+    /// 例外が 2 つ。
+    ///   - Level Meter は「図だけ」で止める。畳むと名前の行に細い棒が出る形で、
+    ///     音が来ているかを見るために置く道具だから
+    ///   - 図を持たないもの（IR Reverb）は「図だけ」の段が無いので 開く ↔ 畳む
+    private func cycle(_ node: EffeTuneDSP.Node) {
+        let id = node.id
+        let hasGraph = ETEffectViews.hasGraph(node.spec.type)
+        let keepsGraph = node.spec.type == "LevelMeterPlugin"
+
+        withAnimation(.snappy(duration: 0.2)) {
+            if expanded.contains(id) {
+                expanded.remove(id)
+                // 図が無いものは、開くのをやめたらそのまま畳む。
+                if !hasGraph { dsp.collapsedFully.insert(id) }
+            } else if !dsp.collapsedFully.contains(id) && hasGraph && !keepsGraph {
+                dsp.collapsedFully.insert(id)
+            } else {
+                dsp.collapsedFully.remove(id)
+                expanded.insert(id)
+            }
+        }
+    }
+
     private func move(_ source: IndexSet, to destination: Int) {
         let visible = rows
         let types = dsp.chain.map(\.spec.type)

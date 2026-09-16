@@ -70,7 +70,11 @@ enum PipelineStore {
     private static func parameters(of node: EffeTuneDSP.Node) -> [String: Any] {
         // Section は ETParam を持たない。名前は Node 側の文字列なのでここで出す。
         if node.isSection { return [ETSection.commentKey: node.sectionName] }
-        return ETParamCoding.encode(params: node.spec.params, values: node.values)
+        var o = ETParamCoding.encode(params: node.spec.params, values: node.values)
+        // IR Reverb の素材は float に載らないので、鍵をここで足す。
+        // 綴りは上流に合わせて `ir`（ir_reverb.js:866）。
+        if !node.irId.isEmpty { o[ETIRLoader.presetKey] = node.irId }
+        return o
     }
 
     // MARK: - 読む
@@ -84,6 +88,8 @@ enum PipelineStore {
         var channelSpec: Int8
         /// Section の名前（`cm`）。Section 以外では空。
         var sectionName: String = ""
+        /// IR Reverb の素材の鍵（`ir`）。それ以外では空。
+        var irId: String = ""
     }
 
     /// ロングでもショートでも受ける。根が配列ならショート、
@@ -140,7 +146,9 @@ enum PipelineStore {
                 enabled: (entry["enabled"] ?? entry["en"]) as? Bool ?? true,
                 inputBus: UInt8(clamping: (entry["inputBus"] ?? entry["ib"]) as? Int ?? 0),
                 outputBus: UInt8(clamping: (entry["outputBus"] ?? entry["ob"]) as? Int ?? 0),
-                channelSpec: ETChannel.spec(from: ch)))
+                channelSpec: ETChannel.spec(from: ch),
+                sectionName: "",
+                irId: params[ETIRLoader.presetKey] as? String ?? ""))
         }
         return out
     }

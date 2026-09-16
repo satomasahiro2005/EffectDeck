@@ -11,6 +11,20 @@ import SwiftUI
 enum ETEffectViews {
 
     /// 専用の画面を持っているか。
+    /// 専用の画面はあるが、**図は描かないもの**。
+    /// 畳んだときに「図だけ」の段を作れないので、開く↔畳むの 2 つになる。
+    /// 増えたらここに足す。
+    private static let withoutGraph: Set<String> = [
+        // 取り込む口と状態行だけ。曲線は IR が無いと描けない
+        // （IRReverbView.swift の冒頭に理由がある）。
+        "IRReverbPlugin",
+    ]
+
+    /// 畳んだときに図だけを出せるか。
+    static func hasGraph(_ type: String) -> Bool {
+        has(type) && !withoutGraph.contains(type)
+    }
+
     static func has(_ type: String) -> Bool { types.contains(type) }
 
     private static let types: Set<String> = [

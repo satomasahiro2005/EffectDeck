@@ -31,6 +31,11 @@ final class EffeTuneDSP: ObservableObject {
         /// Section の名前（section.js の `cm`）。Section 以外では空。
         /// ETParam は float しか運べないので values には入れられない。
         var sectionName: String = ""
+        /// IR Reverb が使っている素材の鍵（中身の sha256 先頭 24 桁）。
+        /// IR Reverb 以外では空。sectionName と同じで、float に載らないので
+        /// values ではなくここに持つ。上流のプリセットは `ir` という名前で書く
+        /// （plugins/reverb/ir_reverb.js:866）。
+        var irId: String = ""
 
         // --- 鎖の形 ---
         // 普通の使い方では全部 0→0 の All なので、既定から外れたものだけ画面に出す。
@@ -85,6 +90,13 @@ final class EffeTuneDSP: ObservableObject {
     @Published var expanded: Set<UUID> = [] {
         didSet { if !restoring { persistExpanded() } }
     }
+
+    /// 図も出さずに畳んでいるもの。
+    ///
+    /// **`expanded` の意味は変えていない。** 畳んでいて、ここに入っていなければ
+    /// 「図だけ」。ここに入っていれば「名前の行だけ」。
+    /// そうしたのは、既に端末に残っている `expanded` をそのまま生かすため。
+    @Published var collapsedFully: Set<UUID> = []
 
     /// restore() の最中だけ true。読み込みで入れた値を書き戻さないため。
     private var restoring = false

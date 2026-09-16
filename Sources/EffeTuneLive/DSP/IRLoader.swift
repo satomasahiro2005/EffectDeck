@@ -45,6 +45,38 @@ enum ETIRLoader {
 
     private static let log = Logger(subsystem: "ai.nemut.effetune", category: "ir")
 
+    /// プリセットに書く鍵の名前。上流に合わせて `ir`
+    /// （plugins/reverb/ir_reverb.js:866 の `ir: entry.irId`）。
+    static let presetKey = "ir"
+
+    /// 鍵からライブラリを引いて入れ直す。開き直したときに呼ぶ。
+    ///
+    /// **入っていなければ黙って諦める。** 上流も、鍵が指す素材が手元に無ければ
+    /// 素通しに落とすだけで、エラーは出さない（プリセットは中身を持たないので、
+    /// 別の端末で作ったものを開けば普通に起きる）。
+    @MainActor
+    @discardableResult
+    static func reload(irId: String,
+                       engine: UInt32,
+                       instance: UInt32,
+                       processingRate: Double,
+                       routedChannels: Int,
+                       channelMode: String,
+                       latency: String,
+                       convolutionRate: String) -> String? {
+        guard !irId.isEmpty,
+              let entry = IRLibrary.shared.entries.first(where: { $0.id == irId })
+        else { return nil }
+        return try? load(url: entry.url,
+                         engine: engine,
+                         instance: instance,
+                         processingRate: processingRate,
+                         routedChannels: routedChannels,
+                         channelMode: channelMode,
+                         latency: latency,
+                         convolutionRate: convolutionRate)
+    }
+
     /// 読み込んだ IR。面ごとに分かれた float と、その素材のレート。
     struct Decoded {
         var channels: [[Float]]

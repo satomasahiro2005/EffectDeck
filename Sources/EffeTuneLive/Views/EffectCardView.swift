@@ -17,6 +17,8 @@ struct EffectCardView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
     let isExpanded: Bool
+    /// 畳んでいて、図も出さない。`isExpanded` が真のときは意味を持たない。
+    let isCollapsedFully: Bool
     let toggleExpanded: () -> Void
     /// ⋯ の Move Up / Move Down。**画面の隣の行**と入れ替える。
     ///
@@ -46,7 +48,7 @@ struct EffectCardView: View {
                 // Level Meter は畳むと「Analyzer」という字だけが残るが、
                 // この道具は音が来ているかを見るために置くので、
                 // 字より棒のほうが要る。図だけの形で細く出す。
-                if !isExpanded && showsCollapsedGraph && !inlinesGraph {
+                if !isExpanded && !isCollapsedFully && showsCollapsedGraph && !inlinesGraph {
                     // 図だけの形で下に置く。切らない。
                     // 一度 150pt で切ってみたが、横軸の字まで落ちて壊れて見えた。
                     // 高さが要るのは図がそれだけの情報を持っているからで、
@@ -228,7 +230,8 @@ struct EffectCardView: View {
     /// Spectrum Analyzer や Stereo Meter は図が縦に伸びるので入らない。
     /// そちらは名前を残して、図はその下に置く。
     private var inlinesGraph: Bool {
-        showsCollapsedGraph && !isExpanded && node.spec.type == "LevelMeterPlugin"
+        showsCollapsedGraph && !isExpanded && !isCollapsedFully
+            && node.spec.type == "LevelMeterPlugin"
     }
 
 
@@ -254,7 +257,9 @@ struct EffectCardView: View {
         if isExpanded && hasBody { return node.spec.category.categoryLabel }
         // 畳んだ状態で図を出すものは、その下に図が来る。
         // 字でも分類名しか出ないので、分類を出しておく（重複しない）。
-        if !isExpanded && showsCollapsedGraph { return node.spec.category.categoryLabel }
+        if !isExpanded && !isCollapsedFully && showsCollapsedGraph {
+            return node.spec.category.categoryLabel
+        }
         guard !node.spec.params.isEmpty else { return node.spec.category.categoryLabel }
         let shown = node.spec.params.prefix(3).compactMap { param -> String? in
             guard !param.isArray,
