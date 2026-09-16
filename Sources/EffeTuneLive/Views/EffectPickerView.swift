@@ -19,8 +19,11 @@ struct EffectPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
     @State private var query = ""
-    /// 検索の欄を触っているか。縁の出し分けだけに使う。
-    @FocusState private var searching: Bool
+    /// 検索が出ているか。**畳むために持つ。**
+    /// 検索が出ている間はシートを閉じられない（下の row のコメント）ので、
+    /// 先にこれを false にしてから閉じる。`.searchable(text:isPresented:)` は
+    /// iOS 17 から。
+    @State private var searching = false
     /// つまんでいる間の高さ。**見出しの行だけを残す。**
     /// 掴んだものは指に付いたままなので、一覧が隠れても運べる。
     /// 鎖を隠さないのが目的なので、これ以上は残さない。
@@ -73,20 +76,18 @@ struct EffectPickerView: View {
                 // 重なって潰れる。つまんで運んでいる最中なので、中身は要らない。
                 if detent == Self.lifted {
                     Color.clear
-                } else {
+                } else if query.isEmpty {
                     VStack(spacing: 0) {
-                        searchField
-                        if query.isEmpty {
-                            categoryStrip
-                            Divider()
-                            allSections
-                        } else {
-                            searchList
-                        }
+                        categoryStrip
+                        Divider()
+                        allSections
                     }
+                } else {
+                    searchList
                 }
             }
             .onAppear { if current.isEmpty { current = categories.first ?? "" } }
+            .searchable(text: $query, isPresented: $searching, prompt: "Search effects")
             .navigationTitle("Available Effects")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -97,59 +98,6 @@ struct EffectPickerView: View {
             .presentationDetents([Self.lifted, Self.opened, .large], selection: $detent)
             .presentationBackgroundInteraction(.enabled(upThrough: Self.opened))
         }
-    }
-
-    /// 検索の欄。
-    ///
-    /// **`.searchable` は使わない。** あれは UIKit の検索コントローラを
-    /// シートの上に重ねるので、検索が出ている間にシートを閉じようとすると
-    /// 先に検索の方が閉じて、シートは残る。`dismiss()` でも、呼び手が
-    /// `sheet = nil` を書いても同じ経路を通る。**検索してから選ぶと閉じない**
-    /// のがそれだった。自前の欄なら重なるものが無い。
-    ///
-    /// 見た目は iOS 26 以降の検索の作法に合わせる: 角丸ではなく丸、
-    /// 中身はガラス、触っている間だけ縁が付く。
-    private var searchField: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(searching ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-
-            TextField("Search effects", text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 16))
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .submitLabel(.search)
-                .focused($searching)
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
-                        .contentShape(.circle)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale))
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 13)
-        .frame(height: 38)
-        .background(.regularMaterial, in: .capsule)
-        .overlay {
-            Capsule().strokeBorder(searching ? AnyShapeStyle(.tint)
-                                             : AnyShapeStyle(.quaternary),
-                                   lineWidth: searching ? 1.5 : 0.5)
-        }
-        .animation(.snappy(duration: 0.18), value: searching)
-        .animation(.snappy(duration: 0.18), value: query.isEmpty)
-        .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
     }
 
     /// 下の一覧への飛び先。現在地は見出しが上に張り付いて出すので、
@@ -241,8 +189,14 @@ struct EffectPickerView: View {
 
     private func row(_ effect: ETEffect, showCategory: Bool = false) -> some View {
         Button {
-            // 閉じるのは呼び手（PipelineView が sheet = nil を書く）。
-            onPick(effect)
+            // **先に検索を畳む。**
+            // `.searchable` は UIKit の検索コントローラをシートの上に重ねる。
+            // 検索が出ている間に閉じようとすると、閉じるのは検索の方で
+            // シートは残る。`dismiss()` でも、呼び手が `sheet = nil` を
+            // 書いても同じ経路を通る（実機で両方とも残った）。
+            searching = false
+            // 畳むのが効くのは次の回。同じ回で閉じると間に合わない。
+            Task { @MainActor in onPick(effect) }
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
