@@ -1,6 +1,12 @@
 # EffeTune Live
 
-[EffeTune](https://github.com/Frieve-A/effetune) for iOS.
+> **An independent project.** EffeTune Live is built by nemut.ai. It is **not affiliated
+> with, endorsed by, or supported by
+> [EffeTune](https://github.com/Frieve-A/effetune) or its author (Frieve-A / Yoshiyuki
+> Kobayashi).** It bundles EffeTune's DSP core under the MIT license and says so.
+>
+> Send anything about this app to nemut.ai, not to EffeTune. Do not open issues about it
+> on the EffeTune repository. If an official iOS version appears, this app stops shipping.
 
 <img src="docs/shot.png" width="300" alt="EffeTune Live">
 
@@ -112,16 +118,6 @@ Change the bundle IDs to yours, then create the following in the Apple Developer
    its Info.plist. The entitlement value must be an array with one element; a bare string
    stops the extension from launching
 3. App IDs for the app and the extension
-
-## Not the EffeTune project
-
-EffeTune Live is a separate app built by nemut.ai. It is **not affiliated with, endorsed
-by, or supported by [EffeTune](https://github.com/Frieve-A/effetune) or its author.**
-It bundles EffeTune's DSP core under the MIT license and says so, and that is the whole
-of the relationship.
-
-Send anything about this app to nemut.ai. Do not open issues about it on the EffeTune
-repository. If an official iOS version ever appears, this app stops shipping.
 
 ## License
 
