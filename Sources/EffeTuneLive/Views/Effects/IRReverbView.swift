@@ -202,6 +202,7 @@ struct IRReverbView: View {
             // どちらも無ければ、いま置いた中身から引き直す。
             let key = id ?? IRLibrary.shared.entries
                 .first(where: { $0.url == url })?.id
+            if ETConsoleLog.on { print("IR apply index=\(index) key=\(key ?? "nil") url=\(url.lastPathComponent)") }
             if let key { dsp.setIRId(key, at: index) }
             if let loaded { dsp.assetInfo[node.id] = loaded }
         } catch {

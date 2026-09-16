@@ -159,13 +159,23 @@ enum PipelineStore {
 
     static func saveLast(_ chain: [EffeTuneDSP.Node]) {
         guard let data = try? JSONSerialization.data(withJSONObject: shortForm(chain)) else { return }
+        if ETConsoleLog.on {
+            let ir = chain.filter { !$0.irId.isEmpty }.count
+            let hasKey = String(data: data, encoding: .utf8)?.contains("\"ir\"") ?? false
+            print("saveLast bytes=\(data.count) irNodes=\(ir) jsonHasIR=\(hasKey)")
+        }
         UserDefaults.standard.set(data, forKey: lastKey)
     }
 
     static func loadLast(catalog: [ETEffect]) -> [Loaded]? {
         guard let data = UserDefaults.standard.data(forKey: lastKey),
               let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
-        return parse(json, catalog: catalog)
+        let out = parse(json, catalog: catalog)
+        if ETConsoleLog.on {
+            let hasKey = String(data: data, encoding: .utf8)?.contains("\"ir\"") ?? false
+            print("loadLast bytes=\(data.count) jsonHasIR=\(hasKey) 読めた=\(out.filter { !$0.irId.isEmpty }.count)")
+        }
+        return out
     }
 
     static var hasSaved: Bool {
