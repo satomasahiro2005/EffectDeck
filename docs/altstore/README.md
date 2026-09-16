@@ -79,17 +79,66 @@ curl -H "User-Agent: Mozilla/5.0"  https://nemut.ai/   → 200 text/html
 curl                               https://nemut.ai/source.json → 200 application/json
 ```
 
-## federate（explore.alt.store に出す）
+## federate（explore.alt.store に出す）— **未解決**
 
 `POST https://api.altstore.io/federate` に `{"source": "<URL>"}`。
+ドキュメント上は認証も前提条件も無い（`faq.altstore.io/developers/rest-api.md` 逐語:
+「Use this endpoint to make your source discoverable on explore.alt.store」、
+Request Body は `source` だけ、Response は `HTTP 200 OK`）。
 
-**2026-09-16 時点で 403。** 本文は
+**2026-09-16 時点で 403。ADP を置いても変わらなかった。**
 
 ```
 {"headers":[],"line":166,"statusCode":403,"file":"AltMarketplaceKit/FederationManager.swift"}
 ```
 
-URL の形の問題ではない（`https://nemut.ai` / `https://nemut.ai/` /
-`https://nemut.ai/source.json` / `https://www.nemut.ai` の 4 通りとも同じ 403）。
-`downloadURL` が指す `adp/manifest.json` がまだ 404 なので、
-**ADP を置いてから撃ち直す**。
+### 潰した読み
+
+| 読み | 結果 |
+|---|---|
+| URL の形が悪い | **外れ。**`https://nemut.ai` / `…/` / `…/source.json` / `www.` の 4 通りとも同じ 403 |
+| `downloadURL` が指す `manifest.json` が 404 だから | **外れ。**ADP を置いて 200 になっても 403 のまま |
+| ソースが JSON を返していない | 外れ。UA 無し・AltStore・AsyncHTTPClient のどれでも 200 で JSON が返る |
+
+### 残っている 2 つの読み（決める材料が無い）
+
+同じ `line 166` から、渡す URL によって違う番号が返る:
+
+```
+{"source":"https://example.com/nope.json"} -> 404
+{"source":"https://nemut.ai"}              -> 403
+{"source":"not-a-url"}                     -> 500 AsyncHTTPClient.HTTPClientError error 1
+```
+
+1. **向こうがこちらの URL を取りに行った状態をそのまま返している。**
+   なら `nemut.ai` が向こうの取得元（AWS）に 403 を返している。
+   ただしこちらからは UA を変えても 200 で、別のデータセンターから取らせても 200 だった。
+   Cloudflare の bot 対策が AWS の帯だけ弾いている可能性は残る。
+   **確かめるには Cloudflare の設定を見る必要があるが、いまのトークンは
+   `zone (read)` までで WAF を触れない。**
+2. **向こうが自分の台帳を引いている。** `example.com` は未登録なので 404、
+   `nemut.ai` は登録済みだが federate が許されていないので 403。
+
+### 分かっていること
+
+**federate は「探せるようにする」だけで、入れるのには要らない。**
+`nemut.ai` と打てばソースは出るし、そこから ADP まで繋がっている（下記）。
+
+## 通し確認（2026-09-16）
+
+```
+curl -H "User-Agent: AltStore/2.0" https://nemut.ai/            200 application/json
+curl https://nemut.ai/effetune-live/adp/manifest.json           200 4096
+curl https://nemut.ai/effetune-live/adp/signature               200 2757
+curl https://nemut.ai/effetune-live/adp/variant/<publicId>.ipa  200 9452894
+```
+
+変種 2 本の sha256 は ASC の `fileChecksum` と一致:
+
+```
+842593beafd659e41279d3114f10c963410bfb8d62c37dd864239b7f706c53b6  10a19580-…ipa
+400406cdc0f5f0f2ed0a266371d01ee9cf9d506a94ed9b52707ebdfa00e0db47  152dd787-…ipa
+```
+
+`source.json` は 2.9.0 / build 10 / `downloadURL` が `adp/manifest.json` /
+`size` が 9452894（変種の実寸）。
