@@ -67,7 +67,7 @@ def main() -> int:
         "",
     ]
     SWIFT.write_text(chr(10).join(header), encoding="utf-8", newline=chr(10))
-    print("version: %s" % version)
+    print("version: app %s / upstream %s" % (app, version))
     return 0
 
 
