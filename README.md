@@ -8,10 +8,11 @@ It takes the audio another app is playing, runs it through EffeTune's effects, a
 it to the built-in speaker. No virtual cable, no input device to configure. Pick
 **EffeTune** as the output in Control Center and that is the whole setup.
 
-**It works with apps that show up as Now Playing**, the ones with a transport in Control
-Center. That is a necessary condition, not a sufficient one: some of those are still
-turned away (see below). Apps that make sound without a Now Playing session, games among
-them, are not offered the route at all. A game was tried and the route never moved.
+**It is not a system-wide effect.** It takes the one session that shows up as Now Playing,
+the one with a transport in Control Center. Apps that make sound without one, games among
+them, route around it: EffeTune stays selected as the output and their sound keeps coming
+out of the speaker, untouched. Being a Now Playing app is necessary but not sufficient,
+and the next section is about the rest of it.
 
 ```
 Spotify / a podcast app / Safari
