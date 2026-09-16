@@ -90,47 +90,34 @@ curl -H "User-Agent: Mozilla/5.0"  https://nemut.ai/   → 200 text/html
 curl                               https://nemut.ai/source.json → 200 application/json
 ```
 
-## federate（explore.alt.store に出す）— **未解決**
+## federate（explore.alt.store に出す）
 
 `POST https://api.altstore.io/federate` に `{"source": "<URL>"}`。
 ドキュメント上は認証も前提条件も無い（`faq.altstore.io/developers/rest-api.md` 逐語:
 「Use this endpoint to make your source discoverable on explore.alt.store」、
 Request Body は `source` だけ、Response は `HTTP 200 OK`）。
 
-**2026-09-16 時点で 403。ADP を置いても変わらなかった。**
+**2026-09-16 に通った。受理の返事は `The source is pending approval.`**
 
-```
-{"headers":[],"line":166,"statusCode":403,"file":"AltMarketplaceKit/FederationManager.swift"}
-```
+### 403 の正体は Cloudflare の Bot fight mode だった
 
-### 潰した読み
+向こう（AWS）がこちらの URL を取りに行った結果をそのまま返していた。
+`nemut.ai` の Security → Settings → **Bot fight mode が ON** で、AWS の帯を
+403 で弾いていた。**Worker より前に走るので Worker では直せない。**
+ダッシュボードで OFF にしたら federate が 200 を返した。**戻すとまた 403 になる。**
+
+こちらから `curl` で 200 が返っていたのは、ブラウザや curl の指紋が
+bot 判定を通っていただけ。「別のデータセンターから取らせても 200」も、
+そこが AWS ではなかったため。
+
+### 外れた読み（記録として残す）
 
 | 読み | 結果 |
 |---|---|
-| URL の形が悪い | **外れ。**`https://nemut.ai` / `…/` / `…/source.json` / `www.` の 4 通りとも同じ 403 |
-| `downloadURL` が指す `manifest.json` が 404 だから | **外れ。**ADP を置いて 200 になっても 403 のまま |
+| URL の形が悪い | 外れ。`https://nemut.ai` / `…/` / `…/source.json` / `www.` の 4 通りとも同じ 403 |
+| `downloadURL` が指す `manifest.json` が 404 だから | 外れ。ADP を置いて 200 になっても 403 のまま |
 | ソースが JSON を返していない | 外れ。UA 無し・AltStore・AsyncHTTPClient のどれでも 200 で JSON が返る |
-
-### 残っている 2 つの読み（決める材料が無い）
-
-同じ `line 166` から、渡す URL によって違う番号が返る:
-
-```
-{"source":"https://example.com/nope.json"} -> 404
-{"source":"https://nemut.ai"}              -> 403
-{"source":"not-a-url"}                     -> 500 AsyncHTTPClient.HTTPClientError error 1
-```
-
-1. **向こうがこちらの URL を取りに行った状態をそのまま返している。**
-   なら `nemut.ai` が向こうの取得元（AWS）に 403 を返している。
-   ただしこちらからは UA を変えても 200 で、別のデータセンターから取らせても 200 だった。
-   Cloudflare の bot 対策が AWS の帯だけ弾いている可能性は残る。
-   **確かめるには Cloudflare の設定を見る必要があるが、いまのトークンは
-   `zone (read)` までで WAF を触れない。**
-2. **向こうが自分の台帳を引いている。** `example.com` は未登録なので 404、
-   `nemut.ai` は登録済みだが federate が許されていないので 403。
-
-### 分かっていること
+| 向こうが自分の台帳を引いている | 外れ。取りに来ていた |
 
 **federate は「探せるようにする」だけで、入れるのには要らない。**
 `nemut.ai` と打てばソースは出るし、そこから ADP まで繋がっている（下記）。

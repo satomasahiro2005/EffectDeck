@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""上流 EffeTune の版に追従する。
+"""上流 EffeTune の版に追従する。ただし**末尾はこちらの番号**。
 
 このアプリは EffeTune の dsp/ をそのまま積んでいるので、
-効果の中身は上流の版で決まる。表示する版も合わせる。
+効果の中身は上流の版で決まる。表示する版もそこに合わせる。
 
-project.yml の MARKETING_VERSION を Vendor/effetune/package.json の version で置く。
+**合わせるのは上 2 つ（major.minor）だけ。** 末尾（patch）はこちらの配布の回数。
+上流が動いていないあいだもアプリ側の直しは出るし、**App Store Connect は
+同じ版を二度公証に出せない**（版が READY_FOR_DISTRIBUTION になると、
+ビルドの差し替えが 409 ENTITY_ERROR.RELATIONSHIP.INVALID.INVALID_STATE で弾かれる。
+2026-09-17 に実測）。上流の版をそのまま名乗ると、上流が動くまで出し直せない。
+
+  上流 2.9.0、こちら 2.9.0 → 2.9.1 → 2.9.2 …
+  上流が 2.10.0 になったら 2.10.0 から数え直す
+
 ビルド番号（CURRENT_PROJECT_VERSION）はこちらの都合なので触らない。
+「どの EffeTune を積んだか」は UpstreamVersion.swift に別の事実として残る。
 """
 import json
 import pathlib
@@ -31,12 +40,20 @@ def main() -> int:
         return 1
 
     s = DST.read_text(encoding="utf-8")
-    new, n = re.subn(r'(MARKETING_VERSION: )"[^"]*"', r'\1"%s"' % version, s, count=1)
-    if n != 1:
+    found = re.search(r'MARKETING_VERSION: "([^"]*)"', s)
+    if not found:
         print("!! MARKETING_VERSION が見つからない", file=sys.stderr)
         return 1
-    if new != s:
-        DST.write_text(new, encoding="utf-8", newline="\n")
+
+    # 上 2 つが同じなら、末尾はこちらのものなので触らない。
+    def head(v: str) -> str:
+        return ".".join(v.split(".")[:2])
+
+    current = found.group(1)
+    app = current if head(current) == head(version) else head(version) + ".0"
+    if app != current:
+        s = s[:found.start(1)] + app + s[found.end(1):]
+        DST.write_text(s, encoding="utf-8", newline="\n")
     header = [
         "//  UpstreamVersion.swift",
         "//  Tools/gen_version.py が作る。手で直さないこと。",

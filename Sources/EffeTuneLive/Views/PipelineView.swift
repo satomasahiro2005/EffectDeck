@@ -75,9 +75,8 @@ struct PipelineView: View {
     /// 削除やパラメータの変更では増やさない（あちらは身元が変わらないほうが良い）。
     @State private var dragGeneration = 0
 
-    /// 図を動かすための速い方。DSP が 30Hz で吐いているのでそれに合わせる。
-    private let fast = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
     /// 状態の見直し。ルートの問い合わせなど重いものはこちら。
+    /// **図はこちらでは動かさない**（ETDisplayPump が面に合わせて汲む）。
     private let slow = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -101,6 +100,10 @@ struct PipelineView: View {
                     EffectPickerView { spec in
                         dsp.add(spec, at: insertAt)
                         insertAt = nil
+                        // **閉じるのはこちら。** ピッカーの中の dismiss() は
+                        // 検索が出ている間、シートではなく検索を閉じる。
+                        // 検索から選んだときだけ閉じない、という形になっていた。
+                        sheet = nil
                     }
                 case .settings:
                     SettingsView(io: io)
@@ -141,8 +144,11 @@ struct PipelineView: View {
                 processingRate = io.processingRate
             }
         }
-        .onReceive(fast) { _ in io.pollTelemetry() }
         .onReceive(slow) { _ in io.tick() }
+        // 図は画面の描き直しに合わせて汲む。タイマーで回すと面と揃わず、
+        // DSP が出した 60Hz の枠も半分捨てていた（DisplayPump.swift の頭）。
+        .onAppear { ETDisplayPump.shared.start { io.pollTelemetry() } }
+        .onDisappear { ETDisplayPump.shared.stop() }
         // io を丸ごと観測せず、要る値だけを写す。
         .onReceive(io.$running) { running = $0 }
         .onReceive(io.$hasPeer) { hasPeer = $0 }

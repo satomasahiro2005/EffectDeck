@@ -9,6 +9,10 @@
   python3 asc.py encryption <build-id>        輸出コンプライアンスを「該当なし」にする
   python3 asc.py attach <version-id> <build-id>  版にビルドを結びつける
   python3 asc.py version <version-id>         版の状態
+  python3 asc.py versions                     版の一覧（新しい順）
+  python3 asc.py new-version <2.9.1>          版を作る（公証用。前の版が
+                                              READY_FOR_DISTRIBUTION になると
+                                              その版へは二度と出せない）
   python3 asc.py notary                       公証（Notarization）の提出一覧
   python3 asc.py get <path>                   任意の GET（path は /v1/... から）
 """
@@ -119,6 +123,30 @@ def main() -> int:
     if cmd == "version":
         d = call("GET", f"/v1/appStoreVersions/{sys.argv[2]}")
         print(json.dumps(d["data"]["attributes"], indent=2, ensure_ascii=False))
+        return 0
+
+    if cmd == "versions":
+        d = call("GET", f"/v1/apps/{APP}/appStoreVersions?limit=20")
+        for v in d.get("data", []):
+            a = v["attributes"]
+            print(f'{v["id"]}  {a.get("versionString"):<8} '
+                  f'{a.get("appVersionState"):<24} {a.get("createdDate")}')
+        return 0
+
+    if cmd == "new-version":
+        # 公証は版ごと。前の版が READY_FOR_DISTRIBUTION になったら、
+        # ビルドを差し替えて出し直すことはできない（版を作る）。
+        # reviewType を NOTARIZATION にしないと App Store の審査になる。
+        d = call("POST", "/v1/appStoreVersions",
+                 {"data": {"type": "appStoreVersions",
+                           "attributes": {"platform": "IOS",
+                                          "versionString": sys.argv[2],
+                                          "reviewType": "NOTARIZATION",
+                                          "releaseType": "AFTER_APPROVAL",
+                                          "copyright": "2026 nemut.ai"},
+                           "relationships": {"app": {"data": {
+                               "type": "apps", "id": APP}}}}})
+        print(d["data"]["id"])
         return 0
 
     if cmd == "notary":

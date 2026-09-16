@@ -149,6 +149,9 @@ final class EffeTuneDSP: ObservableObject {
         // 以前は engine を作ったときだけ呼んでいたため、二度目の prepare のあとも
         // 「組めている」印と古い ET_OK が残り、死んだ instance のまま process していた。
         ETPipeline_SetEngine(engine)
+        // Engine::prepare は destroyAllInstances を通る（engine.cpp:221）。
+        // 探りの番号も一緒に死ぬので、控えを捨てて作り直させる。
+        probes.removeAll()
 
         // テレメトリの輪を確保しないと、可視化の値が一切出てこない。
         let st = et_engine_prepare(engine, Float(sampleRate), maxChannels, maxFrames,
@@ -773,6 +776,74 @@ final class EffeTuneDSP: ObservableObject {
         }
     }
 
+    // MARK: - 図に重ねるための探り
+
+    /// 図にスペクトラムを重ねるためだけに置く Spectrum Analyzer。
+    ///
+    /// **chain には入れない。** PipelineStore は chain をそのまま保存形式へ落とす
+    /// ので、入れるとプリセットと共有リンクに上流に無い段が 1 本生える。
+    /// descriptor（publish / republish）にだけ足す。
+    ///
+    /// Spectrum Analyzer のカーネルは音を素通しする
+    /// （dsp/plugins/analyzer/spectrum_analyzer/kernel.cpp:173-209 の process は
+    ///   audio を読むだけで一度も書かない）ので、間に挟んでも音は変わらない。
+    private struct Probe {
+        var instance: UInt32
+        var tapId: UInt32
+    }
+
+    /// 段の id → 探り。
+    private var probes: [UUID: Probe] = [:]
+
+    /// 図に音を重ねる段の型。上流の対応表（plugins/spectrum-overlay.js:17-37）から、
+    /// こちらに専用の図があるものだけ。
+    private static let probedTypes: Set<String> = ["FiveBandPEQPlugin", "FifteenBandPEQPlugin"]
+    private static let probeType = "SpectrumAnalyzerPlugin"
+
+    /// その段の図に重ねる音の tap。まだ無ければ nil。
+    func probeTap(at index: Int) -> UInt32? {
+        guard chain.indices.contains(index) else { return nil }
+        return probes[chain[index].id]?.tapId
+    }
+
+    /// 要る探りを作り、要らなくなったものを捨てる。publish のたびに呼ぶ。
+    private func syncProbes() {
+        guard engine != 0, ready else { return }
+
+        // バスを分けている段は、engine.cpp:978-990 が出口で足し込む＝他の音と混ざる。
+        // 「その段に入る音」と呼べるのは入口と出口が同じバスのときだけ。
+        let want = Set(chain.filter {
+            Self.probedTypes.contains($0.spec.type)
+                && $0.instance != 0
+                && $0.inputBus == $0.outputBus
+        }.map(\.id))
+
+        for id in Array(probes.keys) where !want.contains(id) {
+            if let probe = probes[id] { et_instance_destroy(engine, probe.instance) }
+            probes[id] = nil
+        }
+
+        guard let spec = ETCatalog.first(where: { $0.type == Self.probeType }) else { return }
+        for id in want where probes[id] == nil {
+            let inst = Self.probeType.withCString { et_instance_create(engine, $0) }
+            guard inst != 0 else { continue }
+            let tap = nextTap
+            nextTap &+= 1
+            guard et_instance_set_tap(engine, inst, tap) == ET_OK else {
+                et_instance_destroy(engine, inst)
+                continue
+            }
+            // 既定のまま。Points の既定は 12（= FFT 4096）で、上流のオーバーレイが
+            // 使っている大きさと同じ（spectrum-overlay.js:2-3）。
+            var v = spec.defaults
+            _ = v.withUnsafeBufferPointer {
+                et_instance_set_params(engine, inst, $0.baseAddress,
+                                       UInt32(spec.floatCount), spec.paramsHash, 0)
+            }
+            probes[id] = Probe(instance: inst, tapId: tap)
+        }
+    }
+
     private func pushParams(_ node: Node) {
         guard engine != 0, node.instance != 0, node.spec.floatCount > 0 else { return }
         var v = node.values
@@ -802,15 +873,28 @@ final class EffeTuneDSP: ObservableObject {
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
         applySectionGates()
+        syncProbes()
         // Section は instance を持たないのでここで落ちる。上流も同じく
         // descriptor に入れない（dsp-pipeline-descriptor.js:194-198）。
-        let nodes = chain.filter { $0.instance != 0 }.map { n in
-            ETPipeNode(instance: n.instance,
-                       enabled: n.enabled ? 1 : 0,
-                       inputBus: n.inputBus,
-                       outputBus: n.outputBus,
-                       channelSpec: n.channelSpec,
-                       sectionGate: n.sectionGate)
+        var nodes: [ETPipeNode] = []
+        nodes.reserveCapacity(chain.count * 2)
+        for n in chain where n.instance != 0 {
+            // 探りは相手の**直前**。engine.cpp:917 は descriptor の順に回すので、
+            // 直前の段が見ている音 = その段に入る音。
+            if let probe = probes[n.id] {
+                nodes.append(ETPipeNode(instance: probe.instance,
+                                        enabled: 1,
+                                        inputBus: n.inputBus,
+                                        outputBus: n.inputBus,
+                                        channelSpec: n.channelSpec,
+                                        sectionGate: n.sectionGate))
+            }
+            nodes.append(ETPipeNode(instance: n.instance,
+                                    enabled: n.enabled ? 1 : 0,
+                                    inputBus: n.inputBus,
+                                    outputBus: n.outputBus,
+                                    channelSpec: n.channelSpec,
+                                    sectionGate: n.sectionGate))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
@@ -887,13 +971,23 @@ final class EffeTuneDSP: ObservableObject {
     /// 鎖の中身は変わっていないので保存する理由が無い。
     func republish(reason: String = "壊したので組み直した") {
         guard engine != 0 else { return }
-        let nodes = chain.filter { $0.instance != 0 }.map { n in
-            ETPipeNode(instance: n.instance,
-                       enabled: n.enabled ? 1 : 0,
-                       inputBus: n.inputBus,
-                       outputBus: n.outputBus,
-                       channelSpec: n.channelSpec,
-                       sectionGate: n.sectionGate)
+        var nodes: [ETPipeNode] = []
+        nodes.reserveCapacity(chain.count * 2)
+        for n in chain where n.instance != 0 {
+            if let probe = probes[n.id] {
+                nodes.append(ETPipeNode(instance: probe.instance,
+                                        enabled: 1,
+                                        inputBus: n.inputBus,
+                                        outputBus: n.inputBus,
+                                        channelSpec: n.channelSpec,
+                                        sectionGate: n.sectionGate))
+            }
+            nodes.append(ETPipeNode(instance: n.instance,
+                                    enabled: n.enabled ? 1 : 0,
+                                    inputBus: n.inputBus,
+                                    outputBus: n.outputBus,
+                                    channelSpec: n.channelSpec,
+                                    sectionGate: n.sectionGate))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         let line = "republish nodes=\(nodes.count) （\(reason)）"

@@ -15,14 +15,16 @@
 //      web もバンドの操作列に同じスライダーを置いている（同 537-549 行）。
 //    - バンドの入切は web の右クリック（同 478-482 行）に当たるものが無いので、ON バッジにした。
 //
-//  図に重ねるスペクトラム（波形のボタン）について:
+//  図に重ねるスペクトラムについて:
 //    web にも同じものが在るが、PEQ のプラグインの中には無い。ホスト側の共通機能
 //    （plugins/spectrum-overlay.js）が段の前後で音を横取りしている
 //    （plugins/audio-processor.js:5142 が入口、:5275 が出口）。
 //    こちらにその口は無い。PEQ のカーネルは何も書き出さず
 //    （dsp/plugins/eq/five_band_peq/kernel.cpp に telemetry の綴りが 1 度も出てこない）、
 //    段の間を覗く関数も dsp/include/effetune/abi.h に無い。
-//    だから**隣に置かれた Spectrum Analyzer の tap を借りる**。
+//    そこで **EffeTuneDSP が descriptor にだけ Spectrum Analyzer を 1 本挟む**
+//    （EffeTuneDSP.syncProbes）。chain には入れないので、プリセットにも
+//    共有リンクにも出ない。**入切は無い。最初から重なる。**
 //    詳しくは Views/Graphs/SpectrumOverlayLayer.swift の冒頭。
 
 import SwiftUI
@@ -327,11 +329,6 @@ struct FiveBandPEQView: View {
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
 
-    /// 図にスペクトラムを重ねるか。**保存しない。**
-    /// 上流も sessionModes というメモリ上の Map に置くだけで
-    /// （spectrum-overlay.js:14）、プリセットにも共有リンクにも書いていない。
-    @State private var showSpectrum = false
-
     /// 生成されたカタログは配列の既定値を拾えていない
     /// （Tools/gen_catalog.py:101 で list を float に直せず 0 になる）。
     /// 全部 0Hz のままだと印が左端に重なるので、web 版の初期値
@@ -341,10 +338,11 @@ struct FiveBandPEQView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             graph
-            // 図だけのときも帯は残す。どのバンドを見ているかが図の印と対応していて、
-            // 消すと選べなくなる（図の印を掴めば選べるが、細い）。
-            bandStrip
+            // **畳んだら札も消す。** 畳んだ図は allowsHitTesting(false) で
+            // 押せない（EffectCardView.swift の畳んだ図）ので、
+            // 押せない札を残しても場所を取るだけ。
             if !graphOnly {
+                bandStrip
                 Divider()
                 bandPanel
             }
@@ -354,34 +352,17 @@ struct FiveBandPEQView: View {
     // MARK: 図
 
     private var graph: some View {
-        let source = showSpectrum ? spectrumSource : nil
-        return FrequencyResponseGraph(
+        FrequencyResponseGraph(
             curves: curves,
             markers: markers,
             frequencyRange: 20...20000,
             decibelRange: -20...20,
             decibelStep: 6,
             height: ETGraphMetrics.height,
-            caption: caption(for: source),
-            spectrumTap: source?.tapId,
+            caption: "Drag a marker — across for frequency, up for gain",
+            spectrumTap: dsp.probeTap(at: index),
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
             onMarkerSelected: { selected = $0 })
-    }
-
-    /// 図に重ねる音の出どころ。**毎回 dsp.chain から引く。**
-    /// engine を建て直すと instance も tap も振り直されるので
-    /// （EffeTuneDSP.swift:670 の rebuildAll）、番号を @State に溜め込まない。
-    /// 段を切ったり Section で止めたりしたときも、ここで毎回見直される。
-    private var spectrumSource: ETSpectrumOverlaySource? {
-        ETSpectrumOverlayFinder.source(in: dsp.chain, at: index)
-    }
-
-    /// 図の見出し。重ねているときは**どちら側の音か**を必ず出す。
-    /// 入口と出口を取り違えると、見えているものが逆になる。
-    private func caption(for source: ETSpectrumOverlaySource?) -> String {
-        guard showSpectrum else { return "Drag a marker — across for frequency, up for gain" }
-        guard let source else { return "Add a Spectrum Analyzer before or after this effect" }
-        return source.caption
     }
 
     /// 合成した特性と、選んでいるバンド 1 本ぶん。
@@ -432,9 +413,6 @@ struct FiveBandPEQView: View {
             ForEach(Array(0..<layout.count), id: \.self) { i in
                 chip(i)
             }
-            // 図に重ねるスペクトラムの入切。隣に Spectrum Analyzer が居ないときも出す
-            // （押せば図の見出しが、何を足せばよいかを言う）。
-            SpectrumOverlayToggle(isOn: $showSpectrum)
         }
     }
 

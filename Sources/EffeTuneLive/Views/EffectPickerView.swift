@@ -184,8 +184,9 @@ struct EffectPickerView: View {
 
     private func row(_ effect: ETEffect, showCategory: Bool = false) -> some View {
         Button {
+            // 閉じるのは呼び手。ここで dismiss() を呼ぶと、検索が出ている間は
+            // シートではなく検索が閉じるだけになる。
             onPick(effect)
-            dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
