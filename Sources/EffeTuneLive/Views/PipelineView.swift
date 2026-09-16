@@ -30,7 +30,7 @@ struct PipelineView: View {
     /// 実機で ⋯ の項目が全部押せなくなったのがそれ。ひとつにまとめる。
     /// ツールバーを別の型へ出したので、その型からも見えるところに置く。
     enum Sheet: String, Identifiable {
-        case picker, settings, routing, presets, welcome, ir
+        case picker, settings, routing, presets, ir
         var id: String { rawValue }
     }
 
@@ -42,7 +42,6 @@ struct PipelineView: View {
     /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
     @State private var confirmingReset = false
-    @AppStorage("welcome.seen") private var welcomeSeen = false
     /// 開いている段。中身は EffeTuneDSP が持っている（足す・入れ替えるを握っているのが
     /// あちらで、端末に残すのも persist() なので）。Section もここに入り、
     /// その場合は自分のパラメータではなく配下の行が消える（下の rows）。
@@ -111,8 +110,6 @@ struct PipelineView: View {
                     RoutingView(dsp: dsp)
                 case .presets:
                     PresetsView(dsp: dsp)
-                case .welcome:
-                    WelcomeView(io: io)
                 case .ir:
                     IRLibraryView()
                 }
@@ -128,12 +125,14 @@ struct PipelineView: View {
             } message: {
                 Text("Removes every effect and leaves a single Level Meter.")
             }
-            .onChange(of: sheet) { old, now in
-                if old == .welcome && now == nil { welcomeSeen = true }
-            }
             .onAppear {
-                // 画面を撮るときは案内を出さない。後ろが見えなくなるので。
-                if !welcomeSeen && ETScreenshotSeed.requested == nil { sheet = .welcome }
+                // **案内の画面は持たない。**
+                // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
+                // と思って 1 枚置いていた。いまは鎖の頭の帯（ConnectBanner）が
+                // 「別のアプリで鳴らしてから、コントロールセンターで EffeTune を
+                // 選ぶ」と言っていて、音が来ていないあいだ出たままになる。
+                // 読む場所が 2 つあっても片方しか読まれない。
+                //
                 // 撮るシートを指定されていればそれを出す。
                 if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name) {
                     sheet = which
@@ -479,7 +478,6 @@ private struct PipelineToolbar: ToolbarContent {
             Menu {
                 Button("Settings", systemImage: "gearshape") { sheet = .settings }
                 Button("Routing", systemImage: "arrow.triangle.branch") { sheet = .routing }
-                Button("How it works", systemImage: "questionmark.circle") { sheet = .welcome }
                 Divider()
                 // 上流に鎖を空にする操作は無く、既定を組む所を
                 // 「Initialize default plugins」と呼んでいる（js/app.js:1061）。

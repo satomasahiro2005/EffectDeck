@@ -398,12 +398,14 @@ struct ETDiagnostics {
             ETDiagnosticLine(label: "Effects running",
                              value: "\(io.applied) of \(dsp.chain.filter { !$0.isSection }.count)"),
             ETDiagnosticLine(label: "Output", value: io.outputRoute),
-            // **名前は 2 系統ある**（Sources/Shared/ETNames.h）。
-            // 上の Output は「いまどこへ出しているか」で、普段はスピーカー。
-            // 下の 2 行は「こちらが名乗っている字」。ここは診断なので、
-            // 見出しは名詞にして値を並べるだけにする。
-            ETDiagnosticLine(label: "Route name", value: ET_ROUTE_NAME),
-            ETDiagnosticLine(label: "Virtual device", value: ET_DRIVER_NAME),
+            // **名乗っている字はここに出さない。**
+            // ET_ROUTE_NAME も ET_DRIVER_NAME もコンパイル時の定数で、
+            // 出しても定数を書き戻すだけ。動的に取る手も無い:
+            //   - 仮想デバイスの名前はそこへ繋がっているときしか
+            //     AVAudioSession から読めない。繋がっていれば上の Output に出る
+            //   - MediaOutputDevice.displayName は拡張のプロセスが持っていて、
+            //     アプリから問い合わせる口が無い
+            // 字そのものは Sources/Shared/ETNames.h。
             ETDiagnosticLine(label: "Engine state", value: io.status),
             ETDiagnosticLine(label: "DSP ABI", value: ETAppInfo.abi),
         ]

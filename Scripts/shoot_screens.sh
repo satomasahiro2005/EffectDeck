@@ -60,7 +60,6 @@ shoot() {
 
 shoot empty      none
 shoot chain      chain
-shoot welcome    chain welcome
 shoot picker     chain picker
 shoot presets    chain presets
 shoot settings   chain settings

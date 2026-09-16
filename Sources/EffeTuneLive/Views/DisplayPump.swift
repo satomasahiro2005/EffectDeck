@@ -35,6 +35,7 @@ final class ETDisplayPump: NSObject {
     /// **出す側も一緒に起こす。** 誰も汲んでいないあいだカーネルが枠を
     /// 書き続けると、輪（256KB）が溢れて `droppedFrames` が増える。
     /// 画面に何も描いていないのだから、出す必要が無い。
+    @MainActor
     func start(_ body: @escaping () -> Void) {
         self.body = body
         EffeTuneDSP.shared.setTelemetryRate(EffeTuneDSP.telemetryHz)
@@ -45,6 +46,7 @@ final class ETDisplayPump: NSObject {
         link = made
     }
 
+    @MainActor
     func stop() {
         link?.invalidate()
         link = nil
