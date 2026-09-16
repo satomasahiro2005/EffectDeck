@@ -21,11 +21,25 @@ built-in speaker
 ## Spotify Canvas
 
 Spotify plays a short looping video called Canvas behind some tracks. While one is on
-screen iOS treats the session as video and refuses to hand the audio to a third-party
-output device, so picking EffeTune Live during such a track does not stick.
+screen the system counts the session as playing video output, and a session playing video
+is never handed to a third-party output device: iOS looks for an AirPlay receiver instead,
+finds none, and puts the route back on the speaker 1.5 seconds later. Picking EffeTune
+Live during such a track does not stick.
 
-Pick it during a track without Canvas. The check only runs at the moment you pick it, so
-a Canvas track starting afterwards will not interrupt the audio.
+Pick it during a track without Canvas. The check only runs at the moment the device is
+activated, so a Canvas track starting afterwards will not interrupt the audio.
+
+Nothing on this side can change that. The system decides from four things, and all of
+them belong to the app that is playing:
+
+- whether it is showing video output
+- `MDESupportedProtocols` in its `Info.plist`, which would have to list this app's
+  protocol identifier
+- `MDESupportsUniversalURLPlayback` in its `Info.plist` (Safari sets this, which is why
+  video in Safari is allowed through)
+- `AVPlayer.allowsExternalPlayback` being `false`
+
+None of the arguments `MediaOutputDevice` takes are read when that decision is made.
 
 ## The iOS 27 Media Device Extension
 
