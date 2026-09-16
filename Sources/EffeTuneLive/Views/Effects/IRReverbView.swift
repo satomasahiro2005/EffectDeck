@@ -123,8 +123,16 @@ struct IRReverbView: View {
     /// 入っていなければ上流と同じ 1 行（:1721）を出す。
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // 名前が先。何を使っているかが分からないと、聴き比べのときに困る。
+            if let name = fileName {
+                Text(name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(caption)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11))
+                .foregroundStyle(fileName == nil ? .primary : .secondary)
             if let failure {
                 Text(failure)
                     .font(.system(size: 11))
@@ -156,13 +164,22 @@ struct IRReverbView: View {
     /// アプリを開き直したときは入っていない。入れ直しは DSP がやっていて
     /// （EffeTuneDSP.reloadAssets）、ビューはその結果を知らないため。
     /// そのときは鍵からライブラリを引いて名前を出す。
+    /// いま使っている素材の名前。鍵からライブラリを引く。
+    private var fileName: String? {
+        guard !node.irId.isEmpty else { return nil }
+        return library.entries.first(where: { $0.id == node.irId })?.name
+    }
+
     private var caption: String {
         if let loaded { return loaded }
         // 開き直したあとは DSP が入れ直していて、その 1 行がここに残っている。
         if let line = dsp.assetInfo[node.id] { return line }
         guard !node.irId.isEmpty else { return "No impulse response loaded" }
-        if let e = library.entries.first(where: { $0.id == node.irId }) { return e.name }
-        return "Impulse response missing from the library"
+        // 名前は上の行が出す。ここは中身の説明だけ。
+        guard library.entries.contains(where: { $0.id == node.irId }) else {
+            return "Missing from the library"
+        }
+        return "Loaded"
     }
 
     /// 選択肢の param から、いま選ばれている綴りを引く。
