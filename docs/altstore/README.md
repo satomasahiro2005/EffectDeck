@@ -171,3 +171,45 @@ GUI セッションで `security unlock-keychain` が「パスフレーズが違
 言っていたのは、SecurityAgent のダイアログが出て消された結果
 （errSecAuthFailed=51）。**開けるのは ssh から 1 回だけにして、
 GUI の側で unlock を撃たない。**
+
+## Cloudflare が配布を 2 回壊している
+
+**nemut.ai の Cloudflare は Worker より前に走る層を持っていて、そこで落ちると
+コードでは直せない。**2 回とも症状が「こちらからは取れるのに、向こうからは取れない」
+で、原因が見えにくかった。
+
+| いつ | 何が | 症状 | 直し方 |
+|---|---|---|---|
+| 2026-09-16 | **Bot fight mode** | `federate` が 403。向こう（AWS）がソースを取りに来て弾かれていた | Security → Settings で OFF |
+| 2026-09-17 | **Hotlink Protection** | AltStore の頁でアプリのアイコンが出ない。画像が `error code: 1011` で 403 | Configuration Rule で `effetune-live/*` だけ OFF |
+
+### Hotlink Protection の見分け方
+
+Referer で分かれる。**Referer が無ければ通る**ので、curl でも Discord の埋め込み
+クローラーでも取れてしまう。落ちるのは**ブラウザが他所のページから読むとき**だけ。
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n"                        https://nemut.ai/effetune-live/icon.png   # 200
+curl -sS -o /dev/null -w "%{http_code}\n" -e https://altstore.io/ https://nemut.ai/effetune-live/icon.png   # 403
+curl -sS                                  -e https://altstore.io/ https://nemut.ai/effetune-live/icon.png   # error code: 1011
+```
+
+`1011` が Hotlink Protection。`1010` は Browser Integrity Check なので別物。
+
+### 入れたルール
+
+Rules → Configuration Rules に 1 本:
+
+```
+名前   effetune-live: allow hotlinking
+条件   (http.request.full_uri wildcard r"https://nemut.ai/effetune-live/*")
+設定   Hotlink Protection = OFF
+```
+
+**サイト全体は切っていない。**配布用の画像だけ他所から読めればよく、
+残りは守られたままにしたいので。
+
+### 触れないもの
+
+`wrangler` のトークンは `zone (read)` までで、**ゾーンの設定を API から変えられない**。
+この手の直しはダッシュボードを開くしかない。
