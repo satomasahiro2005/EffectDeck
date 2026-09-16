@@ -320,8 +320,22 @@ final class AudioIO: ObservableObject {
             // 内蔵スピーカーから鳴る。
             // 仮想デバイスへ引きずられていないかは
             // refreshRoute() の loopback で見て、Settings に出す。
-            try session.overrideOutputAudioPort(.none)
-            escape.reset()
+            //
+            // **いま仮想デバイスを指しているときは触らない。**
+            // followPeer() は engine が上がらない間 1 秒おきに start() を
+            // 呼び直す（下の 270-279）。ここで無条件に .none と reset() を撃つと
+            // escape.attempts が毎秒 0 に戻り、打ち止め（maxAttempts = 3）が
+            // 一度も効かない。しかも経路の再計算は setCategory / setActive の側で
+            // 起きるので、いちばん効かせたい瞬間に「システムの選択に従う」と
+            // 宣言していることになる。
+            let onVirtualNow = session.currentRoute.outputs.contains {
+                $0.portName.localizedCaseInsensitiveContains("EffeTune")
+            }
+            if !onVirtualNow {
+                try session.overrideOutputAudioPort(.none)
+                escape.reset()
+                reportedGaveUp = false
+            }
 
 
             // このアプリの音がどこへ出ているか。
@@ -477,6 +491,7 @@ final class AudioIO: ObservableObject {
 
     func stop(keepListening: Bool = false) {
         escape.reset()
+        reportedGaveUp = false
         node.map { engine.detach($0) }
         node = nil
         engine.stop()
@@ -644,6 +659,9 @@ final class AudioIO: ObservableObject {
     /// Tests/Unit/RouteEscapeTests.swift が実機なしで見張る。
     private var escape = ETRouteEscape()
 
+    /// 打ち止めをログに出したか。3.3Hz で同じ行を吐かないため。
+    private var reportedGaveUp = false
+
     /// tick のログに出す用。
     private var overriding: Bool { escape.overriding }
 
@@ -656,9 +674,23 @@ final class AudioIO: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
 
         switch escape.decide(onVirtual: onVirtual, onSpeaker: onSpeaker, now: now) {
-        case .speaker: apply(.speaker, on: session, reason: "仮想デバイスを指している")
-        case .clear:   apply(.none, on: session, reason: "仮想デバイスを指していない")
-        case nil:      break
+        case .speaker:
+            apply(.speaker, on: session, reason: "仮想デバイスを指している")
+        case .clear:
+            apply(.none, on: session, reason: "仮想デバイスを指していない")
+            reportedGaveUp = false
+        case nil:
+            // **打ち止めに達したことを 1 度だけ残す。**
+            // `gaveUp` は定義だけで誰からも読まれておらず、3 回外したあとは
+            // 何の痕跡も残らないまま輪が回り続けていた。
+            // ここで消音はしない（症状に蓋をするだけで、32bit float なので
+            // 出るときは出る）。**引き剥がせなかったという事実だけを残す。**
+            if onVirtual && escape.gaveUp && !reportedGaveUp {
+                reportedGaveUp = true
+                let line = "escape 打ち止め attempts=\(escape.attempts) route=\(outs.map(\.portName).joined(separator: ","))"
+                log.notice("\(line, privacy: .public)")
+                if ETConsoleLog.on { print(line) }
+            }
         }
     }
 
