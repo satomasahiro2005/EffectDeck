@@ -72,19 +72,6 @@ struct IRReverbView: View {
                 }
             }
         }
-        // **開いたときに入れ直す。** 送り込みはカーネル側の状態で、
-        // アプリを落とすと消える。鎖に残した鍵から引き直す。
-        .task(id: node.irId) {
-            guard loaded == nil, !node.irId.isEmpty else { return }
-            loaded = ETIRLoader.reload(irId: node.irId,
-                                       engine: dsp.engine,
-                                       instance: node.instance,
-                                       processingRate: dsp.sampleRate,
-                                       routedChannels: routedChannels,
-                                       channelMode: choice("cm"),
-                                       latency: choice("lt"),
-                                       convolutionRate: choice("cr"))
-        }
         .sheet(isPresented: $browsing) {
             IRLibraryView { entry in apply(entry.url, id: entry.id) }
         }
@@ -136,14 +123,14 @@ struct IRReverbView: View {
     /// 入っていなければ上流と同じ 1 行（:1721）を出す。
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(loaded ?? "No impulse response loaded")
+            Text(caption)
                 .font(.system(size: 12, weight: .semibold))
             if let failure {
                 Text(failure)
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if loaded == nil {
+            } else if node.irId.isEmpty {
                 Text("""
                      Import a file or choose one from the library. Four-channel true \
                      stereo impulse responses work: with Channel Mode on Auto they are \
@@ -161,6 +148,20 @@ struct IRReverbView: View {
     }
 
     // MARK: 畳み込みへ渡す
+
+    /// カードに出す 1 行。
+    ///
+    /// **正は鎖の `irId`。** ビューの `loaded` はいま読み込んだときの
+    /// 詳しい 1 行（4ch True Stereo / 48000 Hz / 1.23 s）で、
+    /// アプリを開き直したときは入っていない。入れ直しは DSP がやっていて
+    /// （EffeTuneDSP.reloadAssets）、ビューはその結果を知らないため。
+    /// そのときは鍵からライブラリを引いて名前を出す。
+    private var caption: String {
+        if let loaded { return loaded }
+        guard !node.irId.isEmpty else { return "No impulse response loaded" }
+        if let e = library.entries.first(where: { $0.id == node.irId }) { return e.name }
+        return "Impulse response missing from the library"
+    }
 
     /// 選択肢の param から、いま選ばれている綴りを引く。
     /// enumeration の値は選択肢の添字なので、そこから戻す。

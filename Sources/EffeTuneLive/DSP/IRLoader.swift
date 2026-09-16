@@ -323,6 +323,11 @@ enum ETIRLoader {
                              rateDivider: resolved.rateDivider,
                              processingChannels: resolved.processingChannels)
 
+        // **送ったあとに組み直す。**
+        // 鎖の遅延（gLatency）は configure のときにしか書かれない。
+        // 資産はその後に送るので、畳み込みが足す遅延が帯に出ないまま残る。
+        EffeTuneDSP.shared.republish()
+
         let seconds = Double(decoded.frames) / decoded.sampleRate
         let name = displayName(resolved.channelMode)
         // 出すのは素材のレート。送ったレートは中身の都合なので出さない。

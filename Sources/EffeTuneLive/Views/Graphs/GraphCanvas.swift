@@ -249,6 +249,8 @@ struct GraphCanvas<Overlay: View>: View {
     /// 掴んでいる値。空なら caption を出す。
     var readout: [ETReadoutItem]
     var caption: String?
+    /// 読み値の行の**右端**に出す札。印を出したいときだけ。
+    var badge: String?
     /// 中身を枠で切るか。PEQ の曲線のように外へ出したいものは false。
     var clipsContent: Bool
     var draw: (inout GraphicsContext, ETPlot) -> Void
@@ -260,6 +262,7 @@ struct GraphCanvas<Overlay: View>: View {
          insets: ETGraphInsets = .standard,
          readout: [ETReadoutItem] = [],
          caption: String? = nil,
+         badge: String? = nil,
          clipsContent: Bool = true,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void,
          @ViewBuilder overlay: @escaping (ETPlot) -> Overlay) {
@@ -269,6 +272,7 @@ struct GraphCanvas<Overlay: View>: View {
         self.insets = insets
         self.readout = readout
         self.caption = caption
+        self.badge = badge
         self.clipsContent = clipsContent
         self.draw = draw
         self.overlay = overlay
@@ -324,6 +328,19 @@ struct GraphCanvas<Overlay: View>: View {
                 }
             }
             Spacer(minLength: 0)
+            // 右端の札。行の高さは下で固定してあるので、出ても位置は動かない。
+            if let badge {
+                Text(badge)
+                    .font(.system(size: 10, weight: .heavy))
+                    .tracking(0.5)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.tint, in: .capsule)
+                    // 行の高さは下の frame が決めているので、
+                    // 札が大きくても位置は動かない。
+                    .fixedSize()
+            }
         }
         .frame(height: ETGraphMetrics.readoutHeight, alignment: .leading)
         .lineLimit(1)
@@ -382,10 +399,11 @@ extension GraphCanvas where Overlay == EmptyView {
          insets: ETGraphInsets = .standard,
          readout: [ETReadoutItem] = [],
          caption: String? = nil,
+         badge: String? = nil,
          clipsContent: Bool = true,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void) {
         self.init(x: x, y: y, height: height, insets: insets, readout: readout,
-                  caption: caption, clipsContent: clipsContent, draw: draw,
+                  caption: caption, badge: badge, clipsContent: clipsContent, draw: draw,
                   overlay: { _ in EmptyView() })
     }
 }

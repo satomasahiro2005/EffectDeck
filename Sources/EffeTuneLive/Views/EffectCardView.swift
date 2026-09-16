@@ -241,7 +241,12 @@ struct EffectCardView: View {
     /// 鎖へ入れるものなので、畳んだ状態でも動いているものが見えたほうがよい。
     /// 出すのは図だけの形（つまみも目盛りも畳んだもの）なので、
     /// 一覧としての高さは字 1 行ぶんより少し増える程度に収まる。
-    private var showsCollapsedGraph: Bool { ETEffectViews.has(node.spec.type) }
+    /// 畳んだときに図だけを出すか。
+    ///
+    /// **`has` ではなく `hasGraph`。** 専用の画面はあるが図は描かないもの
+    /// （IR Reverb）を `has` で拾うと、畳んでいるのに取り込む口と状態行が
+    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（実機で確認）。
+    private var showsCollapsedGraph: Bool { ETEffectViews.hasGraph(node.spec.type) }
 
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。

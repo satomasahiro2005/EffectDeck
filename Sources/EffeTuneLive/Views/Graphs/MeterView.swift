@@ -71,6 +71,8 @@ struct MeterView: View {
     var caption: String?
     /// 上に値を出すか。メーターを小さく並べたいときは切る。
     var showsReadout: Bool
+    /// 読み値の行の右端に出す札。
+    var badge: String?
 
     /// 保持しているピーク。段ごと。
     @State private var held: [Int: Hold] = [:]
@@ -89,7 +91,8 @@ struct MeterView: View {
          fallRate: Double = 20,
          rowHeight: CGFloat = 16,
          caption: String? = nil,
-         showsReadout: Bool = true) {
+         showsReadout: Bool = true,
+         badge: String? = nil) {
         self.channels = channels
         self.range = range
         self.ticks = ticks
@@ -99,6 +102,7 @@ struct MeterView: View {
         self.rowHeight = rowHeight
         self.caption = caption
         self.showsReadout = showsReadout
+        self.badge = badge
     }
 
     private var height: CGFloat {
@@ -114,6 +118,7 @@ struct MeterView: View {
             insets: ETGraphInsets(leading: 16, trailing: 8, top: 4, bottom: 14),
             readout: showsReadout ? readout : [],
             caption: caption,
+            badge: badge,
             clipsContent: false,
             draw: { context, plot in
                 let rows = channels.count

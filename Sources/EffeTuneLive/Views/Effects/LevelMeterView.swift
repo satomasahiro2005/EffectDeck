@@ -55,39 +55,16 @@ struct LevelMeterView: View {
     private static let ticks: [Double] = [-96, -72, -48, -24, -12, 0]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: graphOnly ? 0 : 8) {
-            // 畳んでいても OVERLOAD だけは出す。見逃すと困るものなので。
-            if !graphOnly || isOverloaded { header }
-            meter
-        }
+        // **見出しの行は持たない。**
+        // 数字は棒の横に水平に並んでいるので、印もその並びの右端へ入れる。
+        // 別の行に置くと、出た瞬間に行が増えてカードの中身ごと下へずれる。
+        meter
         .onChange(of: sequence) { _, _ in advance() }
         .onAppear { lastFall = Date() }
     }
 
-    // MARK: 見出し
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            if !graphOnly {
-                Text("LEVEL")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-
-            if isOverloaded {
-                Text("OVERLOAD")
-                    .font(.system(size: 10, weight: .heavy))
-                    .tracking(0.5)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.tint, in: .capsule)
-            }
-        }
-    }
+    /// 読み値の行の右端に出す印。畳んでいても出す。
+    private var overloadBadge: String? { isOverloaded ? "OVERLOAD" : nil }
 
     private var isOverloaded: Bool {
         guard let until = overloadUntil else { return false }
@@ -105,7 +82,8 @@ struct LevelMeterView: View {
                       holdTime: Self.holdTime,
                       fallRate: Self.fallRate,
                       rowHeight: rowHeight(count: r.peaks.count),
-                      showsReadout: true)
+                      showsReadout: true,
+                      badge: overloadBadge)
         } else {
             // 枠が来ていない。値が無いことと -inf は違うので、棒は描かない。
             MeterView(channels: [],
