@@ -516,19 +516,30 @@ private struct ConnectBanner: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("No audio yet")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Play something in another app, then send it here.")
+                    // **やることをそのまま書く。**「送る」では、どこで何を
+                    // 押せばよいのか画面から読めない。選ぶ場所を名指しする。
+                    //
+                    // **この帯に押し所は無い。** RoutePicker は中身を空にしてある
+                    // （RoutePicker.swift の頭。置くとこのアプリが共有の出力
+                    // コンテキストへ参加して、帰還ループに引きずられる）。
+                    // 出す先を選べるのはコントロールセンターだけ。
+                    //
+                    // **名乗っている名前は「EffeTune」。**「EffeTune Live」ではない
+                    // （Sources/Extension の displayName）。一覧に出る字と
+                    // 揃えないと、どれを押せばよいのか分からない。
+                    //
+                    // 鳴らしてから選ぶ順も落とさない。止まっていると系が
+                    // 1.5 秒で経路を戻す（README の Picking it, and keeping it）。
+                    Text("""
+                         Play something in another app first, then pick EffeTune as \
+                         the output in Control Center.
+                         """)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 4)
-
-                // 押すとシステムの出力先の一覧が出る。そこで EffeTune を選ぶと、
-                // いま鳴っているアプリの音がこちらへ来る。
-                // コントロールセンターを開くのと同じことを、ここでできる。
-                RoutePicker()
-                    .frame(width: 40, height: 40)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

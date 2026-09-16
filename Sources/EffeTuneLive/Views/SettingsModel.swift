@@ -302,7 +302,7 @@ struct ETIssue: Identifiable {
                 systemImage: "exclamationmark.triangle.fill",
                 title: "The device is running at \(hz) Hz",
                 detail: "Audio arrives at 48 kHz, so pitch and speed are off. Another app is "
-                      + "holding the hardware at that rate — stop it, then play again."))
+                      + "holding the hardware at that rate. Stop it, then play again."))
         }
 
         // 3. 締切に近い。色が変わるのと同じところで出す（閾値は ETLoadReading）。

@@ -42,14 +42,14 @@ What makes the decision go the right way, in the order the system checks them:
   (no third-party app does)
 - the playing app sets `MDESupportsUniversalURLPlayback` in its `Info.plist`
   (Safari does, which is why audio from a page is allowed through)
-- **music is actually playing** — the system keeps a music voice-activity detector while
+- **music is actually playing**: the system keeps a music voice-activity detector while
   it is, and its presence alone is enough to allow the route
 - the playing app is a long-form video app with `AVPlayer.allowsExternalPlayback` set
   to `false`
 
 In practice the third one is what carries it. Pick EffeTune Live while music is playing,
 not while it is paused. Pausing and resuming re-activates the device, and if the detector
-is gone at that moment the route drops back to the speaker — which is also why a Canvas
+is gone at that moment the route drops back to the speaker. That is also why a Canvas
 track can take the route away in the middle of a listening session.
 
 None of the arguments `MediaOutputDevice` takes are read when that decision is made, so
@@ -67,7 +67,7 @@ files, shared memory and `bind`. Outbound connections are allowed, so the audio 
 a single TCP connection to the app. It ships as one app, and the user installs one app.
 
 Signing the app itself with `com.apple.developer.media-device-extension` stops it from
-opening an `AVAudioSession` — every category fails with `'!pla'`. The check only looks at
+opening an `AVAudioSession`: every category fails with `'!pla'`. The check only looks at
 whether the entitlement's array is empty, so the app carries an empty array and the
 extension carries the protocol identifier. That also gets past App Store Connect's
 ITMS-91183.

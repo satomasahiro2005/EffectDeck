@@ -304,7 +304,7 @@ struct ModalResonatorView: View {
             decibelRange: -24...24,
             decibelStep: 6,
             height: ETGraphMetrics.height,
-            caption: "Drag a marker — across for frequency, up for gain",
+            caption: "Drag a marker: across for frequency, up for gain",
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
             onMarkerSelected: { selected = $0 })
     }

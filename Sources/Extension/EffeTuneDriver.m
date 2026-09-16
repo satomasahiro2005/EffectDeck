@@ -450,6 +450,14 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 case kAudioObjectPropertyBaseClass: PUT(AudioClassID, kAudioObjectClassID);
                 case kAudioObjectPropertyClass:     PUT(AudioClassID, kAudioDeviceClassID);
                 case kAudioObjectPropertyOwner:     PUT(AudioObjectID, kObjectID_PlugIn);
+                // ここも「EffeTune」を名乗る。MediaOutputDevice.displayName とは
+                // 別系統。**画面に出る字を変える口ではない**（2026-09-17 に
+                // EffeTune Live にして測ったが、コントロールセンターの行は
+                // 2 行とも変わらなかった）。
+                //
+                // ただし AudioIO の帰還ループ判定はこの名前を
+                // localizedCaseInsensitiveContains("EffeTune") で見ている
+                // （AudioIO.swift:336, 681, 767）。変えるならそちらも直す。
                 case kAudioObjectPropertyName:
                     PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR("EffeTune")));
                 case kAudioObjectPropertyManufacturer:

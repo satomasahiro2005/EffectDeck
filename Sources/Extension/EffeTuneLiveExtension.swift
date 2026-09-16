@@ -189,6 +189,10 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
             volumeControl: .none,
             canMute: false,
             requiredNetworkEndpoints: eps,
+            // **空のまま。**
+            // コントロールセンターの行は 2 行とも displayName が出る。
+            // 2 行目をこちらから変える口は無い（2026-09-17 に 3 つとも実機で外した。
+            // docs/connect-log.md の「2 行目は選べない」）。
             txtRecords: [],
             supportsSimultaneousSessions: false
         )

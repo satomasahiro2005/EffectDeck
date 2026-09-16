@@ -313,7 +313,7 @@ struct CrosstalkCancellationView: View {
             let milliseconds = dsp.sampleRate > 0
                 ? Double(samples) * 1000 / dsp.sampleRate
                 : 0
-            let state = active ? "active" : "preparing — starts once audio is running"
+            let state = active ? "active" : "preparing, starts once audio is running"
             return String(format: "%d samples / %.1f ms latency · %@",
                           samples, milliseconds, state)
         }
