@@ -35,6 +35,9 @@ struct PipelineView: View {
     }
 
     @State private var sheet: Sheet?
+    /// 次にピッカーで選んだものを差し込む位置（鎖の添字）。
+    /// nil なら末尾。ツールバーの「Add Effect」から開いたときは常に nil。
+    @State private var insertAt: Int?
     /// 「Reset Pipeline」の確認を出しているか。
     /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
@@ -95,7 +98,10 @@ struct PipelineView: View {
             .sheet(item: $sheet) { which in
                 switch which {
                 case .picker:
-                    EffectPickerView { spec in dsp.add(spec) }
+                    EffectPickerView { spec in
+                        dsp.add(spec, at: insertAt)
+                        insertAt = nil
+                    }
                 case .settings:
                     SettingsView(io: io)
                 case .routing:
@@ -171,7 +177,7 @@ struct PipelineView: View {
             }
 
             if dsp.chain.isEmpty {
-                EmptyChainRow { sheet = .picker }
+                EmptyChainRow { insertAt = nil; sheet = .picker }
                     .listRowInsets(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 14))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -200,6 +206,28 @@ struct PipelineView: View {
                         // こちらは押されたら閉じるだけで、行を消すのは鎖が変わった結果。
                         .swipeActions(edge: .trailing) {
                             Button("Delete", role: .destructive) { remove(row.node.id) }
+                        }
+                        // **長押しで位置を選んでから足す。**
+                        // ピッカーはシートなので、そこから背後の鎖へ
+                        // ドラッグで落とすことはできない（前面が覆っている）。
+                        // 位置を先に決めて、ピッカーはその位置を持って開く。
+                        .contextMenu {
+                            Button {
+                                insertAt = row.index
+                                sheet = .picker
+                            } label: {
+                                Label("Insert Above", systemImage: "arrow.up.to.line")
+                            }
+                            Button {
+                                insertAt = row.index + 1
+                                sheet = .picker
+                            } label: {
+                                Label("Insert Below", systemImage: "arrow.down.to.line")
+                            }
+                            Divider()
+                            Button(role: .destructive) { remove(row.node.id) } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                 }
                 .onMove { source, destination in

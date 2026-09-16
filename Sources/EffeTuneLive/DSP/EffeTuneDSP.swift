@@ -178,10 +178,22 @@ final class EffeTuneDSP: ObservableObject {
 
     // MARK: - 鎖をいじる
 
-    func add(_ spec: ETEffect) {
+    /// 足す。`at` を渡すとその位置へ差し込む。nil なら末尾。
+    ///
+    /// **位置は鎖の添字。** 画面の行番号ではない（Section が畳まれていると
+    /// 行と鎖はずれる）。呼ぶ側が鎖の添字へ直してから渡すこと。
+    func add(_ spec: ETEffect, at index: Int? = nil) {
         guard appendSpec(spec) else { return }
+        // appendSpec は末尾へ積む。差し込む位置が指定されていれば、そこへ移す。
+        var placed = chain.count - 1
+        if let index, index >= 0, index < placed {
+            let node = chain.removeLast()
+            chain.insert(node, at: index)
+            placed = index
+        }
         publish()
-        guard let id = chain.last?.id else { return }
+        guard chain.indices.contains(placed) else { return }
+        let id = chain[placed].id
         expanded.insert(id)
         // 足す先は必ず鎖の末尾で、その末尾が畳んだ Section の配下に当たることがある。
         // 隠す範囲は Section の次から次の Section の手前までで、次が無ければ末尾まで
