@@ -1,0 +1,51 @@
+diff --git a/dsp/core/abi.cpp b/dsp/core/abi.cpp
+index 53c5ed2..855aeb5 100644
+--- a/dsp/core/abi.cpp
++++ b/dsp/core/abi.cpp
+@@ -184,6 +184,27 @@ std::uint32_t et_instance_asset_begin(et_engine engine, et_instance instance, st
+   return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(staging));
+ }
+ 
++// 64bit でも使える口。すぐ上の et_instance_asset_begin は番地を uint32 へ
++// 切り落とすので、arm64 では上位 32bit が落ちて使えない。引数も戻り値の意味も
++// 同じで、staging の番地をそのまま返すだけ。
++std::uint8_t *et_instance_asset_begin_ptr(et_engine engine, et_instance instance,
++                                          std::uint32_t slot, std::uint32_t channels,
++                                          std::uint32_t frames, std::uint32_t topology,
++                                          std::uint32_t head_block, std::uint32_t rate_divider,
++                                          std::uint32_t path_count, std::uint32_t input_count,
++                                          std::uint32_t processing_channels,
++                                          std::uint32_t footprint_bytes,
++                                          std::uint32_t byte_size) {
++  effetune::Engine *target = findEngine(engine);
++  if (target == nullptr) {
++    return nullptr;
++  }
++  const effetune::AssetBeginInfo info{channels,        frames,     topology,    head_block,
++                                      rate_divider,    path_count, input_count, processing_channels,
++                                      footprint_bytes, byte_size};
++  return target->beginInstanceAsset(instance, slot, info);
++}
++
+ et_status et_instance_asset_commit(et_engine engine, et_instance instance, std::uint32_t slot,
+                                    std::uint32_t byte_size, std::uint32_t format_tag) {
+   effetune::Engine *target = findEngine(engine);
+diff --git a/dsp/include/effetune/abi.h b/dsp/include/effetune/abi.h
+index e681152..fc583ea 100644
+--- a/dsp/include/effetune/abi.h
++++ b/dsp/include/effetune/abi.h
+@@ -138,6 +138,14 @@ ET_EXPORT uint32_t et_instance_asset_begin(et_engine engine, et_instance instanc
+                                            uint32_t path_count, uint32_t input_count,
+                                            uint32_t processing_channels, uint32_t footprint_bytes,
+                                            uint32_t byte_size);
++/* 64bit 向け。et_instance_asset_begin は番地を uint32 へ切り落とすので、
++   ポインタが 32bit より広い環境ではこちらを使う。 */
++ET_EXPORT uint8_t *et_instance_asset_begin_ptr(
++    et_engine engine, et_instance instance, uint32_t slot, uint32_t channels, uint32_t frames,
++    uint32_t topology, uint32_t head_block, uint32_t rate_divider, uint32_t path_count,
++    uint32_t input_count, uint32_t processing_channels, uint32_t footprint_bytes,
++    uint32_t byte_size);
++
+ ET_EXPORT et_status et_instance_asset_commit(et_engine engine, et_instance instance, uint32_t slot,
+                                              uint32_t byte_size, uint32_t format_tag);
+ ET_EXPORT void et_instance_asset_abort(et_engine engine, et_instance instance, uint32_t slot);

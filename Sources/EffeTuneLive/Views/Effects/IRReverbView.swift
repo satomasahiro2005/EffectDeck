@@ -49,6 +49,10 @@ struct IRReverbView: View {
     @StateObject private var library = IRLibrary.shared
     @State private var picking = false
     @State private var browsing = false
+    /// 送り込めたときの 1 行。nil なら入っていない。
+    @State private var loaded: String?
+    /// 送り込めなかった理由。上流の文をそのまま出す。
+    @State private var failure: String?
 
     /// ボタンの帯で出す選択肢。残りは ParameterRow に任せる。
     private static let stripKeys: Set<String> = ["cm", "lt", "cr"]
@@ -68,7 +72,9 @@ struct IRReverbView: View {
                 }
             }
         }
-        .sheet(isPresented: $browsing) { IRLibraryView() }
+        .sheet(isPresented: $browsing) {
+            IRLibraryView { entry in apply(entry.url) }
+        }
     }
 
     // MARK: IR を取り込む
@@ -84,7 +90,10 @@ struct IRReverbView: View {
                                                         .mpeg4Audio, .data],
                                   allowsMultipleSelection: true) { result in
                         if case .success(let urls) = result {
+                            // 複数選べるのはライブラリへ溜めるため。
+                            // 畳み込みへ渡すのは最後の 1 本だけ（上流も同じ）。
                             for url in urls { library.importFile(at: url) }
+                            if let url = urls.last { apply(url) }
                         }
                     }
 
@@ -107,24 +116,74 @@ struct IRReverbView: View {
         }
     }
 
-    /// 何も言わずに図を省くと壊れて見えるので、無い理由をカードの中に書く。
+    /// 上流の metadata 行（ir_reverb.js:1719-1741）に当たるもの。
+    /// 入っていれば「4ch True Stereo / 48000 Hz / 1.23 s」、
+    /// 入っていなければ上流と同じ 1 行（:1721）を出す。
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("No impulse response loaded")
+            Text(loaded ?? "No impulse response loaded")
                 .font(.system(size: 12, weight: .semibold))
-            Text("""
-                 Imported files are kept in this app's IR library, keyed the way the web \
-                 version keys them. Nothing hands them to the convolver yet, so this \
-                 effect only passes the dry signal and there is no decay curve to plot.
-                 """)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let failure {
+                Text(failure)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if loaded == nil {
+                Text("""
+                     Import a file or choose one from the library. Four-channel true \
+                     stereo impulse responses work: with Channel Mode on Auto they are \
+                     routed as True Stereo.
+                     """)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary,
                     in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+    }
+
+    // MARK: 畳み込みへ渡す
+
+    /// 選択肢の param から、いま選ばれている綴りを引く。
+    /// enumeration の値は選択肢の添字なので、そこから戻す。
+    private func choice(_ key: String) -> String {
+        guard let i = node.spec.params.firstIndex(where: { $0.key == key }),
+              case .enumeration(let options) = node.spec.params[i].kind,
+              i < node.values.count else { return "auto" }
+        let n = Int(node.values[i].rounded())
+        return options.indices.contains(n) ? options[n] : "auto"
+    }
+
+    /// このエフェクトが処理する幅。descriptor の channelSpec から出す。
+    /// 既定（Stereo）と All と組の指定は 2、単独のチャンネルは 1。
+    private var routedChannels: Int {
+        switch node.channelSpec {
+        case -1, -2: return 2
+        case 17...23: return 2
+        default: return 1
+        }
+    }
+
+    /// 読んで、解決して、送る。失敗したら理由をカードに出す。
+    private func apply(_ url: URL) {
+        failure = nil
+        do {
+            loaded = try ETIRLoader.load(url: url,
+                                         engine: dsp.engine,
+                                         instance: node.instance,
+                                         processingRate: dsp.sampleRate,
+                                         routedChannels: routedChannels,
+                                         channelMode: choice("cm"),
+                                         latency: choice("lt"),
+                                         convolutionRate: choice("cr"))
+        } catch {
+            loaded = nil
+            failure = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        }
     }
 
     private func actionButton(_ title: String,

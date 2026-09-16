@@ -94,7 +94,8 @@ final class EffeTuneDSP: ObservableObject {
     /// テレメトリを読むのに要るので外へ出す。
     private(set) var engine: UInt32 = 0
     private var nextTap: UInt32 = 1
-    private var sampleRate: Double = 48000
+    /// 組んであるレート。IR を送るときの解決に要る（IRLoader）。
+    private(set) var sampleRate: Double = 48000
     private var maxFrames: UInt32 = 4096
     private var kernelIndex: [String: UInt32] = [:]
 

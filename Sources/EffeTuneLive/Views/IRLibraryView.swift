@@ -15,6 +15,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct IRLibraryView: View {
+
+    /// 1 本選ばれたら呼ぶ。nil なら押しても何も起きない
+    /// （ツールバーから開いたときは一覧を眺めるだけ）。
+    var onPick: ((IRLibrary.Entry) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @StateObject private var library = IRLibrary.shared
     @State private var picking = false
@@ -89,12 +93,22 @@ struct IRLibraryView: View {
                                     pendingDelete = entry
                                 }
                             }
+                            // **Button で包まない。** swipeActions と重ねると
+                            // スワイプが取られて消せなくなる。当たり判定だけ広げる。
+                            .contentShape(.rect)
+                            .onTapGesture {
+                                guard let onPick else { return }
+                                onPick(entry)
+                                dismiss()
+                            }
                         }
 
                     } header: {
                         Text("Impulse responses")
                     } footer: {
-                        Text("Swipe one to delete it.")
+                        Text(onPick == nil
+                             ? "Swipe one to delete it."
+                             : "Tap one to load it. Swipe to delete.")
                     }
                 }
             }
