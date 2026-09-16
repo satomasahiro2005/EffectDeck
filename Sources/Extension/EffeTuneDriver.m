@@ -473,14 +473,17 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 // どちらも 0。このデバイスは MediaDevice のルートピッカーで
                 // 明示的に選ばれたときだけ使えればよく、既定の出力の候補に入る必要は無い。
                 //
-                // 未確認: 「既定の候補だったからプレイヤー自身の出力もここへ来て
-                // 帰還ループになり、レベルが +33dB まで伸びた」という筋は測っていない。
-                // レベルが伸びたのは実機で見た事実だが、原因はこれと決まっていない。
-                // プレイヤーの出力が本当にここへ来ていたなら AddDeviceClient の
-                // bundle に ai.nemut.effetune.player が出る。まずそれを読むこと。
-                // 0 にした副作用（ルートピッカーから選べなくなる）も未確認。
-                case kAudioDevicePropertyDeviceCanBeDefaultDevice:       PUT(UInt32, 1);
-                case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: PUT(UInt32, 1);
+                // **コメントは最初からこう書いてあったのに 1 を返していた**（2026-09-16 に 0 へ）。
+                // 既定の候補に入っていると、新しく活性化したセッションは「いまの既定の出力」
+                // から経路を組むのでここへ落ちる。既に走っているセッションは生きた経路を
+                // 持つ限り引き剥がされないので、**起動のタイミングで分かれる**。
+                // ループバックが 20% くらいで出る、という観測の説明になりうる。
+                //
+                // 副作用を見ること: ルートピッカーから EffeTune が消えたら戻す。
+                // MediaDevice のピッカーは MediaOutputDevice の広告で出るので、
+                // このプロパティとは別系統のはずだが、測っていない。
+                case kAudioDevicePropertyDeviceCanBeDefaultDevice:       PUT(UInt32, 0);
+                case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: PUT(UInt32, 0);
                 case kAudioDevicePropertyLatency:           PUT(UInt32, 0);
                 case kAudioObjectPropertyOwnedObjects:
                 case kAudioDevicePropertyStreams: {
