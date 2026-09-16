@@ -18,6 +18,14 @@ enum ETEffectViews {
         // 取り込む口と状態行だけ。曲線は IR が無いと描けない
         // （IRReverbView.swift の冒頭に理由がある）。
         "IRReverbPlugin",
+        // 資産を送り込む 6 種。操作するのは設計の設定で、描く材料
+        // （測定や設計した応答）はテレメトリでは来ない。
+        "CrosstalkCancellationPlugin",
+        "FIRCrossoverPlugin",
+        "FiveBandFIRPEQPlugin",
+        "GroupDelayEqPlugin",
+        "GroupDelayPEQPlugin",
+        "RoomEqPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。
@@ -31,6 +39,7 @@ enum ETEffectViews {
         "AutoLevelerPlugin",
         "ChannelDividerPlugin",
         "CompressorPlugin",
+        "CrosstalkCancellationPlugin",
         "DynamicSaturationPlugin",
         "EarphoneCableSimPlugin",
         "ExpanderPlugin",
@@ -41,6 +50,7 @@ enum ETEffectViews {
         "FiveBandFIRPEQPlugin",
         "FiveBandPEQPlugin",
         "GatePlugin",
+        "GroupDelayEqPlugin",
         "GroupDelayPEQPlugin",
         "HardClippingPlugin",
         "HarmonicDistortionPlugin",
@@ -79,6 +89,8 @@ enum ETEffectViews {
             ChannelDividerView(index: index, node: node, dsp: dsp)
         case "CompressorPlugin":
             CompressorView(index: index, node: node, dsp: dsp)
+        case "CrosstalkCancellationPlugin":
+            CrosstalkCancellationView(index: index, node: node, dsp: dsp)
         case "DynamicSaturationPlugin":
             DynamicSaturationView(index: index, node: node, dsp: dsp)
         case "EarphoneCableSimPlugin":
@@ -99,6 +111,8 @@ enum ETEffectViews {
             FiveBandPEQView(index: index, node: node, dsp: dsp)
         case "GatePlugin":
             GateView(index: index, node: node, dsp: dsp)
+        case "GroupDelayEqPlugin":
+            GroupDelayEQView(index: index, node: node, dsp: dsp)
         case "GroupDelayPEQPlugin":
             GroupDelayPEQView(index: index, node: node, dsp: dsp)
         case "HardClippingPlugin":
