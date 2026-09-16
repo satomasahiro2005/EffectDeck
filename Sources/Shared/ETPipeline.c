@@ -139,6 +139,42 @@ int ETPipeline_HasConfigured(void)
     return atomic_load_explicit(&gConfigured, memory_order_relaxed);
 }
 
+void ETPipeline_ApplyPending(void)
+{
+    const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
+    if (engine == 0) return;
+
+    // 溜まっている差し替えを反映する。
+    // configure は確保を伴うが、鎖を変えたときだけなので毎ブロックでは起きない。
+    // 音のスレッドから呼ぶ。処理と同じスレッドに寄せて競合を無くすため。
+    //
+    // **ETPipeline_Process から切り出してある。**
+    // 以前はこの中身が Process の先頭に埋まっていて、その Process は
+    // AudioIO のレンダーブロックが `if awake` の内側でしか呼ばない。
+    // PowerGate が無音で休んでいる間は Process ごと飛ぶので、
+    // **無音の間に鎖を変えると descriptor が gPending に積まれたまま消費されない。**
+    // エフェクトを足しても、鎖を戻しても、プリセットを読んでも、
+    // グラフは古いままで、音が戻るまで何も効かない。
+    // 反映は処理と別なので、休んでいても必ず通す。
+    int pending = atomic_exchange_explicit(&gPending, -1, memory_order_acquire);
+    if (pending < 0) return;
+
+    const ETPipeDescriptor *d = &gSlots[pending];
+    et_status st = et_pipeline_configure(engine, d->bytes, d->length);
+    // 呼んだ事実そのものを数える。0 なら Publish が一度も拾われていない。
+    atomic_fetch_add_explicit(&gConfigures, 1, memory_order_relaxed);
+    atomic_store_explicit(&gStatus, (int)st, memory_order_relaxed);
+    atomic_store_explicit(&gConfigured, st == ET_OK ? 1 : 0, memory_order_relaxed);
+    atomic_store_explicit(&gActive,
+                          (uint_least32_t)(st == ET_OK ? d->active : 0u),
+                          memory_order_relaxed);
+    // **鎖が足す遅れはここでしか読めない。**
+    // 組み直した直後の値が正で、次の configure まで変わらない。
+    atomic_store_explicit(&gLatency,
+                          (uint_least32_t)(st == ET_OK ? et_pipeline_latency(engine) : 0u),
+                          memory_order_relaxed);
+}
+
 int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSeconds)
 {
     atomic_fetch_add_explicit(&gCount, 1, memory_order_relaxed);
@@ -146,26 +182,7 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
     if (engine == 0 || channels == 0 || frames == 0) return ET_ERR_ARGS;
 
-    // 溜まっている差し替えをここで反映する。
-    // configure は確保を伴うが、鎖を変えたときだけなので毎ブロックでは起きない。
-    // ここで呼ぶのは、処理と同じスレッドに寄せて競合を無くすため。
-    int pending = atomic_exchange_explicit(&gPending, -1, memory_order_acquire);
-    if (pending >= 0) {
-        const ETPipeDescriptor *d = &gSlots[pending];
-        et_status st = et_pipeline_configure(engine, d->bytes, d->length);
-        // 呼んだ事実そのものを数える。0 なら Publish が一度も拾われていない。
-        atomic_fetch_add_explicit(&gConfigures, 1, memory_order_relaxed);
-        atomic_store_explicit(&gStatus, (int)st, memory_order_relaxed);
-        atomic_store_explicit(&gConfigured, st == ET_OK ? 1 : 0, memory_order_relaxed);
-        atomic_store_explicit(&gActive,
-                              (uint_least32_t)(st == ET_OK ? d->active : 0u),
-                              memory_order_relaxed);
-        // **鎖が足す遅れはここでしか読めない。**
-        // 組み直した直後の値が正で、次の configure まで変わらない。
-        atomic_store_explicit(&gLatency,
-                              (uint_least32_t)(st == ET_OK ? et_pipeline_latency(engine) : 0u),
-                              memory_order_relaxed);
-    }
+    ETPipeline_ApplyPending();
 
     if (!atomic_load_explicit(&gConfigured, memory_order_relaxed)) return ET_ERR_STATE;
 

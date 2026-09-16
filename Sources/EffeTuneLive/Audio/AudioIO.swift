@@ -380,6 +380,16 @@ final class AudioIO: ObservableObject {
 
             // 4. 本線のバスへ書いて、鎖を通して、読み戻す。
             //    バスの置き場は engine が持っているので、そこへ直接書く。
+            //
+            //    **鎖の差し替えは休んでいても通す。**
+            //    configure を呼ぶのは ETPipeline_Process の中だけで、その Process は
+            //    下の `if awake` の内側にある。無音で PowerGate が休むと Process ごと
+            //    飛ぶので、**無音の間に足したエフェクトが永久に反映されない。**
+            //    足しても効かない／リセットしてもメーターが動かない、の本体がこれ。
+            //    反映は処理と別の仕事なので、ゲートの外で呼ぶ。
+            //    溜まっていなければ atomic を 1 回読むだけで戻る。
+            ETPipeline_ApplyPending()
+
             if awake, let main = ETPipeline_MainBus() {
                 if f > 1, let rs = state.resampler {
                     ETResampler_Up(rs, p, main, UInt32(n))

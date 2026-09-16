@@ -90,6 +90,13 @@ uint32_t ETPipeline_ActiveNodes(void);
 /// et_pipeline_latency（abi.h:168）の値で、FIR を持つエフェクトを入れると増える。
 /// リンクやブロックの遅れは含まない。あちらは AudioIO が持っている。
 /// 上流 EffeTune が右下に出している "Total Delay: N samples" と同じ量。
+/// 溜まっている鎖の差し替えを反映する。**音のスレッドから、毎ブロック呼ぶ。**
+///
+/// ETPipeline_Process も先頭でこれを呼ぶが、Process 自体が
+/// 「音が来ているとき」しか呼ばれないので、それだけだと無音の間の
+/// 変更が反映されない。休んでいる間もこちらは呼ぶこと。
+void ETPipeline_ApplyPending(void);
+
 uint32_t ETPipeline_Latency(void);
 
 /// 素通しにしてあるか。
