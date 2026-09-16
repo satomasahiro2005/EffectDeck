@@ -510,7 +510,15 @@ final class AudioIO: ObservableObject {
         if ticks % 20 == 0 {
             // configure の結果（LastStatus）と process の戻り値（proc）は別物。
             // applied が 0 のとき、どちらで止まっているかをここで分ける。
-            let line = "tick out=\(route) ovr=\(overriding) applied=\(applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(hasPeer) recv=\(received) load=\(load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(render?.pipeStatus ?? 0)"
+            // rsp は routeSharingPolicy の生値。**こちらは Default(0) しか設定していない。**
+            // 1 (LongFormAudio) になっていたら、MediaExperience の
+            // _CMSUtility_UpdateRoutingContextForSession が now playing 能力を見て
+            // SystemMusic コンテキストへ移し、setByClient:0 で書き換えたということ。
+            // SystemMusic は non-groupable な経路が選ばれると SystemAudio へ追従するので、
+            // どちらに居ても仮想デバイスを指す。ループバックに入る条件の判別に使う。
+            let session = AVAudioSession.sharedInstance()
+            let ports = session.currentRoute.outputs.map(\.portType.rawValue).joined(separator: "+")
+            let line = "tick out=\(route) rsp=\(session.routeSharingPolicy.rawValue) ports=\(ports) ovr=\(overriding) applied=\(applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(hasPeer) recv=\(received) load=\(load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(render?.pipeStatus ?? 0)"
             log.notice("\(line, privacy: .public)")
             // **無線だとログが取れない。**
             // log stream --device はこの Xcode で無くなり、devicectl にも
