@@ -126,6 +126,15 @@ uint32_t ETPipeline_ActiveNodes(void)
 
 uint32_t ETPipeline_Latency(void)
 {
+    // **その場で engine に聞く。**
+    // 組み直したときの値を覚えているだけだと、パラメータで遅延が変わる
+    // エフェクト（IR Reverb の Latency / Conv Rate、FIR 系の Taps など）を
+    // 触っても帯の数字が動かない。資産を送ったときも同じ。
+    // 読むだけの呼び出しで、音のスレッドは通らない。
+    const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
+    if (engine != 0 && atomic_load_explicit(&gConfigured, memory_order_relaxed)) {
+        return (uint32_t)et_pipeline_latency(engine);
+    }
     return (uint32_t)atomic_load_explicit(&gLatency, memory_order_relaxed);
 }
 

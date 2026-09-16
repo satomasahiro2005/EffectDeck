@@ -158,6 +158,8 @@ struct IRReverbView: View {
     /// そのときは鍵からライブラリを引いて名前を出す。
     private var caption: String {
         if let loaded { return loaded }
+        // 開き直したあとは DSP が入れ直していて、その 1 行がここに残っている。
+        if let line = dsp.assetInfo[node.id] { return line }
         guard !node.irId.isEmpty else { return "No impulse response loaded" }
         if let e = library.entries.first(where: { $0.id == node.irId }) { return e.name }
         return "Impulse response missing from the library"
@@ -201,6 +203,7 @@ struct IRReverbView: View {
             let key = id ?? IRLibrary.shared.entries
                 .first(where: { $0.url == url })?.id
             if let key { dsp.setIRId(key, at: index) }
+            if let loaded { dsp.assetInfo[node.id] = loaded }
         } catch {
             loaded = nil
             failure = (error as? LocalizedError)?.errorDescription

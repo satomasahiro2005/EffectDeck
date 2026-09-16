@@ -91,6 +91,11 @@ final class EffeTuneDSP: ObservableObject {
         didSet { if !restoring { persistExpanded() } }
     }
 
+    /// 資産を入れたときの 1 行（「4ch True Stereo / 48000 Hz / 1.23 s」）。
+    /// 段の id で引く。**音には関係しない。**カードに出すためだけに持つ。
+    /// 入れ直しは DSP がやるので、ビューはここから読む。
+    @Published var assetInfo: [UUID: String] = [:]
+
     /// 図も出さずに畳んでいるもの。
     ///
     /// **`expanded` の意味は変えていない。** 畳んでいて、ここに入っていなければ
@@ -387,7 +392,7 @@ final class EffeTuneDSP: ObservableObject {
         for i in chain.indices where !chain[i].irId.isEmpty {
             let node = chain[i]
             guard node.instance != 0 else { continue }
-            ETIRLoader.reload(irId: node.irId,
+            let line = ETIRLoader.reload(irId: node.irId,
                               engine: engine,
                               instance: node.instance,
                               processingRate: sampleRate,
@@ -396,6 +401,7 @@ final class EffeTuneDSP: ObservableObject {
                               channelMode: Self.choice("cm", of: node),
                               latency: Self.choice("lt", of: node),
                               convolutionRate: Self.choice("cr", of: node))
+            if let line { assetInfo[node.id] = line }
         }
     }
 
