@@ -2,6 +2,18 @@
 
 [EffeTune](https://github.com/Frieve-A/effetune) for iOS (Unofficial).
 
+[![Release](https://img.shields.io/github/v/release/satomasahiro2005/effetune-live?label=release&color=3B82F6)](https://github.com/satomasahiro2005/effetune-live/releases)
+[![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
+![Effects](https://img.shields.io/badge/effects-100-3B82F6)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+<a href="https://altstore.io/source/nemut.ai/source.json?app=ai.nemut.effetune">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/altstore-badge-dark.png">
+    <img src="docs/altstore-badge-light.png" alt="Download on AltStore" height="60">
+  </picture>
+</a>
+
 > **An independent project.** EffeTune Live is built by nemut.ai. It is **not affiliated
 > with, endorsed by, or supported by
 > [EffeTune](https://github.com/Frieve-A/effetune) or its author (Frieve-A / Yoshiyuki

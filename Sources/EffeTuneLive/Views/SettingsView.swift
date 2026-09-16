@@ -194,8 +194,8 @@ private struct StatusSection: View {
             Text("Status")
         } footer: {
             Text("""
-                 Audio from other apps arrives here at 48 kHz through the EffeTune output in \
-                 Control Center.
+                 Audio from the player you are listening to arrives here at 48 kHz \
+                 through the EffeTune output in Control Center.
                  """)
         }
     }
