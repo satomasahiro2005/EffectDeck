@@ -53,6 +53,7 @@ struct EffectCardView: View {
                     // 畳んだ状態でも見たいものはそこにある。
                     ETEffectViews.view(index: index, node: node, dsp: dsp)
                         .environment(\.etGraphOnly, true)
+                        .environment(\.etGraphMaxHeight, Self.collapsedGraphHeight)
                         .padding(.horizontal, ETMetrics.cardPadding)
                         .padding(.bottom, ETMetrics.cardPadding)
                         .allowsHitTesting(false)
@@ -62,7 +63,7 @@ struct EffectCardView: View {
                         if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
                             ETEffectViews.view(index: index, node: node, dsp: dsp)
-                                .environment(\.etGraphOnly, node.graphOnly)
+                                .environment(\.etGraphOnly, false)
                         } else {
                             VStack(alignment: .leading, spacing: 12) {
                                 ForEach(node.spec.params) { param in
@@ -142,37 +143,21 @@ struct EffectCardView: View {
                     .foregroundStyle(.white)
             }
 
-            // 図を持つものは、図だけ見たいことがある。目盛りを畳められるようにする。
-            // ⋯ の中ではなく直のボタンにしてある。1 手で切り替えたいものだから。
-            //
-            // 以前は analyzer だけに出していたが、PEQ のように図が主役のものでも
-            // スライダーを畳みたい場面は同じだけある。図があるかどうかで決める。
-            if canGraphOnly {
-                Button {
-                    dsp.setGraphOnly(!node.graphOnly, at: index)
-                } label: {
-                    Image(systemName: node.graphOnly
-                          ? "chart.xyaxis.line" : "slider.horizontal.3")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(node.graphOnly ? AnyShapeStyle(.tint)
-                                                : AnyShapeStyle(.secondary))
-                .accessibilityLabel(node.graphOnly ? "Show controls" : "Graph only")
-            }
-
             if hasBody {
                 // **印であって押し所ではない。**
                 // 押すのは行そのもの（下の onTapGesture）。
                 // 矢印にも当たり判定があると、行の手つきと取り合って
                 // 押せたり押せなかったりに見える。しかも文字を押すのと
                 // 結果が同じなので、分ける意味が無い。
+                // **右向き↔下向きにする。上向きにしない。**
+                // 0°↔180°（下↔上）だと並べ替えの矢印に見える。カードは長押しで
+                // 動かせるうえ、⋯ の中に Move Up / Move Down が上下の矢印で
+                // 並んでいるので、同じ形が開閉にも使われていると取り違える。
+                // 右→下は開閉の作法で、下の Section の印とも揃う。
                 Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
@@ -224,6 +209,15 @@ struct EffectCardView: View {
     ///
     /// 名前を消して図を下に置くと、頭の行が空のまま残って場所を食う。
     /// 名前が要らないのは、図がその場所に収まって 1 行になるものだけ。
+    /// 畳んだときに図へ許す高さ。
+    ///
+    /// **畳んだら縮むこと。** 以前は図の言い値のままで、Stereo Meter のように
+    /// 幅から正方形を作るものは 340pt 前後になり、畳んでもカードが縮まなかった。
+    /// 一度 150pt で切ってみたが、外から切ると横軸の字まで落ちて壊れて見えた。
+    /// いまは GraphCanvas が自分の高さを決めるときに上限として使うので、
+    /// 中身はこの高さに収まる形で引き直される。
+    static let collapsedGraphHeight: CGFloat = 132
+
     private var hidesName: Bool { inlinesGraph }
 
     /// 図を名前の場所へ入れるか。**横長で背の低い図だけ。**
@@ -237,30 +231,15 @@ struct EffectCardView: View {
         showsCollapsedGraph && !isExpanded && node.spec.type == "LevelMeterPlugin"
     }
 
-    /// 図で見せるもの。パラメータを畳んでも中身が残る。
-    private var isAnalyzer: Bool {
-        node.spec.category == "analyzer" && ETEffectViews.has(node.spec.type)
-    }
 
-    /// 畳んでいるあいだも図を出すか。**analyzer は全部そうする。**
+    /// 畳んでいるあいだも図を出すか。**図を持つものは全部そうする。**
     ///
     /// 畳んで字だけにしても「Analyzer」としか出ない。この分類は見るために
     /// 鎖へ入れるものなので、畳んだ状態でも動いているものが見えたほうがよい。
     /// 出すのは図だけの形（つまみも目盛りも畳んだもの）なので、
     /// 一覧としての高さは字 1 行ぶんより少し増える程度に収まる。
-    private var showsCollapsedGraph: Bool {
-        node.spec.category == "analyzer" && ETEffectViews.has(node.spec.type)
-    }
+    private var showsCollapsedGraph: Bool { ETEffectViews.has(node.spec.type) }
 
-    /// 図だけにできるか。専用のビューを持っていれば図がある。
-    ///
-    /// **パラメータの有無で決めない。** Level Meter はパラメータを 1 つも
-    /// 持たないが、畳めば見出しと目盛りと数値が消えて棒だけになる。
-    /// 音が来ているかを見るために鎖の先頭へ置く道具なので、
-    /// 細いまま機能することのほうが大事。
-    private var canGraphOnly: Bool {
-        ETEffectViews.has(node.spec.type)
-    }
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
     private var hasBody: Bool {

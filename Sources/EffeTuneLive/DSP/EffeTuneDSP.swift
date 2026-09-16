@@ -25,7 +25,6 @@ final class EffeTuneDSP: ObservableObject {
         var values: [Float]
         var enabled: Bool = true
         /// Analyzer を図だけで見る。パラメータ行を畳む。
-        var graphOnly: Bool = false
         var instance: UInt32 = 0
         /// 描画用の値がどのエフェクトから出たかを見分ける番号。
         var tapId: UInt32 = 0
@@ -257,12 +256,6 @@ final class EffeTuneDSP: ObservableObject {
         }
     }
 
-    /// 図だけ表示する。DSP には何も伝えない（見た目だけの話）。
-    func setGraphOnly(_ on: Bool, at index: Int) {
-        guard chain.indices.contains(index) else { return }
-        chain[index].graphOnly = on
-    }
-
     func setEnabled(_ enabled: Bool, at index: Int) {
         guard chain.indices.contains(index) else { return }
         chain[index].enabled = enabled
@@ -324,12 +317,6 @@ final class EffeTuneDSP: ObservableObject {
                 restoring = true
                 expanded = Set(chain.map(\.id))
                 restoring = false
-                // **Analyzer だけ図にする。** 全部畳むと下が真っ白になる。
-                // Analyzer は中身が図そのものでつまみを見せる意味が薄いが、
-                // エフェクトの方はつまみが出ていないと何をする画面か伝わらない。
-                for i in chain.indices where chain[i].spec.category == "analyzer" {
-                    chain[i].graphOnly = true
-                }
                 publish()
                 return
             }

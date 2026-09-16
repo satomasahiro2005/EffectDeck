@@ -274,4 +274,12 @@ extension ToggleStyle where Self == MasterPowerToggleStyle {
 /// ParameterRow がこれを見て自分を消すので、専用の画面を 1 つずつ直さずに済む。
 extension EnvironmentValues {
     @Entry var etGraphOnly: Bool = false
+
+    /// 畳んだカードで図を出すときの高さの上限。nil なら figure の言い値のまま。
+    ///
+    /// **畳む意味を残すため。** analyzer は畳んでも図を出すようにしてあるが、
+    /// Stereo Meter のように幅から正方形を作るものは 340pt 前後になり、
+    /// 畳んでもカードが縮まない＝畳めないのと同じだった。
+    /// GraphCanvas の 1 箇所で当たるので、12 本ある図に個別の細工は要らない。
+    @Entry var etGraphMaxHeight: CGFloat? = nil
 }

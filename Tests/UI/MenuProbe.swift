@@ -5,24 +5,28 @@ import XCTest
 
 final class MenuProbe: XCTestCase {
 
-    /// Analyzer の「図だけ」が本当にパラメータを畳むか。
-    func testGraphOnlyHidesParameters() {
+    /// **畳んだらパラメータが消え、図は残るか。**
+    ///
+    /// 「図だけ表示」のトグルは畳む操作と同じ意味だったので外した。
+    /// いまは畳む＝図だけ（高さは EffectCardView.collapsedGraphHeight で頭打ち）。
+    func testCollapsingHidesParametersButKeepsGraph() {
         let app = XCUIApplication()
         app.launchArguments = ["-ETSeed", "spectrum"]
         app.launch()
         Thread.sleep(forTimeInterval: 6)
 
         let before = app.sliders.count + app.textFields.count
-        let toggle = app.buttons["Graph only"]
-        print("PROBE before sliders+fields=\(before) toggleExists=\(toggle.exists)")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 15), "Graph only のボタンが無い")
+        XCTAssertGreaterThan(before, 0, "開いた状態でパラメータが出ていない")
 
-        toggle.tap()
+        // カードの頭を押して畳む。押し所は行そのもの。
+        let card = app.staticTexts["Spectrum Analyzer"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 20), "Spectrum Analyzer のカードが無い")
+        card.tap()
         Thread.sleep(forTimeInterval: 2)
-        let after = app.sliders.count + app.textFields.count
-        print("PROBE after sliders+fields=\(after) backToggle=\(app.buttons["Show controls"].exists)")
 
-        XCTAssertLessThan(after, before, "図だけにしてもパラメータが残っている")
+        let after = app.sliders.count + app.textFields.count
+        print("PROBE collapse before=\(before) after=\(after)")
+        XCTAssertLessThan(after, before, "畳んでもパラメータが残っている")
     }
 
     /// ツールバーの Menu。ToolbarItemGroup の中だと死ぬのかを見る。

@@ -242,6 +242,9 @@ struct GraphCanvas<Overlay: View>: View {
     var x: ETAxis
     var y: ETAxis
     var height: CGFloat
+
+    /// 畳んだカードから渡る高さの上限。nil なら height をそのまま使う。
+    @Environment(\.etGraphMaxHeight) private var maxHeight
     var insets: ETGraphInsets
     /// 掴んでいる値。空なら caption を出す。
     var readout: [ETReadoutItem]
@@ -291,7 +294,7 @@ struct GraphCanvas<Overlay: View>: View {
                     overlay(ETPlot(size: geo.size, x: x, y: y, insets: insets))
                 }
             }
-            .frame(height: height)
+            .frame(height: min(height, maxHeight ?? height))
         }
     }
 

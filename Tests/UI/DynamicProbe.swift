@@ -271,40 +271,6 @@ final class DynamicProbe: XCTestCase {
 
     // MARK: - 5. 図だけ表示
 
-    /// 期待: 頭のボタンでつまみが畳まれ、もう一度で戻る。鎖は変わらない。
-    func test06GraphOnly() {
-        let app = launch(["-ETSeed", "FiveBandPEQPlugin"])
-        Thread.sleep(forTimeInterval: 3)
-
-        let before = app.sliders.count + app.textFields.count
-        let toggle = app.buttons["Graph only"]
-        print("PROBE graphOnly before=\(before) exists=\(toggle.exists)")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 15), "図だけのボタンが無い")
-        toggle.tap()
-        Thread.sleep(forTimeInterval: 2)
-
-        let after = app.sliders.count + app.textFields.count
-        let back = app.buttons["Show controls"]
-        print("PROBE graphOnly after=\(after) backExists=\(back.exists)")
-        XCTAssertLessThan(after, before, "図だけにしてもつまみが残る")
-        XCTAssertTrue(back.exists, "戻すボタンが出ない")
-
-        back.tap()
-        Thread.sleep(forTimeInterval: 2)
-        let restored = app.sliders.count + app.textFields.count
-        print("PROBE graphOnly restored=\(restored)")
-        XCTAssertEqual(restored, before, "戻しても元に戻らない")
-    }
-
-    // MARK: - 6. プリセット
-
-    private func openPresets(_ app: XCUIApplication) {
-        app.navigationBars.buttons["Presets"].tap()
-        XCTAssertTrue(app.navigationBars["Presets"].waitForExistence(timeout: 15),
-                      "Presets が開かない")
-    }
-
-    /// 期待: System Presets は鎖を置き換えず、名前付き Section で包んで足す。
     func test07SystemPreset() {
         let app = launch(["-ETSeed", "VolumePlugin"])
         Thread.sleep(forTimeInterval: 2)
