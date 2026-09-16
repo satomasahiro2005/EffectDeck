@@ -18,6 +18,16 @@ struct EffectCardView: View {
     @ObservedObject var dsp: EffeTuneDSP
     let isExpanded: Bool
     let toggleExpanded: () -> Void
+    /// ⋯ の Move Up / Move Down。**画面の隣の行**と入れ替える。
+    ///
+    /// 鎖の添字で 1 つ動かすと、隣が畳んだ Section の配下（画面に無い行）のときに
+    /// そこへ入り込んで、動かした行が画面から消える。どこが隣かを知っているのは
+    /// 行を組んでいる PipelineView なので、中身はあちらから渡してもらう。
+    let moveUp: () -> Void
+    let moveDown: () -> Void
+    /// 画面の端の行か。鎖の本数ではなく**見えている行**で決める。
+    let canMoveUp: Bool
+    let canMoveDown: Bool
 
     var body: some View {
         if node.isSection {
@@ -64,7 +74,7 @@ struct EffectCardView: View {
     private var isMuted: Bool { !node.enabled || node.sectionGate == 0 }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             // Button ではなく Toggle。支援技術に入切が伝わるようにする。
             Toggle("Enabled", isOn: Binding(
                 get: { node.enabled },
@@ -74,8 +84,13 @@ struct EffectCardView: View {
                 .accessibilityLabel(node.spec.name)
 
             VStack(alignment: .leading, spacing: 1) {
+                // 折り返さない。幅が足りないときは縮める。
+                // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
+                // 2 行に折れていた。
                 Text(node.spec.name)
                     .font(.system(size: 16, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -95,9 +110,12 @@ struct EffectCardView: View {
                     .foregroundStyle(.white)
             }
 
-            // Analyzer は図だけ見たいことが多いので、目盛りを畳められるようにする。
-            // ⻳ の中ではなく直のボタンにしてある。1 手で切り替えたいものだから。
-            if isAnalyzer {
+            // 図を持つものは、図だけ見たいことがある。目盛りを畳められるようにする。
+            // ⋯ の中ではなく直のボタンにしてある。1 手で切り替えたいものだから。
+            //
+            // 以前は analyzer だけに出していたが、PEQ のように図が主役のものでも
+            // スライダーを畳みたい場面は同じだけある。図があるかどうかで決める。
+            if canGraphOnly {
                 Button {
                     dsp.setGraphOnly(!node.graphOnly, at: index)
                 } label: {
@@ -131,14 +149,14 @@ struct EffectCardView: View {
                 Button { dsp.resetParams(at: index) } label: {
                     Label("Reset Parameters", systemImage: "arrow.counterclockwise")
                 }
-                Button { dsp.move(from: IndexSet(integer: index), to: index - 1) } label: {
+                Button(action: moveUp) {
                     Label("Move Up", systemImage: "arrow.up")
                 }
-                .disabled(index == 0)
-                Button { dsp.move(from: IndexSet(integer: index), to: index + 2) } label: {
+                .disabled(!canMoveUp)
+                Button(action: moveDown) {
                     Label("Move Down", systemImage: "arrow.down")
                 }
-                .disabled(index >= dsp.chain.count - 1)
+                .disabled(!canMoveDown)
                 Divider()
                 Button(role: .destructive) {
                     dsp.remove(at: IndexSet(integer: index))
@@ -152,7 +170,13 @@ struct EffectCardView: View {
                     .contentShape(Rectangle())
             }
         }
-        .padding(.horizontal, ETMetrics.cardPadding)
+        // 両端の部品は 44pt / 34pt の当たり判定を取っていて、絵の周りに 12pt / 9pt の
+        // 余白を自分で持っている。器の内側（cardPadding = 14）をそのまま足すと、
+        // 電源の絵だけが本文より 12pt 内側に入るうえ、名前に回る幅が 28pt 減って
+        // iPhone 幅で 2 行に折れる。ここでは足りない分だけを足して、
+        // 電源の絵の左端を本文の左端に揃える。
+        .padding(.leading, 2)
+        .padding(.trailing, 4)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -166,23 +190,46 @@ struct EffectCardView: View {
         node.spec.category == "analyzer" && ETEffectViews.has(node.spec.type)
     }
 
+    /// 図だけにできるか。専用のビューを持っていれば図がある。
+    /// analyzer は中身が図そのものなので当然入る。EQ 系も図が主役。
+    /// パラメータを持たないもの（Level Meter など）は畳んでも何も減らないので外す。
+    private var canGraphOnly: Bool {
+        ETEffectViews.has(node.spec.type) && !node.spec.params.isEmpty
+    }
+
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
     private var hasBody: Bool {
         !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
+    ///
+    /// 開いているときは同じ値がすぐ下に出ているので、分類の方を出す。
+    /// そうしないと、どのエフェクトなのかを言う行が頭から消える。
     private var summary: String {
+        if isExpanded && hasBody { return node.spec.category.categoryLabel }
         guard !node.spec.params.isEmpty else { return node.spec.category.categoryLabel }
         let shown = node.spec.params.prefix(3).compactMap { param -> String? in
             guard !param.isArray,
                   node.values.indices.contains(param.offset) else { return nil }
             let v = node.values[param.offset]
-            if case .number = param.kind, v == param.defaultValue { return nil }
-            if case .toggle = param.kind, v == param.defaultValue { return nil }
-            return "\(param.label) \(param.format(v))"
+            // 既定のままの値は出さない。触った所だけを見せる。
+            // 選択肢（.enumeration）にも同じ物差しを当てる。ここを抜いていたので、
+            // SBC Codec Simulator は既定のまま "Channel Mode Joint Stereo" を出し、
+            // Digital Error Emulator は "Mode 10A" を出して、分類を押し出していた。
+            guard v != param.defaultValue else { return nil }
+            return "\(param.label) \(valueText(param, v))"
         }
         return shown.isEmpty ? node.spec.category.categoryLabel : shown.joined(separator: " · ")
+    }
+
+    /// 値 1 個ぶんの文字列。
+    ///
+    /// ETParam.format は入切を「入 / 切」で返す（EffectSpec.swift:37-38）。
+    /// 画面に出す文言は英語なので、入切だけここで組む。
+    private func valueText(_ param: ETParam, _ v: Float) -> String {
+        if case .toggle = param.kind { return v >= 0.5 ? "On" : "Off" }
+        return param.format(v)
     }
 }
 
@@ -224,7 +271,9 @@ private struct SectionCardView: View {
 
     var body: some View {
         Card {
-            HStack(spacing: 10) {
+            // 間隔と余白はエフェクトの頭と同じ。隣り合う札なので、
+            // 電源の絵と名前の左端が揃っていないと目に付く。
+            HStack(spacing: 6) {
                 // Section 自身の入切。切ると次の Section の手前までが止まる
                 // （dsp-pipeline-descriptor.js:190-201 / engine.cpp:919）。
                 Toggle("Enabled", isOn: Binding(
@@ -269,10 +318,12 @@ private struct SectionCardView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(isExpanded ? "Collapse section" : "Expand section")
             }
-            .padding(.horizontal, ETMetrics.cardPadding)
+            .padding(.leading, 2)
             .padding(.vertical, 10)
-            // 器は Card。角丸は containerShape から引く。
-            .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
+            // 緑の枠は Card の縁そのもの。ここに乗せる面と Card が背景を敷く面は
+            // 同じなので、丸みも Card と同じ cardRadius でないと角で線が縁から離れる
+            // （innerRadius 8 と cardRadius 16 で、角のあたり最大 2pt ほどずれる）。
+            .overlay(RoundedRectangle(cornerRadius: ETMetrics.cardRadius, style: .continuous)
                 .stroke(.green, lineWidth: 1.5))
         }
         .opacity(node.enabled ? 1 : 0.55)

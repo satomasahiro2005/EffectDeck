@@ -181,7 +181,14 @@ final class EffeTuneDSP: ObservableObject {
     func add(_ spec: ETEffect) {
         guard appendSpec(spec) else { return }
         publish()
-        if let id = chain.last?.id { expanded.insert(id) }
+        guard let id = chain.last?.id else { return }
+        expanded.insert(id)
+        // 足す先は必ず鎖の末尾で、その末尾が畳んだ Section の配下に当たることがある。
+        // 隠す範囲は Section の次から次の Section の手前までで、次が無ければ末尾まで
+        // なので、鎖 [A, Section(畳), C] に足すと足したものが配下へ入り、
+        // 画面には何も出ない。上の expanded.insert は自分のパラメータを開く印で、
+        // 包んでいる Section は畳んだままなので効かない。
+        revealHidden([id])
     }
 
     /// 1 本足すだけ。publish はしない。
@@ -205,9 +212,49 @@ final class EffeTuneDSP: ObservableObject {
         retire(doomed)
     }
 
+    /// 鎖の並びを変える。位置は**鎖の添字**（画面の行番号ではない）。
+    ///
+    /// 動かした先が畳んだ Section の配下なら、その Section を開く（revealHidden）。
+    /// 開かないと動かした行が画面から消え、どこへ行ったのか分からなくなる。
+    /// 畳んだ Section と一緒に運ばれた配下は開く理由に数えない。Section ごと
+    /// 動かしただけで、畳んでおいた中身が勝手に開いてしまうため。
     func move(from source: IndexSet, to destination: Int) {
+        let types = chain.map(\.spec.type)
+        // 連れて行かれるだけの配下。掴んだ行ではないので開く対象から外す。
+        var carried: Set<UUID> = []
+        for i in source where chain.indices.contains(i) {
+            guard chain[i].isSection, !expanded.contains(chain[i].id) else { continue }
+            for j in ETSection.range(after: i, types: types) where source.contains(j) {
+                carried.insert(chain[j].id)
+            }
+        }
+        let grabbed = Set(source.compactMap { chain.indices.contains($0) ? chain[$0].id : nil })
+            .subtracting(carried)
+
         chain.move(fromOffsets: source, toOffset: destination)
         publish()
+        revealHidden(grabbed)
+    }
+
+    /// 畳んだ Section の配下に入ってしまった段を、その Section を開いて見えるようにする。
+    ///
+    /// 畳んだ Section は配下の**行ごと**消える（PipelineView.rows）ので、そこへ
+    /// 入れてしまうと動かした/足したものが画面から消える。上流は畳んでも行が残るので
+    /// 起きない（js/ui/pipeline/pipeline-item-builder.js:795-836 は
+    /// パラメータの表示を畳むだけ）。
+    ///
+    /// 画面ではなくここに置いてあるのは、鎖を動かす口（move / add）がこちらで、
+    /// ドラッグからも ⋯ からも同じ扱いになるようにするため。
+    func revealHidden(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        let types = chain.map(\.spec.type)
+        for i in chain.indices
+        where chain[i].isSection && !expanded.contains(chain[i].id) {
+            let inside = ETSection.range(after: i, types: types)
+            if inside.contains(where: { ids.contains(chain[$0].id) }) {
+                expanded.insert(chain[i].id)
+            }
+        }
     }
 
     /// 図だけ表示する。DSP には何も伝えない（見た目だけの話）。
@@ -224,8 +271,33 @@ final class EffeTuneDSP: ObservableObject {
 
     /// 端末に残す。次の起動で同じ鎖が出る。
     private func persist() {
+        // まとめ待ちを潰してから書く。待っていた内容はいまの chain に入っている。
+        pendingPersist?.cancel()
+        pendingPersist = nil
         PipelineStore.saveLast(chain)
         persistExpanded()
+    }
+
+    /// 走っている遅延保存。まとめるために持っている。
+    private var pendingPersist: Task<Void, Never>?
+
+    /// 少し待ってから persist() する。
+    ///
+    /// パラメータは 1 目盛り動かすたびに setValue が来る。ドラッグ中はそれが
+    /// 連続し、15BandGEQ の Reset のように 1 操作で 15 回続く所もある。
+    /// そのたびに鎖ぜんぶを JSON へ直して UserDefaults へ書くと重いので、
+    /// 最後の 1 回だけ書く。次が来たら前の待ちを捨てる。
+    ///
+    /// 0.5 秒のあいだにアプリが落とされるとその編集は残らない。
+    /// 背景に回った時点で 1 回書くのが本筋だが、scenePhase を持てるのは
+    /// App 側（EffeTuneLiveApp.swift）で、そこはこの担当の範囲ではない。
+    private func persistSoon() {
+        pendingPersist?.cancel()
+        pendingPersist = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if Task.isCancelled { return }
+            self?.persist()
+        }
     }
 
     private func persistExpanded() {
@@ -244,6 +316,25 @@ final class EffeTuneDSP: ObservableObject {
         guard ready, chain.isEmpty else { return }
 
         // シミュレータで画面を見るときだけ、起動の引数で鎖を仕込む。
+        // 値まで仕込む撮影用の鎖。共有リンクと同じ経路を通す。
+        if let json = ETScreenshotSeed.storeChain {
+            let loaded = ETShareLink.parse(json, catalog: ETCatalog)
+            if !loaded.isEmpty {
+                for item in loaded { append(item) }
+                restoring = true
+                expanded = Set(chain.map(\.id))
+                restoring = false
+                // **Analyzer だけ図にする。** 全部畳むと下が真っ白になる。
+                // Analyzer は中身が図そのものでつまみを見せる意味が薄いが、
+                // エフェクトの方はつまみが出ていないと何をする画面か伝わらない。
+                for i in chain.indices where chain[i].spec.category == "analyzer" {
+                    chain[i].graphOnly = true
+                }
+                publish()
+                return
+            }
+        }
+
         if let seed = ETScreenshotSeed.requested {
             for type in seed {
                 if let spec = Self.spec(forType: type) { appendSpec(spec) }
@@ -273,7 +364,63 @@ final class EffeTuneDSP: ObservableObject {
         }
     }
 
-    /// 鎖をまるごと入れ替える。共有リンクやプリセットの取り込みで使う。
+    /// プリセットを**いまの鎖へ足す**。置き換えない。
+    ///
+    /// 上流 preset-manager.js:78 addPresetToPipeline と同じ組み立てにしてある:
+    ///   1. 先頭に Section を 1 本。名前（cm）はプリセット名（:95-105）
+    ///   2. その後ろにプリセットの中身（:165）
+    ///   3. **挿入先の次が Section でなく、末尾でもないなら**、終端用の
+    ///      名前の無い Section をもう 1 本（:149-160, :166-168）。
+    ///      後ろにあった鎖がこのプリセットの区切りに巻き込まれないように切る
+    ///   4. 足したものは全部開いた状態にする（:170-172 expandedPlugins.add）
+    ///
+    /// 置き換えではないので、プリセットを 2 つ選べば 2 つとも鎖に並ぶ。
+    /// 鎖を捨てたいときは ⋯ の Reset Pipeline を使う。
+    ///
+    /// index を省くと末尾へ足す（上流の insertionIndex = null と同じ）。
+    func addPreset(named name: String, items: [PipelineStore.Loaded], at index: Int? = nil) {
+        guard ready, !items.isEmpty else { return }
+        let target = min(max(index ?? chain.count, 0), chain.count)
+
+        var toAdd: [PipelineStore.Loaded] = [
+            PipelineStore.Loaded(spec: ETSection.spec, values: [], enabled: true,
+                                 inputBus: 0, outputBus: 0, channelSpec: 0,
+                                 sectionName: name)
+        ]
+        toAdd += items
+
+        // 末尾に足すなら閉じる必要が無い（その先に何も無い）。
+        // 次が既に Section ならそれが区切りになるので、重ねない。
+        let nextIsSection = target < chain.count && chain[target].isSection
+        if target < chain.count && !nextIsSection {
+            toAdd.append(PipelineStore.Loaded(spec: ETSection.spec, values: [], enabled: true,
+                                              inputBus: 0, outputBus: 0, channelSpec: 0,
+                                              sectionName: ""))
+        }
+
+        var made: [Node] = []
+        for item in toAdd {
+            var node = Node(spec: item.spec, values: item.values)
+            node.enabled = item.enabled
+            node.inputBus = item.inputBus
+            node.outputBus = item.outputBus
+            node.channelSpec = item.channelSpec
+            node.sectionName = item.sectionName
+            guard instantiate(&node) else { continue }
+            made.append(node)
+        }
+        guard !made.isEmpty else { return }
+
+        chain.insert(contentsOf: made, at: target)
+        publish()
+        // 足したものは開いて出す。上流も expandedPlugins に入れている。
+        // publish() の後に入れるのは、persistExpanded に確定後の位置を書かせるため。
+        for node in made { expanded.insert(node.id) }
+    }
+
+    /// 鎖をまるごと入れ替える。共有リンクの取り込みで使う。
+    ///
+    /// プリセットはこちらを通さない。上流は足す側なので addPreset(named:items:at:) を使う。
     func replaceChain(with items: [PipelineStore.Loaded]) {
         guard ready else { return }
         let doomed = chain.map(\.instance).filter { $0 != 0 }
@@ -356,12 +503,18 @@ final class EffeTuneDSP: ObservableObject {
               chain[index].values.indices.contains(offset) else { return }
         chain[index].values[offset] = value
         pushParams(chain[index])
+        // publish() は通さない。descriptor に載るのは並びと入切と鎖の形だけで、
+        // 値は pushParams が instance へ直に渡している。
+        // ただし端末には残す。残さないと、次に鎖を足す/消す/動かすまで
+        // "pipeline.last" が古い値のままで、次の起動でそこへ戻る。
+        persistSoon()
     }
 
     func resetParams(at index: Int) {
         guard chain.indices.contains(index) else { return }
         chain[index].values = chain[index].spec.defaults
         pushParams(chain[index])
+        persistSoon()
     }
 
     func clear() {

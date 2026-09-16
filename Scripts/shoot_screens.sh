@@ -66,4 +66,8 @@ shoot presets    chain presets
 shoot settings   chain settings
 shoot routing    chain routing
 shoot ir         chain ir
+# 撮り終わったら落とす。-ETMock で音が鳴っているので、
+# 起きたままだと Mac のスピーカーから掃引が鳴り続ける。
+xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
+xcrun simctl shutdown "$DEV" >/dev/null 2>&1
 echo "SHOTS: $OUT"

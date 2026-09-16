@@ -1,3 +1,4 @@
+!docs/shot.png
 *.dSYM/
 *.ipa
 *.log
@@ -14,6 +15,5 @@ package-lock.json
 project-sim.yml
 shots-all/
 shots-render/
-shots-screens/
 shots-store/
 xcuserdata/

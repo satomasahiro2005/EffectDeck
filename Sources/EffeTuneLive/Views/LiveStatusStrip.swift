@@ -1,12 +1,42 @@
 //  LiveStatusStrip.swift
-//  鎖の帯に出す、いまの処理レートと遅れと負荷。
+//  鎖の帯に出す、いまの遅れと負荷。
 //
 //  **ここだけが io を観測する。**
 //  PipelineView 全体で観測すると tick() の 3.3Hz で body ごと作り直され、
 //  ツールバーの Menu が UIDeferredMenuElement の「読み込み中」のまま固まる。
 //  実機でそれを踏んだので、観測はこの小さなビューに閉じ込めてある。
 //
-//  **3 つを 1 行に並べるのをやめて 2 行にした。**
+//  **数字だけを並べるのをやめて、上流と同じく語を付けた。**
+//  上流は右下の #pipelineStats に 2 つだけ出している。
+//
+//    effetune.html:312   <span id="pipelineCpuValue">CPU: Avg 0.0%</span>
+//    effetune.html:314   <div id="pipelineLatency">Total Delay: 0 samples</div>
+//    js/locales/en.json5:68  "ui.pipelineLatency": "Total Delay: {samples} samples"
+//    js/locales/en.json5:69  "ui.pipelineCpuUsage": "CPU: Avg {average}%"
+//
+//  出しているのは「遅れ」と「CPU」の 2 つで、レートはここに無い。
+//  レートは鳴っている間ずっと同じ値で、live の代金ではなく設定の読み返しなので、
+//  こちらでも帯から外した。SettingsView の Picker が "Sample Rate" の名前で
+//  同じ値を出しているので、読める場所は残っている。
+//
+//  **単位の語と桁**
+//  上流は遅れを samples、CPU を小数 1 桁で出している。こちらは ms と整数にした。
+//   - samples ではなく ms。ここに出るのは鎖の遅れではなく、
+//     link とブロックと FIR を足した「耳に届くまでの遅れ」で、
+//     数えるものではなく待つ時間だから。samples は Status に出してある。
+//   - 小数を落としたのは、上流の更新が 1 秒に 1 回（audio-processor.js:4501 で
+//     1 秒ぶん貯めてから post）なのに対し、こちらの tick() は 3.3Hz で、
+//     小数 1 桁を出すと末尾がバーの中で常に踊るため。
+//
+//  **色の閾値は上流を写した。**
+//    js/ui-manager.js:419  100 以上なら overload、75 以上なら high、ほかは normal
+//    effetune.css:691,695  high は --et-warning、overload は --et-danger
+//  上流が塗るのはメーターの棒で、文字の色は変えない。こちらは棒を置く幅が無いので
+//  （下の枠の話）、同じ閾値で数字そのものを .orange / .red にする。
+//  色は新しく作らず、この app が既に使っている semantic color を使う
+//  （警告の行は StatusView が .orange、EffectCardView の枠が .green）。
+//
+//  **枠**
 //  ここは ToolbarItem(placement: .principal)＝ナビゲーションバーの中央で、
 //  中央に置かれる以上、使える幅は「バーの中心から、右のボタン群の内側の端まで」の
 //  2 倍しかない。左がどれだけ空いていても、そちらへは伸びない。
@@ -16,109 +46,181 @@
 //      右 = ボタン 3 つ（1 つ 38-44pt）+ 余白 16 → 空きの右端 x≈245-263
 //      中央に置けるのは 2×(245-196.5)=97pt、ボタンが太ければそれ以下。
 //
-//  1 行に並べた形は 46+62+32 に隙間 8×2 で 156pt あり、この枠の 1.5 倍以上ある。
-//  入らないぶんはバーに潰されるか右のボタンに重なるので、実機では欠けて見える。
-//  2 行にすると 74pt で、狭く見積もった枠にも収まる。
-//  高さは 10pt の行が 2 つでおよそ 25pt、inline のバーの 44pt に入る。
+//  高さも効く。Info.plist が横向きを許しているので、横持ちの iPhone では
+//  バーが 44pt ではなく 32pt になる。10pt の行は行送り約 12pt なので、
+//  3 行（約 36pt）は横持ちで欠ける。**2 行までしか置けない。**
+//  2 行しか置けない以上、語を付けられるのは 2 つまでで、
+//  上流が右下に出している 2 つ（遅れと CPU）がそれに当たる。
+//
+//  幅は 32+4+38=74pt で、直す前と同じ。枠に入ることは実機で確かめてある形。
 
 import SwiftUI
 
 struct LiveStatusStrip: View {
     @ObservedObject var io: AudioIO
 
+    /// 出している面。**タップで入れ替える。**
+    ///
+    /// 幅は増やせない（ToolbarItem(placement: .principal) は中心から
+    /// 右のボタン群の内側までの 2 倍しか使えず、iPhone 16 で 97pt 前後）。
+    /// 4 つ全部を並べると入らないので、2 つずつ 2 面に分けて切り替える。
+    /// 選んだ面は覚える。毎回同じものを見たい人のほうが多い。
+    private enum Face: String {
+        case cost      // 払っているもの: 遅れと CPU
+        case rate      // 通っているもの: 入口と、効果を回しているレート
+
+        var next: Face { self == .cost ? .rate : .cost }
+    }
+    @AppStorage("strip.face") private var faceRaw = Face.cost.rawValue
+    private var face: Face { Face(rawValue: faceRaw) ?? .cost }
+
     /// 欄の幅。**桁で揺れないよう固定する。**
     /// 桁が変わるたびに動くと、隣のものまで揺れて読めない。
     ///
     /// 10pt の SF Mono は 1 文字の送りが 0.6em＝6.0pt、これに 10pt の
-    /// トラッキング（およそ +0.12pt/文字）が乗る。つまり 7 文字で 42.8pt。
-    /// 各欄は「出うる一番長い文字列＋1pt 強」にしてある。
-    /// 余らせると trailing 揃えのぶんが左の隙間になって、隣との間が開いて見える
-    /// （直す前の遅れの欄は 62pt に 7 文字＝42.8pt で、20pt が隙間になっていた）。
+    /// トラッキング（およそ +0.12pt/文字）が乗る。つまり 1 文字 6.11pt。
     private enum Cell {
-        /// "43+23ms" = 7 文字 → 42.8pt
-        static let latency: CGFloat = 44
-        /// "idle" / "100%" = 4 文字 → 24.5pt
-        static let load: CGFloat = 26
+        /// 長いほうの語 "Delay" = 5 文字 → 30.6pt
+        static let label: CGFloat = 32
+        /// 出うる一番長い値 "151 ms" = 6 文字 → 36.7pt。
+        /// 151 は、端末が 16kHz に落ちたとき（link 2048 frames で 128ms）の目安。
+        /// "100%" も "idle" も 4 文字なので、これで足りる。
+        static let value: CGFloat = 38
         static let gap: CGFloat = 4
         /// 帯そのものの幅。上下の行で揃えるので、中身が変わっても動かない。
-        static var total: CGFloat { latency + gap + load }
+        static var total: CGFloat { label + gap + value }
     }
 
     var body: some View {
         if io.running {
-            VStack(spacing: 1) {
-                // 上の行は、いまどのレートで処理しているか。
-                // 一番長い "192 kHz" でも 7 文字＝42.8pt で、下の行の 74pt に余る。
-                // 幅は下の行に合わせて固定し、中身だけ中央に置く。
-                Text(rate)
-                    .frame(width: Cell.total, alignment: .center)
-                // 下の行は、そのために払っている代金。
-                HStack(spacing: Cell.gap) {
-                    // link + dsp。足すと出るまでの遅れ。
-                    // どちらが増えたのかが分かるように足し算のまま出す。
-                    Text("\(linkMs)+\(dspMs)ms")
-                        .frame(width: Cell.latency, alignment: .trailing)
-                    Text(load)
-                        .frame(width: Cell.load, alignment: .trailing)
-                        .foregroundStyle(io.load > 0.8 ? AnyShapeStyle(.red)
-                                                       : AnyShapeStyle(.secondary))
+            VStack(alignment: .leading, spacing: 1) {
+                switch face {
+                case .cost:
+                    // 出るまでの遅れ。上流の "Total Delay" にあたる。
+                    row("Delay", delay, tint: AnyShapeStyle(.secondary))
+                    // 1 ブロックに使える時間のうち、どれだけ使ったか。
+                    // 上流の CPU と同じ量（経過時間 ÷ 音の長さ、audio-processor.js:4506）で、
+                    // 語も上流に合わせて CPU にしてある。
+                    row("CPU", loadText, tint: loadTint)
+                case .rate:
+                    // 入口。拡張から来る音は 48 kHz 固定だが、端末が別のレートを
+                    // 握っていると 48 にならず、速さと音程がずれる。そのときだけ色が付く。
+                    row("In", inRate, tint: rateTint)
+                    // 効果を回しているレート（入口 × オーバーサンプリング倍率）。
+                    row("DSP", dspRate, tint: AnyShapeStyle(.secondary))
                 }
-                .frame(width: Cell.total, alignment: .trailing)
             }
+            // **押せる。** 帯そのものが切り替えの口。
+            // 44pt を確保するため上下に余白を足す（見た目は変わらない）。
+            .padding(.vertical, 9)
+            .contentShape(.rect)
+            .onTapGesture { faceRaw = face.next.rawValue }
+            .padding(.vertical, -9)
             .font(.system(size: 10, design: .monospaced))
             .monospacedDigit()
             .foregroundStyle(.secondary)
             .lineLimit(1)
             // 桁が 1 つ増えたとき（通話でハードウェアのレートが落ちると
-            // link が 3 桁になる）に、数字を「…」で落とさないための保険。
+            // 遅れが 3 桁になる）に、数字を「…」で落とさないための保険。
             // 切るより縮めるほうがまだ読める。普段は等倍のまま。
             .minimumScaleFactor(0.8)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(
-                "Processing \(rateKHz) kilohertz, link latency \(linkMs) milliseconds, "
-                + "DSP latency \(dspMs) milliseconds, load \(load)")
+            .accessibilityLabel(voice)
+            .accessibilityHint("Shows " + (face == .cost ? "sample rates" : "delay and CPU"))
+            .accessibilityAddTraits(.isButton)
         }
     }
 
-    /// 処理レート。ハードウェアのレート×オーバーサンプリング倍率なので、
-    /// 44.1k 系だと 176400 のような値になる。
-    /// 切り捨てではなく丸める。ハードウェアが 47999.9 を返したときに
-    /// "47 kHz" と出るのを避けるため。
-    private var rateKHz: Int {
-        Int((io.processingRate / 1000).rounded())
+    /// 語を左、値を右。上下の行で列が揃うように、どちらも幅を固定する。
+    private func row(_ label: String, _ value: String, tint: AnyShapeStyle) -> some View {
+        HStack(spacing: Cell.gap) {
+            Text(label)
+                .frame(width: Cell.label, alignment: .leading)
+            Text(value)
+                .frame(width: Cell.value, alignment: .trailing)
+                .foregroundStyle(tint)
+        }
+        .frame(width: Cell.total, alignment: .leading)
     }
 
-    /// 単位は略さない。"192k" ではなく "192 kHz"。
-    private var rate: String { "\(rateKHz) kHz" }
+    // MARK: - レート
 
-    /// 2 つのアプリのあいだ。再同期でここへ置き直すので設計上の定数。
-    /// 瞬間の溜まり（bufferedFrames）は払うたびに動いて読めないので使わない。
-    /// 実際の溜まりは Status に出してある。
-    /// LocalLink.m の +targetFrames は 2048 固定なので、48kHz で 43ms。
-    private var linkMs: String {
-        ms(Double(ETLinkReceiver.targetFrames))
+    /// 入口。拡張から来る音のレートで、設計上は 48 kHz 固定。
+    private var inRate: String {
+        let hz = io.sampleRate > 0 ? io.sampleRate : 48000
+        return String(format: "%.0f kHz", hz / 1000)
     }
 
-    /// このアプリの中。1 ブロックと、オーバーサンプリングの FIR。
-    /// どちらも設定で決まる値で、鳴っている間は変わらない。
-    /// blockFrames は 0.005/0.010/0.023 秒（Preferences の ETLatency）、
-    /// resamplerLatency は 0 か 32（ETResample.c の TAPS_PER_PHASE）なので、
-    /// 48kHz では 5ms から 24ms のあいだ。
-    private var dspMs: String {
-        ms(Double(io.blockFrames) + Double(io.resamplerLatency))
+    /// 効果を回しているレート。入口 × 倍率。
+    private var dspRate: String {
+        String(format: "%.0f kHz", io.processingRate / 1000)
     }
+
+    /// 端末が 48 kHz を握れていないときだけ色を付ける。
+    /// 速さと音程がずれている状態なので、黙って出すと気づけない。
+    private var rateTint: AnyShapeStyle {
+        io.sampleRate > 0 && abs(io.sampleRate - 48000) >= 1
+            ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+    }
+
+    // MARK: - 遅れ
+
+    /// 出るまでの遅れ。3 つを足した合計を 1 つの数にして出す。
+    ///
+    ///   link            2 つのアプリのあいだ。再同期でここへ置き直すので設計上の定数で、
+    ///                   LocalLink.m の +targetFrames は 2048 固定＝48kHz で 43ms。
+    ///                   瞬間の溜まり（bufferedFrames）は払うたびに動いて読めないので使わない。
+    ///   blockFrames     iOS が 1 度に渡してくる長さ。Preferences の ETLatency で
+    ///                   0.005/0.010/0.023 秒。
+    ///   resamplerLatency  オーバーサンプリングの FIR。0 か 32（ETResample.c の TAPS_PER_PHASE）。
+    ///
+    /// 内訳は Status に出してある（いまは Block / Queued from Bridge / Added by resampling）。
+    /// ここで "43+23" と足し算のまま出していたのをやめたのは、
+    /// どちらが 43 でどちらが 23 なのかが帯の上では読めないから。
+    ///
+    /// 丸めは合計してから 1 回だけ。ms に直してから足すと 2 回丸めることになる。
+    private var delayMs: Int {
+        let frames = Double(ETLinkReceiver.targetFrames)
+            + Double(io.blockFrames)
+            + Double(io.resamplerLatency)
+        return Int((frames / rate * 1000).rounded())
+    }
+
+    private var delay: String { "\(delayMs) ms" }
 
     /// sampleRate は start() で `session.sampleRate > 0 ? ... : 48000` としか
     /// 書かれないので 0 にも nan にもならないが、ここでも 0 を避けておく。
     /// frames 側は Int 由来なので、"nan" や "inf" が出る経路は無い。
-    private func ms(_ frames: Double) -> String {
-        let sr = io.sampleRate > 0 ? io.sampleRate : 48000
-        return String(format: "%.0f", frames / sr * 1000)
+    private var rate: Double { io.sampleRate > 0 ? io.sampleRate : 48000 }
+
+    // MARK: - CPU
+
+    private var loadPercent: Double { io.load * 100 }
+
+    /// 休んでいるときは数字を出さない（0% と紛らわしいため）。
+    private var loadText: String {
+        io.resting ? "idle" : String(format: "%.0f%%", loadPercent)
     }
 
-    /// 1 ブロックに使える時間のうち、どれだけ使ったか。
-    /// 休んでいるときは数字を出さない（0% と紛らわしいため）。
-    private var load: String {
-        io.resting ? "idle" : String(format: "%.0f%%", io.load * 100)
+    /// 閾値は上流の data-level と同じ（ui-manager.js:419）。
+    /// 休んでいるあいだは、たまたま 75 を跨いだ古い値で色を付けない。
+    private var loadTint: AnyShapeStyle {
+        if io.resting { return AnyShapeStyle(.secondary) }
+        if loadPercent >= 100 { return AnyShapeStyle(.red) }
+        if loadPercent >= 75 { return AnyShapeStyle(.orange) }
+        return AnyShapeStyle(.secondary)
+    }
+
+    // MARK: - 読み上げ
+
+    /// 読み上げでは略さない。"%" や "ms" をそのまま読ませると意味が通らない。
+    private var voice: String {
+        switch face {
+        case .cost:
+            let cpu = io.resting ? "idle" : String(format: "%.0f percent", loadPercent)
+            return "Total delay \(delayMs) milliseconds, CPU \(cpu)"
+        case .rate:
+            return "Incoming \(inRate), effects running at \(dspRate)"
+        }
     }
 }

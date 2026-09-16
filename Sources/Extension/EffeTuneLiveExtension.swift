@@ -224,12 +224,30 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         ETLinkSender.shared.stop()
         EffeTuneDriver.shared.unpublish()
 
-        // 離れたあと、ルートピッカーに戻ってこないことがあるので名乗り直す。
-        // 二重に出る原因かと疑って一度外したが、外しても直らなかったので戻した。
-        if let dev = localDevice {
-            log.notice("deactivate 後に再度 foundDevice")
-            routingManager.foundDevice(dev)
-        }
+        // **このプロセスを終える。**
+        //
+        // AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無い。
+        // 一度登録すると、このプロセスが生きているかぎり audiomxd に残る。
+        // デバイスの UID は MediaOutputDevice.id と一致させる必要があるので固定で、
+        // 次に選ばれたときは同じ UID の死んだポート（conn:1 quies:1 rout:0）に当たる。
+        // そのとき audiomxd は
+        //   customEndpoint_Activate: VA port type 'rstm' already connected;
+        //     skipping port-publication wait
+        // と判断して素通しし、誰も IO を出さないまま "Unable to Connect" になる。
+        // この行が出るのは activateDevice が届く 4ms 前なので、
+        // **Swift 側で何を呼んでも結果は動かない。**
+        //
+        // 端末を再起動すると直るのは、プロセスが入れ替わって 1 回目の登録に戻るから。
+        // ならば毎回 1 回目にすればよい。次に選ばれたとき、システムが
+        // 新しいプロセスを立ち上げ直す。
+        //
+        // 以前は unpublish の中の NULL 登録が落ちることで結果的に同じことが
+        // 起きていた。落ち方が決まらないので、意図して終える形にした。
+        //
+        // 終えるのは routingManager への返事が済んだあと。
+        // いま呼び出しの最中なので、次の回に回す。
+        log.notice("deactivate 済み。登録を残さないためプロセスを終える")
+        DispatchQueue.main.async { exit(0) }
     }
 
     // MARK: - 音量（持たない）

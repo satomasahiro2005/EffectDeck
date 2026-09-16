@@ -1,5 +1,6 @@
 //  ClipboardBanner.swift
-//  クリップボードに鎖が乗っているときだけ出す帯。
+//  クリップボードに URL らしきものが乗っているときに出す帯。
+//  **鎖が乗っているかどうかは分からない。** 文言もそう書くこと。
 //
 //  effetune.frieve.com の共有リンクを、Safari から直接このアプリで開くことはできない。
 //  Universal Links には apple-app-site-association をあの置き場に置く必要があって、
@@ -29,13 +30,19 @@ struct ClipboardBanner: View {
                             .frame(width: 22)
 
                         VStack(alignment: .leading, spacing: 2) {
+                            // 中身は読んでいない。**「鎖が乗っている」とは言えない。**
+                            // detectPatterns が見ているのは「URL らしきものがあるか」
+                            // だけで、EffeTune のリンクかどうかは押すまで分からない。
                             Text(failed ? "That link had no chain in it"
                                          : "A link is on the clipboard")
                                 .font(.system(size: 14, weight: .semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            // 押すと今の鎖が消えることを、押す前に言う。
                             Text(failed ? "Copy an EffeTune share link and try again."
-                                        : "Paste it to load the chain it holds.")
+                                        : "Paste it to replace the current chain.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         Spacer(minLength: 4)
@@ -59,8 +66,15 @@ struct ClipboardBanner: View {
             }
         }
         .onAppear { check() }
+        // 戻ってきたら「読めなかった」を畳む。
+        // 外で別のリンクをコピーしてきたかもしれず、それでも
+        // detectPatterns の答えは URL のまま変わらないので、
+        // 変化で判断すると古い失敗表示が居座る。
         .onReceive(NotificationCenter.default.publisher(
-            for: UIApplication.didBecomeActiveNotification)) { _ in check() }
+            for: UIApplication.didBecomeActiveNotification)) { _ in
+            failed = false
+            check()
+        }
     }
 
     /// 中身は読まない。URL らしきものが乗っているかだけを見る。
@@ -68,10 +82,7 @@ struct ClipboardBanner: View {
         UIPasteboard.general.detectPatterns(for: [.probableWebURL]) { result in
             let found = (try? result.get())?.contains(.probableWebURL) ?? false
             Task { @MainActor in
-                if found != looksLikeLink {
-                    looksLikeLink = found
-                    failed = false
-                }
+                if found != looksLikeLink { looksLikeLink = found }
             }
         }
     }

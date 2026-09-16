@@ -2,7 +2,12 @@
 //  取り込んでいるものの出典と、その本文。
 //
 //  外へリンクを張らず本文を同梱する。配布物の中身と表示が食い違わないようにするため。
-//  About の直下に並べると「EffeTune」「PFFFT」が何なのか分からないので、ここへまとめてある。
+//
+//  **本文をさらに push しない。** ここはシートの中で、Settings から数えて 1 回目の
+//  push に当たる。ここからもう 1 回潜ると、戻り方が分からなくなる（HIG Modality）。
+//  代わりに行をその場で開く。開くのは階層ではないので、戻る場所を失わない。
+//
+//  法務の文書だけを残して押させているのは、iOS 自身も Legal を別の行に置いているから。
 
 import SwiftUI
 
@@ -11,8 +16,13 @@ struct LicensesView: View {
         List {
             Section {
                 ForEach(ETLicenses) { item in
-                    NavigationLink {
-                        LicenseTextView(item: item)
+                    DisclosureGroup {
+                        Text(item.text)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(item.name)
@@ -24,26 +34,10 @@ struct LicensesView: View {
                     }
                 }
             } footer: {
-                Text("The effects are EffeTune's own DSP by Yoshiyuki Kobayashi, running unmodified.")
+                Text("Full text as it ships inside the app.")
             }
         }
-        .navigationTitle("Open Source Licenses")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct LicenseTextView: View {
-    let item: ETLicense
-
-    var body: some View {
-        ScrollView {
-            Text(item.text)
-                .font(.system(size: 12, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-        }
-        .navigationTitle(item.name)
+        .navigationTitle("Licenses")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

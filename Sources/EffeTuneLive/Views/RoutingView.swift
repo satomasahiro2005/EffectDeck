@@ -16,33 +16,26 @@ struct RoutingView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var dsp: EffeTuneDSP
 
+    /// 「Reset routing」の確認を出しているか。
+    /// 全部の段のバスとチャンネルを一度に既定へ戻すので、取り消せない。
+    /// 1 本ずつ直して組んだ分岐が 1 回で消えるから、鎖を捨てるときと同じく一度確かめる。
+    @State private var confirmingReset = false
+
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    ForEach(Array(dsp.chain.enumerated()), id: \.element.id) { index, node in
-                        RoutingRow(index: index, node: node, dsp: dsp)
-                    }
-                } header: {
-                    Text("Signal flow")
-                } footer: {
-                    Text("""
-                         Bus 0 is the main path. Buses 1–4 are cleared at the start of every \
-                         block, so whatever an effect writes there has to be read back within \
-                         the same block. When the input and output bus differ, the result is \
-                         added to that bus instead of replacing what is already on it.
-                         """)
-                }
-
-                if dsp.chain.contains(where: { !$0.isDefaultRouting }) {
-                    Section {
-                        Button("Reset routing", role: .destructive) {
-                            for i in dsp.chain.indices {
-                                dsp.setRouting(at: i, inputBus: 0, outputBus: 0,
-                                               channelSpec: -1, sectionGate: 1)
-                            }
-                        }
-                    }
+            Group {
+                if dsp.chain.isEmpty {
+                    // List の上に overlay で重ねない。段が無くても Section の見出しと
+                    // 注記は描かれるので、その上に重なって二重に読める。
+                    ContentUnavailableView(
+                        "Nothing to route",
+                        systemImage: "arrow.triangle.branch",
+                        description: Text("""
+                                          Add an effect first. Buses and channels belong to \
+                                          the effects on the chain.
+                                          """))
+                } else {
+                    list
                 }
             }
             .navigationTitle("Routing")
@@ -50,11 +43,44 @@ struct RoutingView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .overlay {
-                if dsp.chain.isEmpty {
-                    ContentUnavailableView("Nothing to route", systemImage: "arrow.triangle.branch")
+        }
+    }
+
+    private var list: some View {
+        List {
+            Section {
+                ForEach(Array(dsp.chain.enumerated()), id: \.element.id) { index, node in
+                    RoutingRow(index: index, node: node, dsp: dsp)
+                }
+            } header: {
+                Text("Signal flow")
+            } footer: {
+                Text("""
+                     Bus 0 is the main path. Buses 1–4 are cleared at the start of every \
+                     block, so whatever an effect writes there has to be read back within \
+                     the same block. When the input and output bus differ, the result is \
+                     added to that bus instead of replacing what is already on it.
+                     """)
+            }
+
+            if dsp.chain.contains(where: { !$0.isDefaultRouting }) {
+                Section {
+                    Button("Reset routing", role: .destructive) { confirmingReset = true }
                 }
             }
+        }
+        .confirmationDialog("Reset routing?",
+                            isPresented: $confirmingReset,
+                            titleVisibility: .visible) {
+            Button("Reset routing", role: .destructive) {
+                for i in dsp.chain.indices {
+                    dsp.setRouting(at: i, inputBus: 0, outputBus: 0,
+                                   channelSpec: -1, sectionGate: 1)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Puts every effect back on bus 0 in stereo. This cannot be undone.")
         }
     }
 }
@@ -93,6 +119,8 @@ private struct RoutingRow: View {
 
                 Spacer()
 
+                // 値だけを出さない。In / Out と違って "Stereo" は何の設定か読めない。
+                // 上流も "Channel:" と名前を付けている（js/locales/en.json5 の ui.channel）。
                 Menu {
                     Picker("", selection: Binding(
                         get: { node.channelSpec },
@@ -104,12 +132,15 @@ private struct RoutingRow: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
+                        Text("Channel").font(.system(size: 11)).foregroundStyle(.secondary)
                         Text(ETRouting.channelName(node.channelSpec))
                             .font(.system(size: 13))
+                            .lineLimit(1)
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 9))
                     }
                 }
+                .accessibilityLabel("Channel")
             }
         }
         .padding(.vertical, 4)

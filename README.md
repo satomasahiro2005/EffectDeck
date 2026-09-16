@@ -2,6 +2,8 @@
 
 [EffeTune](https://github.com/Frieve-A/effetune) for iOS.
 
+<img src="docs/shot.png" width="300" alt="EffeTune Live">
+
 It takes the audio other apps are playing, runs it through EffeTune's effects, and sends
 it to the built-in speaker. No virtual cable, no input device to configure. Pick
 **EffeTune** as the output in Control Center and that is the whole setup.

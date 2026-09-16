@@ -215,6 +215,61 @@ extension ToggleStyle where Self == PowerToggleStyle {
     static var power: PowerToggleStyle { PowerToggleStyle() }
 }
 
+/// 鎖ぜんぶの入切。**カード 1 枚ずつの電源と同じ絵にしない。**
+///
+/// 上流は pipeline の見出しの一番左に置いている
+/// （effetune.html:262 `<button class="toggle-button master-toggle" title="Toggle all effects">ON</button>`）。
+/// 絵はカード側の ON バッジと同じで、区別しているのは位置だけ。
+/// 右隣に「Effect Pipeline」の見出しがあるから、鎖ぜんぶのものだと読める。
+/// こちらは見出しを出していないので、位置では読めない。だから字を出す。
+///
+/// 切ったときは「素通しになっている」ことまで出す。
+/// 上流も master を切るとプラグイン名を全部灰に落とし、鎖が効いていないと見せる
+/// （js/ui/pipeline/pipeline-core.js:301-322 の plugin-disabled）。
+/// 言葉は Now Playing に出しているものと揃える（NowPlaying.swift:65 の "Bypassed"）。
+///
+/// configuration.label は描かない。文言が入切で変わるため。
+/// 読み上げの名前は呼ぶ側が accessibilityLabel で付ける。
+struct MasterPowerToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                // 絵で入切を言う。切っているときは斜線入り。
+                Image(systemName: configuration.isOn ? "power" : "power.dotted")
+                    .font(.system(size: 11, weight: .bold))
+                // **字は変えない。** 以前は入で "Effects"、切で "Bypassed" と
+                // 出していたが、8 文字はツールバーの左枠に入らず "Bypas..." と切れた。
+                // 中心の帯と右のボタン 3 つに挟まれて、ここに使える幅は
+                // iPhone 16 でおよそ 100pt しかない。
+                // 切っていることは塗りと絵、それと鎖の上に出る帯が言う。
+                Text("Effects")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(configuration.isOn ? AnyShapeStyle(.white)
+                                                : AnyShapeStyle(.secondary))
+            // ツールバーに詰められて切れないようにする。
+            // 幅は字が固定なので動かない。
+            .fixedSize()
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(configuration.isOn ? AnyShapeStyle(.tint)
+                                           : AnyShapeStyle(.quaternary),
+                        in: .capsule)
+            // 見えている丸みは 28pt ぶんだが、押せる面は 44pt 取る（HIG: Touch targets）。
+            .frame(height: ETMetrics.hitTarget)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension ToggleStyle where Self == MasterPowerToggleStyle {
+    static var masterPower: MasterPowerToggleStyle { MasterPowerToggleStyle() }
+}
+
 /// 図だけを見たいとき true。Analyzer 系のカードが立てる。
 /// ParameterRow がこれを見て自分を消すので、専用の画面を 1 つずつ直さずに済む。
 extension EnvironmentValues {

@@ -14,7 +14,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "Vendor" / "effetune" / "presets"
-OUT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "BuiltinPresets.swift"
+OUT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "SystemPresets.swift"
 
 LABEL = {
     "4ch": "4 Channel",
@@ -61,7 +61,7 @@ def main() -> int:
                       len(data["pipeline"])))
 
     lines = [
-        "//  BuiltinPresets.swift",
+        "//  SystemPresets.swift",
         "//  Tools/gen_presets.py が作る。手で直さないこと。",
         "//",
         "//  中身は EffeTune 同梱の .effetune_preset をそのまま持ってきたもの。",
@@ -69,7 +69,7 @@ def main() -> int:
         "",
         "import Foundation",
         "",
-        "struct ETBuiltinPreset: Identifiable {",
+        "struct ETSystemPreset: Identifiable {",
         "    var id: String { category + \"/\" + name }",
         "    let category: String",
         "    let name: String",
@@ -77,10 +77,10 @@ def main() -> int:
         "    let json: String",
         "}",
         "",
-        "let ETBuiltinPresets: [ETBuiltinPreset] = [",
+        "let ETSystemPresets: [ETSystemPreset] = [",
     ]
     for category, name, compact, count in items:
-        lines.append("    ETBuiltinPreset(")
+        lines.append("    ETSystemPreset(")
         lines.append('      category: "%s",' % category)
         lines.append('      name: "%s",' % name)
         lines.append("      effectCount: %d," % count)

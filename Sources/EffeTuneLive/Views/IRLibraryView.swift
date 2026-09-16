@@ -4,6 +4,12 @@
 //  プリセットは IR の中身を持たず鍵の参照だけを書くので、
 //  web 版で作ったプリセットをこちらで開くには、同じ IR がここに入っている必要がある。
 //  鍵は sha256 の先頭24桁で、web 版と同じ作り方をしている。
+//
+//  取り込みの結果と削除の確認は上流に合わせてある
+//  （js/locales/en.json5 の irLibrary.status.importResult と irLibrary.confirm.delete）。
+//  importFile は読めない・書けないときに nil を返すだけで何も言わない。
+//  同じ中身のものは既にある鍵を返して一覧が変わらない。
+//  どちらも呼びっぱなしだと「選んだのに増えない」が理由なしで起きる。
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -12,6 +18,17 @@ struct IRLibraryView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var library = IRLibrary.shared
     @State private var picking = false
+
+    /// 取り込みの結果。出したままにせず、次の取り込みで置き換える。
+    @State private var importReport: String?
+
+    /// 消す前に確かめる。消したものは戻せない。
+    @State private var pendingDelete: IRLibrary.Entry?
+
+    /// 確認の見出し。Text ではなく String で渡す（どの初期化子か迷わせない）。
+    private var deleteTitle: String {
+        "Delete “\(pendingDelete?.name ?? "")”?"
+    }
 
     var body: some View {
         NavigationStack {
@@ -22,32 +39,62 @@ struct IRLibraryView: View {
                     } label: {
                         Label("Import audio file", systemImage: "square.and.arrow.down")
                     }
+                    if let importReport {
+                        Text(importReport)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 } footer: {
+                    // 「WAV と FLAC が使える」とは書かない。**このアプリに音の
+                    // デコーダは無い。** importFile は中身を読まずに sha256 を取って
+                    // Documents へ写すだけで、IR を畳み込みへ渡す口もまだ無い
+                    // （IRReverbView.swift の notice に同じことが書いてある）。
                     Text("""
-                         WAV and FLAC both work. Files are kept under this app's Documents \
-                         folder, so you can also drop them in with the Files app.
+                         Files are kept under this app's Documents folder, so you can also \
+                         drop them in with the Files app. Nothing plays them back yet: \
+                         IR Reverb still passes the dry signal through.
                          """)
                 }
 
                 if library.entries.isEmpty {
                     Section {
-                        Text("Nothing here yet.")
+                        Text("No impulse responses yet")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    } footer: {
+                        Text("""
+                             Imported files are keyed by their contents, the same way the web \
+                             version keys them, so a preset built around one can find it here.
+                             """)
                     }
                 } else {
-                    Section("Impulse responses") {
+                    Section {
                         ForEach(library.entries) { entry in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.name).font(.system(size: 15))
-                                Text("\(entry.id) · \(size(entry.bytes))")
+                                Text(entry.name)
+                                    .font(.system(size: 15))
+                                    .lineLimit(2)
+                                // 鍵は web 版と突き合わせるためのもの。
+                                // 24 桁を裸で出しても何の数か読めないので名前を付ける。
+                                Text("Key \(entry.id) · \(size(entry.bytes))")
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                            }
+                            // **.onDelete を使わない。**（PresetsView に理由を書いた）
+                            // 位置ではなく身元で受け取る。消すのは確認を通ってから。
+                            .swipeActions(edge: .trailing) {
+                                Button("Delete", role: .destructive) {
+                                    pendingDelete = entry
+                                }
                             }
                         }
-                        .onDelete { offsets in
-                            for i in offsets { library.remove(library.entries[i]) }
-                        }
+
+                    } header: {
+                        Text("Impulse responses")
+                    } footer: {
+                        Text("Swipe one to delete it.")
                     }
                 }
             }
@@ -59,11 +106,48 @@ struct IRLibraryView: View {
             .fileImporter(isPresented: $picking,
                           allowedContentTypes: [.audio, .wav, .aiff, .mpeg4Audio, .data],
                           allowsMultipleSelection: true) { result in
-                if case .success(let urls) = result {
-                    for url in urls { library.importFile(at: url) }
+                switch result {
+                case .success(let urls): report(importing: urls)
+                case .failure(let error): importReport = error.localizedDescription
                 }
             }
+            .confirmationDialog(deleteTitle,
+                                isPresented: Binding(get: { pendingDelete != nil },
+                                                     set: { if !$0 { pendingDelete = nil } }),
+                                titleVisibility: .visible,
+                                presenting: pendingDelete) { entry in
+                Button("Delete", role: .destructive) { library.remove(entry) }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                // 上流の文言に寄せる（irLibrary.confirm.delete）。
+                // 「使用中」は言えない。IR を指す側がまだ居ないので、
+                // 困るのは**その鍵を書いたプリセットを開いたとき**だけ。
+                Text("""
+                     A preset built around it will not find it here again. This cannot be undone.
+                     """)
+            }
         }
+    }
+
+    /// 取り込んで、何本入って何本落ちたかを出す。
+    /// 同じ中身のものは importFile が既にある鍵を返すだけなので、
+    /// 「増えなかった」理由として別に数える。
+    private func report(importing urls: [URL]) {
+        // 一度に同じ中身を 2 本選ばれても 1 本は「既にある」側に数えたいので、
+        // 取り込んだ鍵をその場で足していく。
+        var seen = Set(library.entries.map(\.id))
+        var added = 0, duplicate = 0, failed = 0
+
+        for url in urls {
+            guard let id = library.importFile(at: url) else { failed += 1; continue }
+            if seen.insert(id).inserted { added += 1 } else { duplicate += 1 }
+        }
+
+        var parts: [String] = []
+        if added > 0 { parts.append(added == 1 ? "1 imported" : "\(added) imported") }
+        if duplicate > 0 { parts.append("\(duplicate) already in the library") }
+        if failed > 0 { parts.append("\(failed) could not be read") }
+        importReport = parts.isEmpty ? nil : parts.joined(separator: ", ") + "."
     }
 
     private func size(_ bytes: Int) -> String {

@@ -311,6 +311,9 @@ struct FiveBandPEQView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    /// カードの頭のボタンで立つ。図だけにして、下のつまみを畳む。
+    @Environment(\.etGraphOnly) private var graphOnly
+
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
 
@@ -323,9 +326,13 @@ struct FiveBandPEQView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             graph
+            // 図だけのときも帯は残す。どのバンドを見ているかが図の印と対応していて、
+            // 消すと選べなくなる（図の印を掴めば選べるが、細い）。
             bandStrip
-            Divider()
-            bandPanel
+            if !graphOnly {
+                Divider()
+                bandPanel
+            }
         }
     }
 

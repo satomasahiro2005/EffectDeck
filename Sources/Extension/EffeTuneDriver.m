@@ -937,11 +937,15 @@ static void ETFillInterfaceOnce(void) {
     // audio server がドライバを手放す最中に IO コールバックが走る。
     atomic_store_explicit(&gHandlerPtr, NULL, memory_order_release);
 
-    os_log_error(gLog, "ET unregister 試行 frames=%llu registered=%d",
-                 (unsigned long long)gIOCount, (int)gRegistered);
-    OSStatus st = AudioServerPlugInRegisterMediaDeviceExtension(NULL, NULL);
+    // **NULL で登録し直さない。**
+    // AudioServerPlugInRegisterMediaDeviceExtension(NULL, NULL) は解除ではなく
+    // その場で落ちる。dev.log に "ET unregister status=" が 1 行も無いのが証拠で、
+    // 次の行まで到達していない。結果としてプロセスが入れ替わるので症状は
+    // 隠れていたが、後片付けが途中で飛ぶうえ、いつ落ちるかが決まらない。
+    //
+    // 解除の口はそもそも無い。だから「登録を落とす」のではなく
+    // 「プロセスを終える」で片づける（EffeTuneLiveExtension.deactivateDevice）。
     gRegistered = false;
-    os_log_error(gLog, "ET unregister status=%d", (int)st);
 
     os_log(gLog, "unpublish frames=%llu registered=%d",
            (unsigned long long)gIOCount, (int)gRegistered);

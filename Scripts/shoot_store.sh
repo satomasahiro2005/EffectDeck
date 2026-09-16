@@ -8,18 +8,9 @@ set -u
 export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")/.." || exit 1
 ROOT="$PWD"
-WHICH="${1:-Bridge}"
-OUT="$ROOT/shots-store/$WHICH"
-
-if [ "$WHICH" = "Bridge" ]; then
-  SCHEME=EffeTuneLiveBridge
-  APPID=ai.nemut.effetune.bridge
-  APPNAME="EffeTune Live Bridge.app"
-else
-  SCHEME=EffeTuneLive
-  APPID=ai.nemut.effetune
-  APPNAME="EffeTune Live.app"
-fi
+OUT="$ROOT/shots-store"
+APPID=ai.nemut.effetune
+APPNAME="EffeTune Live.app"
 
 DEV=$(xcrun simctl list devices available | grep -F "${SIM:-iPhone 18 Pro Max} (" | head -1 \
       | sed -n 's/.*(\([0-9A-F-]\{36\}\)).*/\1/p')
@@ -37,8 +28,12 @@ xcrun simctl status_bar "$DEV" override --time "9:41" \
   --cellularMode active --cellularBars 4 --wifiMode active --wifiBars 3 \
   --batteryState charged --batteryLevel 100 >/dev/null 2>&1
 
-xcodegen generate --spec project.yml 2>&1 | tail -1
-/usr/bin/xcodebuild -project EffeTuneLive.xcodeproj -scheme "$SCHEME" \
+bash Scripts/setup.sh 2>&1 | tail -1
+# 拡張を外した仕様で建てる。MediaDevice.framework はシミュレータに無い。
+python3 Tools/gen_sim_spec.py 2>&1 | tail -1
+xcodegen generate --spec project-sim.yml 2>&1 | tail -1
+rm -rf "$ROOT/out-sim"
+/usr/bin/xcodebuild -project EffeTuneLiveSim.xcodeproj -scheme EffeTuneLive \
   -configuration Debug -sdk iphonesimulator -arch arm64 \
   CONFIGURATION_BUILD_DIR="$ROOT/out-sim" build 2>&1 \
   | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -3
@@ -49,19 +44,24 @@ xcrun simctl uninstall "$DEV" "$APPID" >/dev/null 2>&1
 xcrun simctl install "$DEV" "$APP"
 
 mkdir -p "$OUT"
-shift || true
 if [ "$#" -gt 0 ]; then SEEDS="$*"; else SEEDS="none"; fi
 n=0
 for seed in $SEEDS; do
   xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
-  if [ "$WHICH" = "Bridge" ]; then
-    xcrun simctl launch "$DEV" "$APPID" >/dev/null 2>&1
+  # 作り物の音を流す。メーターも図も止まったままだと店頭で意味が無い。
+  # 幅は絞らない（端末そのままが正しい）。
+  if [ -n "${SHEET:-}" ]; then
+    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETSheet "$SHEET" \
+                        -ETWidth 0 -ETMock 1 >/dev/null 2>&1
   else
-    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" >/dev/null 2>&1
+    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETWidth 0 -ETMock 1 >/dev/null 2>&1
   fi
   sleep 5
   xcrun simctl io "$DEV" screenshot "$OUT/$seed.png" >/dev/null 2>&1
   n=$((n + 1))
   echo "  $seed"
 done
+# 撮り終わったら落とす。モックの音が鳴り続けるので。
+xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
+xcrun simctl shutdown "$DEV" >/dev/null 2>&1
 echo "SHOTS: $OUT ($n)"

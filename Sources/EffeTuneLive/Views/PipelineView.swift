@@ -127,8 +127,11 @@ struct PipelineView: View {
     }
 
     private var chainList: some View {
+        // 1 回だけ組む。⋯ の Move Up / Move Down が「画面の何行目か」と
+        // 「画面の行数」の両方を要るので、行ごとに組み直すと本数ぶん無駄になる。
+        let visible = rows
 
-        List {
+        return List {
             ClipboardBanner(dsp: dsp)
                 .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                 .listRowSeparator(.hidden)
@@ -141,13 +144,22 @@ struct PipelineView: View {
                     .listRowBackground(Color.clear)
             }
 
+            // 鎖の真上に出す。ここより下のカードが効いていない、という話なので。
+            // 鎖が空のときは出さない。EmptyChainRow が同じことを既に言っている。
+            if dsp.bypass && !dsp.chain.isEmpty {
+                BypassBanner { dsp.bypass = false }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 8, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
             if dsp.chain.isEmpty {
                 EmptyChainRow { sheet = .picker }
                     .listRowInsets(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 14))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(rows) { row in
+                ForEach(visible) { row in
                     EffectCardView(
                         index: row.index,
                         node: row.node,
@@ -156,14 +168,21 @@ struct PipelineView: View {
                         toggleExpanded: {
                             if expanded.contains(row.node.id) { expanded.remove(row.node.id) }
                             else { expanded.insert(row.node.id) }
-                        })
+                        },
+                        // 隣は鎖の隣ではなく**画面の隣**。畳んだ Section の配下と
+                        // 入れ替わって行が消えないように、ドラッグと同じ道を通す。
+                        moveUp: { moveRow(row.visible, to: row.visible - 1) },
+                        moveDown: { moveRow(row.visible, to: row.visible + 2) },
+                        canMoveUp: row.visible > 0,
+                        canMoveDown: row.visible < visible.count - 1)
                         .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
-                        .id(row.node.id)
-                }
-                .onDelete { offsets in
-                    dsp.remove(at: chainIndices(of: offsets))
+                        // **.onDelete は使わない。** 詳しくは下の remove(_:)。
+                        // こちらは押されたら閉じるだけで、行を消すのは鎖が変わった結果。
+                        .swipeActions(edge: .trailing) {
+                            Button("Delete", role: .destructive) { remove(row.node.id) }
+                        }
                 }
                 .onMove { source, destination in
                     move(source, to: destination)
@@ -180,6 +199,9 @@ struct PipelineView: View {
     /// EffectCardView は index で dsp を触る（setValue など）ため、
     /// ここがずれると別のエフェクトを書き換える。
     private struct Row: Identifiable {
+        /// 画面の何行目か。⋯ の Move Up / Move Down が使う。
+        /// List の onMove が渡してくる数と同じ数え方（鎖の添字ではない）。
+        let visible: Int
         let index: Int
         let node: EffeTuneDSP.Node
         var id: UUID { node.id }
@@ -199,7 +221,8 @@ struct PipelineView: View {
         }
         return dsp.chain.indices
             .filter { !hidden.contains($0) }
-            .map { Row(index: $0, node: dsp.chain[$0]) }
+            .enumerated()
+            .map { Row(visible: $0.offset, index: $0.element, node: dsp.chain[$0.element]) }
     }
 
     /// 帯に出す本数。Section は音を触らないので数に入れない。
@@ -211,6 +234,47 @@ struct PipelineView: View {
     private func chainIndices(of offsets: IndexSet) -> IndexSet {
         let visible = rows
         return IndexSet(offsets.compactMap { visible.indices.contains($0) ? visible[$0].index : nil })
+    }
+
+    /// スワイプで消す。**払った行そのものを id で指す。**
+    ///
+    /// ここが .onDelete だったときに壊れていた。.onDelete は消す相手を
+    /// 「ForEach の何番目か」で渡してくるうえ、行を消すアニメーションを
+    /// List が自分で先に走らせる。前の削除のそれが終わらないうちに次を払うと、
+    /// List が抱えている行の集合が rows より**先頭側に短くなり**、そのまま戻らない。
+    /// 短くなった並びの中での位置が渡ってくるので、画面で払ったのとは別の段が消える。
+    /// 5 本を間を空けずに払うと、3 本目のあとで画面が 1 枚だけになり、
+    /// 以降スワイプも受け付けなくなっていた（Tests/UI/DeleteProbe の testDeleteFast）。
+    /// 実測では鎖の側（publish）は最後まで正しく、狂っているのは List の表示だけだった。
+    ///
+    /// .swipeActions のボタンは押されても List は何もしない。鎖が変わった結果として
+    /// 行が 1 つ減るだけなので、数える場所が 1 つになり、ずれようが無い。
+    /// 払える範囲と全部払い切ったときの動きは .onDelete と同じ。
+    ///
+    /// **畳んでいる Section は配下ごと消す。** move(_:to:) が配下を連れて動かすのと
+    /// 同じ扱いにしてある。揃えないと壊れる:
+    ///
+    ///   鎖  [A, B, Section(畳), C, D, E]   画面は 3 行（配下は rows が落とす）
+    ///   Section だけを外すと隠す理由が消えるので、同じ更新で C D E が現れる。
+    ///   ForEach に渡す配列が削除の最中に 3 から 5 へ**増える**。
+    ///   List は消える行を 1 つ前提に対応を組み直すので、そこで食い違い、
+    ///   関係ない位置に区切り線が残り、それより下の行がスワイプを受けなくなる。
+    ///
+    /// 上流は Section を畳んでも行が残る（畳むのはパラメータの表示だけ）ので、
+    /// この食い違いが起きず、Section だけを消してよい
+    /// （js/ui/pipeline/pipeline-selection-manager.js:93 の deleteSelectedPlugins）。
+    /// こちらは幅が無くて行ごと隠しているため、同じにはできない。
+    ///
+    /// 開いている Section は行 1 つだけ消す。配下は見えているので、
+    /// 消えたことにその場で気づける。
+    private func remove(_ id: UUID) {
+        guard let i = dsp.chain.firstIndex(where: { $0.id == id }) else { return }
+        var doomed = IndexSet(integer: i)
+        if dsp.chain[i].isSection && !expanded.contains(id) {
+            doomed.formUnion(IndexSet(integersIn:
+                ETSection.range(after: i, types: dsp.chain.map(\.spec.type))))
+        }
+        dsp.remove(at: doomed)
     }
 
     /// 長押しで動かしたときの置き換え。
@@ -225,12 +289,10 @@ struct PipelineView: View {
         let types = dsp.chain.map(\.spec.type)
 
         var moving = IndexSet()
-        var dragged: Set<UUID> = []      // 掴んだ行だけ。連れて行く配下は入れない
         for offset in source {
             guard visible.indices.contains(offset) else { continue }
             let i = visible[offset].index
             moving.insert(i)
-            dragged.insert(visible[offset].node.id)
             if visible[offset].node.isSection && !expanded.contains(visible[offset].node.id) {
                 moving.formUnion(IndexSet(integersIn: ETSection.range(after: i, types: types)))
             }
@@ -239,26 +301,23 @@ struct PipelineView: View {
 
         let target = visible.indices.contains(destination) ? visible[destination].index
                                                            : dsp.chain.count
+        // 落ちた先が畳んだ Section の中なら、EffeTuneDSP.move が開く
+        // （revealHidden）。連れて行った配下は開く理由に数えない。
         dsp.move(from: moving, to: target)
-        reveal(dragged)
     }
 
-    /// 掴んだ行が畳んだ Section の中に入ったら、その Section を開く。
+    /// ⋯ の Move Up / Move Down。画面の 1 行を、画面の隣へ動かす。
     ///
-    /// 畳んだ Section の下へ落とすと配下に入る。隠す範囲に入った以上そのままでは
-    /// 行が消え、どこへ行ったのか分からなくなる。上流は行が残るので起きない。
-    /// 連れて行った配下は対象にしない。Section ごと動かしたときに、
-    /// 畳んだままにしていたものが勝手に開いてしまうため。
-    private func reveal(_ ids: Set<UUID>) {
-        guard !ids.isEmpty else { return }
-        let types = dsp.chain.map(\.spec.type)
-        for i in dsp.chain.indices
-        where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
-            let inside = ETSection.range(after: i, types: types)
-            if inside.contains(where: { ids.contains(dsp.chain[$0].id) }) {
-                expanded.insert(dsp.chain[i].id)
-            }
-        }
+    /// 数え方は List の onMove と同じで、上へは 1 つ前、下へは 2 つ先
+    /// （自分が抜けるぶん 1 つずれる）。ドラッグと同じ move(_:to:) を通すので、
+    /// 畳んだ Section を動かせば配下も付いてくるし、畳んだ Section の中へ
+    /// 入ったら開く。鎖の添字で動かしていた頃は、隣が画面に無い行だと
+    /// そこへ入り込んで動かした行が消えていた。
+    private func moveRow(_ from: Int, to destination: Int) {
+        // 端の行では項目を押せないようにしてあるが、-1 を渡すと
+        // move(_:to:) が「画面の外＝末尾へ」と解いてしまうので、ここでも止める。
+        guard destination >= 0 else { return }
+        move(IndexSet(integer: from), to: destination)
     }
 }
 
@@ -276,25 +335,48 @@ private struct PipelineToolbar: ToolbarContent {
     /// 拡張が繋がっているか。繋がっていないあいだマスターを沈める。
     let hasPeer: Bool
 
+    /// マスターの読み上げ。入切と、沈めている理由の両方を言う。
+    /// 沈んでいることは目には見えても、読み上げには何も出ないため。
+    private var voiceOverValue: String {
+        let state = dsp.bypass ? "Bypassed" : "On"
+        return hasPeer ? state : state + ", no audio"
+    }
+
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            // 鎖ごとの入切。帯を無くしたのでここへ。
+            // 鎖ぜんぶの入切。帯を無くしたのでここへ。
+            //
+            // **カードの電源と同じ絵を出さない。** 同じ丸い power を置くと、
+            // どのエフェクトのものか分からないまま 1 個だけ余って見える。
+            // 字の入った横長にしてある（MasterPowerToggleStyle）。
+            // 切っているあいだは "Bypassed" と出るので、鎖が並んでいるのに
+            // 音が変わらない理由が、ここと下の帯の両方から読める。
+            //
+            // .scaleEffect は外した。0.7 を掛けると当たり判定まで縮んで
+            // 44pt が 30.8pt になる（scaleEffect は描画と一緒にタッチも縮める）。
+            //
+            // 幅は 44pt から 95pt 前後（枠 75 + 左右の余白 20）に増える。
+            // 中央の LiveStatusStrip の取り分は変わらない。あれは
+            //「バーの中心から右のボタン群の内側まで」の 2 倍で決まっていて
+            //（iPhone 16 で約 97pt）、左からは 2×(196.5-(16+95))=171pt あるので、
+            // 狭いのは相変わらず右側。LiveStatusStrip.swift:15 の見積もりにある
+            //「電源トグル 44」だけが古くなる（あちらは別の担当のファイル）。
             //
             // 音が来ていないあいだは沈めて出す。**bypass は触らない。**
             // 見た目だけの話で、鎖の入切は人が決めた値のまま残す。
             // ここで bypass を立てると、繋がった瞬間に素通しで鳴り始めて、
             // なぜ効かないのか分からなくなる。
             // 押せるままにしてあるのは、繋ぐ前に切っておきたいことがあるため。
-            Toggle("Effects", isOn: Binding(get: { !dsp.bypass },
-                                            set: { dsp.bypass = !$0 }))
-                .toggleStyle(.power)
-                .labelsHidden()
-                .scaleEffect(0.7, anchor: .center)
+            Toggle("All effects", isOn: Binding(get: { !dsp.bypass },
+                                                set: { dsp.bypass = !$0 }))
+                .toggleStyle(.masterPower)
                 .grayscale(hasPeer ? 0 : 1)
-                .opacity(hasPeer ? 1 : 0.4)
+                // 0.4 だと 13pt の字が読めない。沈んでいると分かる所で止める。
+                .opacity(hasPeer ? 1 : 0.55)
                 .animation(.easeInOut(duration: 0.2), value: hasPeer)
-                .accessibilityLabel("Effect pipeline")
-                .accessibilityValue(hasPeer ? "" : "No audio")
+                .accessibilityLabel("All effects")
+                .accessibilityValue(voiceOverValue)
+                .accessibilityHint("Turns every effect in the pipeline on or off")
         }
         ToolbarItem(placement: .principal) {
             // 帯を 1 行使うのをやめて、ナビゲーションの中に入れた。
@@ -358,6 +440,55 @@ private struct ConnectBanner: View {
                 // コントロールセンターを開くのと同じことを、ここでできる。
                 RoutePicker()
                     .frame(width: 40, height: 40)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// マスターを切っているあいだ、鎖の頭に出る。
+///
+/// ツールバーの外に何も出ないと、カードが並んでいるのに音が変わらない理由が
+/// 画面から読めない。上流は master を切るとプラグイン名を全部灰に落として
+/// これを見せている（js/ui/pipeline/pipeline-core.js:301-322 の plugin-disabled）。
+/// こちらはカード側に手を入れず、1 枚の帯で言う。
+///
+/// Now Playing からも切れる（NowPlaying.swift の再生/一時停止が bypass を動かす）ので、
+/// この画面を触っていないのに切れていることがある。なおさら出す。
+private struct BypassBanner: View {
+    let turnOn: () -> Void
+
+    var body: some View {
+        Card {
+            HStack(spacing: 12) {
+                Image(systemName: "power")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("All effects bypassed")
+                        .font(.system(size: 15, weight: .semibold))
+                    // 鎖が空のときと同じ言い方にする（下の EmptyChainRow）。
+                    Text("The audio passes through untouched.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 4)
+
+                Button(action: turnOn) {
+                    Text("Turn On")
+                        .font(.system(size: 13, weight: .semibold))
+                        // 見た目を膨らませるためではなく、押せる面を 44pt に
+                        // 届かせるための余白。字が 13pt だと、style が足す
+                        // 上下 7pt だけでは 30pt 前後にしかならない。
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.borderedProminent)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

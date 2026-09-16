@@ -15,6 +15,10 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "Vendor" / "effetune" / "package.json"
 DST = ROOT / "project.yml"
+# 上流の版を Swift からも読めるようにする。MARKETING_VERSION と同じ値になるが、
+# あちらは「このアプリの版」でこちらは「どの EffeTune の dsp を積んだか」。
+# 意味が違うので別の事実として持つ。
+SWIFT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "UpstreamVersion.swift"
 
 
 def main() -> int:
@@ -33,6 +37,19 @@ def main() -> int:
         return 1
     if new != s:
         DST.write_text(new, encoding="utf-8", newline="\n")
+    header = [
+        "//  UpstreamVersion.swift",
+        "//  Tools/gen_version.py が作る。手で直さないこと。",
+        "//",
+        "//  同梱している EffeTune の版（Vendor/effetune/package.json）。",
+        "//  アプリの版は同じ数字に揃えてあるが、意味が違う。",
+        "//  あちらは「このアプリの何度目の配布か」、",
+        "//  こちらは「どの EffeTune の dsp を積んだか」。",
+        "",
+        'let ETUpstreamVersion = "%s"' % version,
+        "",
+    ]
+    SWIFT.write_text(chr(10).join(header), encoding="utf-8", newline=chr(10))
     print("version: %s" % version)
     return 0
 

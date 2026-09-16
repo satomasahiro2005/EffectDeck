@@ -2,18 +2,32 @@
 //  初回だけ出す案内。
 //
 //  このアプリは普通ではない形をしている。音を出すのは他のアプリで、
-//  それを横取りする仕掛けは別のアプリ（EffeTune Live Bridge）に入っていて、
+//  それを横取りする Media Device Extension はこのアプリが同梱していて
+//  （project.yml の EffeTuneLive が EffeTuneLiveExtension を embed している）、
 //  つなぐのはコントロールセンターの出力先。
 //  黙っていると「音が来ない」で詰まるので、最初に一度だけ道筋を見せる。
 //
-//  Bridge は入れるだけでよい（開かなくても拡張は登録される。実機で確認済み）。
-//  だから「Bridge を開いてください」とは言わない。
+//  **Bridge という別アプリはもう無い。** 以前は拡張を別アプリに入れていたが、
+//  '!pla' の判定が本体の entitlement ひとつで決まると分かって 1 本になった。
+//  案内に Bridge の話が無いのはそのため。
 
+import Combine
 import SwiftUI
 
 struct WelcomeView: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject var io: AudioIO
+
+    /// **観測しない。** tick() が 3.3Hz、pollTelemetry() が 30Hz で回るので、
+    /// @ObservedObject にすると案内ぜんぶが毎秒作り直される。
+    /// 読むのは hasPeer 1 つだけなので、下の LiveStatus に閉じ込めて
+    /// そこで publisher から @State へ写す（PipelineView が io を @State へ写しているのと同じ扱い）。
+    let io: AudioIO
+
+    /// 初回の案内か、⋯ の「How it works」で開き直したか。
+    /// PipelineView は初回だけ自動で出し、閉じたときにこれを立てる
+    /// （PipelineView の welcomeSeen）。開き直したときに「Welcome / Start」と
+    /// 出すと、何も始まらないのに始まりそうに読めるので、見出しを分ける。
+    @AppStorage("welcome.seen") private var welcomeSeen = false
 
     var body: some View {
         NavigationStack {
@@ -26,15 +40,15 @@ struct WelcomeView: View {
                              title: step.title, detail: step.detail)
                     }
 
-                    liveStatus
+                    LiveStatus(io: io)
                 }
                 .padding(22)
             }
-            .navigationTitle("Welcome")
+            .navigationTitle(welcomeSeen ? "How it works" : "Welcome")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Start") { dismiss() }
+                    Button(welcomeSeen ? "Done" : "Start") { dismiss() }
                 }
             }
         }
@@ -54,18 +68,31 @@ struct WelcomeView: View {
         }
     }
 
-    /// 繋がっていれば、案内を読んでいる間に緑になる。
-    private var liveStatus: some View {
-        HStack(spacing: 10) {
-            Image(systemName: io.hasPeer ? "checkmark.circle.fill" : "circle.dotted")
-                .foregroundStyle(io.hasPeer ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            Text(io.hasPeer ? "Audio is coming in." : "Waiting for audio.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+    /// 繋がっていれば、案内を読んでいる間に切り替わる。
+    ///
+    /// io を読むのはここだけ。この型の body しか作り直されないよう、
+    /// 案内本体から切り離してある。
+    private struct LiveStatus: View {
+        let io: AudioIO
+        @State private var hasPeer = false
+
+        var body: some View {
+            HStack(spacing: 10) {
+                Image(systemName: hasPeer ? "checkmark.circle.fill" : "circle.dotted")
+                    .foregroundStyle(hasPeer ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                Text(hasPeer ? "Audio is coming in." : "Waiting for audio.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial,
+                        in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+            // 初期値は購読の初回配信に頼らず合わせる（PipelineView の onAppear と同じ）。
+            .onAppear { hasPeer = io.hasPeer }
+            .onReceive(io.$hasPeer) { hasPeer = $0 }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 
     private struct StepSpec {
@@ -84,11 +111,15 @@ struct WelcomeView: View {
                          EffeTune shows up there like a speaker. Picking it sends that app's \
                          audio here instead.
                          """),
+        // 「ON バッジ」とは書かない。**そのバッジはもう無い。**
+        // 鎖ぜんぶの入切はツールバー左上の電源ボタンで、カード 1 枚ずつのも
+        // 同じ電源の絵（Components.swift の PowerToggleStyle）。
         StepSpec(icon: "slider.horizontal.3",
                  title: "Add effects",
                  detail: """
-                         Tap + to browse. They run in order, top to bottom. Turning off the ON \
-                         badge at the top lets the sound through untouched.
+                         Tap + to browse. They run in order, top to bottom. The power button \
+                         at the top left turns the whole chain off, so the sound passes \
+                         through untouched.
                          """),
     ]
 

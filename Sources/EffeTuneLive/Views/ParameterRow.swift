@@ -137,73 +137,96 @@ struct ParameterRow: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 6) {
+            headRow
+            // 要素を選ぶ札は名前の下に置く。上に置くと、何の番号なのかを言わないまま
+            // 数字だけが並ぶ。
             if param.isArray {
                 bandPicker
             }
-
-            switch param.kind {
-            case .toggle:
-                Toggle(isOn: Binding(get: { value >= 0.5 }, set: { set($0 ? 1 : 0) })) {
-                    Text(title).font(.system(size: 14))
-                }
-
-            case .enumeration(let options):
-                HStack {
-                    Text(title).font(.system(size: 14))
-                    Spacer(minLength: 8)
-                    Picker(title, selection: Binding(
-                        get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
-                        set: { set(Float($0)) })
-                    ) {
-                        ForEach(Array(options.enumerated()), id: \.offset) { i, name in
-                            Text(name).tag(i)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                }
-
-            case .number(let lo, let hi, let step, _, let isInteger):
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.system(size: 14))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 4)
-                    valueField
-                }
-                if hi > lo {
-                    // step に 0 を渡すと Slider は落ちる。刻みが無いものは
-                    // step を取らない方を使う。params.json に step が無い
-                    // パラメータがあるので、ここを分けないと開いた瞬間に死ぬ。
-                    let stride = step > 0 ? Double(step) : (isInteger ? 1 : 0)
-                    let binding = Binding(
-                        get: { Double(value) },
-                        set: { set(isInteger ? Float($0.rounded()) : Float($0)) })
-                    switch scale(lo: lo, hi: hi) {
-                    case .logarithmic:
-                        // 位置は対数、値はリニアのまま。刻みは付けない（上流も値を丸めない）。
-                        // 読み上げは位置ではなく値を渡す。
-                        ETLogSlider(value: binding, range: Double(lo)...Double(hi))
-                            .accessibilityValue(param.format(value))
-                    case .zeroAwareLog:
-                        ETZeroAwareLogSlider(value: binding, maximum: Double(hi))
-                            .accessibilityValue(param.format(value))
-                    case .linear:
-                        if stride > 0 {
-                            Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
-                        } else {
-                            Slider(value: binding, in: Double(lo)...Double(hi))
-                        }
-                    }
-                }
-            }
+            valueSlider
         }
         .padding(.vertical, 2)
     }
 
+    /// 名前と、値そのものを触る所。
+    @ViewBuilder
+    private var headRow: some View {
+        switch param.kind {
+        case .toggle:
+            Toggle(isOn: Binding(get: { value >= 0.5 }, set: { set($0 ? 1 : 0) })) {
+                Text(title).font(.system(size: 14))
+            }
+
+        case .enumeration(let options):
+            HStack {
+                Text(title).font(.system(size: 14))
+                Spacer(minLength: 8)
+                Picker(title, selection: Binding(
+                    get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
+                    set: { set(Float($0)) })
+                ) {
+                    ForEach(Array(options.enumerated()), id: \.offset) { i, name in
+                        Text(name).tag(i)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+        case .number:
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                valueField
+            }
+        }
+    }
+
+    /// つまみ。数値のパラメータだけが持つ。
+    @ViewBuilder
+    private var valueSlider: some View {
+        if case .number(let lo, let hi, let step, _, let isInteger) = param.kind, hi > lo {
+            // step に 0 を渡すと Slider は落ちる。刻みが無いものは
+            // step を取らない方を使う。params.json に step が無い
+            // パラメータがあるので、ここを分けないと開いた瞬間に死ぬ。
+            let stride = step > 0 ? Double(step) : (isInteger ? 1 : 0)
+            let binding = Binding(
+                get: { Double(value) },
+                set: { set(isInteger ? Float($0.rounded()) : Float($0)) })
+            switch scale(lo: lo, hi: hi) {
+            case .logarithmic:
+                // 位置は対数、値はリニアのまま。刻みは付けない（上流も値を丸めない）。
+                // 読み上げは位置ではなく値を渡す（この 2 つは Binding が位置なので、
+                // 黙っていると 0-1 や 0-1000 の位置が読まれる）。
+                // 単位は名前の側に付いているので、ここも欄と同じ displayValue。
+                ETLogSlider(value: binding, range: Double(lo)...Double(hi))
+                    .accessibilityValue(displayValue)
+            case .zeroAwareLog:
+                ETZeroAwareLogSlider(value: binding, maximum: Double(hi))
+                    .accessibilityValue(displayValue)
+            case .linear:
+                if stride > 0 {
+                    Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
+                } else {
+                    Slider(value: binding, in: Double(lo)...Double(hi))
+                }
+            }
+        }
+    }
+
+    /// 行の名前。単位はここに付ける。上流も名前の側だけに付けていて、数値の欄には付けない
+    /// （plugin-base.js:1305 と 1402 が `${label}${unit ? ' (' + unit + ')' : ''}:`、
+    ///  1318-1326 で作る number 入力には単位が入らない）。
+    ///
+    /// 配列は「どの要素を触っているか」も名前に入れる（"Balance 3 (%)"）。
+    /// 札の上に見出しを置く形にしていたが、それだと同じ名前が 2 回出るうえ、
+    /// 単位が名前から落ちて（配列だけ unitSuffix を外していた）どこにも出なかった。
     private var title: String {
-        param.isArray ? param.label : param.label + unitSuffix
+        let base = param.isArray ? "\(param.label) \(slot + 1)" : param.label
+        return base + unitSuffix
     }
 
     /// この行のつまみをどの目盛りで置くか。
@@ -233,6 +256,26 @@ struct ParameterRow: View {
         return ""
     }
 
+    /// 数値欄に出す文字列。単位は名前の側に付いているので、ここには付けない。
+    ///
+    /// 付けると単位が 1 行に 2 回出る（"Volume (dB)" と "0.00 dB"）うえ、
+    /// 後ろに置けない単位が壊れる。Compressor と Expander の Ratio は単位が "1:" で、
+    /// 値の後ろに回すと "2.00 1:" になる（EffectCatalog.swift:270,286。
+    /// 上流は compressor.js:797 がこの "1:" を名前の側へ渡している）。
+    /// Digital Error Emulator と G726 の Bit Error Rate の "10^x" も同じ。
+    ///
+    /// 桁数は ETParam.format と同じにしてある（EffectSpec.swift:43-46）。
+    private var displayValue: String {
+        guard case .number(_, _, _, _, let isInteger) = param.kind else {
+            return param.format(value)
+        }
+        let v = value
+        if isInteger { return String(Int(v.rounded())) }
+        if abs(v) >= 100 { return String(format: "%.0f", v) }
+        if abs(v) >= 10 { return String(format: "%.1f", v) }
+        return String(format: "%.2f", v)
+    }
+
     /// 数値欄。触ると打ち込める。
     ///
     /// Text に onTapGesture を足す形だと、支援技術から操作できない
@@ -240,7 +283,7 @@ struct ParameterRow: View {
     /// だから常に TextField を置く。編集していない間は書式付きの値を出す。
     private var valueField: some View {
         TextField(param.label, text: Binding(
-            get: { editing ? draft : param.format(value) },
+            get: { editing ? draft : displayValue },
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
@@ -261,8 +304,9 @@ struct ParameterRow: View {
                     commit()
                 }
             }
-            .accessibilityLabel(param.label)
-            .accessibilityValue(param.format(value))
+            // 読み上げも画面と同じ切り方にする。単位は名前、数だけが値。
+            .accessibilityLabel(title)
+            .accessibilityValue(displayValue)
     }
 
     private func commit() {
@@ -285,28 +329,24 @@ struct ParameterRow: View {
     }
 
     /// EffeTune のバンドタブと同じ考え方。要素を 1 つ選んで、その値だけを触る。
+    ///
+    /// 名前は上の行が出す（"Balance 3 (%)"）。ここで見出しとして繰り返さない。
     private var bandPicker: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(param.label.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.secondary)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(0..<param.count, id: \.self) { i in
-                        Button {
-                            slot = i
-                        } label: {
-                            Text("\(i + 1)")
-                                .font(.system(size: 12, weight: slot == i ? .bold : .regular))
-                                .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-                                .frame(minWidth: 30, minHeight: 26)
-                                .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(0..<param.count, id: \.self) { i in
+                    Button {
+                        slot = i
+                    } label: {
+                        Text("\(i + 1)")
+                            .font(.system(size: 12, weight: slot == i ? .bold : .regular))
+                            .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                            .frame(minWidth: 30, minHeight: 26)
+                            .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
+                                        in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(param.label) \(i + 1)")
                 }
             }
         }
