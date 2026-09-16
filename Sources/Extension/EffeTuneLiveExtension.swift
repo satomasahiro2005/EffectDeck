@@ -46,13 +46,36 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いので、
     /// 登録を落とす代わりにプロセスごと終える。次に選ばれたときは
     /// システムが新しいプロセスを立ち上げ、毎回 1 回目の登録になる。
+    ///
+    /// **すぐには落とさない。** 2026-09-16 の実機ログ:
+    /// ```
+    /// Error acquiring assertion: <Error Domain=RBSAssertionErrorDomain Code=2
+    ///   "Specified target process 11030 does not exist">
+    /// Failed to get MediaDeviceDiscoveryOrBridge assertion, for instance
+    ///   <SystemMediaCastingExtension<EffeTune:media-device-protocol.ai.nemut.effetune>
+    /// -FigCustomEndpoint- signalled err=-16729
+    /// Evicted device from cache for protocol
+    ///   'media-device-protocol.ai.nemut.effetune' due to activation failure
+    /// All devices evicted for protocol …; removing protocol entry
+    /// Cleared cache from disk
+    /// ```
+    /// システムはこちらのプロセスに `MediaDeviceDiscoveryOrBridge` の assertion を
+    /// 取りに来る。`exit(0)` を次の回で撃つと、その前に居なくなっていることがある。
+    /// 取れないと activation failure 扱いになり、**この protocol のキャッシュごと
+    /// 捨てられて**ルートピッカーの項目がくるくるのまま残る。
+    /// 猶予を置いて、システムの後始末が終わってから落ちる。
+    private static let quitGrace: TimeInterval = 2
+
     private func quit(_ why: String) {
-        log.notice("終了する: \(why, privacy: .public)")
+        log.notice("終了する: \(why, privacy: .public) grace=\(Self.quitGrace)")
         reportTimer?.invalidate(); reportTimer = nil
         EffeTuneDriver.shared.stopCapture()
         ETLinkSender.shared.stop()
         EffeTuneDriver.shared.unpublish()
-        DispatchQueue.main.async { exit(0) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.quitGrace) {
+            log.notice("終了する: 猶予が明けた")
+            exit(0)
+        }
     }
 
     /// デバイスの id。AudioServerPlugIn の kAudioDevicePropertyDeviceUID と一致させる。

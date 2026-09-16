@@ -158,6 +158,10 @@ final class AudioIO: ObservableObject {
                                    maxFrames: UInt32(Double(Self.capacity) * factor))
         // ロック画面の再生/一時停止は、曲ではなく鎖の入切に割り当てる。
         NowPlaying.start { on in EffeTuneDSP.shared.bypass = !on }
+        // 測るためだけ。`-ETNowPlaying first` のときだけ、start()（setCategory）より
+        // 前に now playing を名乗る。前後の入れ替わりがループバックの原因なら
+        // 毎回 rsp=1 になるはず。
+        NowPlaying.claimBeforeSession()
     }
 
     /// 音の経路に関わる設定が変わったら組み直す。一瞬切れる。
@@ -343,7 +347,13 @@ final class AudioIO: ObservableObject {
             let outs = session.currentRoute.outputs
                 .map { "\($0.portType.rawValue):\($0.portName)" }
                 .joined(separator: ",")
-            log.notice("route out=\(outs, privacy: .public)")
+            // **経路が決まった直後の rsp を残す。**
+            // routeSharingPolicy はこちらが一度も設定していないので、
+            // 1 (LongFormAudio) が出たら系が SystemMusic へ移したということ。
+            // np は NowPlaying を止めているか（-ETNoNowPlaying 1）。
+            let line = "session out=\(outs) rsp=\(session.routeSharingPolicy.rawValue) np=\(NowPlaying.mode.rawValue)"
+            log.notice("\(line, privacy: .public)")
+            if ETConsoleLog.on { print(line) }
             refreshRoute()
         } catch {
             let ns = error as NSError
@@ -539,7 +549,7 @@ final class AudioIO: ObservableObject {
             // どちらに居ても仮想デバイスを指す。ループバックに入る条件の判別に使う。
             let session = AVAudioSession.sharedInstance()
             let ports = session.currentRoute.outputs.map(\.portType.rawValue).joined(separator: "+")
-            let line = "tick out=\(route) rsp=\(session.routeSharingPolicy.rawValue) ports=\(ports) ovr=\(overriding) applied=\(applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(hasPeer) recv=\(received) load=\(load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(render?.pipeStatus ?? 0)"
+            let line = "tick out=\(route) rsp=\(session.routeSharingPolicy.rawValue) np=\(NowPlaying.mode.rawValue) ports=\(ports) ovr=\(overriding) applied=\(applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(hasPeer) recv=\(received) load=\(load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(render?.pipeStatus ?? 0)"
             log.notice("\(line, privacy: .public)")
             // **無線だとログが取れない。**
             // log stream --device はこの Xcode で無くなり、devicectl にも

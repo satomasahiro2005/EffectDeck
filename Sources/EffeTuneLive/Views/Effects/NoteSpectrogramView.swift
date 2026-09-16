@@ -125,8 +125,20 @@ enum ETNoteKeyboard {
     static let whiteClasses = [0, 2, 4, 5, 7, 9, 11]
     /// 黒鍵の音名。同 :32。
     static let blackClasses: Set<Int> = [1, 3, 6, 8, 10]
-    /// 音名ごとの色。同 :43-56。Note Colors のときだけ使う。
-    static let noteColors: [(r: Double, g: Double, b: Double)] = [
+    /// 彩度を上げる。上流の表は灰色に寄っていて、升目が小さいと色が読めない。
+    /// 明るさ（Rec.709 の輝度）を軸に外へ広げ、少し持ち上げる。
+    private static func vivid(_ c: (r: Double, g: Double, b: Double))
+        -> (r: Double, g: Double, b: Double) {
+        let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+        let gain = 1.55, lift = 1.12
+        func f(_ v: Double) -> Double { min(255, max(0, (y + (v - y) * gain) * lift)) }
+        return (f(c.r), f(c.g), f(c.b))
+    }
+
+    /// 音名ごとの色。同 :43-56 を vivid で広げたもの。Note Colors のときだけ使う。
+    static let noteColors: [(r: Double, g: Double, b: Double)] = rawNoteColors.map(vivid)
+
+    private static let rawNoteColors: [(r: Double, g: Double, b: Double)] = [
         (170, 98, 86), (161, 105, 57), (140, 115, 42), (109, 124, 55),
         (69, 130, 84), (19, 132, 116), (0, 130, 146), (56, 123, 167),
         (96, 115, 175), (129, 107, 168), (153, 99, 148), (167, 96, 119)
@@ -486,17 +498,29 @@ private struct NoteSpectrogramGraph: View {
         let rect = CGRect(x: 0, y: 0, width: rollWidth, height: frame.height)
         let pieces = band.pieces(in: rect, midi: range, slots: slots)
         guard !pieces.isEmpty else { return }
+        // **最近傍で貼る。**
+        // 画像は 88 列（半音 1 つが 1 列）しか無く、画面の幅まで引き伸ばす。
+        // 既定の平滑化が掛かると半音の境目と、音が始まった／終わった縦の線が
+        // ぼやける。升目の絵なので拡大は最近傍でよい。
+        //
+        // **`interpolation` は `GraphicsContext` ではなく `Image` の修飾子。**
+        // `context.interpolation = .none` は通らない（has no member）。
+        func tile(_ image: CGImage) -> Image {
+            Image(decorative: image, scale: 1)
+                .interpolation(.none)
+                .antialiased(false)
+        }
         if display.color == .rainbow {
             // 画像が色を持っているので、そのまま貼る。
             for piece in pieces {
-                context.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
+                context.draw(tile(piece.image), in: piece.rect)
             }
         } else {
             // 画像は alpha だけを持つ。それで型を抜いて .tint を流し込む。
             context.drawLayer { layer in
                 layer.clipToLayer { mask in
                     for piece in pieces {
-                        mask.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
+                        mask.draw(tile(piece.image), in: piece.rect)
                     }
                 }
                 layer.fill(Path(rect), with: ETGraphShading.curve)
@@ -994,8 +1018,23 @@ final class ETNoteBand: ObservableObject {
         return ETNoteKeyboard.fineColor(pitch: pitch)
     }
 
-    private func write(row: Int, column: Int, value: UInt8,
+    /// 確からしさを濃さへ写す表。
+    ///
+    /// そのまま alpha にすると、模型が返す中くらいの値が一面に薄く乗って
+    /// 音の形が沈む。**下を切って上を伸ばす。**
+    /// 0.12 未満は消す（背景が澄む）、0.80 で上限に当てる。
+    /// 指数 0.75 は弱い音を見失わないためのわずかな持ち上げ。
+    /// 上流（note_spectrogram.js）は素通しなので、ここだけ形が違う。
+    private static let shaped: [UInt8] = (0...255).map { v in
+        let x = Double(v) / 255
+        let lo = 0.12, hi = 0.80
+        let t = min(max((x - lo) / (hi - lo), 0), 1)
+        return UInt8((pow(t, 0.75) * 255).rounded())
+    }
+
+    private func write(row: Int, column: Int, value raw: UInt8,
                        color: (r: Double, g: Double, b: Double)?) {
+        let value = Self.shaped[Int(raw)]
         let offset = (row * Self.columns + column) * 4
         if let color = color {
             // 前乗算なので、確からしさを掛けた色を置く。
