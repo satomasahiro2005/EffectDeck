@@ -19,5 +19,22 @@
 	<array>
 		<string>group.ai.nemut.effetune</string>
 	</array>
+	<!-- iCloud の key-value store（CloudMirror）。
+	     プリセットと鎖を写すためだけに使う。書類も CloudKit も使わない。
+	     署名時に C82ST8T9MN.ai.nemut.effetune へ展開される。
+
+	     **$(CFBundleIdentifier) ではなく $(PRODUCT_BUNDLE_IDENTIFIER) で書く。**
+	     Xcode が iCloud の capability を付けるときに書くのは前者だが、
+	     このプロジェクトでは CFBundleIdentifier はビルド設定ではなく
+	     Info.plist の鍵で、その値自体が $(PRODUCT_BUNDLE_IDENTIFIER) から来る
+	     （Sources/EffeTuneLive/Info.plist:5-6）。実在するビルド設定
+	     （project.yml:70）の方で書けば、展開されるかどうかを確かめずに済む。
+	     entitlements でビルド変数を使うのはこれが最初で、既存の 2 鍵は
+	     どちらも literal（group.ai.nemut.effetune）。
+
+	     **拡張側（Extension.entitlements）には足さない。**
+	     拡張は UserDefaults を触らない。 -->
+	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
+	<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 </dict>
 </plist>

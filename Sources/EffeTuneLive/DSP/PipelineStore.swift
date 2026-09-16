@@ -47,6 +47,30 @@ enum PipelineStore {
         }
     }
 
+    /// 読み込んだ鎖をショート形式へ戻す。取り込みでロング形式のプリセットを
+    /// 受けたときに使う（ETBackup.presets(from:catalog:)）。
+    ///
+    /// 上の `shortForm(_ chain:)` と同じものを出すが、入口が Node ではなく Loaded。
+    /// Node を作るには instance が要り、鎖に載せずに作ることはできない。
+    static func shortForm(_ loaded: [Loaded]) -> [[String: Any]] {
+        loaded.map { item in
+            var o: [String: Any]
+            if ETSection.isSection(item.spec) {
+                // Section は ETParam を持たない（parameters(of:) と同じ扱い）。
+                o = [ETSection.commentKey: item.sectionName]
+            } else {
+                o = ETParamCoding.encode(params: item.spec.params, values: item.values)
+                if !item.irId.isEmpty { o[ETIRLoader.presetKey] = item.irId }
+            }
+            o["nm"] = item.spec.name
+            o["en"] = item.enabled
+            if item.inputBus  != 0 { o["ib"] = Int(item.inputBus) }
+            if item.outputBus != 0 { o["ob"] = Int(item.outputBus) }
+            if let ch = ETChannel.channel(from: item.channelSpec) { o["ch"] = ch }
+            return o
+        }
+    }
+
     /// ロング形式。ファイルに書き出すときに使う。
     static func longForm(_ chain: [EffeTuneDSP.Node]) -> [String: Any] {
         let list: [[String: Any]] = chain.map { node in
@@ -155,11 +179,27 @@ enum PipelineStore {
 
     // MARK: - 端末に残す
 
-    private static let lastKey = "pipeline.last"
+    /// **private ではない。** CloudMirror が iCloud 側を同じ鍵で読む。
+    /// 綴りを 2 か所に書くと、片方だけ直したときに黙って別の鍵になる。
+    static let lastKey = "pipeline.last"
 
     static func saveLast(_ chain: [EffeTuneDSP.Node]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: shortForm(chain)) else { return }
+        // **鍵の並びを固定する。**下の「同じなら書かない」が字面の比較なので、
+        // 起動ごとに並びが変わると毎回「違う」と出る。
+        guard let data = try? JSONSerialization.data(withJSONObject: shortForm(chain),
+                                                     options: [.sortedKeys]) else { return }
+
+        // **同じ中身なら書かない。**
+        // restore() も rebuildAll() も publish() を通り、publish() の末尾は
+        // persist() なので、読んだままの鎖がそのまま書き戻される。手元では
+        // 何も変わらないが、iCloud では「最後に編集した端末」ではなく
+        // 「最後に起動した端末」が勝つ形になる。半年触っていない端末を
+        // 1 度開くだけで、別の端末のその日の編集が消える。
+        guard UserDefaults.standard.data(forKey: lastKey) != data else { return }
+
         UserDefaults.standard.set(data, forKey: lastKey)
+        // 正はいま書いた UserDefaults の側。iCloud へは写すだけ（CloudMirror）。
+        CloudMirror.mirror(data, forKey: lastKey)
     }
 
     static func loadLast(catalog: [ETEffect]) -> [Loaded]? {
