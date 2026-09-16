@@ -114,6 +114,16 @@ Change the bundle IDs to yours, then create the following in the Apple Developer
    stops the extension from launching
 3. App IDs for the app and the extension
 
+## Not the EffeTune project
+
+EffeTune Live is a separate app built by nemut.ai. It is **not affiliated with, endorsed
+by, or supported by [EffeTune](https://github.com/Frieve-A/effetune) or its author.**
+It bundles EffeTune's DSP core under the MIT license and says so, and that is the whole
+of the relationship.
+
+Send anything about this app to nemut.ai. Do not open issues about it on the EffeTune
+repository. If an official iOS version ever appears, this app stops shipping.
+
 ## License
 
 MIT. See [NOTICE.md](NOTICE.md) for what is bundled.
