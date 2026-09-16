@@ -196,6 +196,41 @@ def main() -> int:
                       json.dumps(x["attributes"], ensure_ascii=False))
         return 0
 
+    if cmd == "adp-url":
+        # ADP の zip の URL だけを出す。ASC が直接くれる（期限つき）。
+        vid = sys.argv[2]
+        d = call("GET", f"/v1/appStoreVersions/{vid}/alternativeDistributionPackage")
+        if not d.get("data"):
+            print("!! ADP はまだ無い", file=sys.stderr)
+            return 1
+        aid = d["data"]["id"]
+        vs = call("GET", f"/v1/alternativeDistributionPackages/{aid}/versions")
+        for v in vs.get("data", []):
+            a = v["attributes"]
+            if a.get("state") == "COMPLETED" and a.get("url"):
+                print(a["url"])
+                return 0
+        print("!! COMPLETED の版が無い", file=sys.stderr)
+        return 1
+
+    if cmd == "adp-variants":
+        # 変種を "publicId<TAB>url" で出す。manifest の assetPath と対で使う。
+        vid = sys.argv[2]
+        d = call("GET", f"/v1/appStoreVersions/{vid}/alternativeDistributionPackage")
+        if not d.get("data"):
+            print("!! ADP はまだ無い", file=sys.stderr)
+            return 1
+        aid = d["data"]["id"]
+        vs = call("GET", f"/v1/alternativeDistributionPackages/{aid}/versions")
+        for v in vs.get("data", []):
+            if v["attributes"].get("state") != "COMPLETED":
+                continue
+            va = call("GET",
+                      f"/v1/alternativeDistributionPackageVersions/{v['id']}/variants")
+            for x in va.get("data", []):
+                print(f'{x["id"]}	{x["attributes"]["url"]}')
+        return 0
+
     if cmd == "get":
         print(json.dumps(call("GET", sys.argv[2]), indent=2, ensure_ascii=False))
         return 0

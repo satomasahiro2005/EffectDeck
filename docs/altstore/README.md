@@ -43,14 +43,25 @@ python3 ~/asc.py adp-show <version-id>         ADP → その版 → 変種ま�
 
 **自分で作るものではない。公証のときに Apple が生成する。**
 
-1. `python3 ~/asc.py adp-show <version-id>` で ADP の ID と変種を読む
-   （通る前は「ADP はまだ無い」＝ `alternativeDistributionPackage` が `data: null`）
-2. `GET https://api.altstore.io/adps/<ADP ID>` → `downloadURL` が返る
-3. 落として **階層をそのまま** 置く。`manifest.json` は**一切いじらない**
-   （各ファイルのハッシュが変わると使えなくなる）
-4. `nemut.ai` の `public/effetune-live/adp/` へ置いて push（GitHub Actions が Cloudflare へ出す）
+> **`GET https://api.altstore.io/adps/<ADP ID>` は使わない。** ASC の ADP ID を渡すと
+> 404 が返る（`{"statusCode":404,"file":"AltMarketplaceKit/GetADP.swift","line":33}`）。
+> **ASC が zip の URL を直接くれる**ので、そちらから落とす。
 
-一式は `~/adp_fetch.sh` が 1 から 4 の手前までやる。
+1. `python3 ~/asc.py adp-url <version-id>` で zip の URL を取る
+   （通る前は「ADP はまだ無い」＝ `alternativeDistributionPackage` が `data: null`）
+2. 落として展開する。**中身は `manifest.json` と `signature` の 2 つだけ**（約 3KB）
+3. `manifest.json` が `variant/<publicId>.ipa` を**相対で**指しているので、
+   `python3 ~/asc.py adp-variants <version-id>` が出す URL から
+   その 2 本も落として同じ階層に置く。
+   落としたら sha256 が ASC の `fileChecksum` と一致するか見る
+4. `python3 Tools/adp_place.py <pkg のディレクトリ>` で
+   `new-nemutai/public/effetune-live/adp/` へ階層のまま写し、`source.json` の
+   `size` を変種の実寸に合わせる。**`manifest.json` は一切いじらない**
+   （各ファイルのハッシュが変わると使えなくなる）
+5. `new-nemutai` を commit して push（GitHub Actions が Cloudflare へ出す）
+
+1 から 3 は `~/adp_fetch.sh` にしてある。
+zip の URL には `accessKey` が付いていて **2 日で切れる**（`urlExpirationDate`）。
 
 ## source.json
 
