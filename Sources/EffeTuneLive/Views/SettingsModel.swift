@@ -286,7 +286,7 @@ struct ETIssue: Identifiable {
                 id: "loopback",
                 tone: .warning,
                 systemImage: "arrow.triangle.2.circlepath",
-                title: "Output is set to EffeTune",
+                title: "Output is set to EffeTune Live",
                 detail: "The processed sound is going back into this app instead of to a "
                       + "speaker, so you hear nothing and the level keeps rising. Open "
                       + "Control Center, press and hold the audio card, and pick a real "
@@ -398,6 +398,12 @@ struct ETDiagnostics {
             ETDiagnosticLine(label: "Effects running",
                              value: "\(io.applied) of \(dsp.chain.filter { !$0.isSection }.count)"),
             ETDiagnosticLine(label: "Output", value: io.outputRoute),
+            // **名前は 2 系統ある**（Sources/Shared/ETNames.h）。
+            // 上の Output は「いまどこへ出しているか」で、普段はスピーカー。
+            // 下の 2 行は「こちらが名乗っている字」。ここは診断なので、
+            // 見出しは名詞にして値を並べるだけにする。
+            ETDiagnosticLine(label: "Route name", value: ET_ROUTE_NAME),
+            ETDiagnosticLine(label: "Virtual device", value: ET_DRIVER_NAME),
             ETDiagnosticLine(label: "Engine state", value: io.status),
             ETDiagnosticLine(label: "DSP ABI", value: ETAppInfo.abi),
         ]

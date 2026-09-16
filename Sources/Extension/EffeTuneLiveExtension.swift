@@ -174,7 +174,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         log.notice("endpoints=\(eps.map { $0.debugDescription }.joined(separator: ","), privacy: .public)")
         return MediaOutputDevice(
             id: Self.deviceUUID,
-            displayName: "EffeTune",
+            displayName: ET_ROUTE_NAME,
             capabilities: [.realtimeAudioStreaming],
             canGroupWithCurrentlyActivatedDevices: false,
             deviceType: .hifiSpeaker,

@@ -86,7 +86,7 @@ void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
     }
     d->length = ET_PIPE_HEADER + count * ET_PIPE_NODE;
     for (uint32_t i = 0; i < count; i++) {
-        if (nodes[i].enabled && nodes[i].sectionGate) d->active++;
+        if (nodes[i].enabled == 1 && nodes[i].sectionGate) d->active++;
     }
 
     atomic_store_explicit(&gPending, slot, memory_order_release);

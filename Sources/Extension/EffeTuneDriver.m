@@ -20,6 +20,7 @@
 //  そこが EffeTune の挿入点になる。
 
 #import "EffeTuneDriver.h"
+#import "ETNames.h"
 #import <CoreAudio/AudioServerPlugIn.h>
 #import <os/log.h>
 #import <pthread.h>
@@ -450,16 +451,18 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 case kAudioObjectPropertyBaseClass: PUT(AudioClassID, kAudioObjectClassID);
                 case kAudioObjectPropertyClass:     PUT(AudioClassID, kAudioDeviceClassID);
                 case kAudioObjectPropertyOwner:     PUT(AudioObjectID, kObjectID_PlugIn);
-                // ここも「EffeTune」を名乗る。MediaOutputDevice.displayName とは
-                // 別系統。**画面に出る字を変える口ではない**（2026-09-17 に
-                // EffeTune Live にして測ったが、コントロールセンターの行は
-                // 2 行とも変わらなかった）。
+                // 仮想デバイスの名前。**アプリと同じ「EffeTune Live」を名乗る。**
+                // 出るのは出力先を出す所（アプリの Settings の Device、音量の
+                // 表示など）。MediaOutputDevice.displayName（ルートピッカーに
+                // 出る「EffeTune」）とは別系統で、コントロールセンターの行は
+                // こちらを見ていない（2026-09-17 に測った。docs/connect-log.md）。
                 //
-                // ただし AudioIO の帰還ループ判定はこの名前を
+                // 帰還ループの判定はこの名前を
                 // localizedCaseInsensitiveContains("EffeTune") で見ている
-                // （AudioIO.swift:336, 681, 767）。変えるならそちらも直す。
+                // （AudioIO.swift:336, 681, 767）ので、"EffeTune" を含む限り効く。
+                // 含まない名前にするならそちらも直す。
                 case kAudioObjectPropertyName:
-                    PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR("EffeTune")));
+                    PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR(ET_DRIVER_NAME)));
                 case kAudioObjectPropertyManufacturer:
                     PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR("nemut.ai")));
                 case kAudioDevicePropertyDeviceUID:

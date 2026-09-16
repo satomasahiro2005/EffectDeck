@@ -1,3 +1,4 @@
+#import "ETNames.h"
 #import "LocalLink.h"
 #import "ETPipeline.h"
 #import "ETResample.h"

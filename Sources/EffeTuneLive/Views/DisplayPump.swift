@@ -31,8 +31,13 @@ final class ETDisplayPump: NSObject {
     private override init() { super.init() }
 
     /// 汲み始める。二度呼んでも 1 本しか作らない（中身だけ差し替わる）。
+    ///
+    /// **出す側も一緒に起こす。** 誰も汲んでいないあいだカーネルが枠を
+    /// 書き続けると、輪（256KB）が溢れて `droppedFrames` が増える。
+    /// 画面に何も描いていないのだから、出す必要が無い。
     func start(_ body: @escaping () -> Void) {
         self.body = body
+        EffeTuneDSP.shared.setTelemetryRate(EffeTuneDSP.telemetryHz)
         guard link == nil else { return }
         let made = CADisplayLink(target: self, selector: #selector(fire))
         // .common にしないと、リストを払っている間だけ止まる。
@@ -44,6 +49,8 @@ final class ETDisplayPump: NSObject {
         link?.invalidate()
         link = nil
         body = nil
+        // 出す側を止める。0 は engine.cpp:552 で「書かない」に落ちる。
+        EffeTuneDSP.shared.setTelemetryRate(0)
     }
 
     @objc private func fire() {

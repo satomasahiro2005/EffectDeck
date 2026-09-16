@@ -37,7 +37,11 @@ enum {
 
 typedef struct {
     uint32_t instance;
-    uint8_t  enabled;      // 0 or 1
+    /// 0 = 切、1 = 入、**2 = 入だが数に入れない**。
+    /// 2 は図に重ねるためだけに挿した段（EffeTuneDSP.syncProbes）に使う。
+    /// descriptor へは 1 として書くので音の扱いは同じだが、
+    /// 画面に出す「動いている数」には入れない。人が置いた段ではないため。
+    uint8_t  enabled;      // 0, 1, 2
     uint8_t  inputBus;     // 0〜4
     uint8_t  outputBus;    // 0〜4
     int8_t   channelSpec;

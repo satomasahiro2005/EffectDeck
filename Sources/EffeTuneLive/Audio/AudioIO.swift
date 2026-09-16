@@ -762,7 +762,10 @@ final class AudioIO: ObservableObject {
         // 名前で見る。ドライバは kAudioDeviceTransportTypeRemoteStreaming で名乗るので
         // portType は .airPlay になるが、本物の AirPlay スピーカーも同じ型で出る。
         // 型だけで判ると、実際には鳴っている相手に「戻っている」と警告してしまう。
-        // ドライバが出す名前は "EffeTune" 固定（EffeTuneDriver.m:407）。
+        // ドライバが出す名前は "EffeTune Live" 固定（EffeTuneDriver.m の
+        // kAudioObjectPropertyName）。**前方一致ではなく包含で見る。**
+        // ルートピッカーに出る名前（MediaOutputDevice.displayName）は
+        // "EffeTune" で、こちらとは別系統。どちらも "EffeTune" を含む。
         let nowLoopback = outs.contains {
             $0.portName.localizedCaseInsensitiveContains("EffeTune")
         }

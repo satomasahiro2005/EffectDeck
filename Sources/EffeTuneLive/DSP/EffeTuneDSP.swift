@@ -120,8 +120,9 @@ final class EffeTuneDSP: ObservableObject {
     private(set) var available: [ETEffect] = []
 
     /// 可視化の値を貯める輪の大きさと、1 秒あたりに出す回数。
-    private static let telemetryRingBytes: UInt32 = 256 * 1024
-    private static let telemetryHz: Float = 60
+    /// Telemetry の読み取りバッファも同じ大きさにしてある（Telemetry.swift）。
+    static let telemetryRingBytes: UInt32 = 256 * 1024
+    static let telemetryHz: Float = 60
 
     /// 何も無いときに置く 1 本。restore() の既定と resetToDefault() が同じものを
     /// 指すように、型名はここだけに書く。
@@ -175,6 +176,16 @@ final class EffeTuneDSP: ObservableObject {
     func reset() {
         guard engine != 0 else { return }
         et_engine_reset(engine)
+    }
+
+    /// 可視化の枠を出す速さ。**0 にすると書かなくなる**（engine.cpp:552）。
+    ///
+    /// 誰も汲んでいないあいだ書き続けると輪（256KB）が溢れて
+    /// `Telemetry.droppedFrames` が増える。画面に描いていないなら要らないので、
+    /// 汲む側（ETDisplayPump）の出入りに合わせて止める。
+    func setTelemetryRate(_ hz: Float) {
+        guard engine != 0, ready else { return }
+        et_engine_set_telemetry_rate(engine, hz)
     }
 
     /// カーネルとして実際に登録されている型だけをカタログから残す。
@@ -833,9 +844,18 @@ final class EffeTuneDSP: ObservableObject {
                 et_instance_destroy(engine, inst)
                 continue
             }
-            // 既定のまま。Points の既定は 12（= FFT 4096）で、上流のオーバーレイが
-            // 使っている大きさと同じ（spectrum-overlay.js:2-3）。
+            // **Points を落とす。** 既定は 12（FFT 4096）で、枠が
+            // `12 + 2049*8` = 16KB ある。それが 60Hz で出て、探りは段の数だけ
+            // 増えるので、テレメトリの輪（256KB）が溢れて枠が捨てられる
+            // （診断の Telemetry dropped が増える）。
+            // 10（FFT 1024、bin 513、枠 4KB）にする。PEQ の曲線に重ねるのは
+            // 1/12 オクターブに均した線で、20Hz〜20kHz を対数で 300pt 弱に
+            // 畳んでから描く（ETSpectrumSmoothing）。4096 本の分解能は要らない。
             var v = spec.defaults
+            if let pt = spec.params.first(where: { $0.key == "pt" }),
+               v.indices.contains(pt.offset) {
+                v[pt.offset] = 10
+            }
             _ = v.withUnsafeBufferPointer {
                 et_instance_set_params(engine, inst, $0.baseAddress,
                                        UInt32(spec.floatCount), spec.paramsHash, 0)
@@ -882,8 +902,11 @@ final class EffeTuneDSP: ObservableObject {
             // 探りは相手の**直前**。engine.cpp:917 は descriptor の順に回すので、
             // 直前の段が見ている音 = その段に入る音。
             if let probe = probes[n.id] {
+                // enabled: 2 = 音は通すが「動いている数」には入れない
+                // （ETPipeline.h の enabled）。人が置いた段ではないので、
+                // 画面の Effects running に混ぜると数が合わなくなる。
                 nodes.append(ETPipeNode(instance: probe.instance,
-                                        enabled: 1,
+                                        enabled: 2,
                                         inputBus: n.inputBus,
                                         outputBus: n.inputBus,
                                         channelSpec: n.channelSpec,
@@ -975,8 +998,11 @@ final class EffeTuneDSP: ObservableObject {
         nodes.reserveCapacity(chain.count * 2)
         for n in chain where n.instance != 0 {
             if let probe = probes[n.id] {
+                // enabled: 2 = 音は通すが「動いている数」には入れない
+                // （ETPipeline.h の enabled）。人が置いた段ではないので、
+                // 画面の Effects running に混ぜると数が合わなくなる。
                 nodes.append(ETPipeNode(instance: probe.instance,
-                                        enabled: 1,
+                                        enabled: 2,
                                         inputBus: n.inputBus,
                                         outputBus: n.inputBus,
                                         channelSpec: n.channelSpec,
