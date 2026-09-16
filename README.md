@@ -35,6 +35,17 @@ whether the entitlement's array is empty, so the app carries an empty array and 
 extension carries the protocol identifier. That also gets past App Store Connect's
 ITMS-91183.
 
+## Pick it while nothing is playing video
+
+iOS refuses to hand the audio to a third-party output device while the playing app is
+showing video. If you pick EffeTune Live at that moment, the system spends 1.5 seconds
+looking for an AirPlay receiver instead, finds none, and drops the route back to the
+speaker. Spotify's Canvas — the short looping video some tracks have — counts as video,
+so picking EffeTune Live during one of those tracks never sticks.
+
+Pick it while a track without Canvas is playing. The check only runs at the moment the
+device is activated, so once the audio is flowing a Canvas track will not interrupt it.
+
 ## Building
 
 ```bash
