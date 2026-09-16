@@ -147,8 +147,10 @@ struct SettingsView: View {
         } footer: {
             Text("""
                  The effects are EffeTune's own DSP by Yoshiyuki Kobayashi, running \
-                 unmodified. This app is a separate project and is not affiliated with \
-                 EffeTune.
+                 unmodified under the MIT license. This app is a separate project by \
+                 nemut.ai. It is not affiliated with, endorsed by, or supported by \
+                 EffeTune or its author, and it stops shipping if an official iOS \
+                 version appears.
                  """)
         }
 
