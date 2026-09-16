@@ -140,3 +140,34 @@ curl https://nemut.ai/effetune-live/adp/variant/<publicId>.ipa  200 9452894
 
 `source.json` は 2.9.0 / build 10 / `downloadURL` が `adp/manifest.json` /
 `size` が 9452894（変種の実寸）。
+
+## 署名で詰まったとき（2026-09-17）
+
+**`errSecInternalComponent` はパスワードの話ではない。**
+配布用の証明書が `login` と `effetune-release` の**両方**に入っていて、
+セッションが両方を見ていた。`security find-identity -v -p codesigning` に
+同じ `Apple Distribution: Masahiro Sato (C82ST8T9MN)` が 4 つ並び、
+codesign が選べずに落ちていた。
+
+そのセッションの検索リストを login だけに絞ると通る:
+
+```bash
+security list-keychains -s ~/Library/Keychains/login.keychain-db
+```
+
+**`-d user` で書き換えても効かない。** あれは利用者ドメインを書くだけで、
+もう開いている Aqua セッションの一覧は変わらない。署名するセッションの中で
+撃つこと（`~/gui_export.sh` と `~/gui_ship.sh` の頭に入れてある）。
+
+外れた読み:
+
+| 読み | 結果 |
+|---|---|
+| `effetune-release` のパスワードが違う | 外れ。ssh からは `~/signing/kc.pw` で開く |
+| キーチェーンが自動で再ロックされている | 外れ。`no-timeout` にしても変わらない |
+| 鍵の ACL（`set-key-partition-list`）が足りない | 外れ。入れても同じ |
+
+GUI セッションで `security unlock-keychain` が「パスフレーズが違う」と
+言っていたのは、SecurityAgent のダイアログが出て消された結果
+（errSecAuthFailed=51）。**開けるのは ssh から 1 回だけにして、
+GUI の側で unlock を撃たない。**
