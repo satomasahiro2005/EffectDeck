@@ -31,19 +31,39 @@ enum NowPlaying {
     /// 入れ替わる**。起動ごとに結果が変わる観測と整合する。
     /// （「20%」は Unable to Connect の頻度で、ループバックの頻度ではない）
     ///
-    /// 実測（2026-09-16）: ループバック中の tick は
-    ///   `out=EffeTune rsp=1 ports=MediaDeviceExtension ovr=true`
-    /// `routeSharingPolicy` はこちらが一度も設定していないので、
-    /// 1（LongFormAudio）は系が書いたもの。
+    /// 実測（2026-09-16）。セッションを開いた瞬間の出力先と `rsp`:
+    ///
+    /// | `np` | セッション開始 | `out=EffeTune` の tick |
+    /// |---|---|---|
+    /// | `on`    | 5（うち 1 回が EffeTune で開いて `rsp=1`） | 3 |
+    /// | `first` | 2 | 7 |
+    /// | `off`   | **6** | **0** |
+    ///
+    /// `off` の 6 回は全部 `rsp=0` で内蔵／BT へ出ており、一度も仮想デバイスに
+    /// 乗っていない。`routeSharingPolicy` はこちらが一度も設定していないので、
+    /// 1（LongFormAudio）は系が書いたもの。ヘッダの定義がそのまま症状になっている:
+    ///   「All applications on the system that use the long-form audio route
+    ///    sharing policy will have their audio routed to the same location.」
+    /// その location が EffeTune なので、自分の音が自分へ戻る。
+    ///
+    /// **引き金**: アプリが動いていない状態で EffeTune を選ぶ、または
+    /// タスクキル後に選び直す。どちらも「仮想デバイスが選ばれている最中に
+    /// こちらがセッションを開く」並びになる。
+    ///
+    /// **失うものは無い。** 名乗っていた頃もロック画面に EffeTune Live の
+    /// 再生/一時停止は出ていなかった（2026-09-16 ユーザー確認）。
+    /// 鳴らしているアプリが Now Playing を握っているので、こちらは出番が無い。
+    /// そもそも鎖の入切は、コントロールセンターで出力先を iPhone Speaker と
+    /// EffeTune で切り替えるのと同じことなので、割り当てる価値も無い。
+    /// つまりこの配線は**効果ゼロでループバックだけ招いていた**。
+    /// 名乗らなければロック画面には実際に鳴っているアプリが出る。
     enum Mode: String {
-        /// 製品の姿。
+        /// 名乗る。**2026-09-16 までの既定。ループバックの原因だったので外した。**
         case on
-        /// now playing 能力を名乗らない。これで `rsp=1` が出なければ原因が確定する。
-        /// 引き換えにロック画面から鎖の入切ができなくなる。
+        /// **既定。** now playing 能力を名乗らない。
         case off
         /// **わざと先に名乗る。** `start()` より前に `playbackState = .playing` を置く。
-        /// 前後の入れ替わりが原因なら、これで毎回 `rsp=1` になるはず。
-        /// 起きるのを待たずに 1 回で判定するためのもの。
+        /// 測るためだけ。
         case first
     }
 
@@ -57,7 +77,7 @@ enum NowPlaying {
             d.set(m.rawValue, forKey: "diag.nowPlaying")
             return m
         }
-        return Mode(rawValue: d.string(forKey: "diag.nowPlaying") ?? "") ?? .on
+        return Mode(rawValue: d.string(forKey: "diag.nowPlaying") ?? "") ?? .off
     }()
 
     nonisolated static var disabled: Bool { mode == .off }
