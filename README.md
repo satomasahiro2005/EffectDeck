@@ -20,11 +20,21 @@ built-in speaker
 
 ## Picking it, and keeping it
 
-iOS decides whether to hand the audio to a third-party output device every time the
-device is activated, and it re-activates whenever playback stops and starts. If the
-decision goes the wrong way the system spends 1.5 seconds looking for an AirPlay receiver
-instead, finds none, and puts the route back on the speaker. That shows up as
-"Unable to Connect".
+The one most people hit first is **Spotify with Canvas turned on.** Canvas is the short
+looping video behind some tracks. While one is playing the session counts as video
+output, and iOS sends the route to AirPlay instead of here. That shows up as
+"Unable to Connect", or as a route that drops a few tracks in.
+
+**Spotify does not have to be on screen.** The Canvas is decided per track whether the
+app is in front or in the background, so it fails on the tracks that happen to have one
+and works on the tracks that do not, with nothing on screen to explain why. Turning
+Canvas off in Spotify's settings removes it.
+
+The rest of it is the general rule. iOS decides whether to hand the audio to a
+third-party output device every time the device is activated, and it re-activates
+whenever playback stops and starts. If the decision goes the wrong way the system spends
+1.5 seconds looking for an AirPlay receiver instead, finds none, and puts the route back
+on the speaker.
 
 What makes the decision go the right way, in the order the system checks them:
 
@@ -39,11 +49,8 @@ What makes the decision go the right way, in the order the system checks them:
 
 In practice the third one is what carries it. Pick EffeTune Live while music is playing,
 not while it is paused. Pausing and resuming re-activates the device, and if the detector
-is gone at that moment the route drops back to the speaker.
-
-Video counts against it separately: while Spotify shows a Canvas, the short looping video
-behind some tracks, the session is treated as video output and takes the same path to
-AirPlay.
+is gone at that moment the route drops back to the speaker — which is also why a Canvas
+track can take the route away in the middle of a listening session.
 
 None of the arguments `MediaOutputDevice` takes are read when that decision is made, so
 there is nothing on this side to set.
