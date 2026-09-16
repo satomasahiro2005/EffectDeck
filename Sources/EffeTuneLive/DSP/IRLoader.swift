@@ -277,6 +277,9 @@ enum ETIRLoader {
                      channelMode: String,
                      latency: String,
                      convolutionRate: String) throws -> String {
+        if ETConsoleLog.on {
+            print("IRLoader.load 呼ばれた instance=\(instance) rate=\(processingRate) lt=\(latency) cr=\(convolutionRate) url=\(url.lastPathComponent)")
+        }
         let decoded = try decode(url)
         let resolved = try resolve(sampleRate: processingRate,
                                    channelCount: decoded.channels.count,
@@ -322,6 +325,10 @@ enum ETIRLoader {
                              headBlock: resolved.headBlock,
                              rateDivider: resolved.rateDivider,
                              processingChannels: resolved.processingChannels)
+
+        // 送ったら組み直す。カーネルは資産が入って初めてその段を有効と数える。
+        // 入れ直しのときは呼び手（reloadAssets）がまとめて 1 回呼ぶ。
+        EffeTuneDSP.shared.republish()
 
         let seconds = Double(decoded.frames) / decoded.sampleRate
         let name = displayName(resolved.channelMode)

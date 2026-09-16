@@ -412,6 +412,8 @@ final class EffeTuneDSP: ObservableObject {
                 print("reloadAssets 入らない irId=\(node.irId) instance=\(node.instance)")
             }
         }
+        // 組み直しは ETIRLoader.load が送るたびにやっている
+        // （素材が入って初めてカーネルがその段を有効と数えるため）。
     }
 
     /// 選択肢の param から、いま選ばれている綴りを引く。
@@ -471,7 +473,7 @@ final class EffeTuneDSP: ObservableObject {
             node.outputBus = item.outputBus
             node.channelSpec = item.channelSpec
             node.sectionName = item.sectionName
-        node.irId = item.irId
+            node.irId = item.irId
             guard instantiate(&node) else { continue }
             made.append(node)
         }
@@ -545,6 +547,7 @@ final class EffeTuneDSP: ObservableObject {
         node.outputBus = item.outputBus
         node.channelSpec = item.channelSpec
         node.sectionName = item.sectionName
+        node.irId = item.irId
         guard instantiate(&node) else { return false }
         chain.append(node)
         return true
@@ -680,6 +683,14 @@ final class EffeTuneDSP: ObservableObject {
             log.error("rebuild で instance を作れなかった \(failed.count)/\(total): \(failed.joined(separator: ","), privacy: .public)")
         }
         publish()
+        // **instance を作り直したら資産も入れ直す。**
+        // 資産は instance が持っているので、作り直すと消える。
+        // ここは出力先の切り替え・レート変更・オーバーサンプリングの変更で走る
+        // （prepare → rebuildAll）。入れ直さないと IR が黙って外れる。
+        //
+        // **次の回に回す。** ここは音の経路を組む途中で、素材を読むのは重い
+        // （4ch を伸縮して数 MB）。同期でやると起動が詰まって SIGKILL で殺される。
+        Task { @MainActor [weak self] in self?.reloadAssets() }
     }
 
     private func pushParams(_ node: Node) {
