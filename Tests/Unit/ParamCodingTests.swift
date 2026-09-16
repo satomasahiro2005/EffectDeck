@@ -138,6 +138,69 @@ final class ParamCodingTests: XCTestCase {
         }
     }
 
+    // MARK: - 添字付きの配列
+
+    /// **上流は配列を `f0 f1 f2 …` と書く。** 平らな `"f": [...]` では読めない。
+    /// これを書いていたせいで、同梱プリセットの 5Band PEQ が既定のまま載り、
+    /// 曲線が平坦になっていた。
+    func testWritesIndexedKeysForPlainArrays() throws {
+        let s = try spec("FiveBandPEQPlugin")
+        let o = ETParamCoding.encode(params: s.params, values: s.defaults)
+        for i in 0..<5 {
+            XCTAssertNotNil(o["f\(i)"], "f\(i) が無い")
+            XCTAssertNotNil(o["g\(i)"], "g\(i) が無い")
+        }
+        XCTAssertNil(o["f"] as? [Any], "平らな配列を書いている")
+        XCTAssertNil(o["g"] as? [Any], "平らな配列を書いている")
+    }
+
+    /// 上流が書いた形を読めること。Old R2r Dac のゲインをそのまま使う。
+    func testReadsIndexedKeys() throws {
+        let s = try spec("FiveBandPEQPlugin")
+        let g = try XCTUnwrap(s.params.first { $0.key == "g" })
+        let f = try XCTUnwrap(s.params.first { $0.key == "f" })
+        let json: [String: Any] = [
+            "f0": 20, "g0": 0, "q0": 0.16, "t0": "ap", "e0": true,
+            "f1": 316, "g1": -9.40909, "f2": 1000, "g2": 1.63636,
+            "f3": 3160, "g3": 5.56363, "f4": 10000, "g4": 9.16363,
+        ]
+        let v = ETParamCoding.decode(params: s.params, defaults: s.defaults, from: json)
+        XCTAssertEqual(v[g.offset + 1], -9.40909, accuracy: 0.001)
+        XCTAssertEqual(v[g.offset + 4], 9.16363, accuracy: 0.001)
+        XCTAssertEqual(v[f.offset + 0], 20, accuracy: 0.001)
+        XCTAssertEqual(v[f.offset + 4], 10000, accuracy: 0.001)
+    }
+
+    /// 書いて読んで戻ること。
+    func testIndexedRoundTrip() throws {
+        let s = try spec("FiveBandPEQPlugin")
+        let g = try XCTUnwrap(s.params.first { $0.key == "g" })
+        var v = s.defaults
+        for (i, x) in [-12, -3, 0, 6, 15].enumerated() { v[g.offset + i] = Float(x) }
+        let back = ETParamCoding.decode(params: s.params, defaults: s.defaults,
+                                        from: ETParamCoding.encode(params: s.params, values: v))
+        for i in 0..<5 { XCTAssertEqual(back[g.offset + i], v[g.offset + i], "バンド\(i + 1)") }
+    }
+
+    /// 配列を持つプラグインはすべて object か添字付きで書くこと。平らは 1 つも無い。
+    func testNoPluginWritesFlatArrays() {
+        for s in ETCatalog {
+            let o = ETParamCoding.encode(params: s.params, values: s.defaults)
+            for p in s.params where p.isArray {
+                XCTAssertNil(o[p.key] as? [Any], "\(s.type).\(p.key) を平らな配列で書いている")
+            }
+        }
+    }
+
+    /// 古い保存（平らな配列）も読めること。作った鎖を失わない。
+    func testStillReadsOldFlatArraysForIndexed() throws {
+        let s = try spec("FiveBandPEQPlugin")
+        let g = try XCTUnwrap(s.params.first { $0.key == "g" })
+        let v = ETParamCoding.decode(params: s.params, defaults: s.defaults,
+                                     from: ["g": [1, 2, 3, 4, 5]])
+        for i in 0..<5 { XCTAssertEqual(v[g.offset + i], Float(i + 1)) }
+    }
+
     // MARK: - 表示と保存がずれるもの
 
     /// Tilt EQ の Pivot は自然対数で持っている。画面には Hz を出す。

@@ -36,6 +36,16 @@ private final class RenderState {
     var gate = PowerGate()
     var resting = false
 
+    /// 出力を捨てるか。**帰還ループを切るため。**
+    ///
+    /// 出力先が仮想デバイス（EffeTune 自身）を指している間は、こちらが出した音が
+    /// そのまま拡張へ拾われて戻ってくる。実機で測ったとおり
+    /// overrideOutputAudioPort では剥がせないので、輪を切るには
+    /// **自分が出すのをやめる**しかない。
+    /// 剥がせていない間はどのみちスピーカーへ何も届かないので、
+    /// 消しても聞こえ方は変わらない。消さないとレベルだけが上がり続ける。
+    var muteToBreakLoop = false
+
     /// 撮影用の作り物の信号。-ETMock 1 のときだけ入る。
     /// 実機では常に nil なので、音のスレッドでは nil 判定 1 回ぶんしか増えない。
     var mock: ETMockSource?
@@ -71,6 +81,16 @@ private final class RenderState {
         if timebase.denom == 0 { mach_timebase_info(&timebase) }
         return Double(mach_absolute_time()) * Double(timebase.numer) / Double(timebase.denom) / 1e9
     }
+}
+
+/// `-ETConsole 1` のときだけ、測るための行を標準出力にも出す。
+/// os_log は無線では取り出せないので、`devicectl device process launch --console`
+/// から読めるようにするためだけに在る。
+///
+/// **AudioIO の @MainActor より前に置くこと。** 属性とクラス宣言の間に
+/// 挟むと属性がこちらへ付いて、AudioIO が非隔離になり全体が崩れる。
+enum ETConsoleLog {
+    nonisolated static let on = UserDefaults.standard.string(forKey: "ETConsole") != nil
 }
 
 @MainActor
@@ -415,10 +435,12 @@ final class AudioIO: ObservableObject {
             var peak: Float = 0
             let l = abl[0].mData!.assumingMemoryBound(to: Float.self)
             let r = abl.count > 1 ? abl[1].mData!.assumingMemoryBound(to: Float.self) : l
+            // 帰還ループを切る。メーターは通した音のまま出す（何が来ているかは見える）。
+            let mute = state.muteToBreakLoop
             for i in 0..<n {
                 let a = p[i], b = p[n + i]
-                l[i] = a
-                if abl.count > 1 { r[i] = b }
+                l[i] = mute ? 0 : a
+                if abl.count > 1 { r[i] = mute ? 0 : b }
                 let m = max(abs(a), abs(b))
                 if m > peak { peak = m }
             }
@@ -499,7 +521,14 @@ final class AudioIO: ObservableObject {
         if ticks % 20 == 0 {
             // configure の結果（LastStatus）と process の戻り値（proc）は別物。
             // applied が 0 のとき、どちらで止まっているかをここで分ける。
-            log.notice("tick out=\(self.route, privacy: .public) ovr=\(self.overriding) applied=\(self.applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(self.hasPeer) recv=\(self.received) load=\(self.load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(self.render?.pipeStatus ?? 0)")
+            let line = "tick out=\(route) ovr=\(overriding) applied=\(applied) active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) peer=\(hasPeer) recv=\(received) load=\(load) cfgStatus=\(ETPipeline_LastStatus()) proc=\(render?.pipeStatus ?? 0)"
+            log.notice("\(line, privacy: .public)")
+            // **無線だとログが取れない。**
+            // log stream --device はこの Xcode で無くなり、devicectl にも
+            // ログの口が無い。USB を挿さないと idevicesyslog が使えず、
+            // ルートの取り回しを測れなかった。標準出力へ出しておけば
+            // devicectl device process launch --console で無線でも読める。
+            if ETConsoleLog.on { print(line) }
         }
 
         refreshRoute()
@@ -620,9 +649,14 @@ final class AudioIO: ObservableObject {
                        on session: AVAudioSession, reason: String) {
         do {
             try session.overrideOutputAudioPort(port)
-            log.notice("escape \(reason, privacy: .public) -> \(port == .speaker ? "speaker" : "none", privacy: .public)")
+            let line = "escape \(reason) -> \(port == .speaker ? "speaker" : "none") route=\(session.currentRoute.outputs.map(\.portName).joined(separator: ","))"
+            log.notice("\(line, privacy: .public)")
+            if ETConsoleLog.on { print(line) }
         } catch {
-            log.error("出力先を変えられない \((error as NSError).code)")
+            let ns = error as NSError
+            let line = "escape 失敗 \(reason) code=\(ns.code) \(ns.domain)"
+            log.error("\(line, privacy: .public)")
+            if ETConsoleLog.on { print(line) }
         }
     }
 
@@ -656,5 +690,9 @@ final class AudioIO: ObservableObject {
             $0.portName.localizedCaseInsensitiveContains("EffeTune")
         }
         if loopback != nowLoopback { loopback = nowLoopback }
+        // **剥がせなかったときだけ消す。**
+        // 掛けた直後はまだ反映されていないことがあるので、
+        // ETRouteEscape が諦める（3 回試して外れない）まで待つ。
+        render?.muteToBreakLoop = nowLoopback && escape.gaveUp
     }
 }

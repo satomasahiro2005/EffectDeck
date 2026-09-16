@@ -8,6 +8,12 @@
 //  切り出した理由。ここに 2 つ欠陥があって、どちらも静的に読んだだけでは
 //  何度も見落とし、実際に壊れている画面を見るまで気づけなかった:
 //
+//    0. 配列を平らな `"f": [...]` で書いていた。**上流にその形は 1 つも無い。**
+//       params.json の配列 77 個を数えると、57 個がオブジェクト配列
+//       （objectArrayKey）、残り 20 個が添字付き（`f0 f1 f2 …`）で、平らは 0 個。
+//       5Band PEQ / 15Band PEQ / 15Band GEQ / MultiChannel Panel /
+//       Earphone Cable Sim が添字付きの側。読めないので既定のまま載り、
+//       PEQ の曲線が平坦になっていた。
 //    1. オブジェクト配列を平らな配列で書いていた。上流は 5Band Dynamic EQ を
 //       `"bs": [{"en":…,"ft":…}, …]` と書くのに `"en": [...]` と書いていたので、
 //       (a) 段の入切も `en` なので shortForm の上書きで潰れ、
@@ -48,11 +54,16 @@ enum ETParamCoding {
                 }
                 objects[group] = rows
             } else if p.isArray {
-                let slice = (0..<p.count).compactMap { i -> Float? in
+                // **添字を付けて 1 本ずつ書く。** `"f": [...]` ではなく `f0 f1 f2 …`。
+                // 上流は params['f' + i] で書き、同じ形でしか読まない
+                // （plugins/eq/five_band_peq.js:321-329 の getParameters）。
+                // 平らな配列で書いていたので、同梱プリセットも共有リンクも
+                // 一つも読めず、5Band PEQ が既定のまま＝曲線が平坦になっていた。
+                for i in 0..<p.count {
                     let k = p.offset + i
-                    return values.indices.contains(k) ? values[k] : nil
+                    guard values.indices.contains(k) else { continue }
+                    o[p.key + String(i)] = tidy(values[k], p)
                 }
-                o[p.key] = slice.map { tidy($0, p) }
             } else {
                 o[p.key] = tidy(values[p.offset], p)
             }
@@ -95,10 +106,23 @@ enum ETParamCoding {
                 continue
             }
 
+            // 添字付き。上流・同梱プリセット・共有リンクはこの形。
+            if p.isArray, !p.isObjectMember {
+                var hit = false
+                for i in 0..<p.count {
+                    guard let item = dict[p.key + String(i)] else { continue }
+                    hit = true
+                    let k = p.offset + i
+                    if values.indices.contains(k) { values[k] = number(item, p) }
+                }
+                if hit { continue }
+            }
+
             guard let raw = dict[p.key] else { continue }
 
             if p.isArray, let arr = raw as? [Any] {
-                // 古い保存（平らな配列で書いていた頃）もここで拾える。
+                // 古い保存（平らな配列で書いていた頃）だけがここへ来る。
+                // 読めなくして作った鎖を失わないために残す。書くのはもうしない。
                 for (i, item) in arr.enumerated() where i < p.count {
                     let k = p.offset + i
                     if values.indices.contains(k) { values[k] = number(item, p) }

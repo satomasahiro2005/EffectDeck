@@ -18,6 +18,18 @@ struct ETRouteEscape {
         case clear
     }
 
+    /// 諦めるまでの回数。
+    ///
+    /// **実機で測ったら、掛けてもルートが動かなかった。**
+    ///   escape 仮想デバイスを指している -> speaker route=EffeTune   ×8（3 秒ごと）
+    ///   tick out=EffeTune ovr=true …                                 一度も変わらず
+    /// overrideOutputAudioPort は例外を投げずに成功を返すのに、
+    /// 仮想デバイス（MediaDevice の出力）からは剥がせない。
+    /// 効かない操作を打ち続けるとルート変更の連打になり、
+    /// MediaDevice のセッションの方を壊す。数回試して駄目なら止める。
+    /// 輪を切るのは呼び出し側の消音（AudioIO の render）が受け持つ。
+    static let maxAttempts = 3
+
     /// 掛け直すまで空ける秒数。
     ///
     /// overrideOutputAudioPort は即時に反映されない。呼んだ直後に currentRoute を
@@ -32,6 +44,12 @@ struct ETRouteEscape {
 
     /// 最後に掛けた時刻（systemUptime）。間隔を計るためだけに持つ。
     private(set) var lastApply: TimeInterval = 0
+
+    /// 仮想デバイスを指したまま掛けた回数。maxAttempts で打ち止め。
+    private(set) var attempts = 0
+
+    /// 掛けても外れなかったので諦めた。呼び出し側はここで消音へ倒す。
+    var gaveUp: Bool { attempts >= Self.maxAttempts }
 
     /// - Parameters:
     ///   - onVirtual: 出力先に "EffeTune" という名前の口が居るか。
@@ -50,8 +68,11 @@ struct ETRouteEscape {
             // 自分の音が仮想デバイスへ出続け、それを拡張が拾って戻すので
             // レベルだけ上がり、スピーカーには何も出ない。
             guard !overriding || now - lastApply >= Self.retry else { return nil }
+            // **打ち止め。** 効かないものを打ち続けない。
+            guard attempts < Self.maxAttempts else { return nil }
             overriding = true
             lastApply = now
+            attempts += 1
             return .speaker
         }
 
@@ -62,6 +83,7 @@ struct ETRouteEscape {
         guard !onSpeaker else { return nil }
         overriding = false
         lastApply = now
+        attempts = 0
         return .clear
     }
 
@@ -69,5 +91,6 @@ struct ETRouteEscape {
     mutating func reset() {
         overriding = false
         lastApply = 0
+        attempts = 0
     }
 }

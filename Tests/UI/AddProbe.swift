@@ -1,44 +1,54 @@
 //  AddProbe.swift
-//  **足した直後に効かない**を機械で捕まえる。
+//  **無音の間に足したエフェクトが効かない**を機械で捕まえる。
 //
-//  症状: エフェクトを足しても音が変わらず、段のスイッチを切って入れ直すと効く。
-//  足すのも入切も publish() を呼ぶだけなので、**1 回目の publish が
-//  音のスレッドに拾われていない**という筋を疑っている。ここはその確認。
+//  欠陥そのもの: et_pipeline_configure を呼ぶのは ETPipeline_Process の中だけで、
+//  その Process は AudioIO のレンダーブロックが `if awake` の内側でしか呼ばない。
+//  PowerGate が無音で休んでいる間は Process ごと飛ぶので、ETPipeline_Publish が
+//  置いた descriptor は gPending に積まれたまま消費されない。
 //
-//  見るのは画面ではなくログ。EffeTuneDSP.publish() が
-//      publish nodes=N chain=N sections=N dead=N active=N gated=N types=…
-//  を出し、AudioIO.tick() が 6 秒ごとに
-//      tick out=… applied=N active=N chain=N …
-//  を出す。`applied` は ETPipeline_ActiveNodes()＝configure が通ったときの
-//  有効ノード数なので、**publish の active と tick の applied がずれていれば
-//  descriptor が拾われていない。**
+//  **1 回通ったことを直った証拠にしない。**
+//  この症状は「音が来ているかどうか」で分岐するので、鳴らしながら試すと
+//  たまたま直って見える。だから**無音を作ってから**足す。
+//  直っていなければ active が上がらないので、必ず落ちる。
 //
-//  走らせ方（ログは別に取る）:
-//      xcodebuild test -scheme EffeTuneLive -only-testing:EffeTuneLiveUITests/AddProbe
-//      xcrun simctl spawn booted log show --last 2m \
-//        --predicate 'subsystem == "ai.nemut.effetune"' | grep -E "publish |tick "
+//  読むのは LiveStatusStrip の diag（-ETDiag 1 のときだけ読み上げの木に出る）:
+//      active=N chain=N cfg=S
+//  active は configure が反映した有効ノード数、chain は UI が持っている段の数。
+//  **ずれていたら descriptor が拾われていない。**
 
 import XCTest
 
 final class AddProbe: XCTestCase {
 
-    /// 足して、しばらく待って、切って入れて、また待つ。
-    /// ログ側で applied の推移を読む。
-    func testAddThenToggle() {
+    /// diag の行から数字を 1 つ取り出す。
+    private func value(_ app: XCUIApplication, _ key: String) -> Int? {
+        let label = app.staticTexts["diag"].label
+        guard let r = label.range(of: "\(key)=") else { return nil }
+        let rest = label[r.upperBound...].prefix { $0.isNumber || $0 == "-" }
+        return Int(rest)
+    }
+
+    /// **無音のまま足して、効いているか。**
+    ///
+    /// -ETMock を付けない＝作り物の音も流さないので PowerGate は休んだままになる。
+    /// その状態で 1 本足し、active が chain に追いつくのを待つ。
+    func testAddWhileSilentTakesEffect() throws {
         let app = XCUIApplication()
-        // 作り物の音を流す。無音だと PowerGate が休んで
-        // ETPipeline_Process ごと呼ばれず、descriptor が拾われない。
-        // それ自体が原因の候補なので、まず音がある状態で測る。
-        app.launchArguments = ["-ETSeed", "none", "-ETMock", "1"]
+        app.launchArguments = ["-ETSeed", "none", "-ETDiag", "1"]
         app.launch()
 
-        let add = app.buttons["Add Effect"]
-        XCTAssertTrue(add.waitForExistence(timeout: 30), "Add Effect が出ない")
+        let diag = app.staticTexts["diag"]
+        XCTAssertTrue(diag.waitForExistence(timeout: 30),
+                      "diag が出ない（-ETDiag の配線か、io.running が false）")
 
-        print("PROBE ADD phase=before")
+        let before = value(app, "active") ?? -1
+        let beforeChain = value(app, "chain") ?? -1
+        print("PROBE ADD before active=\(before) chain=\(beforeChain) label=\(diag.label)")
+
+        let add = app.buttons["Add Effect"]
+        XCTAssertTrue(add.waitForExistence(timeout: 20), "Add Effect が出ない")
         add.tap()
 
-        // ピッカーから 1 本選ぶ。名前で引く（検索欄に打つと候補が絞れる）。
         let search = app.searchFields.firstMatch
         if search.waitForExistence(timeout: 10) {
             search.tap()
@@ -48,23 +58,57 @@ final class AddProbe: XCTestCase {
         XCTAssertTrue(pick.waitForExistence(timeout: 10), "ピッカーに Volume が出ない")
         pick.tap()
 
-        // tick は 6 秒ごとなので 2 本ぶん待つ。
-        print("PROBE ADD phase=added")
-        Thread.sleep(forTimeInterval: 14)
-
-        // 段のスイッチを切って入れる。これで直るなら 1 回目の publish が拾われていない。
-        let sw = app.switches.firstMatch
-        if sw.waitForExistence(timeout: 10) {
-            print("PROBE ADD phase=toggling")
-            sw.tap()
-            Thread.sleep(forTimeInterval: 2)
-            sw.tap()
-        } else {
-            print("PROBE ADD phase=no-switch")
+        // configure は次のオーディオブロックで走る。数ブロックぶん待てば足りるが、
+        // 画面の更新も挟むので余裕を見る。
+        var active = -1
+        var chain = -1
+        for _ in 0..<40 {
+            Thread.sleep(forTimeInterval: 0.5)
+            active = value(app, "active") ?? -1
+            chain = value(app, "chain") ?? -1
+            if active >= chain && chain > beforeChain { break }
         }
+        print("PROBE ADD after active=\(active) chain=\(chain) label=\(diag.label)")
 
-        print("PROBE ADD phase=toggled")
-        Thread.sleep(forTimeInterval: 14)
-        print("PROBE ADD phase=end")
+        XCTAssertGreaterThan(chain, beforeChain, "そもそも足せていない")
+        XCTAssertEqual(active, chain,
+                       "無音の間に足した段が configure に反映されていない"
+                       + "（active=\(active) chain=\(chain)）。"
+                       + "ETPipeline_ApplyPending がゲートの外で呼ばれているか見ること")
+    }
+
+    /// 対照。音が流れていれば古いコードでも通るので、こちらが通って
+    /// 上が落ちるなら「無音のときだけ壊れる」が確定する。
+    func testAddWhileAudioFlowsTakesEffect() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ETSeed", "none", "-ETMock", "1", "-ETDiag", "1"]
+        app.launch()
+
+        let diag = app.staticTexts["diag"]
+        XCTAssertTrue(diag.waitForExistence(timeout: 30), "diag が出ない")
+        let beforeChain = value(app, "chain") ?? -1
+
+        let add = app.buttons["Add Effect"]
+        XCTAssertTrue(add.waitForExistence(timeout: 20), "Add Effect が出ない")
+        add.tap()
+        let search = app.searchFields.firstMatch
+        if search.waitForExistence(timeout: 10) {
+            search.tap()
+            search.typeText("Volume")
+        }
+        let pick = app.buttons["Volume"].firstMatch
+        XCTAssertTrue(pick.waitForExistence(timeout: 10), "ピッカーに Volume が出ない")
+        pick.tap()
+
+        var active = -1
+        var chain = -1
+        for _ in 0..<40 {
+            Thread.sleep(forTimeInterval: 0.5)
+            active = value(app, "active") ?? -1
+            chain = value(app, "chain") ?? -1
+            if active >= chain && chain > beforeChain { break }
+        }
+        print("PROBE ADD(mock) after active=\(active) chain=\(chain)")
+        XCTAssertEqual(active, chain, "音が流れていても反映されない（別の欠陥）")
     }
 }

@@ -93,9 +93,42 @@ struct LiveStatusStrip: View {
         static var total: CGFloat { label + gap + value }
     }
 
+    /// 鎖に入っている値ぜんぶの指紋。**プリセットの中身が届いたかを見るため。**
+    ///
+    /// 既定のままなら既定の和になる。プリセットを読んで値が入れば変わる。
+    /// 「プリセットを選んでも中身が載っていない」を、画面の字ではなく
+    /// 鎖が持っている数そのもので確かめられる。
+    @MainActor
+    enum ETDiagFingerprint {
+        static var chainSum: Int {
+            let total = EffeTuneDSP.shared.chain.reduce(Float(0)) { acc, node in
+                acc + node.values.reduce(0, +)
+            }
+            return Int(total.rounded())
+        }
+    }
+
+    /// 測るためだけの行。`-ETDiag 1` のときだけ読み上げの木に出す。
+    ///
+    /// 画面には出さない（幅 0・透明）。UI テストから
+    /// `app.staticTexts["diag"].label` で読む。
+    /// 出すのは configure が反映した結果（ETPipeline_ActiveNodes）と、
+    /// UI が持っている鎖の長さ。**この 2 つがずれていたら
+    /// descriptor が拾われていない**——足しても効かない状態そのもの。
+    @ViewBuilder private var diag: some View {
+        if UserDefaults.standard.string(forKey: "ETDiag") != nil {
+            Text("active=\(ETPipeline_ActiveNodes()) chain=\(EffeTuneDSP.shared.chain.count) cfg=\(ETPipeline_LastStatus()) sum=\(ETDiagFingerprint.chainSum)")
+                .accessibilityIdentifier("diag")
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .allowsHitTesting(false)
+        }
+    }
+
     var body: some View {
         if io.running {
             VStack(alignment: .leading, spacing: 1) {
+                diag
                 switch face {
                 case .delay:
                     // **鎖が足す遅れ。** et_pipeline_latency の値で、

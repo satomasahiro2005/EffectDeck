@@ -42,6 +42,30 @@ BS = chr(92)
 # digital_error_emulator / g726_adpcm_simulator の *Exponent は pow(10, x) の
 # 指数で、上流はその指数を "10^x" のラベルでそのまま見せている。
 # 名前が Exponent で終わるかどうかで分けると後者まで変換してしまう。
+# 配列パラメータの書き方を**数えて**確かめる。
+#
+# 上流には 2 つしか無い:
+#   - オブジェクト配列  "bs": [{"en":…}, …]   params.json の objectArrayKey
+#   - 添字付き          "f0" "f1" "f2" …      js が params['f' + i] で書く
+# **平らな "f": [...] は 1 つも無い。** 以前それで書いていて、5Band PEQ の
+# プリセットが一つも読めず曲線が平坦になっていた。
+# 将来 params.json が増えたときに黙って同じ穴に落ちないよう、
+# 「object でも indexed でもない配列」が出たらここで止める。
+def check_array_shape(meta, type_name, category, folder):
+    js = JS_PLUGINS / category / (folder + ".js")
+    src = js.read_text(encoding="utf-8", errors="replace") if js.exists() else ""
+    for f in meta.get("fields", []):
+        if (f.get("count") or 1) <= 1 or f.get("objectArrayKey"):
+            continue
+        k = f.get("key") or f["name"]
+        indexed = re.search(r"\[\s*['\"]%s['\"]\s*\+" % re.escape(k), src) or                   re.search(r"`%s\$\{" % re.escape(k), src)
+        if not indexed:
+            raise SystemExit(
+                "!! %s の配列 %s が object でも indexed でもない。"
+                "書き方を確かめて ETParamCoding を直すこと（%s）"
+                % (type_name, k, js))
+
+
 SCALES = {
     ("TiltEQPlugin", "pivotExponent"): "naturalExp",
 }
@@ -383,6 +407,7 @@ def main():
 
         rel = pj.relative_to(DSP / "plugins").parts   # (category, folder, params.json)
         category, folder = rel[0], rel[1]
+        check_array_shape(meta, type_name, category, folder)
 
         # params.json のフィールドを名前で引けるようにする。
         # 配列は arrayKey / objectArrayKey+memberKey で名前がずれることがあるので、
