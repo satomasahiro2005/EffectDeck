@@ -370,11 +370,43 @@ final class EffeTuneDSP: ObservableObject {
                 .map { chain[$0].id })
             restoring = false
             publish()
+            reloadAssets()
         } else if !PipelineStore.hasSaved {
             if let meter = ETCatalog.first(where: { $0.type == Self.defaultType }) {
                 add(meter)
             }
         }
+    }
+
+    /// 鎖に残っている鍵から、資産（いまは IR だけ）を入れ直す。
+    ///
+    /// **ビューに置いてはいけない。** 畳んだカードはビューが作られないので
+    /// `.task` が走らず、開くまで素通しのままになる（実機で確認）。
+    /// 音の側の話なので、鎖が戻った時点でここがやる。
+    func reloadAssets() {
+        for i in chain.indices where !chain[i].irId.isEmpty {
+            let node = chain[i]
+            guard node.instance != 0 else { continue }
+            ETIRLoader.reload(irId: node.irId,
+                              engine: engine,
+                              instance: node.instance,
+                              processingRate: sampleRate,
+                              routedChannels: node.channelSpec == -1 || node.channelSpec == -2
+                                  || (17...23).contains(node.channelSpec) ? 2 : 1,
+                              channelMode: Self.choice("cm", of: node),
+                              latency: Self.choice("lt", of: node),
+                              convolutionRate: Self.choice("cr", of: node))
+        }
+    }
+
+    /// 選択肢の param から、いま選ばれている綴りを引く。
+    /// enumeration の値は選択肢の添字なので、そこから戻す。
+    static func choice(_ key: String, of node: Node) -> String {
+        guard let i = node.spec.params.firstIndex(where: { $0.key == key }),
+              case .enumeration(let options) = node.spec.params[i].kind,
+              i < node.values.count else { return "auto" }
+        let n = Int(node.values[i].rounded())
+        return options.indices.contains(n) ? options[n] : "auto"
     }
 
     /// プリセットを**いまの鎖へ足す**。置き換えない。
