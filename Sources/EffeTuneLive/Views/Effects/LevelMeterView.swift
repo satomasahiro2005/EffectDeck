@@ -34,6 +34,14 @@ struct LevelMeterView: View {
 
     @ObservedObject private var telemetry = Telemetry.shared
 
+    /// カードの頭のボタンで立つ。畳むのは "LEVEL" の見出しだけ。
+    ///
+    /// **dB の数字と目盛りは畳まない。** メーターは値を読むための道具で、
+    /// 棒の長さだけ残しても何 dB か分からず用をなさない。
+    /// 消してよいのは「これはレベルメーターです」と言っている字のほうで、
+    /// 棒と目盛りを見れば分かることを二度書いている。
+    @Environment(\.etGraphOnly) private var graphOnly
+
     /// 棒の値。dB。枠が来るたびに落としながら追いかける（level_meter.js:277-279）。
     @State private var bars: [Int: Double] = [:]
     @State private var lastFall = Date()
@@ -47,8 +55,9 @@ struct LevelMeterView: View {
     private static let ticks: [Double] = [-96, -72, -48, -24, -12, 0]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
+        VStack(alignment: .leading, spacing: graphOnly ? 0 : 8) {
+            // 畳んでいても OVERLOAD だけは出す。見逃すと困るものなので。
+            if !graphOnly || isOverloaded { header }
             meter
         }
         .onChange(of: sequence) { _, _ in advance() }
@@ -59,10 +68,12 @@ struct LevelMeterView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("LEVEL")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.secondary)
+            if !graphOnly {
+                Text("LEVEL")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+            }
 
             Spacer(minLength: 0)
 
@@ -93,7 +104,7 @@ struct LevelMeterView: View {
                       holdsPeak: true,
                       holdTime: Self.holdTime,
                       fallRate: Self.fallRate,
-                      rowHeight: r.peaks.count > 2 ? 12 : 18,
+                      rowHeight: rowHeight(count: r.peaks.count),
                       showsReadout: true)
         } else {
             // 枠が来ていない。値が無いことと -inf は違うので、棒は描かない。
@@ -102,6 +113,12 @@ struct LevelMeterView: View {
                       ticks: Self.ticks,
                       caption: "Waiting for audio")
         }
+    }
+
+    /// 棒の高さ。畳んだら少し細くするが、読める太さは保つ。
+    private func rowHeight(count: Int) -> CGFloat {
+        if graphOnly { return count > 2 ? 9 : 13 }
+        return count > 2 ? 12 : 18
     }
 
     private func channels(_ r: Reading) -> [ETMeterChannel] {

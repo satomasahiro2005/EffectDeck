@@ -86,6 +86,12 @@ uint64_t ETPipeline_ConfigureCount(void);
 /// enabled かつ sectionGate のものだけ数えている（engine.cpp:916-919 と同じ条件）。
 uint32_t ETPipeline_ActiveNodes(void);
 
+/// **鎖そのものが足す遅れ（標本）。**
+/// et_pipeline_latency（abi.h:168）の値で、FIR を持つエフェクトを入れると増える。
+/// リンクやブロックの遅れは含まない。あちらは AudioIO が持っている。
+/// 上流 EffeTune が右下に出している "Total Delay: N samples" と同じ量。
+uint32_t ETPipeline_Latency(void);
+
 /// 素通しにしてあるか。
 int ETPipeline_IsBypassed(void);
 

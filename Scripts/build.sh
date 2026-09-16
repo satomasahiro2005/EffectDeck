@@ -21,13 +21,22 @@ find_device() {
            }'
 }
 
+# **このスクリプトは Mac の GUI セッションの Terminal から走らせる。**
+# SSH から叩くと codesign が鍵に届かず、拡張の署名だけが
+#   .../EffeTuneLiveExtension.debug.dylib: errSecInternalComponent
+# で落ちる。コンパイルは通るので out/*.app は出来るが、中身が署名されておらず
+# install が「not a valid bundle」になる。README にも同じことを書いてある。
+#
+# 下の grep に errSec と CodeSign failed を足したのは、一度これを取りこぼして
+# 「BUILD FAILED」としか出ず、原因を見失ったため
+# （codesign の失敗行は "error:" の形を取らない）。
 build_one() {
   echo "================ build $1 ================"
   /usr/bin/xcodebuild -project EffeTuneLive.xcodeproj \
     -scheme "$1" -configuration Debug \
     -sdk iphoneos -arch arm64 -allowProvisioningUpdates \
     CONFIGURATION_BUILD_DIR="$ROOT/out" build 2>&1 \
-    | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED|not found and could not|doesn't (support|include)" \
+    | grep -E "error:|errSec|CodeSign failed|BUILD SUCCEEDED|BUILD FAILED|not found and could not|doesn't (support|include)" \
     | tail -25
 }
 

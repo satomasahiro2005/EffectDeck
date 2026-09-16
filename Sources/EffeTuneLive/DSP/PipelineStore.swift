@@ -63,40 +63,14 @@ enum PipelineStore {
         return ["pipeline": list]
     }
 
-    /// パラメータを保存形式へ。キーは params.json の `key`。
-    /// 配列は EffeTune 側の持ち方に合わせきれていないので、いまは先頭だけ書く
-    /// （読み込み側も同じ扱いなので往復はする）。
+    /// パラメータを保存形式へ。中身は ETParamCoding が持つ。
+    ///
+    /// **EffeTuneDSP に触らない形で切り出してある。** オブジェクト配列の扱いを
+    /// 何度も読み違えたので、Tests/Unit/ParamCodingTests.swift が実機なしで見張る。
     private static func parameters(of node: EffeTuneDSP.Node) -> [String: Any] {
         // Section は ETParam を持たない。名前は Node 側の文字列なのでここで出す。
         if node.isSection { return [ETSection.commentKey: node.sectionName] }
-        var o: [String: Any] = [:]
-        for p in node.spec.params {
-            guard node.values.indices.contains(p.offset) else { continue }
-            if p.isArray {
-                let slice = (0..<p.count).compactMap { i -> Float? in
-                    let k = p.offset + i
-                    return node.values.indices.contains(k) ? node.values[k] : nil
-                }
-                o[p.key] = slice.map { tidy($0, p) }
-            } else {
-                o[p.key] = tidy(node.values[p.offset], p)
-            }
-        }
-        return o
-    }
-
-    /// enum は選択肢の文字列、bool は真偽、整数は Int で書く。
-    /// EffeTune はそう書いているので、数値のまま書くと web 版で読めない。
-    private static func tidy(_ v: Float, _ p: ETParam) -> Any {
-        switch p.kind {
-        case .toggle:
-            return v >= 0.5
-        case .enumeration(let values):
-            let i = Int(v.rounded())
-            return values.indices.contains(i) ? values[i] : i
-        case .number(_, _, _, _, let isInteger):
-            return isInteger ? Int(v.rounded()) : v
-        }
+        return ETParamCoding.encode(params: node.spec.params, values: node.values)
     }
 
     // MARK: - 読む
@@ -155,18 +129,9 @@ enum PipelineStore {
                 continue
             }
 
-            var values = spec.defaults
-            for p in spec.params {
-                guard let raw = params[p.key] else { continue }
-                if p.isArray, let arr = raw as? [Any] {
-                    for (i, item) in arr.enumerated() where i < p.count {
-                        let k = p.offset + i
-                        if values.indices.contains(k) { values[k] = number(item, p) }
-                    }
-                } else if values.indices.contains(p.offset) {
-                    values[p.offset] = number(raw, p)
-                }
-            }
+            let values = ETParamCoding.decode(params: spec.params,
+                                              defaults: spec.defaults,
+                                              from: params)
 
             let ch = (entry["channel"] ?? entry["ch"]) as? String
             out.append(Loaded(
@@ -178,18 +143,6 @@ enum PipelineStore {
                 channelSpec: ETChannel.spec(from: ch)))
         }
         return out
-    }
-
-    private static func number(_ raw: Any, _ p: ETParam) -> Float {
-        if let b = raw as? Bool { return b ? 1 : 0 }
-        if let n = raw as? NSNumber { return n.floatValue }
-        if let s = raw as? String {
-            if case .enumeration(let values) = p.kind, let i = values.firstIndex(of: s) {
-                return Float(i)
-            }
-            return Float(s) ?? p.defaultValue
-        }
-        return p.defaultValue
     }
 
     // MARK: - 端末に残す

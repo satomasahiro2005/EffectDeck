@@ -66,13 +66,15 @@ struct LiveStatusStrip: View {
     /// 4 つ全部を並べると入らないので、2 つずつ 2 面に分けて切り替える。
     /// 選んだ面は覚える。毎回同じものを見たい人のほうが多い。
     private enum Face: String {
-        case cost      // 払っているもの: 遅れと CPU
-        case rate      // 通っているもの: 入口と、効果を回しているレート
+        /// 遅れの内訳。鎖が足すぶんと、それ以外（リンク・ブロック・変換）。
+        case delay
+        /// 負荷と、いま回っているレート。
+        case load
 
-        var next: Face { self == .cost ? .rate : .cost }
+        var next: Face { self == .delay ? .load : .delay }
     }
-    @AppStorage("strip.face") private var faceRaw = Face.cost.rawValue
-    private var face: Face { Face(rawValue: faceRaw) ?? .cost }
+    @AppStorage("strip.face") private var faceRaw = Face.delay.rawValue
+    private var face: Face { Face(rawValue: faceRaw) ?? .delay }
 
     /// 欄の幅。**桁で揺れないよう固定する。**
     /// 桁が変わるたびに動くと、隣のものまで揺れて読めない。
@@ -80,8 +82,8 @@ struct LiveStatusStrip: View {
     /// 10pt の SF Mono は 1 文字の送りが 0.6em＝6.0pt、これに 10pt の
     /// トラッキング（およそ +0.12pt/文字）が乗る。つまり 1 文字 6.11pt。
     private enum Cell {
-        /// 長いほうの語 "Delay" = 5 文字 → 30.6pt
-        static let label: CGFloat = 32
+        /// 長いほうの語 "Rate" = 4 文字 → 24.4pt
+        static let label: CGFloat = 26
         /// 出うる一番長い値 "151 ms" = 6 文字 → 36.7pt。
         /// 151 は、端末が 16kHz に落ちたとき（link 2048 frames で 128ms）の目安。
         /// "100%" も "idle" も 4 文字なので、これで足りる。
@@ -95,19 +97,22 @@ struct LiveStatusStrip: View {
         if io.running {
             VStack(alignment: .leading, spacing: 1) {
                 switch face {
-                case .cost:
-                    // 出るまでの遅れ。上流の "Total Delay" にあたる。
-                    row("Delay", delay, tint: AnyShapeStyle(.secondary))
-                    // 1 ブロックに使える時間のうち、どれだけ使ったか。
-                    // 上流の CPU と同じ量（経過時間 ÷ 音の長さ、audio-processor.js:4506）で、
-                    // 語も上流に合わせて CPU にしてある。
+                case .delay:
+                    // **鎖が足す遅れ。** et_pipeline_latency の値で、
+                    // FIR を持つエフェクト（Phase Select EQ など）を入れると増える。
+                    // ここを出していなかったので、そういうものを入れても
+                    // 数字が動かなかった。
+                    row("Fx", fxDelay, tint: AnyShapeStyle(.secondary))
+                    // それ以外。リンク（2048 標本の固定）＋ iOS のブロック
+                    // ＋ オーバーサンプリングの FIR。設定で決まり、鎖では動かない。
+                    row("I/O", ioDelay, tint: AnyShapeStyle(.secondary))
+                case .load:
+                    // 上流の CPU と同じ量（経過時間 ÷ 音の長さ、
+                    // audio-processor.js:4506）で、語も上流に合わせてある。
                     row("CPU", loadText, tint: loadTint)
-                case .rate:
-                    // 入口。拡張から来る音は 48 kHz 固定だが、端末が別のレートを
-                    // 握っていると 48 にならず、速さと音程がずれる。そのときだけ色が付く。
-                    row("In", inRate, tint: rateTint)
                     // 効果を回しているレート（入口 × オーバーサンプリング倍率）。
-                    row("DSP", dspRate, tint: AnyShapeStyle(.secondary))
+                    // 入口が 48 kHz から外れているときだけ色を付ける。
+                    row("Rate", dspRate, tint: rateTint)
                 }
             }
             // **押せる。** 帯そのものが切り替えの口。
@@ -126,7 +131,7 @@ struct LiveStatusStrip: View {
             .minimumScaleFactor(0.8)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(voice)
-            .accessibilityHint("Shows " + (face == .cost ? "sample rates" : "delay and CPU"))
+            .accessibilityHint("Shows " + (face == .delay ? "CPU and sample rate" : "the delay"))
             .accessibilityAddTraits(.isButton)
         }
     }
@@ -145,12 +150,6 @@ struct LiveStatusStrip: View {
 
     // MARK: - レート
 
-    /// 入口。拡張から来る音のレートで、設計上は 48 kHz 固定。
-    private var inRate: String {
-        let hz = io.sampleRate > 0 ? io.sampleRate : 48000
-        return String(format: "%.0f kHz", hz / 1000)
-    }
-
     /// 効果を回しているレート。入口 × 倍率。
     private var dspRate: String {
         String(format: "%.0f kHz", io.processingRate / 1000)
@@ -164,29 +163,24 @@ struct LiveStatusStrip: View {
     }
 
     // MARK: - 遅れ
+    /// 鎖が足す遅れ。処理レートの標本で数えられているので、
+    /// 秒に直すときは processingRate で割る（sampleRate ではない）。
+    private var fxDelayMs: Int {
+        let hz = io.processingRate > 0 ? io.processingRate : rate
+        return Int((Double(io.pipelineLatency) / hz * 1000).rounded())
+    }
 
-    /// 出るまでの遅れ。3 つを足した合計を 1 つの数にして出す。
-    ///
-    ///   link            2 つのアプリのあいだ。再同期でここへ置き直すので設計上の定数で、
-    ///                   LocalLink.m の +targetFrames は 2048 固定＝48kHz で 43ms。
-    ///                   瞬間の溜まり（bufferedFrames）は払うたびに動いて読めないので使わない。
-    ///   blockFrames     iOS が 1 度に渡してくる長さ。Preferences の ETLatency で
-    ///                   0.005/0.010/0.023 秒。
-    ///   resamplerLatency  オーバーサンプリングの FIR。0 か 32（ETResample.c の TAPS_PER_PHASE）。
-    ///
-    /// 内訳は Status に出してある（いまは Block / Queued from Bridge / Added by resampling）。
-    /// ここで "43+23" と足し算のまま出していたのをやめたのは、
-    /// どちらが 43 でどちらが 23 なのかが帯の上では読めないから。
-    ///
-    /// 丸めは合計してから 1 回だけ。ms に直してから足すと 2 回丸めることになる。
-    private var delayMs: Int {
+    private var fxDelay: String { "\(fxDelayMs) ms" }
+
+    /// 鎖の外。リンク・iOS のブロック・オーバーサンプリングの変換。
+    private var ioDelayMs: Int {
         let frames = Double(ETLinkReceiver.targetFrames)
             + Double(io.blockFrames)
             + Double(io.resamplerLatency)
         return Int((frames / rate * 1000).rounded())
     }
 
-    private var delay: String { "\(delayMs) ms" }
+    private var ioDelay: String { "\(ioDelayMs) ms" }
 
     /// sampleRate は start() で `session.sampleRate > 0 ? ... : 48000` としか
     /// 書かれないので 0 にも nan にもならないが、ここでも 0 を避けておく。
@@ -216,11 +210,12 @@ struct LiveStatusStrip: View {
     /// 読み上げでは略さない。"%" や "ms" をそのまま読ませると意味が通らない。
     private var voice: String {
         switch face {
-        case .cost:
+        case .delay:
+            return "Effects add \(fxDelayMs) milliseconds, "
+                 + "audio path adds \(ioDelayMs) milliseconds"
+        case .load:
             let cpu = io.resting ? "idle" : String(format: "%.0f percent", loadPercent)
-            return "Total delay \(delayMs) milliseconds, CPU \(cpu)"
-        case .rate:
-            return "Incoming \(inRate), effects running at \(dspRate)"
+            return "CPU \(cpu), running at \(dspRate)"
         }
     }
 }

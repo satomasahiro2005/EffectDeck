@@ -55,6 +55,23 @@ struct PipelineView: View {
     @State private var hasPeer = false
     @State private var processingRate: Double = 48000
 
+    /// 長押しで並べ替えた回数。**行の身元に混ぜる**（下の Row.dragKey）。
+    ///
+    /// SwiftUI の List は長押しの並べ替えで、自分が抱えているセルを先に動かし、
+    /// その並びを残す。**onMove の中身を空にしても行は動いたままになる**
+    /// （onMove を `{ _, _ in }` にして測った。鎖は一度も動いていないのに、
+    ///  画面だけが 3 回とも落としたとおりに並び替わった）。
+    /// こちらは onMove で鎖も同じだけ動かすので、**同じ移動が 2 回かかる**。
+    /// 4 本の鎖で「先頭を末尾へ」を 1 回やると、鎖は T,C,R,V なのに画面は C,R,V,T になり、
+    /// 次からは掴んだつもりの無い段が動く。⋯ の Move Up / Move Down は
+    /// List の掴みを通らないので、そちらは前から一致している（testRepeatedMenuMoves）。
+    ///
+    /// ここを増やすと ForEach へ渡す身元が全部変わるので、SwiftUI は
+    ///「動かす」ではなく「入れ替える」として組み直す。List が先に動かした並びは捨てられ、
+    /// 鎖の並びがそのまま出る。増やすのは**長押しの並べ替えのときだけ**で、
+    /// 削除やパラメータの変更では増やさない（あちらは身元が変わらないほうが良い）。
+    @State private var dragGeneration = 0
+
     /// 図を動かすための速い方。DSP が 30Hz で吐いているのでそれに合わせる。
     private let fast = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
     /// 状態の見直し。ルートの問い合わせなど重いものはこちら。
@@ -159,7 +176,8 @@ struct PipelineView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(visible) { row in
+                // **身元は id ではなく dragKey。** 理由は上の dragGeneration。
+                ForEach(visible, id: \.dragKey) { row in
                     EffectCardView(
                         index: row.index,
                         node: row.node,
@@ -185,6 +203,8 @@ struct PipelineView: View {
                         }
                 }
                 .onMove { source, destination in
+                    // 先に身元を振り直す。List が自分で動かした並びを捨てさせるため。
+                    dragGeneration &+= 1
                     move(source, to: destination)
                 }
             }
@@ -204,7 +224,13 @@ struct PipelineView: View {
         let visible: Int
         let index: Int
         let node: EffeTuneDSP.Node
+        /// 段そのものの身元。remove(_:) やスワイプ削除はこちらを使う。
         var id: UUID { node.id }
+        /// 長押しで並べ替えた回数。ForEach へ渡す身元に混ぜる（dragGeneration を読むこと）。
+        let drag: Int
+        /// **ForEach に渡す身元。** 並べ替えのたびに変わるので、List は
+        /// 行を動かすのではなく組み直す。
+        var dragKey: String { "\(drag)|\(node.id)" }
     }
 
     /// 畳んでいる Section の配下を落としたもの。
@@ -222,7 +248,8 @@ struct PipelineView: View {
         return dsp.chain.indices
             .filter { !hidden.contains($0) }
             .enumerated()
-            .map { Row(visible: $0.offset, index: $0.element, node: dsp.chain[$0.element]) }
+            .map { Row(visible: $0.offset, index: $0.element, node: dsp.chain[$0.element],
+                       drag: dragGeneration) }
     }
 
     /// 帯に出す本数。Section は音を触らないので数に入れない。
@@ -303,7 +330,21 @@ struct PipelineView: View {
                                                            : dsp.chain.count
         // 落ちた先が畳んだ Section の中なら、EffeTuneDSP.move が開く
         // （revealHidden）。連れて行った配下は開く理由に数えない。
+        let wasVisible = Set(visible.map(\.node.id))
         dsp.move(from: moving, to: target)
+
+        // **見えていたのに消えた段を開く。**
+        //
+        // EffeTuneDSP.move が開くのは掴んだ行のぶんだけ。畳んだ Section を動かすと、
+        // 掴んでいない段が新しくその Section の配下に入ることがある。行は rows から
+        // 落ち、同時に sectionGate もその Section の入切へ移る（applySectionGates）。
+        // Section が切ってあれば、**画面から消えた段が黙って素通しになる**。
+        //   鎖 [SecA(畳), EQ, SecB(開), Comp, Delay] → 画面 [SecA, SecB, Comp, Delay]
+        //   SecA を SecB の下へ落とすと [SecB, SecA, EQ, Comp, Delay] になり、
+        //   SecA の範囲が Comp と Delay まで伸びる。
+        // 掴んだかどうかではなく「見えていたものが消えたか」で開く。
+        let nowVisible = Set(rows.map(\.node.id))
+        dsp.revealHidden(wasVisible.subtracting(nowVisible))
     }
 
     /// ⋯ の Move Up / Move Down。画面の 1 行を、画面の隣へ動かす。

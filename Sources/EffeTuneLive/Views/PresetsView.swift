@@ -17,8 +17,6 @@ struct PresetsView: View {
     @StateObject private var store = PresetStore.shared
 
     @State private var newName = ""
-    @State private var pasted = ""
-    @State private var showPaste = false
 
     /// 押されたものをここで束ねる。ユーザーのものと EffeTune のものを
     /// 同じ経路へ流すため。
@@ -262,8 +260,11 @@ struct PresetsView: View {
                 }
             }
             Button {
-                pasted = UIPasteboard.general.string ?? ""
-                showPaste = true
+                // **@State を立てるだけで終わっていた。** それを読む View が無く、
+                // 押しても確認も知らせも出ないまま何も起きなかった。
+                // 下の .alert（提示は 1 枚だけ）へ流す。
+                let text = UIPasteboard.general.string ?? ""
+                dialog = text.isEmpty ? .emptyClipboard : .importClipboard(text)
             } label: {
                 Label("Import from clipboard", systemImage: "doc.on.clipboard")
             }

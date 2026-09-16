@@ -57,6 +57,12 @@ enum ETScreenshotSeed {
         """
     }
 
+    /// 畳んだ状態で撮るか。既定は開く（中身が写らないと意味が無いので）。
+    /// 畳んだときの見え方を確かめたいときだけ立てる。
+    static var collapsed: Bool {
+        UserDefaults.standard.bool(forKey: "ETCollapsed")
+    }
+
     static var sheet: String? {
         UserDefaults.standard.string(forKey: "ETSheet")
     }

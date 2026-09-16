@@ -111,6 +111,12 @@ final class AudioIO: ObservableObject {
     @Published var blockFrames: Int = 0
     /// リサンプラが増やす遅延（入力レートのサンプル数）。
     @Published var resamplerLatency: Int = 0
+    /// 鎖そのものが持つ遅延（処理レートのサンプル数）。
+    ///
+    /// `et_pipeline_latency`（abi.h:125）を `ETPipeline_Latency()` 越しに読む。
+    /// 読んでいなかったので、Phase Select EQ のように実際に遅延を増やす
+    /// エフェクトを入れても帯の数字が動かなかった。
+    @Published var pipelineLatency: Int = 0
     /// 無音で休んでいるか。
     @Published var resting = false
 
@@ -298,7 +304,7 @@ final class AudioIO: ObservableObject {
             // 仮想デバイスへ引きずられていないかは
             // refreshRoute() の loopback で見て、Settings に出す。
             try session.overrideOutputAudioPort(.none)
-            overriding = false
+            escape.reset()
 
 
             // このアプリの音がどこへ出ているか。
@@ -443,7 +449,7 @@ final class AudioIO: ObservableObject {
     }
 
     func stop(keepListening: Bool = false) {
-        overriding = false
+        escape.reset()
         node.map { engine.detach($0) }
         node = nil
         engine.stop()
@@ -498,6 +504,9 @@ final class AudioIO: ObservableObject {
         // 落ち着いているときは publish が止まるようにする（表示は整数 %）。
         let nowLoad = ((render?.load ?? 0) * 1000).rounded() / 1000
         if load != nowLoad { load = nowLoad }
+
+        let nowLatency = Int(ETPipeline_Latency())
+        if pipelineLatency != nowLatency { pipelineLatency = nowLatency }
 
         let nowResting = render?.resting ?? false
         if resting != nowResting { resting = nowResting }
@@ -574,35 +583,26 @@ final class AudioIO: ObservableObject {
     /// 無音で暴走するよりはよいと判断している。
     /// 仮想デバイスを指していないときは何もしないので、
     /// イヤホンが選ばれている場合はそのまま鳴る。
-    /// いま引き剥がしているか。
-    ///
-    /// **状態を持たないと壊れる。**
-    /// overrideOutputAudioPort は即時には反映されない。呼んだ直後に
-    /// currentRoute を見てもまだ仮想デバイスのままで、実際に切り替わるのは
-    /// 2 秒ほど後だった（実機のログで確認）。
-    /// その間「まだ仮想デバイスだ」と見て呼び直すと、
-    /// 2 秒で 8 回のルート変更を打つことになり、
-    /// MediaDevice のセッションが壊れて Unable to Connect になる。
-    private var overriding = false
+    /// 引き剥がしの判断。**中身は ETRouteEscape が持つ。**
+    /// AVAudioSession に触らない形にしてあるので、こちらの穴は
+    /// Tests/Unit/RouteEscapeTests.swift が実機なしで見張る。
+    private var escape = ETRouteEscape()
+
+    /// tick のログに出す用。
+    private var overriding: Bool { escape.overriding }
 
     private func escapeVirtualDevice(_ session: AVAudioSession) {
-        let onVirtual = session.currentRoute.outputs.contains {
+        let outs = session.currentRoute.outputs
+        let onVirtual = outs.contains {
             $0.portName.localizedCaseInsensitiveContains("EffeTune")
         }
-        // 変える必要があるときだけ呼ぶ。
-        // 引き剥がし済みなら、まだ EffeTune と見えていても何もしない。
-        if onVirtual && !overriding {
-            apply(.speaker, on: session, reason: "仮想デバイスを指している")
-            overriding = true
-        } else if !onVirtual && overriding {
-            // 本当に外れたのかを確かめてから戻す。
-            // Speaker になっているのはこちらが引き剥がした結果なので、
-            // それを「外れた」と誤認して戻すと往復する。
-            let onSpeaker = session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
-            if !onSpeaker {
-                apply(.none, on: session, reason: "仮想デバイスを指していない")
-                overriding = false
-            }
+        let onSpeaker = outs.contains { $0.portType == .builtInSpeaker }
+        let now = ProcessInfo.processInfo.systemUptime
+
+        switch escape.decide(onVirtual: onVirtual, onSpeaker: onSpeaker, now: now) {
+        case .speaker: apply(.speaker, on: session, reason: "仮想デバイスを指している")
+        case .clear:   apply(.none, on: session, reason: "仮想デバイスを指していない")
+        case nil:      break
         }
     }
 

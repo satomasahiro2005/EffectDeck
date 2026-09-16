@@ -35,6 +35,10 @@ static _Atomic uint32_t gEngine = 0;
 // 音のスレッドが書き、UI が読むので atomic にした。relaxed で足りる（値を 1 つ読むだけ）。
 static _Atomic int           gConfigured = 0;
 static _Atomic uint_least32_t gActive = 0;
+// 鎖そのものが足す遅れ（標本）。et_pipeline_latency が返す値で、
+// FIR を持つエフェクト（Phase Select EQ など）を入れると増える。
+// configure のあとに読む。音のスレッドが書き、UI が読む。
+static _Atomic uint_least32_t gLatency = 0;
 
 static void writeU32(uint8_t *p, uint32_t v)
 {
@@ -120,6 +124,11 @@ uint32_t ETPipeline_ActiveNodes(void)
     return (uint32_t)atomic_load_explicit(&gActive, memory_order_relaxed);
 }
 
+uint32_t ETPipeline_Latency(void)
+{
+    return (uint32_t)atomic_load_explicit(&gLatency, memory_order_relaxed);
+}
+
 int ETPipeline_IsBypassed(void)
 {
     return atomic_load_explicit(&gBypass, memory_order_relaxed);
@@ -150,6 +159,11 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
         atomic_store_explicit(&gConfigured, st == ET_OK ? 1 : 0, memory_order_relaxed);
         atomic_store_explicit(&gActive,
                               (uint_least32_t)(st == ET_OK ? d->active : 0u),
+                              memory_order_relaxed);
+        // **鎖が足す遅れはここでしか読めない。**
+        // 組み直した直後の値が正で、次の configure まで変わらない。
+        atomic_store_explicit(&gLatency,
+                              (uint_least32_t)(st == ET_OK ? et_pipeline_latency(engine) : 0u),
                               memory_order_relaxed);
     }
 

@@ -25,9 +25,24 @@ enum ETShareLink {
         let short = PipelineStore.shortForm(chain)
         guard !short.isEmpty,
               let data = try? JSONSerialization.data(withJSONObject: short,
-                                                     options: [.withoutEscapingSlashes]),
+                                                     options: [.withoutEscapingSlashes,
+                                                               .sortedKeys]),
               var comps = URLComponents(string: base) else { return nil }
-        comps.queryItems = [URLQueryItem(name: "p", value: data.base64EncodedString())]
+
+        // **`+` は自分で %2B にする。**
+        // URLComponents は `+` をクエリの正しい文字と見て素通しするが、
+        // 受け側の web 版は URLSearchParams で読むので `+` が空白に復号され、
+        // ui-manager.js:573 と clipboard-manager.js:120 の
+        // /^[A-Za-z0-9+/=]+$/ が落ちて error.invalidUrl になる。
+        // 出るのは Section 名に ASCII 以外を入れたとき（UTF-8 のバイト並びが
+        // base64 で `+` を生む位置に来る）で、ASCII 名だけだと出ない。
+        // こちら（ETShareLink.parse）は URLComponents 経由なので読めてしまい、
+        // 送った側では気づけない。
+        //
+        // `/` はクエリでも `URLSearchParams` でもそのまま通るので触らない。
+        // base64 に `&` `#` `?` は出ない。
+        let encoded = data.base64EncodedString().replacingOccurrences(of: "+", with: "%2B")
+        comps.percentEncodedQuery = "p=" + encoded
         return comps.url
     }
 

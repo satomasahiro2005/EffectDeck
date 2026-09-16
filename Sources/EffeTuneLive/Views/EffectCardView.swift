@@ -42,6 +42,21 @@ struct EffectCardView: View {
         Card {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                // **畳んでいても図を出すもの。**
+                // Level Meter は畳むと「Analyzer」という字だけが残るが、
+                // この道具は音が来ているかを見るために置くので、
+                // 字より棒のほうが要る。図だけの形で細く出す。
+                if !isExpanded && showsCollapsedGraph && !inlinesGraph {
+                    // 図だけの形で下に置く。切らない。
+                    // 一度 150pt で切ってみたが、横軸の字まで落ちて壊れて見えた。
+                    // 高さが要るのは図がそれだけの情報を持っているからで、
+                    // 畳んだ状態でも見たいものはそこにある。
+                    ETEffectViews.view(index: index, node: node, dsp: dsp)
+                        .environment(\.etGraphOnly, true)
+                        .padding(.horizontal, ETMetrics.cardPadding)
+                        .padding(.bottom, ETMetrics.cardPadding)
+                        .allowsHitTesting(false)
+                }
                 if isExpanded && hasBody {
                     Group {
                         if ETEffectViews.has(node.spec.type) {
@@ -83,18 +98,35 @@ struct EffectCardView: View {
                 .labelsHidden()
                 .accessibilityLabel(node.spec.name)
 
-            VStack(alignment: .leading, spacing: 1) {
-                // 折り返さない。幅が足りないときは縮める。
-                // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
-                // 2 行に折れていた。
-                Text(node.spec.name)
-                    .font(.system(size: 16, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Text(summary)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            // **畳んだ Level Meter は図を名前の場所へ入れる。**
+            // 横長の棒 2 本と目盛りなので、名前があった枠にそのまま収まる。
+            // これでカードが 1 行になり、鎖の先頭に置いても場所を食わない。
+            // 他の analyzer（図が縦に伸びるもの）は下に置く。
+            if inlinesGraph {
+                ETEffectViews.view(index: index, node: node, dsp: dsp)
+                    .environment(\.etGraphOnly, true)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(node.spec.name)
+            } else if !hidesName {
+                VStack(alignment: .leading, spacing: 1) {
+                    // 折り返さない。幅が足りないときは縮める。
+                    // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
+                    // 2 行に折れていた。
+                    Text(node.spec.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text(summary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                // 名前も図も頭には出さない（図は下に来る）。
+                // 読み上げだけ残す。図は読み上げられないので。
+                Color.clear.frame(width: 0, height: 0)
+                    .accessibilityHidden(false)
+                    .accessibilityLabel(node.spec.name)
             }
 
             Spacer(minLength: 4)
@@ -177,7 +209,10 @@ struct EffectCardView: View {
         // 電源の絵の左端を本文の左端に揃える。
         .padding(.leading, 2)
         .padding(.trailing, 4)
-        .padding(.vertical, 10)
+        // 名前を出していないときは詰める。字が無いのに 2 行ぶんの高さを
+        // 取ると、頭の行が空白のまま 44pt 居座る。
+        // 図をこの行に入れているときは、図のぶんだけ少し戻す。
+        .padding(.vertical, inlinesGraph ? 8 : (hidesName ? 2 : 10))
         .contentShape(Rectangle())
         .onTapGesture {
             guard hasBody else { return }
@@ -185,16 +220,46 @@ struct EffectCardView: View {
         }
     }
 
+    /// 頭に名前を出さないか。**図を名前の場所へ入れるときだけ。**
+    ///
+    /// 名前を消して図を下に置くと、頭の行が空のまま残って場所を食う。
+    /// 名前が要らないのは、図がその場所に収まって 1 行になるものだけ。
+    private var hidesName: Bool { inlinesGraph }
+
+    /// 図を名前の場所へ入れるか。**横長で背の低い図だけ。**
+    ///
+    /// Level Meter は棒 2 本と目盛りで、名前 2 行ぶんの高さに収まる。
+    /// しかも棒を見れば何かは分かるので、"Level Meter / Analyzer" の字は
+    /// 同じことを二度書いている。
+    /// Spectrum Analyzer や Stereo Meter は図が縦に伸びるので入らない。
+    /// そちらは名前を残して、図はその下に置く。
+    private var inlinesGraph: Bool {
+        showsCollapsedGraph && !isExpanded && node.spec.type == "LevelMeterPlugin"
+    }
+
     /// 図で見せるもの。パラメータを畳んでも中身が残る。
     private var isAnalyzer: Bool {
         node.spec.category == "analyzer" && ETEffectViews.has(node.spec.type)
     }
 
+    /// 畳んでいるあいだも図を出すか。**analyzer は全部そうする。**
+    ///
+    /// 畳んで字だけにしても「Analyzer」としか出ない。この分類は見るために
+    /// 鎖へ入れるものなので、畳んだ状態でも動いているものが見えたほうがよい。
+    /// 出すのは図だけの形（つまみも目盛りも畳んだもの）なので、
+    /// 一覧としての高さは字 1 行ぶんより少し増える程度に収まる。
+    private var showsCollapsedGraph: Bool {
+        node.spec.category == "analyzer" && ETEffectViews.has(node.spec.type)
+    }
+
     /// 図だけにできるか。専用のビューを持っていれば図がある。
-    /// analyzer は中身が図そのものなので当然入る。EQ 系も図が主役。
-    /// パラメータを持たないもの（Level Meter など）は畳んでも何も減らないので外す。
+    ///
+    /// **パラメータの有無で決めない。** Level Meter はパラメータを 1 つも
+    /// 持たないが、畳めば見出しと目盛りと数値が消えて棒だけになる。
+    /// 音が来ているかを見るために鎖の先頭へ置く道具なので、
+    /// 細いまま機能することのほうが大事。
     private var canGraphOnly: Bool {
-        ETEffectViews.has(node.spec.type) && !node.spec.params.isEmpty
+        ETEffectViews.has(node.spec.type)
     }
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
@@ -208,6 +273,9 @@ struct EffectCardView: View {
     /// そうしないと、どのエフェクトなのかを言う行が頭から消える。
     private var summary: String {
         if isExpanded && hasBody { return node.spec.category.categoryLabel }
+        // 畳んだ状態で図を出すものは、その下に図が来る。
+        // 字でも分類名しか出ないので、分類を出しておく（重複しない）。
+        if !isExpanded && showsCollapsedGraph { return node.spec.category.categoryLabel }
         guard !node.spec.params.isEmpty else { return node.spec.category.categoryLabel }
         let shown = node.spec.params.prefix(3).compactMap { param -> String? in
             guard !param.isArray,

@@ -126,6 +126,28 @@ targets:
   # ------------------------------------------------------------------
   # UI の当たり判定を機械で確かめるためのもの。製品には入らない。
   # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # 実機を使わずに測れるものはここで測る。
+  #
+  # **アプリを建てない。** 対象のファイルをこのバンドルへ直接コンパイルする。
+  # アプリを建てると拡張＝MediaDevice.framework が要り、
+  # それはシミュレータの SDK に無いので建たない（docs/connect-log.md の冒頭）。
+  # ここに置けるのは「OS に触らない判断」だけ。触るものは実機で測る。
+  # ------------------------------------------------------------------
+  EffeTuneLiveUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/Unit
+      - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
+      - path: Sources/EffeTuneLive/DSP/ETParamCoding.swift
+      - path: Sources/EffeTuneLive/DSP/EffectSpec.swift
+      - path: Sources/EffeTuneLive/Generated/EffectCatalog.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests
+        GENERATE_INFOPLIST_FILE: YES
+
   EffeTuneLiveUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -140,6 +162,16 @@ targets:
       - target: EffeTuneLive
 
 schemes:
+  # 実機なしで走るもの。
+  #   xcodebuild test -scheme Logic -destination 'platform=iOS Simulator,name=iPhone 17'
+  Logic:
+    build:
+      targets:
+        EffeTuneLiveUnitTests: [test]
+    test:
+      targets:
+        - EffeTuneLiveUnitTests
+
   EffeTuneLive:
     build:
       targets:

@@ -1,4 +1,5 @@
 !docs/shot.png
+!docs/connect-log.md
 *.dSYM/
 *.ipa
 *.log
@@ -8,12 +9,12 @@
 DerivedData/
 Generated/note-models/
 build/
-node_modules/
 out-sim/
 out/
-package-lock.json
 project-sim.yml
 shots-all/
 shots-render/
 shots-store/
 xcuserdata/
+node_modules/
+package-lock.json

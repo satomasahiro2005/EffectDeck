@@ -41,6 +41,20 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
 
     private var reportTimer: Timer?
 
+    /// 終える。呼び出しの最中に落とさないよう次の回に回す。
+    ///
+    /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いので、
+    /// 登録を落とす代わりにプロセスごと終える。次に選ばれたときは
+    /// システムが新しいプロセスを立ち上げ、毎回 1 回目の登録になる。
+    private func quit(_ why: String) {
+        log.notice("終了する: \(why, privacy: .public)")
+        reportTimer?.invalidate(); reportTimer = nil
+        EffeTuneDriver.shared.stopCapture()
+        ETLinkSender.shared.stop()
+        EffeTuneDriver.shared.unpublish()
+        DispatchQueue.main.async { exit(0) }
+    }
+
     /// デバイスの id。AudioServerPlugIn の kAudioDevicePropertyDeviceUID と一致させる。
     ///
     /// **固定値でなければならない。** 一度プロセスごとに作り直してみたが、
@@ -190,6 +204,8 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
             log.error("AudioServerPlugIn の登録に失敗 OSStatus=\(st)")
             routingManager.failedToActivateDevice(device, session: session,
                                                   error: MediaDeviceError(.connectionFailed))
+            // 失敗したまま生き残ると、次の activate も同じ死んだ登録に当たる。
+            quit("publish に失敗した")
             return
         }
         routingManager.activatedDevice(device, session: session)
@@ -246,8 +262,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         //
         // 終えるのは routingManager への返事が済んだあと。
         // いま呼び出しの最中なので、次の回に回す。
-        log.notice("deactivate 済み。登録を残さないためプロセスを終える")
-        DispatchQueue.main.async { exit(0) }
+        quit("deactivate された")
     }
 
     // MARK: - 音量（持たない）

@@ -318,12 +318,12 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "frequency2", key: "f2", label: "Frequency2", kind: .number(min: 100.0, max: 2000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 500.0, offset: 1, count: 1),
         ETParam(name: "frequency3", key: "f3", label: "Frequency3", kind: .number(min: 500.0, max: 8000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 2000.0, offset: 2, count: 1),
         ETParam(name: "frequency4", key: "f4", label: "Frequency4", kind: .number(min: 1000.0, max: 20000.0, step: 0.0, unit: "Hz", isInteger: false), defaultValue: 8000.0, offset: 3, count: 1),
-        ETParam(name: "threshold", key: "t", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -20.0, offset: 4, count: 5),
-        ETParam(name: "ratio", key: "r", label: "Ratio", kind: .number(min: 0.5, max: 20.0, step: 0.01, unit: "", isInteger: false), defaultValue: 4.0, offset: 9, count: 5),
-        ETParam(name: "attack", key: "a", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 30.0, offset: 14, count: 5),
-        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 150.0, offset: 19, count: 5),
-        ETParam(name: "knee", key: "k", label: "Knee", kind: .number(min: 0.0, max: 12.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: 6.0, offset: 24, count: 5),
-        ETParam(name: "gain", key: "g", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: -1.0, offset: 29, count: 5)
+        ETParam(name: "threshold", key: "t", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -20.0, offset: 4, count: 5, objectArrayKey: "bands", memberKey: "t"),
+        ETParam(name: "ratio", key: "r", label: "Ratio", kind: .number(min: 0.5, max: 20.0, step: 0.01, unit: "", isInteger: false), defaultValue: 4.0, offset: 9, count: 5, objectArrayKey: "bands", memberKey: "r"),
+        ETParam(name: "attack", key: "a", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 30.0, offset: 14, count: 5, objectArrayKey: "bands", memberKey: "a"),
+        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 150.0, offset: 19, count: 5, objectArrayKey: "bands", memberKey: "rl"),
+        ETParam(name: "knee", key: "k", label: "Knee", kind: .number(min: 0.0, max: 12.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: 6.0, offset: 24, count: 5, objectArrayKey: "bands", memberKey: "k"),
+        ETParam(name: "gain", key: "g", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: -1.0, offset: 29, count: 5, objectArrayKey: "bands", memberKey: "g")
       ]),
     ETEffect(
       type: "MultibandExpanderPlugin",
@@ -338,12 +338,12 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "frequency2", key: "f2", label: "Frequency2", kind: .number(min: 100.0, max: 2000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 500.0, offset: 1, count: 1),
         ETParam(name: "frequency3", key: "f3", label: "Frequency3", kind: .number(min: 500.0, max: 8000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 2000.0, offset: 2, count: 1),
         ETParam(name: "frequency4", key: "f4", label: "Frequency4", kind: .number(min: 1000.0, max: 20000.0, step: 0.0, unit: "Hz", isInteger: false), defaultValue: 8000.0, offset: 3, count: 1),
-        ETParam(name: "threshold", key: "t", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -30.0, offset: 4, count: 5),
-        ETParam(name: "ratio", key: "r", label: "Ratio", kind: .number(min: 0.05, max: 20.0, step: 0.01, unit: "", isInteger: false), defaultValue: 1.2, offset: 9, count: 5),
-        ETParam(name: "attack", key: "a", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 10.0, offset: 14, count: 5),
-        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 19, count: 5),
-        ETParam(name: "knee", key: "k", label: "Knee", kind: .number(min: 0.0, max: 12.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: 6.0, offset: 24, count: 5),
-        ETParam(name: "gain", key: "g", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 1.0, offset: 29, count: 5)
+        ETParam(name: "threshold", key: "t", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -30.0, offset: 4, count: 5, objectArrayKey: "bands", memberKey: "t"),
+        ETParam(name: "ratio", key: "r", label: "Ratio", kind: .number(min: 0.05, max: 20.0, step: 0.01, unit: "", isInteger: false), defaultValue: 1.2, offset: 9, count: 5, objectArrayKey: "bands", memberKey: "r"),
+        ETParam(name: "attack", key: "a", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 10.0, offset: 14, count: 5, objectArrayKey: "bands", memberKey: "a"),
+        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 19, count: 5, objectArrayKey: "bands", memberKey: "rl"),
+        ETParam(name: "knee", key: "k", label: "Knee", kind: .number(min: 0.0, max: 12.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: 6.0, offset: 24, count: 5, objectArrayKey: "bands", memberKey: "k"),
+        ETParam(name: "gain", key: "g", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 1.0, offset: 29, count: 5, objectArrayKey: "bands", memberKey: "g")
       ]),
     ETEffect(
       type: "MultibandTransientPlugin",
@@ -356,13 +356,13 @@ let ETCatalog: [ETEffect] = [
       params: [
         ETParam(name: "frequency1", key: "f1", label: "Frequency1", kind: .number(min: 20.0, max: 2000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 200.0, offset: 0, count: 1),
         ETParam(name: "frequency2", key: "f2", label: "Frequency2", kind: .number(min: 200.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 4000.0, offset: 1, count: 1),
-        ETParam(name: "fastAttack", key: "fa", label: "Fast Attack", kind: .number(min: 0.1, max: 10.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 5.0, offset: 2, count: 3),
-        ETParam(name: "fastRelease", key: "fr", label: "Fast Release", kind: .number(min: 1.0, max: 200.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 50.0, offset: 5, count: 3),
-        ETParam(name: "slowAttack", key: "sa", label: "Slow Attack", kind: .number(min: 1.0, max: 100.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 25.0, offset: 8, count: 3),
-        ETParam(name: "slowRelease", key: "sr", label: "Slow Release", kind: .number(min: 50.0, max: 1000.0, step: 5.0, unit: "ms", isInteger: true), defaultValue: 250.0, offset: 11, count: 3),
-        ETParam(name: "transientGain", key: "gt", label: "Transient Gain", kind: .number(min: -24.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 6.0, offset: 14, count: 3),
-        ETParam(name: "sustainGain", key: "gs", label: "Sustain Gain", kind: .number(min: -24.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 17, count: 3),
-        ETParam(name: "gainSmoothing", key: "sm", label: "Smoothing", kind: .number(min: 0.1, max: 20.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 5.0, offset: 20, count: 3)
+        ETParam(name: "fastAttack", key: "fa", label: "Fast Attack", kind: .number(min: 0.1, max: 10.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 5.0, offset: 2, count: 3, objectArrayKey: "bands", memberKey: "fa"),
+        ETParam(name: "fastRelease", key: "fr", label: "Fast Release", kind: .number(min: 1.0, max: 200.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 50.0, offset: 5, count: 3, objectArrayKey: "bands", memberKey: "fr"),
+        ETParam(name: "slowAttack", key: "sa", label: "Slow Attack", kind: .number(min: 1.0, max: 100.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 25.0, offset: 8, count: 3, objectArrayKey: "bands", memberKey: "sa"),
+        ETParam(name: "slowRelease", key: "sr", label: "Slow Release", kind: .number(min: 50.0, max: 1000.0, step: 5.0, unit: "ms", isInteger: true), defaultValue: 250.0, offset: 11, count: 3, objectArrayKey: "bands", memberKey: "sr"),
+        ETParam(name: "transientGain", key: "gt", label: "Transient Gain", kind: .number(min: -24.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 6.0, offset: 14, count: 3, objectArrayKey: "bands", memberKey: "gt"),
+        ETParam(name: "sustainGain", key: "gs", label: "Sustain Gain", kind: .number(min: -24.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 17, count: 3, objectArrayKey: "bands", memberKey: "gs"),
+        ETParam(name: "gainSmoothing", key: "sm", label: "Smoothing", kind: .number(min: 0.1, max: 20.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 5.0, offset: 20, count: 3, objectArrayKey: "bands", memberKey: "sm")
       ]),
     ETEffect(
       type: "PowerAmpSagPlugin",
@@ -430,18 +430,18 @@ let ETCatalog: [ETEffect] = [
       floatCount: 60,
       defaults: [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0, 1.0, 1.0, 1.0, 1.0, 1.0, 6.0, 6.0, 6.0, 6.0, 6.0, -18.0, -21.0, -24.0, -27.0, -30.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 10.0, 10.0, 10.0, 10.0, 10.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0, 1.0, 1.0, 1.0, 1.0, 1.0],
       params: [
-        ETParam(name: "enabled", key: "en", label: "Enabled", kind: .toggle, defaultValue: 0.0, offset: 0, count: 5),
-        ETParam(name: "filterType", key: "ft", label: "Filter Type", kind: .enumeration(["pk", "ls", "hs"]), defaultValue: 0.0, offset: 5, count: 5),
-        ETParam(name: "frequency", key: "f", label: "Frequency", kind: .number(min: 20.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 100.0, offset: 10, count: 5),
-        ETParam(name: "q", key: "q", label: "Q", kind: .number(min: 0.1, max: 10.0, step: 0.1, unit: "", isInteger: false), defaultValue: 1.0, offset: 15, count: 5),
-        ETParam(name: "maxGain", key: "mg", label: "Max Gain", kind: .number(min: 0.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 6.0, offset: 20, count: 5),
-        ETParam(name: "threshold", key: "th", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: -18.0, offset: 25, count: 5),
-        ETParam(name: "ratio", key: "r", label: "Ratio", kind: .number(min: 0.1, max: 100.0, step: 0.01, unit: "", isInteger: false), defaultValue: 2.0, offset: 30, count: 5),
-        ETParam(name: "knee", key: "kn", label: "Knee", kind: .number(min: 0.0, max: 10.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 3.0, offset: 35, count: 5),
-        ETParam(name: "attack", key: "a", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 10.0, offset: 40, count: 5),
-        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 1.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 45, count: 5),
-        ETParam(name: "sidechainFrequency", key: "scf", label: "Sidechain Frequency", kind: .number(min: 20.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 100.0, offset: 50, count: 5),
-        ETParam(name: "sidechainQ", key: "scq", label: "Sidechain Q", kind: .number(min: 0.1, max: 10.0, step: 0.1, unit: "", isInteger: false), defaultValue: 1.0, offset: 55, count: 5)
+        ETParam(name: "enabled", key: "en", label: "Enabled", kind: .toggle, defaultValue: 0.0, offset: 0, count: 5, objectArrayKey: "bs", memberKey: "en"),
+        ETParam(name: "filterType", key: "ft", label: "Filter Type", kind: .enumeration(["pk", "ls", "hs"]), defaultValue: 0.0, offset: 5, count: 5, objectArrayKey: "bs", memberKey: "ft"),
+        ETParam(name: "frequency", key: "f", label: "Frequency", kind: .number(min: 20.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 100.0, offset: 10, count: 5, objectArrayKey: "bs", memberKey: "f"),
+        ETParam(name: "q", key: "q", label: "Q", kind: .number(min: 0.1, max: 10.0, step: 0.1, unit: "", isInteger: false), defaultValue: 1.0, offset: 15, count: 5, objectArrayKey: "bs", memberKey: "q"),
+        ETParam(name: "maxGain", key: "mg", label: "Max Gain", kind: .number(min: 0.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 6.0, offset: 20, count: 5, objectArrayKey: "bs", memberKey: "mg"),
+        ETParam(name: "threshold", key: "th", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: -18.0, offset: 25, count: 5, objectArrayKey: "bs", memberKey: "th"),
+        ETParam(name: "ratio", key: "r", label: "Ratio", kind: .number(min: 0.1, max: 100.0, step: 0.01, unit: "", isInteger: false), defaultValue: 2.0, offset: 30, count: 5, objectArrayKey: "bs", memberKey: "r"),
+        ETParam(name: "knee", key: "kn", label: "Knee", kind: .number(min: 0.0, max: 10.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 3.0, offset: 35, count: 5, objectArrayKey: "bs", memberKey: "kn"),
+        ETParam(name: "attack", key: "a", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 10.0, offset: 40, count: 5, objectArrayKey: "bs", memberKey: "a"),
+        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 1.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 45, count: 5, objectArrayKey: "bs", memberKey: "rl"),
+        ETParam(name: "sidechainFrequency", key: "scf", label: "Sidechain Frequency", kind: .number(min: 20.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 100.0, offset: 50, count: 5, objectArrayKey: "bs", memberKey: "scf"),
+        ETParam(name: "sidechainQ", key: "scq", label: "Sidechain Q", kind: .number(min: 0.1, max: 10.0, step: 0.1, unit: "", isInteger: false), defaultValue: 1.0, offset: 55, count: 5, objectArrayKey: "bs", memberKey: "scq")
       ]),
     ETEffect(
       type: "FiveBandFIRPEQPlugin",
@@ -620,7 +620,7 @@ let ETCatalog: [ETEffect] = [
       floatCount: 2,
       defaults: [6.91, 0.0],
       params: [
-        ETParam(name: "pivotExponent", key: "f0", label: "Pivot Freq (Hz)", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 6.91, offset: 0, count: 1),
+        ETParam(name: "pivotExponent", key: "f0", label: "Pivot Freq (Hz)", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 6.91, offset: 0, count: 1, scale: .naturalExp),
         ETParam(name: "slope", key: "sl", label: "Slope", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB/oct", isInteger: false), defaultValue: 0.0, offset: 1, count: 1)
       ]),
     ETEffect(
@@ -1229,12 +1229,12 @@ let ETCatalog: [ETEffect] = [
       floatCount: 31,
       defaults: [1.0, 1.0, 1.0, 1.0, 1.0, 6.86, 7.52, 7.99, 8.34, 8.75, 15.0, 12.0, 10.0, 8.0, 6.0, 7.19, 7.86, 8.33, 8.68, 9.08, 5.8, 6.48, 6.94, 7.29, 7.7, 0.0, -3.0, -6.0, -9.0, -12.0, 25.0],
       params: [
-        ETParam(name: "resonatorEnabled", key: "en", label: "Resonator Enabled", kind: .toggle, defaultValue: 1.0, offset: 0, count: 5),
-        ETParam(name: "frequencyLog", key: "fr", label: "Frequency Log", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 6.86, offset: 5, count: 5),
-        ETParam(name: "decay", key: "dc", label: "Decay", kind: .number(min: 1.0, max: 500.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 15.0, offset: 10, count: 5),
-        ETParam(name: "lowPassLog", key: "lp", label: "Low Pass Log", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 7.19, offset: 15, count: 5),
-        ETParam(name: "highPassLog", key: "hp", label: "High Pass Log", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 5.8, offset: 20, count: 5),
-        ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: -18.0, max: 18.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 25, count: 5),
+        ETParam(name: "resonatorEnabled", key: "en", label: "Resonator Enabled", kind: .toggle, defaultValue: 1.0, offset: 0, count: 5, objectArrayKey: "rs", memberKey: "en"),
+        ETParam(name: "frequencyLog", key: "fr", label: "Frequency Log", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 6.86, offset: 5, count: 5, objectArrayKey: "rs", memberKey: "fr"),
+        ETParam(name: "decay", key: "dc", label: "Decay", kind: .number(min: 1.0, max: 500.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 15.0, offset: 10, count: 5, objectArrayKey: "rs", memberKey: "dc"),
+        ETParam(name: "lowPassLog", key: "lp", label: "Low Pass Log", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 7.19, offset: 15, count: 5, objectArrayKey: "rs", memberKey: "lp"),
+        ETParam(name: "highPassLog", key: "hp", label: "High Pass Log", kind: .number(min: 3.0, max: 9.9, step: 0.01, unit: "", isInteger: false), defaultValue: 5.8, offset: 20, count: 5, objectArrayKey: "rs", memberKey: "hp"),
+        ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: -18.0, max: 18.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 25, count: 5, objectArrayKey: "rs", memberKey: "gn"),
         ETParam(name: "mix", key: "mx", label: "Mix", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 25.0, offset: 30, count: 1)
       ]),
     ETEffect(
@@ -1455,10 +1455,10 @@ let ETCatalog: [ETEffect] = [
       params: [
         ETParam(name: "frequency1", key: "f1", label: "Frequency1", kind: .number(min: 20.0, max: 2000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 200.0, offset: 0, count: 1),
         ETParam(name: "frequency2", key: "f2", label: "Frequency2", kind: .number(min: 200.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 4000.0, offset: 1, count: 1),
-        ETParam(name: "drive", key: "dr", label: "Drive", kind: .number(min: 0.0, max: 10.0, step: 0.1, unit: "", isInteger: false), defaultValue: 1.5, offset: 2, count: 3),
-        ETParam(name: "bias", key: "bs", label: "Bias", kind: .number(min: -0.3, max: 0.3, step: 0.01, unit: "", isInteger: false), defaultValue: 0.1, offset: 5, count: 3),
-        ETParam(name: "mix", key: "mx", label: "Mix", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 8, count: 3),
-        ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: -18.0, max: 18.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 11, count: 3)
+        ETParam(name: "drive", key: "dr", label: "Drive", kind: .number(min: 0.0, max: 10.0, step: 0.1, unit: "", isInteger: false), defaultValue: 1.5, offset: 2, count: 3, objectArrayKey: "bands", memberKey: "dr"),
+        ETParam(name: "bias", key: "bs", label: "Bias", kind: .number(min: -0.3, max: 0.3, step: 0.01, unit: "", isInteger: false), defaultValue: 0.1, offset: 5, count: 3, objectArrayKey: "bands", memberKey: "bs"),
+        ETParam(name: "mix", key: "mx", label: "Mix", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 8, count: 3, objectArrayKey: "bands", memberKey: "mx"),
+        ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: -18.0, max: 18.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 11, count: 3, objectArrayKey: "bands", memberKey: "gn")
       ]),
     ETEffect(
       type: "SaturationPlugin",
@@ -1580,7 +1580,7 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "frequency2", key: "f2", label: "Frequency2", kind: .number(min: 100.0, max: 2000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 500.0, offset: 1, count: 1),
         ETParam(name: "frequency3", key: "f3", label: "Frequency3", kind: .number(min: 500.0, max: 8000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 2000.0, offset: 2, count: 1),
         ETParam(name: "frequency4", key: "f4", label: "Frequency4", kind: .number(min: 1000.0, max: 20000.0, step: 0.0, unit: "Hz", isInteger: false), defaultValue: 8000.0, offset: 3, count: 1),
-        ETParam(name: "balance", key: "balance", label: "Balance", kind: .number(min: -100.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 0.0, offset: 4, count: 5)
+        ETParam(name: "balance", key: "balance", label: "Balance", kind: .number(min: -100.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 0.0, offset: 4, count: 5, objectArrayKey: "bands", memberKey: "balance")
       ]),
     ETEffect(
       type: "PhaseSelectEqPlugin",
@@ -1591,21 +1591,21 @@ let ETCatalog: [ETEffect] = [
       floatCount: 75,
       defaults: [1.0, 0.0, 0.0, 0.0, 0.0, 80.0, 80.0, 80.0, 80.0, 80.0, 100.0, 100.0, 100.0, 100.0, 100.0, 10000.0, 10000.0, 10000.0, 10000.0, 10000.0, 12000.0, 12000.0, 12000.0, 12000.0, 12000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 30.0, 30.0, 30.0, 30.0, 30.0, 45.0, 45.0, 45.0, 45.0, 45.0, 100.0, 100.0, 100.0, 100.0, 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
       params: [
-        ETParam(name: "enabled", key: "en", label: "Enabled", kind: .toggle, defaultValue: 1.0, offset: 0, count: 5),
-        ETParam(name: "outerFrequencyLow", key: "ofl", label: "Outer Frequency Low", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 80.0, offset: 5, count: 5),
-        ETParam(name: "coreFrequencyLow", key: "fl", label: "Core Frequency Low", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 100.0, offset: 10, count: 5),
-        ETParam(name: "coreFrequencyHigh", key: "fh", label: "Core Frequency High", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 10000.0, offset: 15, count: 5),
-        ETParam(name: "outerFrequencyHigh", key: "ofh", label: "Outer Frequency High", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 12000.0, offset: 20, count: 5),
-        ETParam(name: "outerPhaseLow", key: "opl", label: "Outer Phase Low", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 0.0, offset: 25, count: 5),
-        ETParam(name: "corePhaseLow", key: "pl", label: "Core Phase Low", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 0.0, offset: 30, count: 5),
-        ETParam(name: "corePhaseHigh", key: "ph", label: "Core Phase High", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 30.0, offset: 35, count: 5),
-        ETParam(name: "outerPhaseHigh", key: "oph", label: "Outer Phase High", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 45.0, offset: 40, count: 5),
-        ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: 0.0, max: 200.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 45, count: 5),
-        ETParam(name: "solo", key: "so", label: "Solo", kind: .toggle, defaultValue: 0.0, offset: 50, count: 5),
-        ETParam(name: "outerBalanceLow", key: "obl", label: "Outer Balance Low", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: -100.0, offset: 55, count: 5),
-        ETParam(name: "coreBalanceLow", key: "bl", label: "Core Balance Low", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: -100.0, offset: 60, count: 5),
-        ETParam(name: "coreBalanceHigh", key: "bh", label: "Core Balance High", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: 100.0, offset: 65, count: 5),
-        ETParam(name: "outerBalanceHigh", key: "obh", label: "Outer Balance High", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: 100.0, offset: 70, count: 5)
+        ETParam(name: "enabled", key: "en", label: "Enabled", kind: .toggle, defaultValue: 1.0, offset: 0, count: 5, objectArrayKey: "regions", memberKey: "en"),
+        ETParam(name: "outerFrequencyLow", key: "ofl", label: "Outer Frequency Low", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 80.0, offset: 5, count: 5, objectArrayKey: "regions", memberKey: "ofl"),
+        ETParam(name: "coreFrequencyLow", key: "fl", label: "Core Frequency Low", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 100.0, offset: 10, count: 5, objectArrayKey: "regions", memberKey: "fl"),
+        ETParam(name: "coreFrequencyHigh", key: "fh", label: "Core Frequency High", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 10000.0, offset: 15, count: 5, objectArrayKey: "regions", memberKey: "fh"),
+        ETParam(name: "outerFrequencyHigh", key: "ofh", label: "Outer Frequency High", kind: .number(min: 20.0, max: 40000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 12000.0, offset: 20, count: 5, objectArrayKey: "regions", memberKey: "ofh"),
+        ETParam(name: "outerPhaseLow", key: "opl", label: "Outer Phase Low", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 0.0, offset: 25, count: 5, objectArrayKey: "regions", memberKey: "opl"),
+        ETParam(name: "corePhaseLow", key: "pl", label: "Core Phase Low", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 0.0, offset: 30, count: 5, objectArrayKey: "regions", memberKey: "pl"),
+        ETParam(name: "corePhaseHigh", key: "ph", label: "Core Phase High", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 30.0, offset: 35, count: 5, objectArrayKey: "regions", memberKey: "ph"),
+        ETParam(name: "outerPhaseHigh", key: "oph", label: "Outer Phase High", kind: .number(min: 0.0, max: 180.0, step: 1.0, unit: "degree", isInteger: true), defaultValue: 45.0, offset: 40, count: 5, objectArrayKey: "regions", memberKey: "oph"),
+        ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: 0.0, max: 200.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 45, count: 5, objectArrayKey: "regions", memberKey: "gn"),
+        ETParam(name: "solo", key: "so", label: "Solo", kind: .toggle, defaultValue: 0.0, offset: 50, count: 5, objectArrayKey: "regions", memberKey: "so"),
+        ETParam(name: "outerBalanceLow", key: "obl", label: "Outer Balance Low", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: -100.0, offset: 55, count: 5, objectArrayKey: "regions", memberKey: "obl"),
+        ETParam(name: "coreBalanceLow", key: "bl", label: "Core Balance Low", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: -100.0, offset: 60, count: 5, objectArrayKey: "regions", memberKey: "bl"),
+        ETParam(name: "coreBalanceHigh", key: "bh", label: "Core Balance High", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: 100.0, offset: 65, count: 5, objectArrayKey: "regions", memberKey: "bh"),
+        ETParam(name: "outerBalanceHigh", key: "obh", label: "Outer Balance High", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: 100.0, offset: 70, count: 5, objectArrayKey: "regions", memberKey: "obh")
       ]),
     ETEffect(
       type: "StereoBlendPlugin",

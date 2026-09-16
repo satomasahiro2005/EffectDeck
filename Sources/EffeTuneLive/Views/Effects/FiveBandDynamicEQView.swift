@@ -35,7 +35,6 @@ struct FiveBandDynamicEQView: View {
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
-    @ObservedObject private var telemetry = Telemetry.shared
 
     /// 選んでいるバンド。web 版の既定も Band 3（js:26 の currentBandIndex = 2）。
     @State private var band = 2
@@ -57,20 +56,17 @@ struct FiveBandDynamicEQView: View {
     var body: some View {
         // 曲線を引く閉包へ self を渡さないよう、要る値だけ控える。
         let bands = (0..<Self.bandCount).map { setting($0) }
-        let live = liveGains
-        let gains = live ?? Array(repeating: 0, count: Self.bandCount)
-        let rate = AudioIO.shared.processingRate
-        let sampleRate = rate > 0 ? rate : 96000
         let selected = min(max(band, 0), Self.bandCount - 1)
 
         return VStack(alignment: .leading, spacing: 12) {
-            FrequencyResponseGraph(
-                curves: curves(bands: bands, gains: gains,
-                               selected: selected, sampleRate: sampleRate),
-                frequencyRange: Self.lowHz...Self.highHz,
-                decibelRange: -12...12,
-                decibelStep: 6,
-                caption: caption(selected: selected, gains: gains, live: live != nil))
+            // **Telemetry を見るのはこの中だけ。**
+            // ここで観測していたのを struct ごと外へ出した。30Hz の publish で
+            // このビュー全体が作り直されると、下の Filter Type の Picker
+            // （iOS では Menu）が提示を終えられず「読み込み中」で固まる。
+            // 実機で同じ形を踏んでいる（PipelineView.swift の頭を読むこと）。
+            FiveBandDynamicEQGraph(tapId: node.tapId, bands: bands, selected: selected,
+                                   lowHz: Self.lowHz, highHz: Self.highHz,
+                                   bandCount: Self.bandCount)
 
             bandPicker(bands: bands)
 
@@ -80,8 +76,8 @@ struct FiveBandDynamicEQView: View {
 
     // MARK: 曲線
 
-    private func curves(bands: [ETDynamicEQBand], gains: [Double],
-                        selected: Int, sampleRate: Double) -> [ETFrequencyCurve] {
+    static func curves(bands: [ETDynamicEQBand], gains: [Double],
+                       selected: Int, sampleRate: Double) -> [ETFrequencyCurve] {
         var out: [ETFrequencyCurve] = []
         let current = bands[selected]
 
@@ -121,7 +117,7 @@ struct FiveBandDynamicEQView: View {
         return out
     }
 
-    private func caption(selected: Int, gains: [Double], live: Bool) -> String {
+    static func caption(selected: Int, gains: [Double], live: Bool) -> String {
         let name = "Band \(selected + 1)"
         guard live else { return "\(name)  —" }
         return "\(name)  \(ETFormat.gain(gains[selected]))"
@@ -130,15 +126,17 @@ struct FiveBandDynamicEQView: View {
     // MARK: テレメトリ
 
     /// 読めなければ nil。0 を返すと「効いていない」と「値が無い」の区別がつかない。
-    private var liveGains: [Double]? {
-        guard let frame = telemetry.frame(tap: node.tapId, type: .fiveBandDynamicEQ),
+    /// 図の struct から呼ぶので static にしてある。
+    static func liveGains(telemetry: Telemetry, tapId: UInt32,
+                          bandCount: Int) -> [Double]? {
+        guard let frame = telemetry.frame(tap: tapId, type: .fiveBandDynamicEQ),
               frame.matches(version: 1),
               frame.hasPayload(bytes: 24) else { return nil }
         let payload = frame.payloadView
         guard payload.u8(at: 0) == UInt8(Self.bandCount),
               payload.u8(at: 1) == 0,
               payload.u16(at: 2) == 0,
-              let values = payload.floats(at: 4, count: Self.bandCount) else { return nil }
+              let values = payload.floats(at: 4, count: bandCount) else { return nil }
         var out: [Double] = []
         out.reserveCapacity(values.count)
         for value in values {
@@ -443,5 +441,39 @@ struct DynamicEQParameterRow: View {
             return String(Int(v.rounded()))
         }
         return v == v.rounded() ? String(Int(v)) : String(format: "%.2f", v)
+    }
+}
+
+/// 図だけ。**Telemetry を観測するのはここだけ。**
+///
+/// 親（FiveBandDynamicEQView）で観測していたのを切り出した。あちらの配下には
+/// Filter Type の Picker があり、iOS では Menu になる。30Hz の publish で
+/// 親ごと作り直されると、その Menu が提示を終えられず固まる。
+/// 同じ形を MultibandCompressorView と SpectrumAnalyzerView でも使っている。
+private struct FiveBandDynamicEQGraph: View {
+    let tapId: UInt32
+    let bands: [ETDynamicEQBand]
+    let selected: Int
+    let lowHz: Double
+    let highHz: Double
+    let bandCount: Int
+
+    @ObservedObject private var telemetry = Telemetry.shared
+
+    var body: some View {
+        let live = FiveBandDynamicEQView.liveGains(telemetry: telemetry,
+                                                   tapId: tapId, bandCount: bandCount)
+        let gains = live ?? Array(repeating: 0, count: bandCount)
+        let rate = AudioIO.shared.processingRate
+        let sampleRate = rate > 0 ? rate : 96000
+
+        FrequencyResponseGraph(
+            curves: FiveBandDynamicEQView.curves(bands: bands, gains: gains,
+                                                 selected: selected, sampleRate: sampleRate),
+            frequencyRange: lowHz...highHz,
+            decibelRange: -12...12,
+            decibelStep: 6,
+            caption: FiveBandDynamicEQView.caption(selected: selected, gains: gains,
+                                                   live: live != nil))
     }
 }

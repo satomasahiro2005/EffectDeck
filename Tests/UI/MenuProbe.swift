@@ -36,10 +36,25 @@ final class MenuProbe: XCTestCase {
         menu.tap()
         Thread.sleep(forTimeInterval: 2)
 
-        let item = app.buttons["IR Library"]
+        // IR Library は ⋯ から外れた（IR Reverb のカードから開く）。
+        // 無い項目を押していたので、固まるかどうかを判定できていなかった。
+        let item = app.buttons["Settings"]
         print("PROBE item exists=\(item.exists) enabled=\(item.isEnabled) hittable=\(item.isHittable) frame=\(item.frame)")
+
+        // **項目が出ること自体を判定する。**
+        // Menu が固まるときは UIDeferredMenuElement が「読み込み中」のまま留まり、
+        // 中身が 1 つも生えない。ここを見ないと、固まっていても通ってしまう。
+        XCTAssertTrue(item.waitForExistence(timeout: 10),
+                      "⋯ を開いても中身が出ない（Menu が固まっている）")
+
         item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        Thread.sleep(forTimeInterval: 3)
-        print("PROBE sheet opened=\(app.navigationBars["IR Library"].exists)")
+
+        // **開いたことを判定する。**
+        // 以前はここが print だけで、押しても何も起きない状態を素通りさせていた。
+        // このテストは「Menu が効くか」を見るために在るので、判定が無いと用をなさない。
+        let sheet = app.navigationBars["Settings"]
+        let opened = sheet.waitForExistence(timeout: 10)
+        print("PROBE sheet opened=\(opened)")
+        XCTAssertTrue(opened, "Settings を押しても開かない")
     }
 }

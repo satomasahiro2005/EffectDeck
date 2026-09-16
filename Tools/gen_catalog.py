@@ -35,6 +35,18 @@ SUPER = re.compile(r"super\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*'((?:[^'\\]|\\.)*)'", r
 BS = chr(92)
 
 
+# 保存している値と画面に出す値がずれるもの。(type, メンバ名) -> ETParamScale。
+#
+# **表で持つ。名前の綴りから当てない。**
+# tilt_eq の pivotExponent は自然対数（kernel.cpp:131 が std::exp）だが、
+# digital_error_emulator / g726_adpcm_simulator の *Exponent は pow(10, x) の
+# 指数で、上流はその指数を "10^x" のラベルでそのまま見せている。
+# 名前が Exponent で終わるかどうかで分けると後者まで変換してしまう。
+SCALES = {
+    ("TiltEQPlugin", "pivotExponent"): "naturalExp",
+}
+
+
 def parse_header(path):
     """生成ヘッダから (メンバ順, ハッシュ, float総数) を読む。"""
     text = path.read_text(encoding="utf-8")
@@ -463,12 +475,30 @@ def main():
                 stat["miss"] += 1
             # 保存形式は params.json の key を使う。無ければメンバ名で代用する。
             key = f.get("key") or mname
+
+            # 上流がオブジェクト配列で書くもの。
+            #   "bs": [{"en": …, "ft": …}, …]
+            # 平らな "en": [...] にすると段の en と衝突して潰れ、web 版も
+            # 同梱プリセットも読めない（Sources/.../EffectSpec.swift の
+            # objectArrayKey のコメントに経緯）。
+            extra = ""
+            oak, mk = f.get("objectArrayKey"), f.get("memberKey")
+            if oak and mk and mcount > 1:
+                extra += ", objectArrayKey: %s, memberKey: %s" % (
+                    swift_str(oak), swift_str(mk))
+                stat["objarr"] = stat.get("objarr", 0) + 1
+
+            # 保存値と表示値がずれるもの。表を明示で持つ。名前から当てない。
+            scale = SCALES.get((type_name, mname))
+            if scale:
+                extra += ", scale: .%s" % scale
+
             params.append((
                 u.get("line"),
                 "        ETParam(name: %s, key: %s, label: %s, kind: %s, defaultValue: %r, "
-                "offset: %d, count: %d)"
+                "offset: %d, count: %d%s)"
                 % (swift_str(mname), swift_str(key), swift_str(label),
-                   kind_swift, dv_f, offset, mcount)))
+                   kind_swift, dv_f, offset, mcount, extra)))
             if dv_list is not None:
                 # 要素ごとに違う既定値を持つ。足りない分は先頭で埋める。
                 vals = []

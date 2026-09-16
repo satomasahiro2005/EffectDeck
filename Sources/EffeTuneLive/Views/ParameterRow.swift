@@ -269,7 +269,8 @@ struct ParameterRow: View {
         guard case .number(_, _, _, _, let isInteger) = param.kind else {
             return param.format(value)
         }
-        let v = value
+        // 保存値と表示値がずれるものを通す（いまは Tilt EQ の Pivot Freq だけ）。
+        let v = param.display(value)
         if isInteger { return String(Int(v.rounded())) }
         if abs(v) >= 100 { return String(format: "%.0f", v) }
         if abs(v) >= 10 { return String(format: "%.1f", v) }
@@ -296,7 +297,13 @@ struct ParameterRow: View {
             .onSubmit { commit() }
             .onChange(of: focused) { _, now in
                 if now {
-                    draft = trimmed(value)
+                    // **画面に出ている数をそのまま渡す。**
+                    // 生値を渡すと、保存値と表示値がずれるもの（Tilt EQ の Pivot は
+                    // 自然対数）で、触った瞬間に 1000 が 6.91 へ飛ぶ。しかも
+                    // 何も打たずに外すと commit() が store(6.91)=ln(6.91)≈1.93 を
+                    // 下限 3.0 に挟むので、**触って外すだけでピボットが 20Hz になる。**
+                    // commit() が store() で戻す側と対にしてある。
+                    draft = trimmed(param.display(value))
                     editing = true
                 } else if editing {
                     // 他を触ってキーボードが引っ込んだときも確定させる。
@@ -312,7 +319,10 @@ struct ParameterRow: View {
     private func commit() {
         editing = false
         focused = false
-        guard let v = Float(draft.trimmingCharacters(in: .whitespaces)) else { return }
+        guard let typed = Float(draft.trimmingCharacters(in: .whitespaces)) else { return }
+        // **挟むのは戻してから。** Tilt EQ の Pivot は 3.0〜9.9 の自然対数なので、
+        // 打たれた 1000(Hz) をそのまま挟むと 9.9 = 約 19930Hz に飛ぶ。
+        let v = param.store(typed)
         if case .number(let lo, let hi, _, _, let isInteger) = param.kind {
             let clamped = min(max(v, lo), hi)
             set(isInteger ? clamped.rounded() : clamped)
@@ -321,6 +331,7 @@ struct ParameterRow: View {
         }
     }
 
+    /// 打ち込み欄の初期値。**渡すのは画面に出ている数**（param.display 済み）。
     private func trimmed(_ v: Float) -> String {
         if case .number(_, _, _, _, let isInteger) = param.kind, isInteger {
             return String(Int(v.rounded()))

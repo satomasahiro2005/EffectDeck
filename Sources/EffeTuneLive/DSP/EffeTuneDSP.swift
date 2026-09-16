@@ -340,8 +340,9 @@ final class EffeTuneDSP: ObservableObject {
                 if let spec = Self.spec(forType: type) { appendSpec(spec) }
             }
             // 撮るときは中身が写らないと意味が無いので全部開く。
+            // **畳んだ状態を撮りたいときは -ETCollapsed 1 を渡す。**
             restoring = true
-            expanded = Set(chain.map(\.id))
+            expanded = ETScreenshotSeed.collapsed ? [] : Set(chain.map(\.id))
             restoring = false
             publish()
             return
@@ -383,8 +384,13 @@ final class EffeTuneDSP: ObservableObject {
         let target = min(max(index ?? chain.count, 0), chain.count)
 
         var toAdd: [PipelineStore.Loaded] = [
+            // **channelSpec は -1（Stereo）。** 0 は Left で、
+            // ここに 0 を入れていたせいでプリセットを読むだけで Routing が
+            // 既定から外れ、触っていないのに「Reset routing」が生えていた。
+            // 保存や共有リンクにも Section へ "ch":"L" が混ざり、
+            // 再起動すると parse が -1 に直すので表示だけ変わっていた。
             PipelineStore.Loaded(spec: ETSection.spec, values: [], enabled: true,
-                                 inputBus: 0, outputBus: 0, channelSpec: 0,
+                                 inputBus: 0, outputBus: 0, channelSpec: -1,
                                  sectionName: name)
         ]
         toAdd += items
@@ -394,7 +400,7 @@ final class EffeTuneDSP: ObservableObject {
         let nextIsSection = target < chain.count && chain[target].isSection
         if target < chain.count && !nextIsSection {
             toAdd.append(PipelineStore.Loaded(spec: ETSection.spec, values: [], enabled: true,
-                                              inputBus: 0, outputBus: 0, channelSpec: 0,
+                                              inputBus: 0, outputBus: 0, channelSpec: -1,
                                               sectionName: ""))
         }
 
@@ -551,8 +557,17 @@ final class EffeTuneDSP: ObservableObject {
         nextTap &+= 1
         node.instance = inst
         node.tapId = tap
-        et_instance_set_tap(engine, inst, tap)
-        log.notice("instance=\(inst) tap=\(tap) \(typeName, privacy: .public)")
+        // **戻り値を見る。** 捨てていたので、失敗しても気づけなかった。
+        // 失敗すると slot.tapId は 0 のままで、engine.cpp:561 の TelemetryWriter が
+        // tap 0 に書く＝そのノードの図は永久に "Waiting for audio" になる。
+        // 返るのは ET_ERR_ARGS（instance が見つからない）か
+        // ET_ERR_STATE（graph が持っている slot）。
+        let tapStatus = et_instance_set_tap(engine, inst, tap)
+        if tapStatus != ET_OK {
+            log.error("et_instance_set_tap に失敗 \(typeName, privacy: .public) inst=\(inst) tap=\(tap) status=\(tapStatus)")
+            node.tapId = 0
+        }
+        log.notice("instance=\(inst) tap=\(tap) status=\(tapStatus) \(typeName, privacy: .public)")
         pushParams(node)
         return true
     }
