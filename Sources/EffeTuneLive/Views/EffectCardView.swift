@@ -31,6 +31,9 @@ struct EffectCardView: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
 
+    /// この段だけの Routing を出しているか。⋯ からと、印を押したときに開く。
+    @State private var routing = false
+
     var body: some View {
         if node.isSection {
             SectionCardView(index: index, node: node, dsp: dsp,
@@ -80,6 +83,9 @@ struct EffectCardView: View {
             }
         }
         .opacity(isMuted ? 0.55 : 1)
+        .sheet(isPresented: $routing) {
+            EffectRoutingSheet(index: index, node: node, dsp: dsp)
+        }
     }
 
     /// 音が通らない状態か。自分の入切と、上にある Section の入切の両方で決まる。
@@ -136,13 +142,24 @@ struct EffectCardView: View {
 
             // 既定（0→0 の All）から外れたものだけ出す。
             // 普通の鎖は一直線なので、普段は何も出ない。
+            //
+            // **出ているときは押せる。** 印が出ているということは行き先を
+            // いじってあるということで、次に触りたいのもそこ。⋯ を開いて
+            // Routing を選ぶより、目に見えている印をそのまま押すほうが速い。
+            // 矢印を押し所にしていないのとは事情が違う（あちらは行を押すのと
+            // 結果が同じだった）。
             if !node.isDefaultRouting || node.isGated {
-                Text(ETRouting.badge(node))
-                    .font(.system(size: 10, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.tint, in: .capsule)
-                    .foregroundStyle(.white)
+                Button { routing = true } label: {
+                    Text(ETRouting.badge(node))
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.tint, in: .capsule)
+                        .foregroundStyle(.white)
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Routing \(ETRouting.badge(node))")
             }
 
             if hasBody {
@@ -165,6 +182,11 @@ struct EffectCardView: View {
             }
 
             Menu {
+                // 全体の Routing はツールバーにもあるが、あちらは鎖を見渡す画面。
+                // 「このカードの行き先」を変えたいときにここから直に開ける。
+                Button { routing = true } label: {
+                    Label("Routing…", systemImage: "arrow.triangle.branch")
+                }
                 Button { dsp.resetParams(at: index) } label: {
                     Label("Reset Parameters", systemImage: "arrow.counterclockwise")
                 }

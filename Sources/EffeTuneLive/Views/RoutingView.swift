@@ -85,7 +85,7 @@ struct RoutingView: View {
     }
 }
 
-private struct RoutingRow: View {
+struct RoutingRow: View {
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
@@ -183,7 +183,7 @@ enum ETRouting {
         case 0:  return "Left"
         case 1:  return "Right"
         case 2...15: return "Ch \(spec + 1)"
-        case 17...23: return ETChannel.pairName(spec)
+        case 16...23: return ETChannel.pairName(spec)
         default: return "?"
         }
     }
@@ -201,5 +201,56 @@ enum ETRouting {
             parts.append("gated")
         }
         return parts.joined(separator: " ")
+    }
+}
+
+// MARK: - 1 段だけ
+
+/// カードから開く、その段ぶんだけの Routing。
+///
+/// 全体の Routing（上の RoutingView）は分岐の形を見渡すためのもので、
+/// 「いまいじっているカードの行き先を変えたい」ときに開くと、鎖の中から
+/// その 1 行を探すことになる。カードの ⋯ と印から直に開けるようにした。
+///
+/// 中身は RoutingView の行をそのまま使う。**2 つの画面で作りを変えない。**
+struct EffectRoutingSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let index: Int
+    let node: EffeTuneDSP.Node
+    @ObservedObject var dsp: EffeTuneDSP
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    RoutingRow(index: index, node: node, dsp: dsp)
+                } footer: {
+                    Text("""
+                         Bus 0 is the main path. Buses 1–4 are cleared at the start of \
+                         every block, so whatever an effect writes there has to be read \
+                         back within the same block. When the input and output bus differ, \
+                         the result is added to that bus instead of replacing what is \
+                         already on it.
+                         """)
+                }
+
+                if !node.isDefaultRouting {
+                    Section {
+                        Button("Reset routing", role: .destructive) {
+                            dsp.setRouting(at: index, inputBus: 0, outputBus: 0,
+                                           channelSpec: -1, sectionGate: node.sectionGate)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Routing")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        // 行 1 本ぶんしか無いので、画面の半分も要らない。
+        // 上へ引けば広がるように .large も残す。
+        .presentationDetents([.medium, .large])
     }
 }
