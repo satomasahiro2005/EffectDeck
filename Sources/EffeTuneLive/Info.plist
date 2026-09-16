@@ -21,7 +21,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>EffeTune Live</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>加工した音を内蔵スピーカーへ返すために playAndRecord を使います</string>
+	<string>EffeTune Live uses playAndRecord so it can send the processed sound back to the built-in speaker. It never records or stores audio.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

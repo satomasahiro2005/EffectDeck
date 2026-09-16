@@ -1,0 +1,47 @@
+{
+  "name": "nemut.ai",
+  "subtitle": "EffeTune for iOS",
+  "description": "EffeTune Live brings the EffeTune effect chain to iOS. Pick it as your output and every app's sound runs through your chain before it reaches the speaker. No virtual cable, no setup.",
+  "website": "https://nemut.ai",
+  "tintColor": "#3B82F6",
+  "nsfw": false,
+  "apps": [
+    {
+      "name": "EffeTune Live",
+      "bundleIdentifier": "ai.nemut.effetune",
+      "marketplaceID": "6812467517",
+      "developerName": "nemut.ai",
+      "subtitle": "Run every app's audio through an EffeTune chain.",
+      "localizedDescription": "EffeTune Live is EffeTune for iOS.\n\nPick EffeTune as the output device and the sound from any app runs through your effect chain before it reaches the speaker. iOS 27's Media Device Extension makes this work without a virtual cable or any system setup.\n\nThe DSP is the same one the desktop version uses, so chains and presets carry over. Share a chain as a link and open it on the web version, or the other way round.\n\nOver 100 effects: EQ, dynamics, saturation, reverb, delay, modulation, spatial, restoration, and analyzers that draw what is actually happening to the signal.\n\nEffeTune Live is not affiliated with the EffeTune project. Send anything about this app to nemut.ai, not to EffeTune.",
+      "iconURL": "https://nemut.ai/effetune-live/icon.png",
+      "tintColor": "#3B82F6",
+      "category": "utilities",
+      "screenshots": [
+        "https://nemut.ai/effetune-live/shot1.png",
+        "https://nemut.ai/effetune-live/shot2.png",
+        "https://nemut.ai/effetune-live/shot3.png"
+      ],
+      "versions": [
+        {
+          "version": "2.9.0",
+          "buildVersion": "7",
+          "date": "2026-09-16",
+          "localizedDescription": "First release.",
+          "downloadURL": "https://nemut.ai/effetune-live/adp/manifest.json",
+          "size": 14281177,
+          "minOSVersion": "27.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.developer.media-device-extension",
+          "com.apple.security.application-groups"
+        ],
+        "privacy": {
+          "NSMicrophoneUsageDescription": "EffeTune Live uses playAndRecord so it can send the processed sound back to the built-in speaker."
+        }
+      }
+    }
+  ],
+  "news": []
+}

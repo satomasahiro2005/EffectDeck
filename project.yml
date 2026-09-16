@@ -14,7 +14,7 @@ settings:
     CLANG_ENABLE_OBJC_ARC: YES
     TARGETED_DEVICE_FAMILY: "1,2"
     MARKETING_VERSION: "2.9.0"
-    CURRENT_PROJECT_VERSION: "7"
+    CURRENT_PROJECT_VERSION: "8"
 
 # EffeTune の DSP コアは host-neutral な C++20 なので、そのまま arm64 で建つ。
 # WASM を経由しない。include の場所だけ揃えれば通る（実機向けに 75/75 確認済み）。
