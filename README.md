@@ -1,5 +1,7 @@
 # EffeTune Live
 
+[EffeTune](https://github.com/Frieve-A/effetune) for iOS (Unofficial).
+
 > **An independent project.** EffeTune Live is built by nemut.ai. It is **not affiliated
 > with, endorsed by, or supported by
 > [EffeTune](https://github.com/Frieve-A/effetune) or its author (Frieve-A / Yoshiyuki
