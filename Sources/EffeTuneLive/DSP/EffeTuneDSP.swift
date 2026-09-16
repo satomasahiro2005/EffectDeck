@@ -424,6 +424,7 @@ final class EffeTuneDSP: ObservableObject {
             node.outputBus = item.outputBus
             node.channelSpec = item.channelSpec
             node.sectionName = item.sectionName
+        node.irId = item.irId
             guard instantiate(&node) else { continue }
             made.append(node)
         }
@@ -506,6 +507,16 @@ final class EffeTuneDSP: ObservableObject {
     static func spec(forType type: String) -> ETEffect? {
         if type == ETSection.type { return ETSection.spec }
         return ETCatalog.first { $0.type == type }
+    }
+
+    /// IR Reverb が使っている素材の鍵を覚える。
+    ///
+    /// **音には伝えない。** 素材そのものは ETIRLoader が送り込んでいて、
+    /// ここに書くのは「次に開いたときどれを入れ直すか」の印。
+    func setIRId(_ id: String, at index: Int) {
+        guard chain.indices.contains(index), chain[index].irId != id else { return }
+        chain[index].irId = id
+        persist()
     }
 
     /// Section の名前を変える。DSP には伝えない（section.js の `cm` は音に効かない）。

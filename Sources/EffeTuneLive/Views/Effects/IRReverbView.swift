@@ -72,8 +72,21 @@ struct IRReverbView: View {
                 }
             }
         }
+        // **開いたときに入れ直す。** 送り込みはカーネル側の状態で、
+        // アプリを落とすと消える。鎖に残した鍵から引き直す。
+        .task(id: node.irId) {
+            guard loaded == nil, !node.irId.isEmpty else { return }
+            loaded = ETIRLoader.reload(irId: node.irId,
+                                       engine: dsp.engine,
+                                       instance: node.instance,
+                                       processingRate: dsp.sampleRate,
+                                       routedChannels: routedChannels,
+                                       channelMode: choice("cm"),
+                                       latency: choice("lt"),
+                                       convolutionRate: choice("cr"))
+        }
         .sheet(isPresented: $browsing) {
-            IRLibraryView { entry in apply(entry.url) }
+            IRLibraryView { entry in apply(entry.url, id: entry.id) }
         }
     }
 
@@ -92,8 +105,10 @@ struct IRReverbView: View {
                         if case .success(let urls) = result {
                             // 複数選べるのはライブラリへ溜めるため。
                             // 畳み込みへ渡すのは最後の 1 本だけ（上流も同じ）。
-                            for url in urls { library.importFile(at: url) }
-                            if let url = urls.last { apply(url) }
+                            // 取り込みは鍵を返す。最後の 1 本をそのまま使う。
+                            var lastKey: String?
+                            for url in urls { lastKey = library.importFile(at: url) }
+                            if let url = urls.last { apply(url, id: lastKey) }
                         }
                     }
 
@@ -168,7 +183,8 @@ struct IRReverbView: View {
     }
 
     /// 読んで、解決して、送る。失敗したら理由をカードに出す。
-    private func apply(_ url: URL) {
+    /// 通ったら鍵を段に残す。**そうしないと開き直したときに素通しへ戻る。**
+    private func apply(_ url: URL, id: String? = nil) {
         failure = nil
         do {
             loaded = try ETIRLoader.load(url: url,
@@ -179,6 +195,11 @@ struct IRReverbView: View {
                                          channelMode: choice("cm"),
                                          latency: choice("lt"),
                                          convolutionRate: choice("cr"))
+            // 鍵は取り込んだときの戻り値か、ライブラリから選んだ entry の id。
+            // どちらも無ければ、いま置いた中身から引き直す。
+            let key = id ?? IRLibrary.shared.entries
+                .first(where: { $0.url == url })?.id
+            if let key { dsp.setIRId(key, at: index) }
         } catch {
             loaded = nil
             failure = (error as? LocalizedError)?.errorDescription

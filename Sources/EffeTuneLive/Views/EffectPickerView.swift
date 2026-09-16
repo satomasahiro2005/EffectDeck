@@ -19,6 +19,15 @@ struct EffectPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
     @State private var query = ""
+    /// つまんでいる間の高さ。**見出しの行だけを残す。**
+    /// 掴んだものは指に付いたままなので、一覧が隠れても運べる。
+    /// 鎖を隠さないのが目的なので、これ以上は残さない。
+    private static let lifted = PresentationDetent.height(90)
+    /// 開いたときの高さ。一覧を探すのが主な用途なので広めに取る。
+    /// 半分だと一度に 4〜5 行しか見えず、カテゴリを跨ぐのに何度も擦ることになる。
+    private static let opened = PresentationDetent.fraction(0.75)
+    /// いまのシートの高さ。つまんだら lifted まで下げる。
+    @State private var detent: PresentationDetent = Self.opened
 
     /// 帯を押したときの飛び先。
     /// 同じ名前を連打しても飛べるよう、回数も一緒に持つ。
@@ -57,7 +66,12 @@ struct EffectPickerView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if query.isEmpty {
+                // **縮めている間は中身を出さない。**
+                // 90pt にタイトル・検索・カテゴリの帯を全部入れようとすると
+                // 重なって潰れる。つまんで運んでいる最中なので、中身は要らない。
+                if detent == Self.lifted {
+                    Color.clear
+                } else if query.isEmpty {
                     VStack(spacing: 0) {
                         categoryStrip
                         Divider()
@@ -76,8 +90,8 @@ struct EffectPickerView: View {
             }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
-            .presentationDetents([.medium, .large])
-            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+            .presentationDetents([Self.lifted, Self.opened, .large], selection: $detent)
+            .presentationBackgroundInteraction(.enabled(upThrough: Self.opened))
         }
     }
 
@@ -199,6 +213,29 @@ struct EffectPickerView: View {
         // **つまんで鎖へ落とせる。** 運ぶのは型の文字列だけ。
         // 受けるのは PipelineView の段で、落ちた所へ差し込む。
         // 押して足すのは今までどおり末尾。
-        .draggable(effect.type)
+        //
+        // **.draggable ではなく .onDrag を使う。**
+        // 掴んだ瞬間に高さを下げたいが、.draggable は始まりを教えてくれない。
+        // 手前に .onLongPressGesture を重ねたら、そちらが長押しを食って
+        // つまめなくなった（実機で確認）。.onDrag はクロージャが
+        // 掴んだ時に走るので、そこで下げる。
+        //
+        // **自前のプレビューを渡す。** 既定のプレビューは掴んだ行の位置に
+        // 貼り付くので、直後にシートを縮めると指より下にずれる。
+        // 小さな札にすれば指の下に付く。
+        .onDrag {
+            if detent != Self.lifted {
+                DispatchQueue.main.async {
+                    withAnimation(.snappy(duration: 0.2)) { detent = Self.lifted }
+                }
+            }
+            return NSItemProvider(object: effect.type as NSString)
+        } preview: {
+            Text(effect.name)
+                .font(.system(size: 14, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.thickMaterial, in: .capsule)
+        }
     }
 }

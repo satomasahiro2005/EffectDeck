@@ -212,9 +212,7 @@ struct PipelineView: View {
                             guard let type = items.first,
                                   let spec = EffeTuneDSP.spec(forType: type) else { return false }
                             dsp.add(spec, at: row.index)
-                            // **落ちたらシートを閉じる。**
-                            // 開いたままだと、足したものを見るのに自分で
-                            // 下ろさないといけない。
+                            // 落ちたら閉じる。足したものをすぐ見られる。
                             sheet = nil
                             return true
                         }
