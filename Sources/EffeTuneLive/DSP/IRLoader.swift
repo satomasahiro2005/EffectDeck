@@ -56,9 +56,9 @@ enum ETIRLoader {
 
     /// ファイルを float の面へ読む。
     ///
-    /// **レート変換はしない。** 素材のレートをそのままヘッダへ書く。
-    /// カーネルが処理レートとの差を見て畳み込む側で合わせる
-    /// （rate_divider は別の話で、こちらは畳み込みを間引く設定）。
+    /// **ここでは伸縮しない。** 素材のレートのまま返す。
+    /// 合わせるのは load の側（カーネルは「処理レート ÷ rate_divider」で
+    /// 書かれていることを検算するので、そこへ合わせる必要がある）。
     static func decode(_ url: URL) throws -> Decoded {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -267,9 +267,19 @@ enum ETIRLoader {
                 "This impulse response does not have enough channels for the selected mode.")
         }
 
-        // ヘッダに書くレートは **素材のレートを rate_divider で割った値**
-        // （AssetUpload.swift の冒頭 +12 の注記）。
-        let headerRate = Int((decoded.sampleRate / Double(resolved.rateDivider)).rounded())
+        // **ヘッダに書くのは「処理レート ÷ rate_divider」。素材のレートではない。**
+        // カーネルの検算がそう書いてある（ir_reverb/kernel.cpp:486-496）:
+        //     expected_rate = lround(sample_rate_ / rate_divider_)
+        // `sample_rate_` はカーネルの処理レート。ここを素材のレートで書くと
+        // commit が ET_ERR_ARGS(-1) で落ちる。
+        //
+        // だから**中身もそのレートへ合わせる**。44.1kHz の IR を 96kHz の鎖へ
+        // 入れるのは普通にあるので、ここで伸縮する。
+        let targetRate = processingRate / Double(resolved.rateDivider)
+        let headerRate = Int(targetRate.rounded())
+        if abs(decoded.sampleRate - targetRate) > 0.5 {
+            channels = channels.map { resample($0, from: decoded.sampleRate, to: targetRate) }
+        }
 
         try AssetUpload.send(engine: engine,
                              instance: instance,
@@ -283,11 +293,34 @@ enum ETIRLoader {
 
         let seconds = Double(decoded.frames) / decoded.sampleRate
         let name = displayName(resolved.channelMode)
+        // 出すのは素材のレート。送ったレートは中身の都合なので出さない。
         let line = String(format: "%dch %@ / %d Hz / %.2f s",
                           decoded.channels.count, name,
                           Int(decoded.sampleRate.rounded()), seconds)
         log.notice("IR 送り込み \(line, privacy: .public) divider=\(resolved.rateDivider)")
         return line
+    }
+
+    /// 線形で伸縮する。
+    ///
+    /// **凝ったものにしない。** IR は元から尾を引く波形で、変換の誤差は
+    /// 畳み込みの結果に埋もれる。上流は WebAudio の decodeAudioData に
+    /// 任せていて、そこも素材を文脈のレートへ合わせるだけ。
+    /// 端は両側とも自分自身で押さえる（外挿しない）。
+    static func resample(_ input: [Float], from: Double, to: Double) -> [Float] {
+        guard from > 0, to > 0, input.count > 1 else { return input }
+        let ratio = to / from
+        let count = max(1, Int((Double(input.count) * ratio).rounded()))
+        var out = [Float](repeating: 0, count: count)
+        let last = input.count - 1
+        for i in 0..<count {
+            let x = Double(i) / ratio
+            let i0 = min(last, Int(x))
+            let i1 = min(last, i0 + 1)
+            let t = Float(x - Double(i0))
+            out[i] = input[i0] + (input[i1] - input[i0]) * t
+        }
+        return out
     }
 
     /// ir_reverb.js:1746-1756 の _channelModeName と同じ出し方。

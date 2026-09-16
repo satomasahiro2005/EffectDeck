@@ -477,6 +477,16 @@ enum AssetUpload {
         // 書き込み先が取れない環境なら、確保させる前に落とす。
         guard canStage else { throw ETAssetUploadError.stagingAddressUnavailable }
 
+        // **渡す値を全部出す。** カーネルの validateBegin は理由を返さないので、
+        // 弾かれたときはこの行と条件表を突き合わせるしかない。
+        if ETConsoleLog.on {
+            print("asset begin ch=\(request.channels) frames=\(request.frames)"
+                  + " topo=\(request.topology) head=\(request.headBlock)"
+                  + " div=\(request.rateDivider) paths=\(request.pathCount)"
+                  + " inputs=\(request.inputCount) proc=\(request.processingChannels)"
+                  + " footprint=\(request.footprintBytes) bytes=\(request.byteSize)")
+        }
+
         var thrown: Error?
         holdOffAudioThread {
             do {
@@ -498,7 +508,9 @@ enum AssetUpload {
             }
         }
         if let error = thrown {
-            log.error("asset 送り込み失敗 instance=\(instance) slot=\(slot) \(String(describing: error))")
+            let line = "asset 送り込み失敗 instance=\(instance) slot=\(slot) \(String(describing: error))"
+            log.error("\(line, privacy: .public)")
+            if ETConsoleLog.on { print(line) }
             throw error
         }
         log.notice("asset 送り込み instance=\(instance) slot=\(slot) bytes=\(payload.count) ch=\(channels) frames=\(frames) topology=\(rawTopology)")
