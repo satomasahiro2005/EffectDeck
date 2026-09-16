@@ -131,14 +131,15 @@ struct LiveStatusStrip: View {
                 diag
                 switch face {
                 case .delay:
+                    // リンク（2048 標本の固定）＋ iOS のブロック
+                    // ＋ オーバーサンプリングの FIR。設定で決まり、鎖では動かない。
+                    // **上に置く。** 設定で動かせるのはこちらなので先に読ませる。
+                    row("I/O", ioDelay, tint: AnyShapeStyle(.secondary))
                     // **鎖が足す遅れ。** et_pipeline_latency の値で、
                     // FIR を持つエフェクト（Phase Select EQ など）を入れると増える。
                     // ここを出していなかったので、そういうものを入れても
                     // 数字が動かなかった。
                     row("Fx", fxDelay, tint: AnyShapeStyle(.secondary))
-                    // それ以外。リンク（2048 標本の固定）＋ iOS のブロック
-                    // ＋ オーバーサンプリングの FIR。設定で決まり、鎖では動かない。
-                    row("I/O", ioDelay, tint: AnyShapeStyle(.secondary))
                 case .load:
                     // 上流の CPU と同じ量（経過時間 ÷ 音の長さ、
                     // audio-processor.js:4506）で、語も上流に合わせてある。
