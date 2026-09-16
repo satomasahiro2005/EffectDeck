@@ -24,7 +24,16 @@ echo
 echo "  いまコントロールセンターを開いて出力先に EffeTune を選ぶこと。"
 echo "  音が鳴っているアプリ（音楽など）も一緒に動かしておく。"
 echo
-idevicesyslog -u "$UDID" -m "EffeTune" > "$LOG" 2>&1 &
+# **絞らずに録る。**
+# `-m "EffeTune"` を付けていたが、**一番要る行がそれで落ちる。**
+# 経路を決めている audiomxd の行に大文字の EffeTune は入っていない:
+#   Session with bundleID: com.spotify.client doesn't support currently selected
+#   protocolID media-device-protocol.ai.nemut.effetune. isPlayingVideoOutput: NO.
+#   Allow session with bundleID: com.spotify.client to play using
+#   protocolID media-device-protocol.ai.nemut.effetune because there is a MusicVAD.
+# （docs/connect-log.md:545, :587-589 逐語。effetune は小文字）
+# 絞るのは録ったあと。下の grep がやる。
+idevicesyslog -u "$UDID" > "$LOG" 2>&1 &
 CAP=$!
 for i in $(seq "$SECS" -1 1); do printf "\r  残り %2ds " "$i"; sleep 1; done
 printf "\r              \r"
@@ -53,7 +62,11 @@ grep "Device activation completed\|Recieved deactivation request" "$LOG" | awk '
   /activation completed/ { a = secs($3); next }
   /deactivation request/ { if (a > 0) printf "   活かしてから %.3f 秒で切られた\n", secs($3) - a; a = 0 }'
 echo
-echo "-- 5. 切った側の手掛かり（0 件なら別の理由）"
+echo "-- 5. 経路を渡すかどうかの判定（audiomxd。ここが本体）"
+grep -nE "doesn't support currently selected protocolID|Allow session with bundleID|universal URL playback support|allowsExternalPlayback == NO|because we're currently mirroring|Will attempt to switch to AirPlay" "$LOG" | tail -10
+[ "$(n "doesn't support currently selected protocolID")" = 0 ]   && echo "   (0 行) 判定そのものが走っていない。通る / 通らない以前の話"
+echo
+echo "-- 6. 切った側の手掛かり（0 件なら別の理由）"
 for k in "a different endpoint got picked" "MDERouteRevertedToLocal" "already connected" "Unable to Connect" "deny(1) network-bind"; do
   printf "   %-34s %s\n" "$k" "$(n "$k")"
 done
