@@ -9,23 +9,19 @@
 //  --- グラフを出していない理由 ---
 //  上流のグラフは IR の PCM から包絡と EDC を計算して描いている
 //  （ir_reverb.js:1787-1934）。テレメトリでは来ない値なので、材料は IR そのもの。
-//  その IR が iOS 側ではカーネルに入らない:
-//    - 資産を送る口は AssetUpload.send（DSP/AssetUpload.swift:421）にあるが、
-//      呼び手は FIR 系の designer だけで、IRReverbPlugin へ送る側が居ない。
-//    - IRLibrary（DSP/IRLibrary.swift）は取り込んだファイルを Documents/IR に
-//      置くところで止まっていて、instance へは繋がっていない。
-//  カーネルは資産が ACTIVE でない間 wet を出さず dry だけ通す
-//  （dsp/plugins/reverb/ir_reverb/kernel.cpp:205-208 の applyDryWithWetFadeOut）。
-//  描く材料も鳴らす IR も無いので、曲線の代わりに理由を出す。
+//  ETIRLoader が読んだ面はカーネルへ送ったあと手放していて、描く用に
+//  持ち続けてはいない。出すなら包絡を先に畳んでから残す形になる。
 //
 //  上流の metadata 行（ir_reverb.js:1719-1741。秒数・ch 数・トポロジ・レート変換・
-//  レイテンシ・MiB）も、その値が _prepared から来る。IR を用意する側が無いので
-//  出せるのは「入っていない」だけ。上流も IR が無いときは
-//  'No impulse response loaded.'（:1721）の 1 行なので、その 1 行を下の注記に出す。
+//  レイテンシ・MiB）に当たるのが notice の 2 行目で、送り込めたときに
+//  ETIRLoader が返す 1 行をそのまま出す。IR が無いときは上流と同じ
+//  'No impulse response loaded.'（:1721）。
 //
-//  Channel Mode / Conv Rate が auto のとき解決後の値を横に出す副表示
-//  （:1765-1785 の _updateResolvedModeDisplay）も _prepared.config を読む。
-//  上流も IR が無い間は span を hidden にするので、こちらでも出さない。
+//  --- 選択肢は資産を送り直さないと効かない ---
+//  Channel Mode / Latency / Conv Rate はカーネルが読まない。カーネルが
+//  params_ から読むのは preDelay と wetLevel と dry だけで（kernel.cpp:433, :448）、
+//  畳み込みの形は beginAsset に渡す AssetBeginInfo で決まる（:242-250）。
+//  なので選び直したら送り直す。その後始末は EffeTuneDSP.setValue が持っている。
 //
 //  --- 取り込む口をここに置く理由 ---
 //  IR Library はツールバーから外してある（PipelineView.swift:277 のコメント）。
@@ -157,14 +153,10 @@ struct IRReverbView: View {
 
     // MARK: 畳み込みへ渡す
 
-    /// カードに出す 1 行。
+    /// いま使っている素材の名前。
     ///
-    /// **正は鎖の `irId`。** ビューの `loaded` はいま読み込んだときの
-    /// 詳しい 1 行（4ch True Stereo / 48000 Hz / 1.23 s）で、
-    /// アプリを開き直したときは入っていない。入れ直しは DSP がやっていて
-    /// （EffeTuneDSP.reloadAssets）、ビューはその結果を知らないため。
-    /// そのときは鍵からライブラリを引いて名前を出す。
-    /// いま使っている素材の名前。鍵からライブラリを引く。
+    /// **正は鎖の `irId`。** ビューの `loaded` はこの画面から入れたときにしか
+    /// 入らないので、名前は鍵からライブラリを引く。
     private var fileName: String? {
         guard !node.irId.isEmpty else { return nil }
         return library.entries.first(where: { $0.id == node.irId })?.name
@@ -214,7 +206,6 @@ struct IRReverbView: View {
             // どちらも無ければ、いま置いた中身から引き直す。
             let key = id ?? IRLibrary.shared.entries
                 .first(where: { $0.url == url })?.id
-            if ETConsoleLog.on { print("IR apply index=\(index) key=\(key ?? "nil") url=\(url.lastPathComponent)") }
             if let key { dsp.setIRId(key, at: index) }
             if let loaded { dsp.assetInfo[node.id] = loaded }
         } catch {

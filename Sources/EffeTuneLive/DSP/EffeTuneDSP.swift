@@ -389,10 +389,6 @@ final class EffeTuneDSP: ObservableObject {
     /// `.task` が走らず、開くまで素通しのままになる（実機で確認）。
     /// 音の側の話なので、鎖が戻った時点でここがやる。
     func reloadAssets() {
-        let withIR = chain.filter { !$0.irId.isEmpty }.count
-        let line = "reloadAssets chain=\(chain.count) withIR=\(withIR) engine=\(engine)"
-        log.notice("\(line, privacy: .public)")
-        if ETConsoleLog.on { print(line) }
         for i in chain.indices where !chain[i].irId.isEmpty {
             reloadAsset(at: i)
         }
@@ -417,12 +413,7 @@ final class EffeTuneDSP: ObservableObject {
                                      channelMode: Self.choice("cm", of: node),
                                      latency: Self.choice("lt", of: node),
                                      convolutionRate: Self.choice("cr", of: node))
-        if let line {
-            assetInfo[node.id] = line
-            if ETConsoleLog.on { print("reloadAsset 入れた \(line)") }
-        } else if ETConsoleLog.on {
-            print("reloadAsset 入らない irId=\(node.irId) instance=\(node.instance)")
-        }
+        if let line { assetInfo[node.id] = line }
         return line != nil
     }
 
@@ -620,15 +611,9 @@ final class EffeTuneDSP: ObservableObject {
     /// **音には伝えない。** 素材そのものは ETIRLoader が送り込んでいて、
     /// ここに書くのは「次に開いたときどれを入れ直すか」の印。
     func setIRId(_ id: String, at index: Int) {
-        guard chain.indices.contains(index), chain[index].irId != id else {
-            if ETConsoleLog.on {
-                print("setIRId 飛ばした index=\(index) count=\(chain.count) 今=\(chain.indices.contains(index) ? chain[index].irId : "範囲外") 新=\(id)")
-            }
-            return
-        }
+        guard chain.indices.contains(index), chain[index].irId != id else { return }
         chain[index].irId = id
         persist()
-        if ETConsoleLog.on { print("setIRId 書いた index=\(index) id=\(id)") }
     }
 
     /// Section の名前を変える。DSP には伝えない（section.js の `cm` は音に効かない）。

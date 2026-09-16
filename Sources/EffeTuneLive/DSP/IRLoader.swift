@@ -277,9 +277,6 @@ enum ETIRLoader {
                      channelMode: String,
                      latency: String,
                      convolutionRate: String) throws -> String {
-        if ETConsoleLog.on {
-            print("IRLoader.load 呼ばれた instance=\(instance) rate=\(processingRate) lt=\(latency) cr=\(convolutionRate) url=\(url.lastPathComponent)")
-        }
         let decoded = try decode(url)
         let resolved = try resolve(sampleRate: processingRate,
                                    channelCount: decoded.channels.count,
