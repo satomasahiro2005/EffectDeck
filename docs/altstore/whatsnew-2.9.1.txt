@@ -1,4 +1,4 @@
-Effects that were in the list but had no way to load their data now work: IR Reverb, Room EQ, FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ and Crosstalk Cancellation.
+Effects that were in the list but had no way to load their data now work: IR Reverb, Room EQ, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ and Crosstalk Cancellation.
 
 Presets per effect, including the factory ones from the desktop version.
 

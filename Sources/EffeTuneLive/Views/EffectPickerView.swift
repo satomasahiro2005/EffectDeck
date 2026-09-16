@@ -33,6 +33,9 @@ struct EffectPickerView: View {
     private static let opened = PresentationDetent.fraction(0.75)
     /// いまのシートの高さ。つまんだら lifted まで下げる。
     @State private var detent: PresentationDetent = Self.opened
+    /// 掴む前の高さ。**落とし損ねたらここへ戻す。**
+    /// 戻さないと 90pt のまま残り、中身も出さないので何も無い板になる。
+    @State private var detentBeforeDrag: PresentationDetent?
 
     /// 帯を押したときの飛び先。
     /// 同じ名前を連打しても飛べるよう、回数も一緒に持つ。
@@ -71,12 +74,17 @@ struct EffectPickerView: View {
     var body: some View {
         NavigationStack {
             Group {
-                // **縮めている間は中身を出さない。**
-                // 90pt にタイトル・検索・カテゴリの帯を全部入れようとすると
-                // 重なって潰れる。つまんで運んでいる最中なので、中身は要らない。
-                if detent == Self.lifted {
-                    Color.clear
-                } else if query.isEmpty {
+                // **縮めている間も中身は消さない。**
+                //
+                // 前は 90pt のとき Color.clear に差し替えていた。そうすると
+                // **掴んだものの絵が出たり出なかったりする。**つまんだ瞬間に
+                // 高さを下げていて、絵は掴んだ行を写して作られるので、
+                // 写し取る前に行が消えると空になる。速さ次第で分かれる。
+                //
+                // 90pt で潰れるのは題と検索の欄で、それはナビゲーションバーごと
+                // 隠してある（下の .toolbar）。一覧はそのまま置いておけば
+                // 切り取られるだけで済む。
+                if query.isEmpty {
                     VStack(spacing: 0) {
                         categoryStrip
                         Divider()
@@ -90,6 +98,22 @@ struct EffectPickerView: View {
             .searchable(text: $query, isPresented: $searching, prompt: "Search effects")
             .navigationTitle("Available Effects")
             .navigationBarTitleDisplayMode(.inline)
+            // **縮めている間だけ、触ったら戻す。**
+            // 落とし損ねると 90pt のまま残る。中身は見えているが、
+            // その高さで一覧を触らせても選べないので、まず戻す。
+            // 終わりを教えてくれる API は onDragSessionUpdated（iOS 27）だけだが、
+            // .onDrag と同じビューに付けると掴んだものが出なくなった（実機）。
+            .overlay {
+                if detent == Self.lifted {
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture {
+                            let back = detentBeforeDrag ?? Self.opened
+                            detentBeforeDrag = nil
+                            withAnimation(.snappy(duration: 0.2)) { detent = back }
+                        }
+                }
+            }
             // **縮めている間は見出しごと消す。**
             // 中身は上で Color.clear にしているが、見出しと検索の欄は
             // ナビゲーションバーの持ち物なのでそちらでは消えない。
@@ -242,6 +266,7 @@ struct EffectPickerView: View {
         // 小さな札にすれば指の下に付く。
         .onDrag {
             if detent != Self.lifted {
+                detentBeforeDrag = detent
                 // **検索してからつまむと縮まなかった。**
                 // `.searchable` が出ている間は UIKit の検索コントローラが
                 // シートを一番上に張り付かせるので、detent を下げても効かない。

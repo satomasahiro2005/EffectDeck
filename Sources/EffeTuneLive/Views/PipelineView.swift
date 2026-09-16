@@ -227,6 +227,26 @@ struct PipelineView: View {
                     dragGeneration &+= 1
                     move(source, to: destination)
                 }
+
+                // **最後の行より下の余白も受ける。**
+                // 行にしか落とし所が無いと、鎖の下の空いている所へ落としたときに
+                // どこにも入らず、掴んだものが戻っていく。「一番下へ足す」の
+                // つもりで落としているので、末尾へ足す。
+                //
+                // 高さは指が届くぶん。画面の残り全部にはできない（List の行なので）が、
+                // 最後のカードのすぐ下に帯があれば、そこを狙って落とせる。
+                Color.clear
+                    .frame(height: 96)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let type = items.first,
+                              let spec = EffeTuneDSP.spec(forType: type) else { return false }
+                        dsp.add(spec)          // 位置を渡さない = 末尾
+                        sheet = nil
+                        return true
+                    }
             }
         }
         .listStyle(.plain)

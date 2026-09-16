@@ -15,6 +15,27 @@ if [ ! -d Vendor/effetune/dsp ]; then
   exit 1
 fi
 
+# **上流のパッチを当てる。**
+#
+# et_instance_asset_begin は staging の番地を uint32 へ切り落とす。WASM では
+# 足りるが arm64 では上位 32bit が落ちる。Patches/abi-begin-ptr.diff が
+# et_instance_asset_begin_ptr を足していて、AssetUpload.swift の beginPointer が
+# dlsym で拾う。
+#
+# **当てないと黙って壊れる。**資産を使う 7 種（IR Reverb と designer 6 種）が
+# 落ちも警告もせずに素通しになる。clone したままの人の手元でそうなっていた。
+#
+# 既に当たっていれば --check が落ちるので、そのときは何もしない（二度当てない）。
+echo "--- 上流のパッチ ---"
+if git -C Vendor/effetune apply --check ../../Patches/abi-begin-ptr.diff 2>/dev/null; then
+  git -C Vendor/effetune apply ../../Patches/abi-begin-ptr.diff && echo "当てた: abi-begin-ptr.diff"
+elif git -C Vendor/effetune apply --reverse --check ../../Patches/abi-begin-ptr.diff 2>/dev/null; then
+  echo "当たっている: abi-begin-ptr.diff"
+else
+  echo "!! abi-begin-ptr.diff が当たらない。Vendor/effetune の版を確かめること"
+  echo "   当たっていないと、資産を使う 7 種が黙って素通しになる"
+fi
+
 echo "--- エフェクトのカタログを作る ---"
 python3 Tools/gen_catalog.py 2>&1 | tail -5
 python3 Tools/gen_presets.py 2>&1 | tail -1
