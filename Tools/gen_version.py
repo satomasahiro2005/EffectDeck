@@ -67,6 +67,17 @@ def main() -> int:
         "",
     ]
     SWIFT.write_text(chr(10).join(header), encoding="utf-8", newline=chr(10))
+
+    # README のバッジも同じ版にする。手で書くと古くなる。
+    readme = ROOT / "README.md"
+    if readme.is_file():
+        text = readme.read_text(encoding="utf-8")
+        fixed, hits = re.subn(r"(badge/EffeTune%20DSP-)[^-]+(-)",
+                              r"\g<1>%s\g<2>" % version.replace("-", "--"),
+                              text, count=1)
+        if hits == 1 and fixed != text:
+            readme.write_text(fixed, encoding="utf-8", newline=chr(10))
+            print("README のバッジを直した")
     print("version: app %s / upstream %s" % (app, version))
     return 0
 

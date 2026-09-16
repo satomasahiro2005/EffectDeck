@@ -3,3 +3,18 @@ Effects that were in the list but had no way to load their data now work: IR Rev
 Presets per effect, including the factory ones from the desktop version.
 
 UI: drag from the picker to drop an effect anywhere in the chain, fold cards in three steps, reach routing from the card, and see the live spectrum behind the PEQ curves.
+
+Fixed since 2.9.0
+
+IR Reverb never actually applied. The impulse response was read but never reached the kernel, so it passed the dry signal through.
+
+Anything an effect had loaded was thrown away when the output device or the sample rate changed, and nothing put it back.
+
+Crosstalk Cancellation forgot its measurements and its settings as soon as you folded the card.
+
+Total Delay did not follow the settings that change it.
+
+Meters and graphs did not redraw in step with the display, and frames were being dropped.
+
+In the effect picker: a dragged effect sometimes showed nothing under your finger, the sheet stayed shrunk if you missed the drop, you could not drop below the last card, and picking from search did not close the sheet.
+
