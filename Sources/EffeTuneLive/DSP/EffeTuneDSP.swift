@@ -567,7 +567,9 @@ final class EffeTuneDSP: ObservableObject {
             log.error("et_instance_set_tap に失敗 \(typeName, privacy: .public) inst=\(inst) tap=\(tap) status=\(tapStatus)")
             node.tapId = 0
         }
-        log.notice("instance=\(inst) tap=\(tap) status=\(tapStatus) \(typeName, privacy: .public)")
+        let made = "instance=\(inst) tap=\(tap) setTap=\(tapStatus) \(typeName)"
+        log.notice("\(made, privacy: .public)")
+        if ETConsoleLog.on { print(made) }
         pushParams(node)
         return true
     }
@@ -652,7 +654,9 @@ final class EffeTuneDSP: ObservableObject {
         let dead = chain.count - sections - nodes.count
         let active = nodes.filter { $0.enabled != 0 && $0.sectionGate != 0 }.count
         let gated = nodes.filter { $0.enabled != 0 && $0.sectionGate == 0 }.count
-        log.notice("publish nodes=\(nodes.count) chain=\(self.chain.count) sections=\(sections) dead=\(dead) active=\(active) gated=\(gated) types=\(self.chain.map(\.spec.type).joined(separator: ","), privacy: .public)")
+        let pub = "publish nodes=\(nodes.count) chain=\(chain.count) sections=\(sections) dead=\(dead) active=\(active) gated=\(gated) taps=\(chain.map { String($0.tapId) }.joined(separator: ",")) types=\(chain.map(\.spec.type).joined(separator: ","))"
+        log.notice("\(pub, privacy: .public)")
+        if ETConsoleLog.on { print(pub) }
         persist()
     }
 
@@ -683,6 +687,50 @@ final class EffeTuneDSP: ObservableObject {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
             for i in instances { et_instance_destroy(engine, i) }
+
+            // **壊すと鎖ごと無効になるので、必ず組み直す。**
+            //
+            //   void Engine::destroyInstance(et_instance instance) noexcept {
+            //     InstanceSlot *slot = findInstance(instance);
+            //     if (slot != nullptr && !slot->graphOwned) {
+            //       destroySlot(*slot);
+            //       invalidatePipeline();        // pipeline_configured_ = false
+            //     }
+            //   }
+            //   （engine.cpp:395-401）
+            //
+            // 1 つ壊すだけで pipeline_configured_ が落ち、そのあと
+            // processPipeline は毎ブロック ET_ERR_STATE を返す（engine.cpp:709-711）。
+            // 処理もテレメトリも止まるので、鎖は画面に出ているのに音が通らず、
+            // 図は "Waiting for audio" のまま。実機で測った:
+            //   tick out=Speaker applied=0 active=1 chain=1 peer=true cfgStatus=0 proc=-2
+            //
+            // こちらは publish() のあとに（音のスレッドを待ってから）壊すので、
+            // 順番として必ずこうなる。段の入切で直っていたのは、
+            // setEnabled が publish() を呼んで configure がやり直されるから。
+            //
+            // 呼び出し元は remove / clear / resetToDefault / replaceChain の 4 つで、
+            // どれも同じ経路を通る。ここで 1 回組み直せば全部に効く。
+            await MainActor.run { EffeTuneDSP.shared.republish() }
         }
+    }
+
+    /// descriptor だけ出し直す。端末には書かない。
+    /// retire が壊したあとに pipeline_configured_ を立て直すためのもので、
+    /// 鎖の中身は変わっていないので保存する理由が無い。
+    func republish() {
+        guard engine != 0 else { return }
+        let nodes = chain.filter { $0.instance != 0 }.map { n in
+            ETPipeNode(instance: n.instance,
+                       enabled: n.enabled ? 1 : 0,
+                       inputBus: n.inputBus,
+                       outputBus: n.outputBus,
+                       channelSpec: n.channelSpec,
+                       sectionGate: n.sectionGate)
+        }
+        nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
+        let line = "republish nodes=\(nodes.count) （壊したので組み直した）"
+        log.notice("\(line, privacy: .public)")
+        if ETConsoleLog.on { print(line) }
     }
 }

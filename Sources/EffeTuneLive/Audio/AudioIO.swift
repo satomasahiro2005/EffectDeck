@@ -36,15 +36,6 @@ private final class RenderState {
     var gate = PowerGate()
     var resting = false
 
-    /// 出力を捨てるか。**帰還ループを切るため。**
-    ///
-    /// 出力先が仮想デバイス（EffeTune 自身）を指している間は、こちらが出した音が
-    /// そのまま拡張へ拾われて戻ってくる。実機で測ったとおり
-    /// overrideOutputAudioPort では剥がせないので、輪を切るには
-    /// **自分が出すのをやめる**しかない。
-    /// 剥がせていない間はどのみちスピーカーへ何も届かないので、
-    /// 消しても聞こえ方は変わらない。消さないとレベルだけが上がり続ける。
-    var muteToBreakLoop = false
 
     /// 撮影用の作り物の信号。-ETMock 1 のときだけ入る。
     /// 実機では常に nil なので、音のスレッドでは nil 判定 1 回ぶんしか増えない。
@@ -435,12 +426,10 @@ final class AudioIO: ObservableObject {
             var peak: Float = 0
             let l = abl[0].mData!.assumingMemoryBound(to: Float.self)
             let r = abl.count > 1 ? abl[1].mData!.assumingMemoryBound(to: Float.self) : l
-            // 帰還ループを切る。メーターは通した音のまま出す（何が来ているかは見える）。
-            let mute = state.muteToBreakLoop
             for i in 0..<n {
                 let a = p[i], b = p[n + i]
-                l[i] = mute ? 0 : a
-                if abl.count > 1 { r[i] = mute ? 0 : b }
+                l[i] = a
+                if abl.count > 1 { r[i] = b }
                 let m = max(abs(a), abs(b))
                 if m > peak { peak = m }
             }
@@ -690,9 +679,6 @@ final class AudioIO: ObservableObject {
             $0.portName.localizedCaseInsensitiveContains("EffeTune")
         }
         if loopback != nowLoopback { loopback = nowLoopback }
-        // **剥がせなかったときだけ消す。**
-        // 掛けた直後はまだ反映されていないことがあるので、
-        // ETRouteEscape が諦める（3 回試して外れない）まで待つ。
-        render?.muteToBreakLoop = nowLoopback && escape.gaveUp
+
     }
 }
