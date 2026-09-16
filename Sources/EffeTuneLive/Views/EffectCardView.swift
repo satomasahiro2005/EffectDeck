@@ -31,8 +31,24 @@ struct EffectCardView: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
 
-    /// この段だけの Routing を出しているか。⋯ からと、印を押したときに開く。
-    @State private var routing = false
+    /// カードから開くもの。
+    ///
+    /// **1 枚にまとめる。** 同じビューに .sheet を積むと後から付けた方しか
+    /// 出ない（PipelineView.swift:29-32 と IRReverbView.swift の fileImporter で
+    /// 踏んでいる）。カードごとに 1 枚ずつ並ぶのは別の話で、そちらは問題ない。
+    ///
+    /// **PipelineView ではなくここが出す。** あちらの sheet は private で、
+    /// どのカードから開いたかを運ぶ口も無い。
+    private enum Sheet: String, Identifiable {
+        /// この段だけの Routing。⋯ からと、印を押したときに開く。
+        case routing
+        /// エフェクト 1 個ぶんのプリセット。
+        case presets
+
+        var id: String { rawValue }
+    }
+
+    @State private var sheet: Sheet?
 
     var body: some View {
         if node.isSection {
@@ -83,8 +99,11 @@ struct EffectCardView: View {
             }
         }
         .opacity(isMuted ? 0.55 : 1)
-        .sheet(isPresented: $routing) {
-            EffectRoutingSheet(index: index, node: node, dsp: dsp)
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
+            case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
+            }
         }
     }
 
@@ -149,7 +168,7 @@ struct EffectCardView: View {
             // 矢印を押し所にしていないのとは事情が違う（あちらは行を押すのと
             // 結果が同じだった）。
             if !node.isDefaultRouting || node.isGated {
-                Button { routing = true } label: {
+                Button { sheet = .routing } label: {
                     Text(ETRouting.badge(node))
                         .font(.system(size: 10, design: .monospaced))
                         .padding(.horizontal, 6)
@@ -182,10 +201,19 @@ struct EffectCardView: View {
             }
 
             Menu {
+                // 並びは上流に合わせて routing → preset → reset
+                // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
+                //
                 // 全体の Routing はツールバーにもあるが、あちらは鎖を見渡す画面。
                 // 「このカードの行き先」を変えたいときにここから直に開ける。
-                Button { routing = true } label: {
+                Button { sheet = .routing } label: {
                     Label("Routing…", systemImage: "arrow.triangle.branch")
+                }
+                // 絵はしおり（上流 :360 の SVG も bookmark の d）。
+                // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
+                // プリセットの一覧に混ぜない。
+                Button { sheet = .presets } label: {
+                    Label("Effect Presets", systemImage: "bookmark")
                 }
                 Button { dsp.resetParams(at: index) } label: {
                     Label("Reset Parameters", systemImage: "arrow.counterclockwise")

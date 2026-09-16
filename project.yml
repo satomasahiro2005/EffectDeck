@@ -141,8 +141,10 @@ targets:
       - path: Tests/Unit
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
       - path: Sources/EffeTuneLive/DSP/ETParamCoding.swift
+      - path: Sources/EffeTuneLive/DSP/EffectPresetApply.swift
       - path: Sources/EffeTuneLive/DSP/EffectSpec.swift
       - path: Sources/EffeTuneLive/Generated/EffectCatalog.swift
+      - path: Sources/EffeTuneLive/Generated/EffectPresets.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests
