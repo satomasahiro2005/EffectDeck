@@ -90,6 +90,12 @@ struct EffectPickerView: View {
             .searchable(text: $query, isPresented: $searching, prompt: "Search effects")
             .navigationTitle("Available Effects")
             .navigationBarTitleDisplayMode(.inline)
+            // **縮めている間は見出しごと消す。**
+            // 中身は上で Color.clear にしているが、見出しと検索の欄は
+            // ナビゲーションバーの持ち物なのでそちらでは消えない。
+            // 90pt に題と検索の欄が両方載って重なっていた。
+            // つまんで運んでいる最中なので、どちらも要らない。
+            .toolbar(detent == Self.lifted ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
@@ -236,8 +242,15 @@ struct EffectPickerView: View {
         // 小さな札にすれば指の下に付く。
         .onDrag {
             if detent != Self.lifted {
+                // **検索してからつまむと縮まなかった。**
+                // `.searchable` が出ている間は UIKit の検索コントローラが
+                // シートを一番上に張り付かせるので、detent を下げても効かない。
+                // 先に検索を畳んで、**その次の回**で下げる。
                 DispatchQueue.main.async {
-                    withAnimation(.snappy(duration: 0.2)) { detent = Self.lifted }
+                    searching = false
+                    DispatchQueue.main.async {
+                        withAnimation(.snappy(duration: 0.2)) { detent = Self.lifted }
+                    }
                 }
             }
             return NSItemProvider(object: effect.type as NSString)
