@@ -418,12 +418,18 @@ final class EffeTuneDSP: ObservableObject {
     }
 
     /// この段が実際に処理する幅。descriptor の channelSpec から出す。
-    /// 既定（Stereo）と All と組の指定は 2、単独のチャンネルは 1。
+    ///
+    /// **engine.cpp:759 に合わせる。**
+    /// `channelSpec == -1 || channelSpec >= 16 ? 2 : 1`。
+    /// 16 は「1ch 目と 2ch 目の対」で、17 以降が "34"、"56" と続く。
+    /// 16 を 1 に数えると、対に置いた段へ 1ch ぶんの形で資産を送ることになる。
+    /// -2（All）は engine の幅そのもので、この app は 2ch で組んである
+    /// （AudioIO.swift:157 と :383 がどちらも maxChannels: 2）。
     static func routedChannels(of node: Node) -> Int {
         switch node.channelSpec {
-        case -1, -2:  return 2
-        case 17...23: return 2
-        default:      return 1
+        case -2, -1: return 2
+        case 16...:  return 2
+        default:     return 1
         }
     }
 
@@ -741,7 +747,12 @@ final class EffeTuneDSP: ObservableObject {
         //
         // **次の回に回す。** ここは音の経路を組む途中で、素材を読むのは重い
         // （4ch を伸縮して数 MB）。同期でやると起動が詰まって SIGKILL で殺される。
-        Task { @MainActor [weak self] in self?.reloadAssets() }
+        Task { @MainActor [weak self] in
+            self?.reloadAssets()
+            // designer で作る 5 種も同じ理由で消えている。ビューに任せると
+            // 畳んだカードでは走らない（AssetReattach.swift の頭）。
+            ETAssetReattach.all()
+        }
     }
 
     private func pushParams(_ node: Node) {

@@ -82,6 +82,36 @@ final class GroupDelayPEQDesigners {
         return made
     }
 
+    /// instance に繋ぎ直す。**送るものがあるときだけ。**
+    ///
+    /// ビューの attachIfNeeded をここへ出したもの。instance が作り直されるのは
+    /// prepare のときで、そのときこのカードが組み立てられているとは限らない。
+    /// 畳んだまま出力先を切り替えると、ビュー側の onChange は一度も来ない。
+    ///
+    /// attach は即 start(debounce: 0) を回す（GroupDelayPEQDesigner.swift:810）。
+    /// 遅延が 1 本も無ければ .flat の経路へ行って AssetUpload.clear を呼び、
+    /// clear は master bypass を上げて音のスレッドが 2 ブロック進むまで待つ。
+    /// 送るものが無いのに繋ぐと、鎖全体の音が一瞬切れる。
+    func sync(node: EffeTuneDSP.Node) {
+        let dsp = EffeTuneDSP.shared
+        guard dsp.engine != 0, node.instance != 0 else { return }
+        guard let designer = designers[node.id], designer.settings.hasDelay else { return }
+        guard attachedInstance(for: node.id) != node.instance else { return }
+
+        // **繋ぐ前にレートとチャンネル数を入れる。**
+        // 既定の 48000 のまま attach して engine が 96000 だと、ペイロードの +12 が
+        // 合わずに commit が ET_ERR_ARGS で落ちる（kernel.cpp:286）。
+        var next = designer.settings
+        next.sampleRate = dsp.sampleRate
+        next.processingChannels = GroupDelayPEQSettings.routedChannels(
+            channelSpec: node.channelSpec, engineChannels: 2)
+        designer.update(next.clampingDelaysToLimit(), debounce: 0)
+
+        markAttached(node.id, instance: node.instance)
+        let at = dsp.chain.firstIndex(where: { $0.instance == node.instance })
+        designer.attach(instance: node.instance, nodeIndex: at ?? 0)
+    }
+
     func attachedInstance(for id: UUID) -> UInt32 { attached[id] ?? 0 }
 
     func markAttached(_ id: UUID, instance: UInt32) { attached[id] = instance }
@@ -200,10 +230,8 @@ private struct GroupDelayPEQBody: View {
     /// （同 902-911）、clear は master bypass を上げて音のスレッドが 2 ブロック進むまで
     /// 待つ（AssetUpload.swift:553-558, 676-692）。送るものが無いのに繋ぐと、
     /// カードを出しただけで鎖全体の音が一瞬切れる。
-    private func connect() {
-        guard designer.settings.hasDelay else { return }
-        attachIfNeeded()
-    }
+    /// 中身は置き場が持っている（畳んだ状態からも呼ばれるので外に出してある）。
+    private func connect() { GroupDelayPEQDesigners.shared.sync(node: node) }
 
     /// 触る直前に呼ぶ。繋がっていなければここで繋ぐ。
     private func attachIfNeeded() {

@@ -118,7 +118,7 @@ struct RoomEQView: View {
         failure = nil
         let width = processingChannels
         guard width > 0 else {
-            failure = Self.notRouted
+            failure = RoomEQStore.notRouted
             return
         }
 
@@ -180,65 +180,9 @@ struct RoomEQView: View {
 
     // MARK: 設計を頼む
 
-    /// 設計し直して送り直す。schedule が 150ms まとめて 1 回にするので、
-    /// つまみを動かし続けても設計は 1 回で済む（RoomEQDesigner.swift:1265-1276）。
-    private func apply() {
-        // 下の onDesigned は escaping なので、捕まえるものを先に出しておく。
-        let dsp = self.dsp
-        let session = self.session
-        guard !session.sources.isEmpty else { return }
-        guard dsp.engine != 0, node.instance != 0 else { return }
-        let width = processingChannels
-        guard width > 0 else {
-            failure = Self.notRouted
-            return
-        }
-        failure = nil
-
-        var config = session.config
-        // **ヘッダ +12 は処理レート。割らない。** RoomEQ の rateDivider は 1 固定で、
-        // カーネルは readU32(bytes+12) == lround(sample_rate_) を見る
-        // （dsp/plugins/eq/room_eq/kernel.cpp の validatePayload）。
-        // 処理レートは 48000 とは限らない（AudioIO.swift:157/383 の factor）。
-        config.sampleRate = Int(dsp.sampleRate.rounded())
-
-        // **要素数が topology を決める。** 1 なら mono（1 本を全チャンネルへ）、
-        // 2 以上は independent で、処理幅と一致していないと send が
-        // channelCountMismatch で弾く（RoomEQDesigner.swift:437-442、
-        // kernel.cpp validateBegin の independent）。余った面はここで落とす。
-        // 段を動かして幅が 2→1 になったときも、これで通る。
-        var sources = session.sources
-        if sources.count > width { sources = Array(sources.prefix(width)) }
-
-        let mode = latencyMode
-        let instance = node.instance
-        session.correction.schedule(config: config,
-                                    sources: sources,
-                                    engine: dsp.engine,
-                                    instance: instance,
-                                    processingChannels: UInt32(width),
-                                    latencyMode: mode) { design in
-            // 設計が終わって、送る直前。ここが fd を書ける唯一の隙間。
-            // カーネルは begin の時点の fd で遅延を決める
-            // （kernel.cpp beginAsset の candidate_latency_）ので、
-            // 後から書いても遅延だけ前の設計のまま残る。
-            //
-            // 並べ替えを跨ぐので、位置は instance から引き直す
-            // （CrosstalkCancellationDesigner.swift:1202-1208 と同じ）。
-            guard let at = dsp.chain.firstIndex(where: { $0.instance == instance }) else { return }
-            // lt は普通そのまま戻る値なので、外れているときだけ直す。
-            // 毎回書くと node.values が変わり、それを見張っている onChange が
-            // もう一度送り直しに来る。
-            let offset = RoomEQDesigner.ParameterOffset.latencyMode
-            let want = RoomEQDesigner.parameterValue(forLatencyMode: mode)
-            if dsp.chain[at].values.indices.contains(offset),
-               dsp.chain[at].values[offset] != want {
-                dsp.setValue(want, at: at, offset: offset)
-            }
-            dsp.setValue(Float(design.filterDelaySamples),
-                         at: at, offset: RoomEQDesigner.ParameterOffset.filterDelaySamples)
-        }
-    }
+    /// 設計し直して送り直す。中身は RoomEQStore が持っている
+    /// （畳んだ状態からも呼ばれるので、ビューの外に置いてある）。
+    private func apply() { failure = store.design(node: node) }
 
     /// 測定が入っているときだけ設計し直す。
     private func resend() {
@@ -247,19 +191,7 @@ struct RoomEQView: View {
     }
 
     /// 画面へ戻ったときに、カーネルから資産が消えていたら送り直す。
-    /// instance が作り直されるのは prepare のときで、そのときこのカードが
-    /// 組み立てられていなければ onChange は来ない。
-    private func resendIfGone() {
-        guard !session.sources.isEmpty, dsp.engine != 0, node.instance != 0 else { return }
-        // 送っている最中は触らない。送っているあいだ鎖全体が素通しになるので
-        // （AssetUpload.swift:48-60）、重ねて頼まない。
-        switch session.correction.state {
-        case .designing, .sending: return
-        default: break
-        }
-        let state = AssetUpload.status(engine: dsp.engine, instance: node.instance).state
-        if state == ETAssetState.none || state == ETAssetState.error { apply() }
-    }
+    private func resendIfGone() { failure = store.resendIfGone(node: node) }
 
     // MARK: 状態
 
@@ -350,9 +282,6 @@ struct RoomEQView: View {
             }
         }
     }
-
-    private static let notRouted =
-        "This effect is not routed to any channel. Change Routing first."
 
     // MARK: 設計の設定
 
@@ -450,10 +379,7 @@ struct RoomEQView: View {
 
     /// このエフェクトが処理する幅。engine は 2ch で組んである
     /// （AudioIO.swift:157 と :383 がどちらも maxChannels: 2 で prepare する）。
-    private var processingChannels: Int {
-        BandFIRPEQDesigner.processingChannels(channelSpec: node.channelSpec,
-                                              engineChannels: 2)
-    }
+    private var processingChannels: Int { RoomEQStore.processingChannels(of: node) }
 
     /// 実際に送る面の数。処理幅を超えた測定は落とす（apply と同じ数え方）。
     private var assetChannels: Int {
@@ -467,9 +393,7 @@ struct RoomEQView: View {
         return node.values.indices.contains(offset) ? node.values[offset] : 1
     }
 
-    private var latencyMode: UInt32 {
-        RoomEQDesigner.latencyMode(fromParameterValue: latencyParameterValue)
-    }
+    private var latencyMode: UInt32 { RoomEQStore.latencyMode(of: node) }
 
     // MARK: 部品
 

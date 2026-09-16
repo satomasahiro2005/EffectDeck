@@ -23,10 +23,11 @@
 //  音のファイルを取り込む道を用意した（DSP/CrosstalkMeasurementLoader.swift）。
 //  片耳ぶんの 2ch ファイルを 2 本、左耳と右耳。
 //
-//  **取り込んだ測定は画面の @State にしか残らない。** カードを畳むと消える。
+//  **取り込んだ測定と設計の指示は CrosstalkStore が段ごとに持つ。**
+//  ビューの @State に置くと、カードを畳んだ時点で捨てられる（理由は
+//  CrosstalkStore.swift の頭）。端末には残さないので、アプリを終うと消える。
 //  段のパラメータは float の並びしか持てないので（ETParam）、測定の参照を
-//  プリセットに書く口がこのアプリにはまだ無い。カーネルへ送った係数は残るので、
-//  畳んでも音は掛かったまま。
+//  プリセットに書く口がこのアプリにはまだ無い。
 //
 //  --- なぜ apply(chainIndex:) を呼ばないか ---
 //  controller には鎖の位置だけ渡す口もある（CrosstalkCancellationDesigner.swift:1041）が、
@@ -57,8 +58,13 @@ struct CrosstalkCancellationView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @StateObject private var controller = CrosstalkCancellationController()
+    /// 測定・設計の指示・送り込む係。畳んでも消えないよう段ごとの置き場に持つ
+    /// （CrosstalkStore.swift の頭）。
+    @StateObject private var store = CrosstalkStore.shared
     @StateObject private var library = IRLibrary.shared
+
+    private var session: CrosstalkStore.Session { store.session(for: node.id) }
+    private var controller: CrosstalkCancellationController { session.controller }
 
     /// どちらの耳で測ったものか。枠の組は crosstalk_cancellation.js:20-23。
     private enum Side: String, Identifiable {
@@ -80,8 +86,8 @@ struct CrosstalkCancellationView: View {
         }
     }
 
-    @State private var leftEar: ETCrosstalkLoader.Ear?
-    @State private var rightEar: ETCrosstalkLoader.Ear?
+    private var leftEar: ETCrosstalkLoader.Ear? { session.leftEar }
+    private var rightEar: ETCrosstalkLoader.Ear? { session.rightEar }
 
     @State private var picking = false
     /// ファイルを選んだとき、どちらの耳へ入れるか。
@@ -93,13 +99,22 @@ struct CrosstalkCancellationView: View {
     /// 通るまで active にならない（DSP/AssetUpload.swift:563-565）。
     @State private var active = false
 
-    // 設計の指示。既定は上流の初期値（crosstalk_cancellation.js:50-59）。
-    @State private var taps = 4096
-    @State private var regularization = 50.0
-    @State private var maxGainDb = 12.0
-    @State private var lowFrequency = 200.0
-    @State private var highFrequency = 6000.0
-    @State private var directWindowMs = 8.0
+    // 設計の指示は session が持つ。既定は上流の初期値
+    // （crosstalk_cancellation.js:50-59。CrosstalkStore.Session を見ること）。
+    private var taps: Int { session.taps }
+    private var regularization: Double { session.regularization }
+    private var maxGainDb: Double { session.maxGainDb }
+    private var lowFrequency: Double { session.lowFrequency }
+    private var highFrequency: Double { session.highFrequency }
+    private var directWindowMs: Double { session.directWindowMs }
+
+    /// つまみが書き戻す先。Session は class なので、store 越しに書いて
+    /// objectWillChange を出させる。
+    private func bind(_ path: ReferenceWritableKeyPath<CrosstalkStore.Session, Double>)
+        -> Binding<Double> {
+        Binding(get: { self.session[keyPath: path] },
+                set: { new in self.store.update(self.node.id) { $0[keyPath: path] = new } })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -214,9 +229,11 @@ struct CrosstalkCancellationView: View {
         importFailure = nil
         do {
             let measured = try ETCrosstalkLoader.load(url: url, id: id, name: name)
-            switch side {
-            case .left: leftEar = measured
-            case .right: rightEar = measured
+            store.update(node.id) { session in
+                switch side {
+                case .left: session.leftEar = measured
+                case .right: session.rightEar = measured
+                }
             }
             // 設計は designSignature の変化を見ている onChange が始める。
         } catch {
@@ -237,68 +254,16 @@ struct CrosstalkCancellationView: View {
     }
 
     /// latencyMode（lt）の添字を begin の headBlock へ。
-    private var headBlock: UInt32 {
-        guard let param = node.spec.params.first(where: { $0.key == "lt" }),
-              node.values.indices.contains(param.offset) else { return 128 }
-        return CrosstalkCancellationDesigner.headBlock(forLatencyMode: node.values[param.offset])
-    }
+    private var headBlock: UInt32 { CrosstalkStore.headBlock(of: node) }
 
-    /// 4 枠が揃っていれば設計して送る。**MainActor で呼ぶ**
-    /// （AssetUpload.send がそれを求めている。AssetUpload.swift 冒頭）。
-    private func design() {
-        guard let left = leftEar, let right = rightEar else {
-            // 上流も全枠が埋まるまで設計しない（crosstalk_cancellation.js:281-287）。
-            if controller.phase != .idle { controller.clear(instance: node.instance) }
-            return
-        }
-        guard dsp.ready, dsp.engine != 0, node.instance != 0 else { return }
-
-        // 枠の割り当ては crosstalk_cancellation.js:20-31。
-        // 同じ耳の 2 本は 1 つの測定の 2 チャンネルで、左スピーカーが下のチャンネル。
-        let sources = CrosstalkCancellationController.Sources(ll: left.leftSpeaker,
-                                                             lr: right.leftSpeaker,
-                                                             rl: left.rightSpeaker,
-                                                             rr: right.rightSpeaker)
-        let config = CrosstalkCancellationController.Config(
-            sampleRate: Int(dsp.sampleRate.rounded()),
-            taps: taps,
-            regularization: regularization,
-            maxGainDb: maxGainDb,
-            lowFrequency: lowFrequency,
-            highFrequency: highFrequency,
-            directWindowMs: directWindowMs)
-
-        controller.apply(
-            engine: dsp.engine,
-            instance: node.instance,
-            headBlock: headBlock,
-            config: config,
-            sources: sources,
-            beforeSend: { built in
-                // 設計が置いた山の位置を dry 側の遅延にも入れる。
-                // beginAsset は applyPendingParameters() を先に通るので、
-                // 送る直前に書けば同じ begin で効く（kernel.cpp:156）。
-                guard let param = node.spec.params.first(where: { $0.key == "fd" }) else { return }
-                dsp.setValue(Float(built.config.filterDelaySamples),
-                             at: index, offset: param.offset)
-            },
-            afterSend: {
-                // commit で instance の遅延が変わるので、鎖を組み直させる。
-                // setRouting は何も変えずに呼んでも publish まで進む。
-                dsp.setRouting(at: index)
-            })
-    }
+    /// 設計して送る。中身は CrosstalkStore が持っている（畳んだ状態からも
+    /// 呼ばれるので、ビューの外に置いてある）。
+    private func design() { store.design(node: node) }
 
     // MARK: - 状態
 
-    /// このエフェクトが処理する幅。IRReverbView.swift:162-168 と同じ引き方。
-    private var routedChannels: Int {
-        switch node.channelSpec {
-        case -1, -2: return 2
-        case 17...23: return 2
-        default: return 1
-        }
-    }
+    /// このエフェクトが処理する幅。
+    private var routedChannels: Int { EffeTuneDSP.routedChannels(of: node) }
 
     /// 入ったときの 1 行。入っていなければ nil。
     private var loaded: String? {
@@ -362,28 +327,28 @@ struct CrosstalkCancellationView: View {
             tapsRow
 
             controlRow("Regularization (%)", value: decimals(regularization, 0)) {
-                Slider(value: $regularization, in: 0...100, step: 1)
+                Slider(value: bind(\.regularization), in: 0...100, step: 1)
                     .accessibilityLabel("Regularization")
                     .accessibilityValue(decimals(regularization, 0))
             }
             controlRow("Max Gain (dB)", value: decimals(maxGainDb, 1)) {
-                Slider(value: $maxGainDb, in: 0...24, step: 0.1)
+                Slider(value: bind(\.maxGainDb), in: 0...24, step: 0.1)
                     .accessibilityLabel("Max Gain")
                     .accessibilityValue(decimals(maxGainDb, 1))
             }
             // 上流は周波数の 2 本だけ対数のつまみで作っている（同 :744, 746）。
             controlRow("Freq Low (Hz)", value: decimals(lowFrequency, 0)) {
-                ETLogSlider(value: $lowFrequency, range: 20...2000)
+                ETLogSlider(value: bind(\.lowFrequency), range: 20...2000)
                     .accessibilityLabel("Freq Low")
                     .accessibilityValue(decimals(lowFrequency, 0))
             }
             controlRow("Freq High (Hz)", value: decimals(highFrequency, 0)) {
-                ETLogSlider(value: $highFrequency, range: 1000...20000)
+                ETLogSlider(value: bind(\.highFrequency), range: 1000...20000)
                     .accessibilityLabel("Freq High")
                     .accessibilityValue(decimals(highFrequency, 0))
             }
             controlRow("Direct Window (ms)", value: decimals(directWindowMs, 1)) {
-                Slider(value: $directWindowMs, in: 2...50, step: 0.1)
+                Slider(value: bind(\.directWindowMs), in: 2...50, step: 0.1)
                     .accessibilityLabel("Direct Window")
                     .accessibilityValue(decimals(directWindowMs, 1))
             }
@@ -400,7 +365,7 @@ struct CrosstalkCancellationView: View {
                 ForEach(CrosstalkCancellationDesigner.allowedTaps, id: \.self) { value in
                     let selected = value == taps
                     Button {
-                        taps = value
+                        store.update(node.id) { $0.taps = value }
                     } label: {
                         Text(String(value))
                             .font(.system(size: 13, weight: selected ? .bold : .regular))

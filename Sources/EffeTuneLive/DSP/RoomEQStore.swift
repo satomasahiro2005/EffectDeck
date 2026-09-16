@@ -64,6 +64,103 @@ final class RoomEQStore: ObservableObject {
         body(session(for: id))
     }
 
+    // MARK: - 設計して送る
+
+    /// 設計し直して送り直す。schedule が 150ms まとめて 1 回にするので、
+    /// つまみを動かし続けても設計は 1 回で済む（RoomEQDesigner.swift:1265-1276）。
+    ///
+    /// **ビューから切り出してここに置いてある。** instance が作り直されるのは
+    /// prepare のときで、そのときこのカードが組み立てられているとは限らない。
+    /// 畳んだまま出力先を切り替えると、ビュー側の onChange は一度も来ない。
+    ///
+    /// - Returns: 画面に出す失敗の文。頼めたときは nil。
+    @discardableResult
+    func design(node: EffeTuneDSP.Node) -> String? {
+        let dsp = EffeTuneDSP.shared
+        let session = session(for: node.id)
+        guard !session.sources.isEmpty else { return nil }
+        guard dsp.engine != 0, node.instance != 0 else { return nil }
+
+        let width = Self.processingChannels(of: node)
+        guard width > 0 else { return Self.notRouted }
+
+        var config = session.config
+        // **ヘッダ +12 は処理レート。割らない。** RoomEQ の rateDivider は 1 固定で、
+        // カーネルは readU32(bytes+12) == lround(sample_rate_) を見る
+        // （dsp/plugins/eq/room_eq/kernel.cpp の validatePayload）。
+        // 処理レートは 48000 とは限らない（AudioIO.swift:157/383 の factor）。
+        config.sampleRate = Int(dsp.sampleRate.rounded())
+
+        // **要素数が topology を決める。** 1 なら mono（1 本を全チャンネルへ）、
+        // 2 以上は independent で、処理幅と一致していないと send が
+        // channelCountMismatch で弾く（RoomEQDesigner.swift:437-442）。
+        var sources = session.sources
+        if sources.count > width { sources = Array(sources.prefix(width)) }
+
+        let mode = Self.latencyMode(of: node)
+        let instance = node.instance
+        session.correction.schedule(config: config,
+                                    sources: sources,
+                                    engine: dsp.engine,
+                                    instance: instance,
+                                    processingChannels: UInt32(width),
+                                    latencyMode: mode) { design in
+            // 設計が終わって、送る直前。ここが fd を書ける唯一の隙間。
+            // カーネルは begin の時点の fd で遅延を決める
+            // （kernel.cpp beginAsset の candidate_latency_）ので、
+            // 後から書いても遅延だけ前の設計のまま残る。
+            //
+            // 並べ替えを跨ぐので、位置は instance から引き直す。
+            guard let at = dsp.chain.firstIndex(where: { $0.instance == instance }) else { return }
+            // lt は普通そのまま戻る値なので、外れているときだけ直す。
+            // 毎回書くと node.values が変わり、それを見張っている onChange が
+            // もう一度送り直しに来る。
+            let offset = RoomEQDesigner.ParameterOffset.latencyMode
+            let want = RoomEQDesigner.parameterValue(forLatencyMode: mode)
+            if dsp.chain[at].values.indices.contains(offset),
+               dsp.chain[at].values[offset] != want {
+                dsp.setValue(want, at: at, offset: offset)
+            }
+            dsp.setValue(Float(design.filterDelaySamples),
+                         at: at, offset: RoomEQDesigner.ParameterOffset.filterDelaySamples)
+        }
+        return nil
+    }
+
+    /// カーネルから資産が消えていたら送り直す。
+    @discardableResult
+    func resendIfGone(node: EffeTuneDSP.Node) -> String? {
+        let dsp = EffeTuneDSP.shared
+        let session = session(for: node.id)
+        guard !session.sources.isEmpty, dsp.engine != 0, node.instance != 0 else { return nil }
+        // 送っている最中は触らない。送っているあいだ鎖全体が素通しになるので
+        // （AssetUpload.swift:48-60）、重ねて頼まない。
+        switch session.correction.state {
+        case .designing, .sending: return nil
+        default: break
+        }
+        let state = AssetUpload.status(engine: dsp.engine, instance: node.instance).state
+        guard state == ETAssetState.none || state == ETAssetState.error else { return nil }
+        return design(node: node)
+    }
+
+    static let notRouted =
+        "This effect is not routed to any channel. Change Routing first."
+
+    /// この段が処理する幅。engine は 2ch で組んである
+    /// （AudioIO.swift:157 と :383 がどちらも maxChannels: 2 で prepare する）。
+    static func processingChannels(of node: EffeTuneDSP.Node) -> Int {
+        BandFIRPEQDesigner.processingChannels(channelSpec: node.channelSpec,
+                                              engineChannels: 2)
+    }
+
+    /// lt の保存値（列挙の番号）を headBlock へ読み替える。
+    static func latencyMode(of node: EffeTuneDSP.Node) -> UInt32 {
+        let offset = RoomEQDesigner.ParameterOffset.latencyMode
+        let raw = node.values.indices.contains(offset) ? node.values[offset] : 1
+        return RoomEQDesigner.latencyMode(fromParameterValue: raw)
+    }
+
     /// 鎖に居ない段を落とす。
     private func prune() {
         let live = Set(EffeTuneDSP.shared.chain.map(\.id))
