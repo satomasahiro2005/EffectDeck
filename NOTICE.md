@@ -1,29 +1,30 @@
-# 同梱しているもの
+# What is bundled
 
-**このアプリは EffeTune プロジェクトのものではない。**nemut.ai が作った別のアプリで、
-EffeTune の DSP を MIT ライセンスのもとで同梱している。本家の作者による承認も支援も
-受けていない。このアプリについての問い合わせは nemut.ai へ。EffeTune の
-リポジトリへ issue を立てないこと。
+**This app is not part of the EffeTune project.** It is a separate app built by nemut.ai
+that bundles EffeTune's DSP core under the MIT license. It is not endorsed by or supported
+by the author of EffeTune. Send anything about this app to nemut.ai, and do not open
+issues about it on the EffeTune repository.
 
-公式の iOS 版が出たら、このアプリの配信は終える。
+If an official iOS version appears, this app stops shipping.
 
 ## EffeTune
 
-音の加工は [EffeTune](https://github.com/Frieve-A/effetune) の DSP コア
-(`dsp/`) をそのまま使っている。`Vendor/effetune` にサブモジュールとして置いてある。
+The audio processing is EffeTune's DSP core (`dsp/`), used as it is:
+[EffeTune](https://github.com/Frieve-A/effetune), included here as the submodule at
+`Vendor/effetune`.
 
 MIT License / Copyright (c) 2025-2026, Yoshiyuki Kobayashi
 
-EffeTune の `dsp/` は host-neutral な C++20 で、ブラウザや WebAudio の API を
-含まない。だから WASM を経由せず iOS 向けに arm64 で直接ビルドできる。
+EffeTune's `dsp/` is host-neutral C++20 with no browser or WebAudio API in it, so it
+builds for iOS arm64 directly, without going through WASM.
 
 ## PFFFT
 
-EffeTune の DSP コアが FFT に使っている。`Vendor/effetune/dsp/vendor/pffft`。
+Used for the FFT inside EffeTune's DSP core. `Vendor/effetune/dsp/vendor/pffft`.
 
 Copyright (c) 2020 Dario Mambro
 Copyright (c) 2019 Hayati Ayguen
 Copyright (c) 2013 Julien Pommier
 Copyright (c) 2004 the University Corporation for Atmospheric Research (UCAR)
 
-全文は `Vendor/effetune/plugins/dsp/NOTICE.txt`。
+Full text in `Vendor/effetune/plugins/dsp/NOTICE.txt`.

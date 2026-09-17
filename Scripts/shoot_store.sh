@@ -54,14 +54,15 @@ for spec in $SEEDS; do
   [ "$sheet" = "$spec" ] && sheet="${SHEET:-}"
   name=$(printf '%s' "$spec" | tr ':' '-')
   xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
+  # COLLAPSED=1 で畳んだ状態。図だけ残ってつまみが消えるので、Analyzer の鎖はこちら。
   # 作り物の音を流す。メーターも図も止まったままだと店頭で意味が無い。
   # 幅。既定の 0 は絞らない。**iPad で撮るときは WIDTH=440 を渡すこと。**
   # 実機の iPad は ETLayout が 440pt で止めるので、絞らずに撮ると出荷物と違う絵になる。
   if [ -n "$sheet" ]; then
     xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETSheet "$sheet" \
-                        -ETWidth "${WIDTH:-0}" -ETMock 1 >/dev/null 2>&1
+                        -ETWidth "${WIDTH:-0}" -ETCollapsed "${COLLAPSED:-0}" -ETMock 1 >/dev/null 2>&1
   else
-    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETWidth "${WIDTH:-0}" -ETMock 1 >/dev/null 2>&1
+    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETWidth "${WIDTH:-0}" -ETCollapsed "${COLLAPSED:-0}" -ETMock 1 >/dev/null 2>&1
   fi
   sleep 5
   xcrun simctl io "$DEV" screenshot "$OUT/$name.png" >/dev/null 2>&1

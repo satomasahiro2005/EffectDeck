@@ -358,8 +358,10 @@ final class EffeTuneDSP: ObservableObject {
             let loaded = ETShareLink.parse(json, catalog: ETCatalog)
             if !loaded.isEmpty {
                 for item in loaded { append(item) }
+                // 下の分岐と同じで、-ETCollapsed 1 なら畳んだ状態にする。
+                // 図だけ残ってつまみが消えるので、Analyzer を並べた鎖はそちらが見やすい。
                 restoring = true
-                expanded = Set(chain.map(\.id))
+                expanded = ETScreenshotSeed.collapsed ? [] : Set(chain.map(\.id))
                 restoring = false
                 publish()
                 return
