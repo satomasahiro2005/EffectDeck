@@ -12,6 +12,19 @@
 
 import Combine
 import SwiftUI
+import UIKit
+
+enum ETLayout {
+    /// 鎖に許す横幅。
+    ///
+    /// **iPad でも iPhone くらいに留める。**カードは名前を左、値を右に置く形なので、
+    /// 左右いっぱいに広げると 1 行が長くなりすぎて、どの値がどのつまみのものか
+    /// 目で追えなくなる。図も横に伸びるだけで情報は増えない。
+    /// iPad に合わせた並べ方（2 列など）を作るまではこの形。
+    static var chainMaxWidth: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 440 : .infinity
+    }
+}
 
 struct PipelineView: View {
     /// **io は観測しない。@StateObject にしてはいけない。**
@@ -81,11 +94,11 @@ struct PipelineView: View {
     var body: some View {
         NavigationStack {
             chainList
-                // 撮影のときだけ iPhone の幅に絞る。
-                // iPad で撮るのは高さが要るからで、幅まで iPad になると
-                // 実機の見え方にならない。
+                // iPad は ETLayout が絞る。撮影のときは -ETWidth で上書きできる
+                // （iPad で撮るのは高さが要るからで、幅まで iPad になると
+                // 実機の見え方にならない）。
                 .frame(maxWidth: ETScreenshotSeed.requested == nil
-                                 ? .infinity : ETScreenshotSeed.phoneWidth)
+                                 ? ETLayout.chainMaxWidth : ETScreenshotSeed.phoneWidth)
                 .frame(maxWidth: .infinity)
             // タイトルは出さない。アプリの中でアプリ名を読む人は居ないし、
             // その 1 行ぶん鎖が見える。

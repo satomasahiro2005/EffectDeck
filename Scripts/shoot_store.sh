@@ -46,20 +46,26 @@ xcrun simctl install "$DEV" "$APP"
 mkdir -p "$OUT"
 if [ "$#" -gt 0 ]; then SEEDS="$*"; else SEEDS="none"; fi
 n=0
-for seed in $SEEDS; do
+for spec in $SEEDS; do
+  # `鎖:シート` と書くと、その 1 枚だけシートを出して撮る。
+  # 建て直しは 1 度で済ませたいので、SHEET を環境から渡す形と併用できる。
+  seed="${spec%%:*}"
+  sheet="${spec#*:}"
+  [ "$sheet" = "$spec" ] && sheet="${SHEET:-}"
+  name=$(printf '%s' "$spec" | tr ':' '-')
   xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
   # 作り物の音を流す。メーターも図も止まったままだと店頭で意味が無い。
   # 幅は絞らない（端末そのままが正しい）。
-  if [ -n "${SHEET:-}" ]; then
-    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETSheet "$SHEET" \
+  if [ -n "$sheet" ]; then
+    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETSheet "$sheet" \
                         -ETWidth 0 -ETMock 1 >/dev/null 2>&1
   else
     xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETWidth 0 -ETMock 1 >/dev/null 2>&1
   fi
   sleep 5
-  xcrun simctl io "$DEV" screenshot "$OUT/$seed.png" >/dev/null 2>&1
+  xcrun simctl io "$DEV" screenshot "$OUT/$name.png" >/dev/null 2>&1
   n=$((n + 1))
-  echo "  $seed"
+  echo "  $name"
 done
 # 撮り終わったら落とす。モックの音が鳴り続けるので。
 xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1

@@ -1,11 +1,13 @@
-# EffeTune Live
+<div align="center">
 
-<picture align="right">
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/icon-dark.png">
-  <img src="docs/icon.png" width="96" align="right" alt="">
+  <img src="docs/icon.png" width="112" alt="">
 </picture>
 
-[EffeTune](https://github.com/Frieve-A/effetune) for iOS (Unofficial).
+# EffeTune Live
+
+**[EffeTune](https://github.com/Frieve-A/effetune) for iOS (Unofficial)**
 
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/effetune-live?label=release&color=3B82F6)](https://github.com/satomasahiro2005/effetune-live/releases)
 [![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
@@ -15,9 +17,17 @@
 <a href="https://altstore.io/source/nemut.ai/source.json?app=ai.nemut.effetune">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/altstore-badge-dark.png">
-    <img src="docs/altstore-badge-light.png" alt="Download on AltStore" height="60">
+    <img src="docs/altstore-badge-light.png" alt="Download on AltStore" height="52">
   </picture>
 </a>
+
+<p>
+  <img src="docs/shot-effects.png" width="220" alt="">
+  <img src="docs/shot-analyzers.png" width="220" alt="">
+  <img src="docs/shot-routing.png" width="220" alt="">
+</p>
+
+</div>
 
 > **An independent project.** EffeTune Live is built by nemut.ai. It is **not affiliated
 > with, endorsed by, or supported by
@@ -27,16 +37,11 @@
 > Send anything about this app to nemut.ai, not to EffeTune. Do not open issues about it
 > on the EffeTune repository. If an official iOS version appears, this app stops shipping.
 
-<img src="docs/shot.png" width="300" alt="EffeTune Live">
-
 **Effects for any player on your phone.** Anything with a transport in Control Center,
 the Now Playing kind, goes through the chain: it takes that audio, runs it through
 EffeTune's effects, and sends it to the built-in speaker. No virtual cable, no input
 device to configure. Pick **EffeTune** as the output in Control Center and that is the
 whole setup.
-
-Whether a given player keeps the route is a separate matter, and the next section is
-about that.
 
 ```
 Spotify / a podcast app / Safari
