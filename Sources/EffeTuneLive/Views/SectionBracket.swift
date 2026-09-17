@@ -38,18 +38,20 @@ struct ETSectionBracket<Content: View>: View {
     private static var rowGap: CGFloat { 5 }
 
     var body: some View {
-        if active {
-            HStack(spacing: Self.gap) {
-                Capsule()
-                    .fill(.tint.opacity(0.35))
-                    .frame(width: Self.rule)
-                    // 行の上下の余白（listRowInsets の 5）を打ち消して、
-                    // 隣の行の線と繋げる。端は打ち消さないので丸いまま残る。
-                    .padding(.top, extendsUp ? -Self.rowGap : 0)
-                    .padding(.bottom, extendsDown ? -Self.rowGap : 0)
-                content
-            }
-        } else {
+        // **枝分かれさせない。**以前は active のときだけ HStack で包み、
+        // そうでなければ content をそのまま返していた。同じ ForEach の中に
+        // 構造の違う行が混ざることになり、並べ替え（reorderable）が掴んだものを
+        // 解けずに落ちた（DragContainerStorage.payload → _assertionFailure、
+        // 実機で ETProbe の「括り」だけが落ちることで確かめた）。
+        // 形は常に同じにして、線の幅と色だけを変える。
+        HStack(spacing: active ? Self.gap : 0) {
+            Capsule()
+                .fill(active ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.clear))
+                .frame(width: active ? Self.rule : 0)
+                // 行の上下の余白（listRowInsets の 5）を打ち消して、
+                // 隣の行の線と繋げる。端は打ち消さないので丸いまま残る。
+                .padding(.top, active && extendsUp ? -Self.rowGap : 0)
+                .padding(.bottom, active && extendsDown ? -Self.rowGap : 0)
             content
         }
     }
