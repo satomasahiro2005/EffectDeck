@@ -31,7 +31,7 @@
 > Kobayashi).** It bundles EffeTune's DSP core under the MIT license and says so.
 >
 > Send anything about this app to nemut.ai, not to EffeTune. Do not open issues about it
-> on the EffeTune repository. If an official iOS version appears, this app stops shipping.
+> on the EffeTune repository.
 
 **Effects for any player on your phone.** Anything with a transport in Control Center,
 the Now Playing kind, goes through the chain: it takes that audio, runs it through

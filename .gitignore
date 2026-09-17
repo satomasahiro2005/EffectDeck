@@ -25,3 +25,9 @@ docs/next.md
 docs/session-*.md
 docs/which-apps.md
 docs/altstore/timing.md
+
+# エージェントの作業場。
+.claude/
+
+# 調査用。プロジェクトに繋いでいない。
+TestsMotion/

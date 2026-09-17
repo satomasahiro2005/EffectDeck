@@ -5,8 +5,6 @@ that bundles EffeTune's DSP core under the MIT license. It is not endorsed by or
 by the author of EffeTune. Send anything about this app to nemut.ai, and do not open
 issues about it on the EffeTune repository.
 
-If an official iOS version appears, this app stops shipping.
-
 ## EffeTune
 
 The audio processing is EffeTune's DSP core (`dsp/`), used as it is:
