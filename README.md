@@ -14,7 +14,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <a href="https://apps.apple.com/app/effectdeck/id6812467517">
-  <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Download on the App Store">
+  <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="60" alt="Download on the App Store">
 </a>
 
 <p>
