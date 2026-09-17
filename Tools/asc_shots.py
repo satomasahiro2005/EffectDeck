@@ -13,6 +13,7 @@
 """
 import hashlib
 import json
+import os
 import pathlib
 import sys
 import urllib.request
@@ -20,7 +21,8 @@ import urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import asc  # noqa: E402
 
-DISPLAY = "APP_IPHONE_67"   # 6.7 と 6.9 は同じ組。6.9 で入れれば足りる
+# 既定は 6.7/6.9 の組。iPad は ETSHOT_DISPLAY=APP_IPAD_PRO_3GEN_129 で切り替える。
+DISPLAY = os.environ.get("ETSHOT_DISPLAY", "APP_IPHONE_67")
 
 
 def put(op: dict, blob: bytes) -> None:

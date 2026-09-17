@@ -1,9 +1,7 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/icon-dark.png">
-  <img src="docs/icon.png" width="112" alt="">
-</picture>
+<img src="docs/icon.png" width="104" alt="">
+<img src="docs/icon-dark.png" width="104" alt="">
 
 # EffeTune Live
 

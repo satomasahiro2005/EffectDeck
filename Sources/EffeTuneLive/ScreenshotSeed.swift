@@ -21,6 +21,7 @@ enum ETScreenshotSeed {
     /// 18 Pro Max は 440pt あるので、393 に絞ると両脇に 23.5pt ずつ余る。
     /// それを左右の余白の崩れと読み違えたことがある。
     /// `-ETWidth 0` を渡すと絞らない（端末そのままの幅で出る）。
+    ///
     /// **`simctl launch` の引数は文字列で入る。**`object(forKey:) as? Int` は
     /// NSString に当たって必ず nil になるので、`-ETWidth 0` を渡しても既定の
     /// 393 に落ちていた。18 Pro Max（440pt）で左右に 23.5pt ずつ余るのはこれ。
@@ -31,16 +32,6 @@ enum ETScreenshotSeed {
         return v > 0 ? CGFloat(v) : .infinity
     }
 
-    /// 起動と同時に出すシート。`-ETSheet settings` のように渡す。
-    /// エフェクトのカードだけでなく、設定やプリセットの画面も撮るために要る。
-    /// 実機では引数が付かないので nil。
-    /// 値まで入った鎖。上流の共有リンクと同じ形の JSON で渡す。
-    /// `-ETSeed store` のときだけ使い、EffeTuneDSP.restore() がこちらを優先する。
-    ///
-    /// 5 バンド PEQ は素の状態だと直線なので、店頭の絵にならない。
-    /// 低音を持ち上げ、200Hz あたりの濁りを削り、3kHz を少し出し、
-    /// 高域に棚を足した、よくある形にしてある。
-    /// 後ろに Spectrum Analyzer を置いて、かかった結果が図に出るようにする。
     /// 宣材で使う同梱プリセット。名前 → `ETSystemPresets` の id。
     ///
     /// 型を並べただけの鎖は、つまみが既定値のまま並ぶので絵にならない。
@@ -52,8 +43,17 @@ enum ETScreenshotSeed {
         "analyzers": "Visualize/All Analyzers",  // 図が 5 つ動く
         "live": "Spatial/Live",
         "tube": "Amp Simulation/Tube Amp",
+        "bbe": "Processor/Bbe",             // 図が 2 枚並ぶ
+        "fmradio": "Processor/Fm Radio",
     ]
 
+    /// 値まで入った鎖。上流の共有リンクと同じ形の JSON で渡す。
+    /// `EffeTuneDSP.restore()` がこちらを優先する。
+    ///
+    /// `-ETSeed store` のときは下に直に書いた 5 バンド PEQ を返す。
+    /// 素の状態だと直線で店頭の絵にならないので、低音を持ち上げ、200Hz あたりの
+    /// 濁りを削り、3kHz を少し出し、高域に棚を足した、よくある形にしてある。
+    /// 後ろに Spectrum Analyzer を置いて、かかった結果が図に出るようにする。
     static var storeChain: String? {
         if let name = UserDefaults.standard.string(forKey: "ETSeed"),
            let id = storePresets[name] {
@@ -84,6 +84,9 @@ enum ETScreenshotSeed {
         UserDefaults.standard.bool(forKey: "ETCollapsed")
     }
 
+    /// 起動と同時に出すシート。`-ETSheet settings` のように渡す。
+    /// エフェクトのカードだけでなく、設定やプリセットの画面も撮るために要る。
+    /// 実機では引数が付かないので nil。
     static var sheet: String? {
         UserDefaults.standard.string(forKey: "ETSheet")
     }
