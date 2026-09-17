@@ -19,6 +19,14 @@ struct EffeTuneLiveApp: App {
     }
 
     var body: some Scene {
-        WindowGroup { PipelineView() }
+        WindowGroup {
+            // -ETProbe 1 のときは並べ替えの切り分け用の画面
+            // （ReorderProbeView.swift の頭）。
+            if ETScreenshotSeed.probe {
+                ETReorderProbeView()
+            } else {
+                PipelineView()
+            }
+        }
     }
 }

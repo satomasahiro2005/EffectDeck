@@ -120,6 +120,11 @@ enum ETScreenshotSeed {
         UserDefaults.standard.bool(forKey: "ETDebugBlocks")
     }
 
+    /// 並べ替えの切り分け用。段階を画面の上のセグメントで切り替える。
+    static var probe: Bool {
+        UserDefaults.standard.bool(forKey: "ETProbe")
+    }
+
     static var sheet: String? {
         UserDefaults.standard.string(forKey: "ETSheet")
     }
