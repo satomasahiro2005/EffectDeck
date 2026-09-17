@@ -64,7 +64,7 @@ for spec in $SEEDS; do
   else
     xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETWidth "${WIDTH:-0}" -ETCollapsed "${COLLAPSED:-0}" -ETMock 1 >/dev/null 2>&1
   fi
-  sleep 5
+  sleep "${SLEEP:-5}"
   xcrun simctl io "$DEV" screenshot "$OUT/$name.png" >/dev/null 2>&1
   n=$((n + 1))
   echo "  $name"

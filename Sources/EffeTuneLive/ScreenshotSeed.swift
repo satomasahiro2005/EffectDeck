@@ -59,6 +59,19 @@ enum ETScreenshotSeed {
            let id = storePresets[name] {
             return ETSystemPresets.first { $0.id == id }?.json
         }
+        // 宣材用の Analyzer 4 枚。同梱の All Analyzers から Oscilloscope を外し、
+        // Level Meter を頭へ持ってきたもの。畳んで撮ると図だけが 4 つ並ぶ。
+        // **Spectrogram は埋まるまで時間が要る**（SLEEP を伸ばして撮ること）。
+        if UserDefaults.standard.string(forKey: "ETSeed") == "analyzers4" {
+            return """
+            {"pipeline":[
+              {"name":"Level Meter","enabled":true,"parameters":{}},
+              {"name":"Spectrogram","enabled":true,"parameters":{"dr":-96,"pt":12}},
+              {"name":"Spectrum Analyzer","enabled":true,"parameters":{"dr":-96,"pt":12}},
+              {"name":"Stereo Meter","enabled":true,"parameters":{"wt":0.1}}
+            ]}
+            """
+        }
         guard requested != nil, UserDefaults.standard.string(forKey: "ETSeed") == "store" else {
             return nil
         }
@@ -94,7 +107,7 @@ enum ETScreenshotSeed {
     static var requested: [String]? {
         guard let name = UserDefaults.standard.string(forKey: "ETSeed") else { return nil }
         // プリセットを読むものは、並べる型を自分では決めない（storeChain が持つ）。
-        if storePresets[name] != nil { return [] }
+        if storePresets[name] != nil || name == "analyzers4" { return [] }
         switch name {
         case "none":       return []
         case "peq":        return ["FiveBandPEQPlugin"]
