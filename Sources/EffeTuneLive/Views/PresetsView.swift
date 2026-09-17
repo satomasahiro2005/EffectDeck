@@ -173,6 +173,9 @@ struct PresetsView: View {
                 userSection
                 systemSection
                 webSection
+                // 持ち出す / 戻す（BackupSection.swift）。**Settings ではなくここ。**
+                // 扱っているのは設定ではなく、この画面と同じ「保存した鎖」。
+                ETBackupSection()
             }
             .navigationTitle("Presets")
             .navigationBarTitleDisplayMode(.inline)
