@@ -21,9 +21,9 @@
 </a>
 
 <p>
-  <img src="docs/shot-effects.png" width="220" alt="">
-  <img src="docs/shot-analyzers.png" width="220" alt="">
-  <img src="docs/shot-routing.png" width="220" alt="">
+  <img src="docs/shot-effects.png" width="31%" alt="">
+  <img src="docs/shot-analyzers.png" width="31%" alt="">
+  <img src="docs/shot-routing.png" width="31%" alt="">
 </p>
 
 </div>
