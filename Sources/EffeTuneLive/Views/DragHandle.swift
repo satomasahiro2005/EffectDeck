@@ -171,6 +171,8 @@ struct ETDragHandle: UIViewRepresentable {
                 // 同じ認識器が全部の行のぶん立つ。ここで自分のぶんだけ通す。
                 let p = g.location(in: anchor)
                 guard anchor.bounds.contains(p) else { mine = false; return }
+                // つまみの上で止まっていただけでカードを掴まない。
+                guard !ownsDrag(under: g) else { mine = false; return }
                 mine = true
                 origin = g.location(in: window)
                 lockScroll(from: anchor)
@@ -226,7 +228,43 @@ struct ETDragHandle: UIViewRepresentable {
                   let anchor else { return true }
             guard anchor.bounds.contains(pan.location(in: anchor)) else { return false }
             let v = pan.velocity(in: anchor)
-            return abs(v.x) > abs(v.y) * 1.5
+            guard abs(v.x) > abs(v.y) * 1.5 else { return false }
+            return !ownsDrag(under: pan)
+        }
+
+        /// **指の下に、自分でドラッグを受けるものが居るか。**
+        ///
+        /// 掴みも払いも、鎖ぜんぶを載せている UIScrollView に付けてある。
+        /// 祖先なのでカードのどこを触っても呼ばれる代わりに、カードの中の
+        /// つまみを横に引いたときまで立ってしまう（実機で「スライダーを
+        /// 動かしたいのに削除が出てくる」、2026-09-18）。
+        ///
+        /// SwiftUI の Slider は本物の UISlider で、UIControl として、
+        /// 自前の UIPanGestureRecognizer を持った別の View として居る。
+        /// 実機で当たりの連なりを出して確かめた:
+        ///
+        ///     [_UILiquidLensView][_UISliderGlassVisualElement]
+        ///     [UISlider!UIControl g=UIPanGestureRecognizer,UILongPressGestureRecognizer]
+        ///     [UIKitPlatformViewHost<PlatformViewRepresentableAdaptor<SystemSlider>>]
+        ///     [PlatformGroupContainer][HostingScrollView …]
+        ///
+        /// だから「当たった所から器まで遡って、UIControl か、自前の pan を
+        /// 持つものが居たら譲る」で足りる。つまみに限らず、後から足した
+        /// 何かが自分でドラッグを受けるなら同じように譲る。
+        private func ownsDrag(under g: UIGestureRecognizer) -> Bool {
+            guard let anchor, let window = anchor.window else { return false }
+            var v = window.hitTest(g.location(in: window), with: nil)
+            while let cur = v {
+                // **器より先は見ない。**HostingScrollView 自身が pan を
+                // 持っているので、ここで止めないと必ず譲ることになる。
+                if cur is UIScrollView { return false }
+                if cur is UIControl { return true }
+                if (cur.gestureRecognizers ?? []).contains(where: { $0 is UIPanGestureRecognizer }) {
+                    return true
+                }
+                v = cur.superview
+            }
+            return false
         }
     }
 
