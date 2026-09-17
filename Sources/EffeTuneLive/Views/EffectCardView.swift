@@ -256,7 +256,14 @@ struct EffectCardView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard hasBody else { return }
-            withAnimation(.snappy(duration: 0.2)) { toggleExpanded() }
+            // **動かさない。**理由は PipelineView の cycle() の頭に書いた。
+            //
+            // withAnimation は閉包の中で起きた書き換えすべてに掛かるので、
+            // cycle() の側から外しても、ここで包み直せば同じことになる。
+            // 20fps で撮って測ったら、指で触る道は今も 0.2 秒伸び縮みしていて、
+            // 上の行が丸ごと消える枠・板が落ちて字だけ浮く枠・図が二重に
+            // 描かれる枠が 1 サイクルに 4〜5 枚ずつ写った。1 番目でも出る。
+            toggleExpanded()
         }
     }
 
@@ -417,7 +424,10 @@ private struct SectionCardView: View {
                 // 原因は高頻度の再描画）。1 手で効く直のボタンにする。
                 Button {
                     if editing { commit() }
-                    withAnimation(.snappy(duration: 0.2)) { toggleExpanded() }
+                    // **動かさない。**カードの側（上の onTapGesture）と同じ。
+                    // Section は配下の行そのものが増え減りするので、包むと
+                    // 行の抜き差しにも動きが掛かる。
+                    toggleExpanded()
                 } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 12, weight: .semibold))

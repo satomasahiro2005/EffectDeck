@@ -151,9 +151,11 @@ struct PipelineView: View {
                     sheet = which
                 }
                 // 動きを撮るために、しばらくしてから自分で開く。
+                // **4 秒待つ。**シミュレータは画面が出るまで 3 秒以上かかることが
+                // あり、1.5 秒だと描いていない間に開き終わって動きが撮れない。
                 if ETScreenshotSeed.autoExpand {
                     Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        try? await Task.sleep(nanoseconds: 4_000_000_000)
                         let effects = dsp.chain.filter { !$0.isSection }
                         let at = ETScreenshotSeed.autoExpandIndex
                         if effects.indices.contains(at) { cycle(effects[at]) }

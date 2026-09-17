@@ -65,11 +65,6 @@ struct IRLibraryView: View {
                         Text("No impulse responses yet")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                    } footer: {
-                        Text("""
-                             Imported files are keyed by their contents, the same way the web \
-                             version keys them, so a preset built around one can find it here.
-                             """)
                     }
                 } else {
                     Section {

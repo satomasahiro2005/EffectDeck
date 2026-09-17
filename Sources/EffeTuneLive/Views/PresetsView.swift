@@ -283,10 +283,6 @@ struct PresetsView: View {
             }
         } header: {
             Text("User Presets")
-        } footer: {
-            if !store.names.isEmpty {
-                Text("Tap a preset to load it or overwrite it. Loading replaces the current chain.")
-            }
         }
     }
 
@@ -313,7 +309,7 @@ struct PresetsView: View {
         } header: {
             Text("System Presets")
         } footer: {
-            Text("The presets that ship with EffeTune. Loading one adds it to the end of the current chain, in a section named after it.")
+            Text("Adds to the end of the current chain instead of replacing it.")
         }
     }
 
@@ -336,10 +332,7 @@ struct PresetsView: View {
         } header: {
             Text("EffeTune on the web")
         } footer: {
-            Text("""
-                 A shared chain is the same format the web version uses, so a link made \
-                 here opens there and a link made there opens here.
-                 """)
+            Text("A shared chain opens in EffeTune, and one made there opens here.")
         }
     }
 }

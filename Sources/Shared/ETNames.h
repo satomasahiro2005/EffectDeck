@@ -12,9 +12,9 @@
 //
 //  **2 つとも同じ字にしてある。**別々の仕組みが持っていて画面でも別の所に出るが、
 //  違う字を当てると「どちらを選べばいいのか」という問いが使う人に生まれる。
-//  一覧の行をタップすると 2 行になるが、**下の行は OS が上の行を写している
-//  だけで、こちらから変える口は無い**（4 つ測って全部外れた。
-//  docs/connect-log.md の「コントロールセンターの 2 行目は選べない」）。
+//  一覧の行をタップすると 2 行になる。**下の行はここではなく、拡張の
+//  UTTypeDescription（Sources/Extension/Info.plist）。**そちらも揃えること
+//  （docs/connect-log.md「コントロールセンターの 2 行目は UTTypeDescription」）。
 //
 //  **帰還ループの判定は名前の包含で見ている**（AudioIO.swift:336, 681, 767 の
 //  `localizedCaseInsensitiveContains`）。どちらの名前も ET_NAME_STEM を

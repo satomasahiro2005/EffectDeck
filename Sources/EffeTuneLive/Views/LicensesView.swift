@@ -33,8 +33,6 @@ struct LicensesView: View {
                         }
                     }
                 }
-            } footer: {
-                Text("Full text as it ships inside the app.")
             }
         }
         .navigationTitle("Licenses")

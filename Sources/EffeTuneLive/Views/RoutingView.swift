@@ -224,14 +224,6 @@ struct EffectRoutingSheet: View {
             List {
                 Section {
                     RoutingRow(index: index, node: node, dsp: dsp)
-                } footer: {
-                    Text("""
-                         Bus 0 is the main path. Buses 1–4 are cleared at the start of \
-                         every block, so whatever an effect writes there has to be read \
-                         back within the same block. When the input and output bus differ, \
-                         the result is added to that bus instead of replacing what is \
-                         already on it.
-                         """)
                 }
 
                 if !node.isDefaultRouting {

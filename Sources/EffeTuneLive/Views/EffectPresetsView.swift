@@ -140,7 +140,7 @@ struct EffectPresetsView: View {
         } header: {
             Text("System Presets")
         } footer: {
-            Text("The presets that ship with EffeTune. Applying one changes this effect only.")
+            Text("Changes this effect only.")
         }
     }
 

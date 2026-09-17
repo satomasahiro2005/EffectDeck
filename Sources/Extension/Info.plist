@@ -18,9 +18,7 @@
 	<string>6.0</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<!-- **替えない。**EffectDeck に替えたら出力の一覧からアプリが消えた。
-	     UTTypeDescription と同じで、系がこの字を見て何か決めている。
-	     人の目に入る場所ではないので、このままでよい。 -->
+	<!-- 画面には出ない。一覧の 2 行目は下の UTTypeDescription のほう。 -->
 	<key>CFBundleDisplayName</key>
 	<string>EffeTune</string>
 	<key>EXAppExtensionAttributes</key>
@@ -33,8 +31,14 @@
 		<dict>
 			<key>UTTypeIdentifier</key>
 			<string>media-device-protocol.ai.nemut.effetune</string>
+			<!-- **コントロールセンターの一覧の 2 行目はこの字。**実機で確認した。
+			     1 行目が名前なので、ここは通す音の形を出す。**ケーブルの入口は
+			     固定**で、EffeTuneDriver.m:49-50 の kSampleRate 48000 /
+			     kChannelCount 2、EffeTuneFormat() が 32bit float。
+			     識別子（UTTypeIdentifier）のほうは替えないこと。替えると別の型に
+			     なって登録が入れ替わる。 -->
 			<key>UTTypeDescription</key>
-			<string>EffeTune</string>
+			<string>48 kHz, 32-bit float</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.media-sharing-protocol</string>
