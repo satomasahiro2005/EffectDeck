@@ -324,6 +324,7 @@ final class AudioIO: ObservableObject {
             try session.setPreferredSampleRate(48000)
             try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
+            pinInputToBuiltInMic(session)
             // 出力先はシステムに任せる。
             // .speaker を無条件に当てると、イヤホンを繋いでいても
             // 内蔵スピーカーから鳴る。
@@ -680,6 +681,33 @@ final class AudioIO: ObservableObject {
     /// tick のログに出す用。
     private var overriding: Bool { escape.overriding }
 
+    /// **入力を内蔵マイクに固定する。**
+    ///
+    /// このアプリは入力を一切使わない（inputNode も installTap も無い。音は
+    /// 拡張から TCP で来る）。それでも `.playAndRecord` なのでセッションは
+    /// 入力を持っていて、その入力が Bluetooth のマイクに向くと**リンクごと
+    /// HFP に落ちる**。HFP は通話用なので、出力まで 16k か 32k のモノラルに
+    /// 引きずられる。実機で 16000 と 32000 の両方を観測した（2026-09-18）。
+    ///
+    /// `.allowBluetoothA2DP` は**出力にしか効かない**ので、これだけでは防げない。
+    /// 入力を本体のマイクに固定すれば、Bluetooth は出力の A2DP だけに使われる。
+    ///
+    /// **`.playback` にして入力ごと無くす手は取れない。**
+    /// `overrideOutputAudioPort` が `.playAndRecord` 専用で、あれは帰還ループから
+    /// 抜ける唯一の手だから（escapeVirtualDevice の頭）。
+    ///
+    /// 失敗しても投げない。固定できなくても鳴りはする。
+    private func pinInputToBuiltInMic(_ session: AVAudioSession) {
+        guard let mic = session.availableInputs?.first(where: { $0.portType == .builtInMic })
+        else { return }
+        do {
+            try session.setPreferredInput(mic)
+        } catch {
+            let ns = error as NSError
+            log.notice("入力を内蔵マイクに固定できない code=\(ns.code) \(ns.domain, privacy: .public)")
+        }
+    }
+
     private func escapeVirtualDevice(_ session: AVAudioSession) {
         let outs = session.currentRoute.outputs
         let onVirtual = outs.contains {
@@ -738,6 +766,9 @@ final class AudioIO: ObservableObject {
         // そのときも当て直す。
         let sess = AVAudioSession.sharedInstance()
         if running { escapeVirtualDevice(sess) }
+        // **経路が変わるたびに入力を固定し直す。**start() のときだけでは、
+        // あとから Bluetooth を繋いだ回に入力がそちらへ移り、HFP に落ちる。
+        if running { pinInputToBuiltInMic(sess) }
 
         let outs = sess.currentRoute.outputs
         let names = outs.map(\.portName).joined(separator: ", ")
