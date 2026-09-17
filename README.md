@@ -8,6 +8,8 @@
 
 **Effects for any player on your phone**
 
+[![App Store](https://img.shields.io/badge/App%20Store-Download-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/app/effectdeck/id6812467517)
+[![TestFlight](https://img.shields.io/badge/TestFlight-Beta-0D96F6?logo=appstore&logoColor=white)](https://testflight.apple.com/join/b6BkvHgT)
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/EffectDeck?label=release&color=3B82F6)](https://github.com/satomasahiro2005/EffectDeck/releases)
 [![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
 ![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-2.9.0-3B82F6)
