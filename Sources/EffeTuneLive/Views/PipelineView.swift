@@ -51,7 +51,7 @@ struct PipelineView: View {
     /// 次にピッカーで選んだものを差し込む位置（鎖の添字）。
     /// nil なら末尾。ツールバーの「Add Effect」から開いたときは常に nil。
     @State private var insertAt: Int?
-    /// 「Reset Pipeline」の確認を出しているか。
+    /// 「Reset chain」の確認を出しているか。
     /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
     @State private var confirmingReset = false
@@ -130,10 +130,10 @@ struct PipelineView: View {
             // 鎖ごと捨てるのは 1 本ずつのスワイプ削除と違って取り消せないので、
             // ⋯ から直接は走らせず一度確かめる。シートと違って重ねても
             // 潰し合わないので、上の .sheet とは別に付けてある。
-            .confirmationDialog("Reset Pipeline?",
+            .confirmationDialog("Reset chain?",
                                 isPresented: $confirmingReset,
                                 titleVisibility: .visible) {
-                Button("Reset Pipeline", role: .destructive) { dsp.resetToDefault() }
+                Button("Reset chain", role: .destructive) { dsp.resetToDefault() }
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Removes every effect and leaves a single Level Meter.")
@@ -149,6 +149,15 @@ struct PipelineView: View {
                 // 撮るシートを指定されていればそれを出す。
                 if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name) {
                     sheet = which
+                }
+                // 動きを撮るために、しばらくしてから自分で開く。
+                if ETScreenshotSeed.autoExpand {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        let effects = dsp.chain.filter { !$0.isSection }
+                        let at = ETScreenshotSeed.autoExpandIndex
+                        if effects.indices.contains(at) { cycle(effects[at]) }
+                    }
                 }
                 // 写した値の初期合わせ。購読の初回配信に頼らない。
                 running = io.running
@@ -202,6 +211,15 @@ struct PipelineView: View {
             } else {
                 // **身元は id ではなく dragKey。** 理由は上の dragGeneration。
                 ForEach(visible, id: \.dragKey) { row in
+                    // **配下だと分かる印。**左に線を引いて内側へ寄せる。
+                    // 続く行で線が繋がるので、Section から次の Section の手前までが
+                    // 一組に見える。囲まないし、行間も詰めない。
+                    // 伸ばす向きは位置から引く。行の中身から引くと、
+                    // 組の切れ目（見出しの手前）で前の組と繋がってしまう。
+                    // 線も角も同じ位置から引く。単独（.alone）には引かない。
+                    ETSectionBracket(active: row.block != .alone,
+                                     extendsUp: !row.block.roundsTop,
+                                     extendsDown: !row.block.roundsBottom) {
                     EffectCardView(
                         index: row.index,
                         node: row.node,
@@ -214,8 +232,15 @@ struct PipelineView: View {
                         moveUp: { moveRow(row.visible, to: row.visible - 1) },
                         moveDown: { moveRow(row.visible, to: row.visible + 2) },
                         canMoveUp: row.visible > 0,
-                        canMoveDown: row.visible < visible.count - 1)
-                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                        canMoveDown: row.visible < visible.count - 1,
+                        block: row.block)
+                    }
+                        // 線のぶんは外側の余白から取る。カードの左端は
+                        // どちらの行でも 14 に揃う（ETSectionBracket の頭）。
+                        .listRowInsets(EdgeInsets(
+                            top: 5,
+                            leading: row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14,
+                            bottom: 5, trailing: 14))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                         // **.onDelete は使わない。** 詳しくは下の remove(_:)。
@@ -283,6 +308,15 @@ struct PipelineView: View {
         let drag: Int
         /// **ForEach に渡す身元。** 並べ替えのたびに変わるので、List は
         /// 行を動かすのではなく組み直す。
+
+        /// Section の配下か。**画面でそれと分かる印を出すために要る。**
+        /// 音の側は sectionGate で止めているが、あれは入切の話で、
+        /// 「どれがこの Section のものか」は画面のどこにも出ていなかった。
+        /// 組の中での位置。角と線の両方をここから引く。
+        /// **2 つに分けない。**以前は「配下か」を別に持っていて、
+        /// 畳んだ Section（配下が画面に無い）に線だけ残った。
+        var block: ETBlockPosition = .alone
+
         var dragKey: String { "\(drag)|\(node.id)" }
     }
 
@@ -298,11 +332,44 @@ struct PipelineView: View {
         where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
             hidden.formUnion(ETSection.range(after: i, types: types))
         }
-        return dsp.chain.indices
-            .filter { !hidden.contains($0) }
-            .enumerated()
-            .map { Row(visible: $0.offset, index: $0.element, node: dsp.chain[$0.element],
-                       drag: dragGeneration) }
+        // どの段がどの Section のものか。区切りは入れ子にならない。
+        //
+        // **見出しの行にも引く。**終わりの印が無いので、配下にだけ引くと
+        // 次の Section が来たときに線が繋がって見え、入れ子だと読めてしまう。
+        // 見出しから引けば 1 組がそこで閉じ、組と組のあいだに隙間ができる。
+        // 配下を持たない Section には引かない（線だけ浮く）。
+        var member: Set<Int> = []
+        for i in dsp.chain.indices where dsp.chain[i].isSection {
+            let body = ETSection.range(after: i, types: types)
+            guard !body.isEmpty else { continue }
+            member.insert(i)
+            member.formUnion(body)
+        }
+        let shown = dsp.chain.indices.filter { !hidden.contains($0) }
+        // 位置は**見えている並び**で決める。畳んだ Section の配下は出ないので、
+        // 鎖の位置で決めると画面に無い行を末尾だと思って角が丸まらない。
+        // **見出しは必ず組の先頭。**Section が続くと、前の組の最後の配下と
+        // 次の見出しが隣り合うので、member だけで見ると途切れず 1 組に見えてしまう。
+        // 見出しで必ず切る。
+        func isHead(_ at: Int) -> Bool { dsp.chain[shown[at]].isSection }
+        func inGroup(_ at: Int) -> Bool { member.contains(shown[at]) }
+        func position(_ at: Int) -> ETBlockPosition {
+            guard inGroup(at) else { return .alone }
+            // 次が見出しなら、そこから別の組。
+            let next = at + 1 < shown.count && inGroup(at + 1) && !isHead(at + 1)
+            if isHead(at) { return next ? .top : .alone }
+            let prev = at > 0 && inGroup(at - 1)
+            switch (prev, next) {
+            case (false, true):  return .top
+            case (true, true):   return .middle
+            case (true, false):  return .bottom
+            case (false, false): return .alone
+            }
+        }
+        return shown.indices.map {
+            Row(visible: $0, index: shown[$0], node: dsp.chain[shown[$0]],
+                drag: dragGeneration, block: position($0))
+        }
     }
 
     /// 帯に出す本数。Section は音を触らないので数に入れない。
@@ -377,17 +444,28 @@ struct PipelineView: View {
         let hasGraph = ETEffectViews.hasGraph(node.spec.type)
         let keepsGraph = node.spec.type == "LevelMeterPlugin"
 
-        withAnimation(.snappy(duration: 0.2)) {
-            if expanded.contains(id) {
-                expanded.remove(id)
-                // 図が無いものは、開くのをやめたらそのまま畳む。
-                if !hasGraph { dsp.collapsedFully.insert(id) }
-            } else if !dsp.collapsedFully.contains(id) && hasGraph && !keepsGraph {
-                dsp.collapsedFully.insert(id)
-            } else {
-                dsp.collapsedFully.remove(id)
-                expanded.insert(id)
-            }
+        // **動かさない。**
+        //
+        // 20fps で撮って調べた（Scripts は無く、/tmp/rec.sh と frames.swift で
+        // 動画から抜いた）。伸び縮みのあいだ List は行の中身を切るので、
+        // 0.2 秒のあいだ上の Section のカードが上端で欠け、畳む側のカードは
+        // 板だけ消えて字が宙に浮く。材質でも単色でも同じで、色の話ではない。
+        //
+        // 試して駄目だったもの:
+        //   - 出入りの指定（.opacity / .move）… 切られるのは変わらない
+        //   - 汲むのを止める … 図が凍って戻る時に跳ねる。こちらが作った不具合
+        //   - 板を listRowBackground へ移す … **画面が真っ白になる**
+        //
+        // 壊れた動きより、瞬時に切り替わるほうが良い。
+        if expanded.contains(id) {
+            expanded.remove(id)
+            // 図が無いものは、開くのをやめたらそのまま畳む。
+            if !hasGraph { dsp.collapsedFully.insert(id) }
+        } else if !dsp.collapsedFully.contains(id) && hasGraph && !keepsGraph {
+            dsp.collapsedFully.insert(id)
+        } else {
+            dsp.collapsedFully.remove(id)
+            expanded.insert(id)
         }
     }
 
@@ -521,7 +599,7 @@ private struct PipelineToolbar: ToolbarContent {
                 Button(role: .destructive) {
                     confirmingReset = true
                 } label: {
-                    Label("Reset Pipeline", systemImage: "trash")
+                    Label("Reset chain", systemImage: "trash")
                 }
                 // 既に Level Meter 1 本なら押しても何も変わらない。
                 .disabled(dsp.isDefaultChain)

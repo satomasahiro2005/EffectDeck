@@ -111,9 +111,12 @@ final class Preferences: ObservableObject {
         didSet { save(powerMode.rawValue, "pref.power"); onAudioChange?() }
     }
     /// 無音と見なす大きさ。EffeTune の Silence threshold と同じ。
-    /// start() の中でしか読まれないので、変えたら組み直す（音が一瞬切れる）。
+    ///
+    /// **組み直さない。**この値は RenderState.gate の中の数字で、書き換えれば
+    /// 次の枠から効く。以前は組み直しを呼んでいたので、Stepper を押しっぱなしに
+    /// すると反復のたびに音の系が組み直され、そのたびに音が切れていた。
     @Published var silenceThresholdDb: Double {
-        didSet { save(silenceThresholdDb, "pref.silence"); onAudioChange?() }
+        didSet { save(silenceThresholdDb, "pref.silence"); onSilenceThresholdChange?() }
     }
     @Published var keepScreenAwake: Bool {
         didSet {
@@ -121,6 +124,9 @@ final class Preferences: ObservableObject {
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
         }
     }
+
+    /// しきい値だけが変わったときに呼ばれる。組み直さずに値を差し替える。
+    var onSilenceThresholdChange: (() -> Void)?
 
     /// 音の経路を組み直す必要がある設定が変わったときに呼ばれる。
     var onAudioChange: (() -> Void)?

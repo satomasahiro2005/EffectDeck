@@ -38,12 +38,21 @@ struct PresetsView: View {
         case importClipboard(String)
         case emptyClipboard
         case failed(String)
+        /// いまの鎖で、この名前のプリセットを置き換える。
+        case overwrite(String)
+        /// 読むと鎖が置き換わる（ユーザープリセットのみ）。
+        case loadUser(String)
+        /// 消す。取り消しが無いので必ず聞く。
+        case confirmDelete(String)
 
         var id: String {
             switch self {
             case .importClipboard: return "import"
             case .emptyClipboard:  return "empty"
             case .failed(let why): return "failed:" + why
+            case .overwrite(let name): return "overwrite:" + name
+            case .loadUser(let name): return "load:" + name
+            case .confirmDelete(let name): return "delete:" + name
             }
         }
 
@@ -51,6 +60,9 @@ struct PresetsView: View {
             switch self {
             case .importClipboard, .emptyClipboard: return "Import chain"
             case .failed:                           return "Could not load"
+            case .overwrite(let name):              return "Overwrite “\(name)”?"
+            case .loadUser(let name):               return "“\(name)”"
+            case .confirmDelete(let name):          return "Delete “\(name)”?"
             }
         }
 
@@ -62,6 +74,12 @@ struct PresetsView: View {
                 return "The clipboard is empty."
             case .failed(let why):
                 return why
+            case .overwrite:
+                return "The saved preset is overwritten with the chain you have now."
+            case .loadUser:
+                return "Load it into the chain, or overwrite it with the chain you have now?"
+            case .confirmDelete:
+                return "This cannot be undone, and it removes the preset from your other devices too."
             }
         }
     }
@@ -90,7 +108,15 @@ struct PresetsView: View {
 
     // MARK: - 読み込み
 
-    private func request(_ what: Pending) { load(what) }
+    /// **ユーザープリセットは先に聞く。**読むと鎖が置き換わるので、
+    /// いま組んでいるものが消える。同梱のほうは足すだけなので何も壊れず、
+    /// 確認を出すと押す回数が増えるだけ。
+    private func request(_ what: Pending) {
+        switch what {
+        case .user(let name): dialog = .loadUser(name)
+        case .system:         load(what)
+        }
+    }
 
     /// **鎖を置き換えない。いまの鎖へ足す。**
     ///
@@ -125,7 +151,18 @@ struct PresetsView: View {
                               + "None of its effects are available here.")
             return
         }
-        dsp.addPreset(named: what.name, items: loaded)
+        // **読み方が 2 通りある。**同じ経路に流してはいけない。
+        //
+        //   ユーザー … 鎖そのものを保存したもの。読んだら**置き換える**。
+        //   同梱     … 鎖の一部として足すもの。名前の付いた Section に包んで**足す**
+        //              （EffeTune の ui.pluginPresets と同じ扱い）。
+        //
+        // 以前は両方 addPreset に流していたので、自分で保存した鎖を読んでも
+        // いまの鎖の後ろに Section として積まれ、置き換わらなかった。
+        switch what {
+        case .user:   dsp.replaceChain(with: loaded)
+        case .system: dsp.addPreset(named: what.name, items: loaded)
+        }
         dismiss()
     }
 
@@ -156,6 +193,26 @@ struct PresetsView: View {
                     Button("Import") { importChain(text) }
                 case .emptyClipboard, .failed:
                     Button("OK", role: .cancel) {}
+                case .overwrite(let name):
+                    Button("Cancel", role: .cancel) {}
+                    Button("Overwrite", role: .destructive) {
+                        store.save(name, chain: dsp.chain)
+                    }
+                case .loadUser(let name):
+                    Button("Cancel", role: .cancel) {}
+                    // **両方ここに出す。**上書きはスワイプの中にしか無く、
+                    // 見つけられなかった。押すのが一番自然な操作なので、
+                    // 向きの選択もそこで済ませる。名前は打たせない。
+                    // **赤は 1 つだけ。**両方赤だと差が出ない。
+                    // 読むのは戻せる（もう一度読めばいい）。
+                    // 上書きは保存したものが消えて戻せないので、そちらを赤にする。
+                    Button("Load") { load(.user(name)) }
+                    Button("Overwrite", role: .destructive) {
+                        store.save(name, chain: dsp.chain)
+                    }
+                case .confirmDelete(let name):
+                    Button("Cancel", role: .cancel) {}
+                    Button("Delete", role: .destructive) { store.remove(name) }
                 }
             } message: { what in
                 Text(what.message)
@@ -211,8 +268,16 @@ struct PresetsView: View {
                     // 位置がその短い並びの中で数えられて**別の行が消える**。
                     // 鎖の側で同じ壊れ方を捕まえてある（PipelineView の remove(_:)）。
                     // 身元（名前）で消せば List の内部状態に左右されない。
-                    .swipeActions(edge: .trailing) {
-                        Button("Delete", role: .destructive) { store.remove(name) }
+                    // **上書きに名前を打たせない。** 同じ名前を入力欄へ
+                    // 打ち直す形だと、保存するたびに綴りを合わせる作業が要る。
+                    // 消すのと同じ場所に置けば、新しい作法を覚えなくて済む。
+                    // **完全スワイプで消さない**（allowsFullSwipe: false）。
+                    // 払い切っただけで消えるうえ、取り消しが無く、iCloud 経由で
+                    // 他の端末からも消える。押して選ばせる。
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("Delete", role: .destructive) { dialog = .confirmDelete(name) }
+                        Button("Overwrite") { dialog = .overwrite(name) }
+                            .tint(.blue)
                     }
                 }
             }
@@ -220,7 +285,7 @@ struct PresetsView: View {
             Text("User Presets")
         } footer: {
             if !store.names.isEmpty {
-                Text("Swipe a preset to delete it.")
+                Text("Tap a preset to load it or overwrite it. Loading replaces the current chain.")
             }
         }
     }
@@ -248,7 +313,7 @@ struct PresetsView: View {
         } header: {
             Text("System Presets")
         } footer: {
-            Text("The presets that ship with EffeTune. Loading one replaces the current chain.")
+            Text("The presets that ship with EffeTune. Loading one adds it to the end of the current chain, in a section named after it.")
         }
     }
 

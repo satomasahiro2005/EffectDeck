@@ -30,6 +30,8 @@ struct EffectCardView: View {
     /// 画面の端の行か。鎖の本数ではなく**見えている行**で決める。
     let canMoveUp: Bool
     let canMoveDown: Bool
+    /// 組の中での位置。内側を向く角を角にする。
+    var block: ETBlockPosition = .alone
 
     /// カードから開くもの。
     ///
@@ -53,14 +55,15 @@ struct EffectCardView: View {
     var body: some View {
         if node.isSection {
             SectionCardView(index: index, node: node, dsp: dsp,
-                            isExpanded: isExpanded, toggleExpanded: toggleExpanded)
+                            isExpanded: isExpanded, toggleExpanded: toggleExpanded,
+                            block: block)
         } else {
             effectCard
         }
     }
 
     private var effectCard: some View {
-        Card {
+        Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header
                 // **畳んでいても図を出すもの。**
@@ -366,6 +369,7 @@ private struct SectionCardView: View {
     @ObservedObject var dsp: EffeTuneDSP
     let isExpanded: Bool
     let toggleExpanded: () -> Void
+    var block: ETBlockPosition = .alone
 
     /// 打ち込み中の文字。確定するまで dsp へ渡さない。
     ///
@@ -377,7 +381,7 @@ private struct SectionCardView: View {
     @FocusState private var editing: Bool
 
     var body: some View {
-        Card {
+        Card(block: block) {
             // 間隔と余白はエフェクトの頭と同じ。隣り合う札なので、
             // 電源の絵と名前の左端が揃っていないと目に付く。
             HStack(spacing: 6) {
@@ -427,11 +431,6 @@ private struct SectionCardView: View {
             }
             .padding(.leading, 2)
             .padding(.vertical, 10)
-            // 緑の枠は Card の縁そのもの。ここに乗せる面と Card が背景を敷く面は
-            // 同じなので、丸みも Card と同じ cardRadius でないと角で線が縁から離れる
-            // （innerRadius 8 と cardRadius 16 で、角のあたり最大 2pt ほどずれる）。
-            .overlay(RoundedRectangle(cornerRadius: ETMetrics.cardRadius, style: .continuous)
-                .stroke(.green, lineWidth: 1.5))
         }
         .opacity(node.enabled ? 1 : 0.55)
         .onAppear { draft = node.sectionName }

@@ -207,8 +207,9 @@ struct ETLoadReading {
         return .normal
     }
 
-    /// **単位を % で終わらせない。** 何の何 % かを同じ行に書く。
-    var value: String { "\(percent)% of each block" }
+    /// **"of each block" は中の言葉なので出さない。**
+    /// 何の何 % かは Details の内訳（Buffer size）で引ける。
+    var value: String { "\(percent)%" }
 
     /// **語は上流に合わせて "CPU"。** 上流の右下が "CPU: Avg {average}%"
     /// （js/locales/en.json5:69）。ツールバーの帯も同じ語を使っている。
@@ -236,6 +237,8 @@ struct ETDelayReading {
     let linkMs: Double
     let blockMs: Double
     let filterMs: Double
+    /// 積んでいるエフェクトが足す遅れ。**処理レートで数える。**
+    let fxMs: Double
     let blockFrames: Int
 
     @MainActor
@@ -247,7 +250,12 @@ struct ETDelayReading {
         let link = Double(ETLinkReceiver.targetFrames)
         let block = Double(io.blockFrames)
         let filter = Double(io.resamplerLatency)
-        totalMs = Int(((link + block + filter) / rate * 1000).rounded())
+        // **エフェクト自身の遅延も足す。**足さないと、ツールバーの I/O の行と
+        // 同じ値になり、Fx のぶんだけ実際より短く出る（LiveStatusStrip:202-216）。
+        // pipelineLatency は処理レートのサンプル数なので、そちらで割る。
+        let procRate = io.processingRate > 0 ? io.processingRate : rate
+        fxMs = Double(io.pipelineLatency) / procRate * 1000
+        totalMs = Int(((link + block + filter) / rate * 1000 + fxMs).rounded())
         linkMs = link / rate * 1000
         blockMs = block / rate * 1000
         filterMs = filter / rate * 1000
@@ -305,20 +313,18 @@ struct ETIssue: Identifiable {
                       + "holding the hardware at that rate. Stop it, then play again."))
         }
 
-        // 3. 締切に近い。色が変わるのと同じところで出す（閾値は ETLoadReading）。
-        if let load = ETLoadReading(io: io), load.level != .normal {
-            let over = load.level == .over
-            let what = over
-                ? "The effects need more time than each block has (\(load.percent)% of it)."
-                : "The effects are using \(load.percent)% of the time each block has. "
-                  + "Over 100% the sound breaks up."
+        // 3. **割れているときだけ出す。**「締切に近い」は CPU の数字が
+        //    橙になることで既に言っている。近いだけで行が生えると、
+        //    レートや遅延を触っている最中に一覧が飛んで、触っている操作子が動く。
+        if let load = ETLoadReading(io: io), load.level == .over {
             out.append(ETIssue(
                 id: "load",
                 tone: .warning,
                 systemImage: "gauge.with.needle",
-                title: over ? "The sound is breaking up" : "Running close to the limit",
-                detail: what
-                      + " Lower the processing rate, raise the latency, or remove an effect."))
+                title: "The sound is breaking up",
+                detail: "The effects need more time than each buffer has "
+                      + "(\(load.percent)% of it). Lower the processing rate, "
+                      + "raise the latency, or remove an effect."))
         }
 
         // 4. 鎖が切ってある。警告ではなく事実の確認なので色を付けない。
@@ -383,7 +389,11 @@ struct ETDiagnostics {
                                     ? "\(Int(io.sampleRate.rounded()).formatted()) Hz" : "—"),
             ETDiagnosticLine(label: "Processing rate",
                              value: "\(Int((io.processingRate / 1000).rounded())) kHz"),
-            ETDiagnosticLine(label: "Block",
+            // 拡張から本体へ TCP で渡すぶん。再同期でここへ置き直すので
+            // 設計上の固定値（LocalLink.m の +targetFrames）。遅延の大半はここ。
+            ETDiagnosticLine(label: "Extension link",
+                             value: samples(Int(ETLinkReceiver.targetFrames), decimals: 1)),
+            ETDiagnosticLine(label: "Buffer size",
                              value: io.blockFrames > 0 ? samples(io.blockFrames, decimals: 1) : "—"),
             // 拡張と本体のあいだに溜まっているぶん。払うたびに動くので、
             // 判断には使えない。だから常設ではなくここに置いてある。
@@ -420,7 +430,7 @@ struct ETDiagnostics {
         let settings: [ETDiagnosticLine] = [
             ETDiagnosticLine(label: "Processing rate", value: prefs.processingRate.label),
             ETDiagnosticLine(label: "Latency", value: prefs.latency.choiceTitle),
-            ETDiagnosticLine(label: "Pause while silent", value: prefs.powerMode.label),
+            ETDiagnosticLine(label: "Pause after", value: prefs.powerMode.label),
             ETDiagnosticLine(label: "Silence threshold",
                              value: "\(Int(prefs.silenceThresholdDb)) dB"),
             ETDiagnosticLine(label: "Keep the screen on",

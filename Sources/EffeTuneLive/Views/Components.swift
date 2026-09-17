@@ -10,6 +10,7 @@
 //  見た目が先なので、値は cardRadius / innerRadius の 2 つだけに寄せてある。
 
 import SwiftUI
+import UIKit
 import Foundation
 
 enum ETMetrics {
@@ -65,14 +66,53 @@ struct ValueBox: View {
 /// これ自身が器になるので、丸みを数値で持つのはここだけ。
 /// containerShape を名乗っておかないと、中の concentric が画面を器と見て
 /// 引き算で 0 になる。
+/// 組の中での位置。
+///
+/// **組の内側を向く角だけ角にする。**全部丸いと、並んでいるだけなのか
+/// 一組なのかが形に出ない。行間は詰めない（詰めるとカードが切れて別の問題が出る）。
+enum ETBlockPosition {
+    case alone, top, middle, bottom
+
+    var roundsTop: Bool { self == .alone || self == .top }
+    var roundsBottom: Bool { self == .alone || self == .bottom }
+
+    /// 行の上下に空ける量。listRowInsets と、板を描くときの寄せに同じ値を使う。
+    var topInset: CGFloat { 5 }
+    var bottomInset: CGFloat { 5 }
+
+    var radii: RectangleCornerRadii {
+        let r = ETMetrics.cardRadius
+        return RectangleCornerRadii(topLeading: roundsTop ? r : 0,
+                                    bottomLeading: roundsBottom ? r : 0,
+                                    bottomTrailing: roundsBottom ? r : 0,
+                                    topTrailing: roundsTop ? r : 0)
+    }
+}
+
 struct Card<Content: View>: View {
+    var block: ETBlockPosition = .alone
     @ViewBuilder var content: Content
+
+    /// 位置を色で出す。`-ETDebugBlocks 1` のときだけ。確かめるためだけのもの。
+    private var debugTint: AnyShapeStyle? {
+        guard ETScreenshotSeed.debugBlocks else { return nil }
+        switch block {
+        case .alone:  return AnyShapeStyle(.gray)
+        case .top:    return AnyShapeStyle(.red)
+        case .middle: return AnyShapeStyle(.green)
+        case .bottom: return AnyShapeStyle(.blue)
+        }
+    }
 
     var body: some View {
         content
-            .background(.regularMaterial,
-                        in: .rect(cornerRadius: ETMetrics.cardRadius, style: .continuous))
-            .containerShape(.rect(cornerRadius: ETMetrics.cardRadius, style: .continuous))
+            // 背景はここで描く。listRowBackground へ移すと画面が真っ白になる
+            // （行の面に形を置くと List が中身を描かなくなる。実機で確認）。
+            // 単色（secondarySystemGroupedBackground）にも替えてみたが、
+            // **この画面の地も白なので板が見えなくなった。**材質のままにする。
+            .background(debugTint ?? AnyShapeStyle(.regularMaterial),
+                        in: .rect(cornerRadii: block.radii, style: .continuous))
+            .containerShape(.rect(cornerRadii: block.radii, style: .continuous))
     }
 }
 

@@ -39,21 +39,53 @@ struct SettingsView: View {
     /// 読めたが、まだ入れていないファイルの中身。押し直すまでここで待つ。
     @State private var pending: ETBackup.Contents?
 
+    /// **横で束ねる。**縦に全部並べると、一度に読めない長さになる。
+    /// 下位画面へ押し出すと、よく見る Status まで 1 タップ遠くなる。
+    /// バーの真ん中でセグメントを切り替える形なら、どちらも起きない。
+    enum Pane: String, CaseIterable, Identifiable {
+        case audio, backup, about
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .audio:  return "Audio"
+            case .backup: return "Backup"
+            case .about:  return "About"
+            }
+        }
+    }
+
+    @State private var pane: Pane = .audio
+
     var body: some View {
         NavigationStack {
             List {
-                StatusSection(io: io, dsp: dsp)
-                processingRate
-                latency
-                pauseWhileSilent
-                screen
-                backup
-                DetailsSection(io: io, dsp: dsp, prefs: prefs)
-                about
+                switch pane {
+                case .audio:
+                    StatusSection(io: io, dsp: dsp)
+                    processing
+                    power
+                    // **音の数字は Audio に置く。**レート・バッファ・遅延の内訳・
+                    // 出力先なので、探しに来るのはこの面。報告に貼る値でもあるが、
+                    // 貼る前に読むのは音の話として読む。畳んであるので 1 行で済む。
+                    DetailsSection(io: io, dsp: dsp, prefs: prefs)
+                case .backup:
+                    backup
+                case .about:
+                    about
+                }
             }
-            .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // **セグメントは UISegmentedControl で Menu ではない。**
+                // この画面が Picker を避けているのは Menu が固まるからなので、
+                // ここは当たらない（SettingsRows.swift の頭）。
+                ToolbarItem(placement: .principal) {
+                    Picker("", selection: $pane) {
+                        ForEach(Pane.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
@@ -61,51 +93,43 @@ struct SettingsView: View {
 
     // MARK: - 変えるもの
 
-    private var processingRate: some View {
+    /// **処理まわりを 1 つの節にまとめる。**レートとブロックは
+    /// どちらも「どれだけ計算して、どれだけ遅れるか」の話で、
+    /// 節を分けると見出しのぶんだけ縦が伸びる。
+    private var processing: some View {
         Section {
             // 同じものを選び直しても組み直さない。押すたびに音が切れると故障に見える。
             ETSegmentedChoice(title: "Processing rate",
                               values: ETProcessingRate.allCases,
-                              label: \.label, note: \.note,
+                              label: \.label,
                               selection: Binding(get: { prefs.processingRate },
                                                  set: { if $0 != prefs.processingRate {
                                                             prefs.processingRate = $0 } }))
-            // 選んだものが本当に効いたかを、その場で確かめられるようにする。
-            // 選んだ値（上のセグメント）と、いま回っている値は別物で、
-            // 端末が別のレートを握っていると食い違う。
-            RunningRateRow(io: io)
-            // 負荷はレートで動く。**それを動かす操作子の直下に置く。**
-            ProcessingTimeRow(io: io)
-        } header: {
-            Text("Processing rate")
-        } footer: {
-            Text("Changing an audio setting restarts the sound for a moment.")
-        }
-    }
-
-    private var latency: some View {
-        Section {
+            // preferredIOBufferDuration は要求で、約束ではない。
+            // 実際に通った長さは下の "Total delay" で返す。
             ETSegmentedChoice(title: "Latency to aim for",
                               values: ETLatency.allCases,
-                              label: \.msLabel, note: \.note,
+                              // **ms を出す。**Low / Mid / High だけだと、
+                              // 何がどれだけ動くのかが画面のどこにも無い。
+                              label: \.msLabel,
                               selection: Binding(get: { prefs.latency },
                                                  set: { if $0 != prefs.latency {
                                                             prefs.latency = $0 } }))
+            // **操作子を先、読む数字を後ろ。**あいだに数字を挟むと、
+            // 2 つの操作子が離れて一組に見えなくなる。
+            ProcessingTimeRow(io: io)
             DelayRow(io: io)
         } header: {
-            // preferredIOBufferDuration は要求で、約束ではない。
-            // 実際に通った長さは下の "Right now" で返す。
-            Text("Latency to aim for")
-        } footer: {
-            Text("iOS gives the block size it can. Right now is what it actually gave.")
+            Text("Processing")
         }
     }
 
-    private var pauseWhileSilent: some View {
+    /// **省エネまわり。**休む条件と、画面を点けたままにするか。
+    private var power: some View {
         Section {
-            ETSegmentedChoice(title: "Pause while silent",
+            ETSegmentedChoice(title: "Pause after",
                               values: ETPowerMode.allCases,
-                              label: \.label, note: \.note,
+                              label: \.label,
                               selection: Binding(get: { prefs.powerMode },
                                                  set: { if $0 != prefs.powerMode {
                                                             prefs.powerMode = $0 } }))
@@ -123,22 +147,9 @@ struct SettingsView: View {
                 }
             }
             .disabled(prefs.powerMode == .continuous)
-        } header: {
-            Text("Pause while silent")
-        } footer: {
-            Text("""
-                 The effects start again the moment sound returns. Anything quieter than the \
-                 threshold counts as silence: -90 dB is about the noise a quiet recording \
-                 carries on its own, and -20 dB is already audible music.
-                 """)
-        }
-    }
-
-    private var screen: some View {
-        Section {
             Toggle("Keep the screen on", isOn: $prefs.keepScreenAwake)
-        } footer: {
-            Text("The screen will not lock while EffectDeck is in front.")
+        } header: {
+            Text("Power")
         }
     }
 
@@ -173,7 +184,7 @@ struct SettingsView: View {
             .fileExporter(isPresented: $exporting,
                           document: exportFile,
                           contentType: .json,
-                          defaultFilename: "EffeTune Live Settings") { result in
+                          defaultFilename: "EffectDeck Presets") { result in
                 switch result {
                 case .success:
                     backupReport = "Exported."
@@ -225,16 +236,6 @@ struct SettingsView: View {
             }
         } header: {
             Text("Backup")
-        } footer: {
-            Text("""
-                 The file holds the current chain, the presets you saved, and the presets you \
-                 saved on individual effects. Audio settings such as Processing rate are not \
-                 included. Impulse responses stay in the IR Library: a chain that uses one \
-                 keeps its key, not the audio. Importing replaces the current chain, and a \
-                 preset in the file replaces the one here with the same name. The chain is \
-                 written the way the web version writes a preset file, so renaming the file \
-                 to .effetune_preset opens it there.
-                 """)
         }
     }
 
@@ -415,8 +416,6 @@ struct SettingsView: View {
             }
         } header: {
             Text("Contact")
-        } footer: {
-            Text("Send anything about this app here, not to EffeTune.")
         }
     }
 }
@@ -438,50 +437,7 @@ private struct StatusSection: View {
             }
         } header: {
             Text("Status")
-        } footer: {
-            Text("""
-                 Audio from the player you are listening to arrives here at 48 kHz \
-                 through the EffectDeck output in Control Center.
-                 """)
         }
-    }
-}
-
-/// いま実際に回っているレート。
-///
-/// 上のセグメントは「何を選んだか」で、こちらは「何になったか」。
-/// 拡張から来る音は 48 kHz 固定で、そこにオーバーサンプリング倍率が掛かる。
-/// 端末が別のレートを握っていると 48 kHz にならず、速さと音程がずれる
-/// （そのときは Status に警告が出る）。
-private struct RunningRateRow: View {
-    @ObservedObject var io: AudioIO
-
-    var body: some View {
-        // 鳴っていないときは出さない。止まっている値は嘘になる。
-        if io.running {
-            LabeledContent("Running at") {
-                Text(text)
-                    .monospacedDigit()
-                    .foregroundStyle(mismatch ? AnyShapeStyle(.orange)
-                                              : AnyShapeStyle(.secondary))
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Running at \(text)")
-        }
-    }
-
-    /// "96 kHz（48 kHz × 2）"ではなく、入口と出口を並べる。
-    /// 倍率は選んだレートから読めるので書かない。
-    private var text: String {
-        let device = io.sampleRate > 0 ? Int(io.sampleRate.rounded()) : 0
-        let processing = Int((io.processingRate / 1000).rounded())
-        guard device > 0 else { return "\(processing) kHz" }
-        return "\(device.formatted()) Hz in · \(processing) kHz through the effects"
-    }
-
-    /// 端末が 48 kHz を握れていない。
-    private var mismatch: Bool {
-        io.sampleRate > 0 && abs(io.sampleRate - 48000) >= 1
     }
 }
 
@@ -490,23 +446,17 @@ private struct ProcessingTimeRow: View {
     @ObservedObject var io: AudioIO
 
     var body: some View {
-        // 休んでいる間は出さない。状態の行が既に "Idle" と言っているし、
-        // "0%" は「余裕がある」と見分けが付かない。
-        if let reading = ETLoadReading(io: io) {
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("CPU") {
-                    Text(reading.value)
-                        .monospacedDigit()
-                        .foregroundStyle(style(reading.level))
-                }
-                Text(reading.note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(reading.accessibility)
+        // **行を消さない。** 休んでいる間 nil になるので、以前はここだけ
+        // 一瞬出て消えていた。一覧が飛ぶのは故障に見える（Silence threshold で
+        // 同じ踏み方を既に直している）。出ないときは薄く "—"。
+        let reading = ETLoadReading(io: io)
+        LabeledContent("CPU") {
+            Text(reading?.value ?? "—")
+                .monospacedDigit()
+                .foregroundStyle(reading.map { style($0.level) } ?? AnyShapeStyle(.secondary))
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(reading?.accessibility ?? "CPU")
     }
 
     /// 閾値は ETLoadReading が持っている。色はツールバーの帯と同じ段。
@@ -524,18 +474,22 @@ private struct DelayRow: View {
     @ObservedObject var io: AudioIO
 
     var body: some View {
-        if let reading = ETDelayReading(io: io) {
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("Right now") {
-                    Text(reading.value)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-                Text(reading.note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        // **名前は中の言葉にしない。**"Block" は使う人の語ではない。
+        // サンプル数で出すのは、Low / Mid / High で動いているのがここで、
+        // ms だけだと何が変わったのか見えないから。
+        let d = ETDelayReading(io: io)
+        LabeledContent("Buffer size") {
+            Text(d.map { String(format: "%d samples · %.1f ms", $0.blockFrames, $0.blockMs) }
+                 ?? "—")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        // 実際に耳へ届くまでの遅れ。内訳（Extension link / Oversampling filter）は
+        // Details に在る。あそこは畳んであるので縦を食わない。
+        LabeledContent("Total delay") {
+            Text(d?.value ?? "—")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -557,8 +511,6 @@ private struct DetailsSection: View {
             } label: {
                 Text("Details")
             }
-        } footer: {
-            Text("These numbers are for bug reports.")
         }
     }
 }

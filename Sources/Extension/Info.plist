@@ -18,6 +18,9 @@
 	<string>6.0</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- **替えない。**EffectDeck に替えたら出力の一覧からアプリが消えた。
+	     UTTypeDescription と同じで、系がこの字を見て何か決めている。
+	     人の目に入る場所ではないので、このままでよい。 -->
 	<key>CFBundleDisplayName</key>
 	<string>EffeTune</string>
 	<key>EXAppExtensionAttributes</key>

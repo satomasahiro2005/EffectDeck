@@ -12,13 +12,9 @@
 
 import SwiftUI
 
-/// 3 つの選択肢を**1 行**に並べ、選んでいるものの説明をその下に 1 文。
+/// 3 つの選択肢を**1 行**に並べる。説明は付けない。
 ///
-/// 選択肢ごとに行を立てない。3 設定で 9 行＋9 文になり、設定が縦に伸びる。
-/// 選んでいないものの説明は、選ぶ前に読みたい人が少ない。押せば入れ替わる。
-///
-/// 説明を節の footer に集めるのも駄目。集めると 3 つの別々の文が 1 段落に
-/// 連結されて意味の通らない文章になる（直す前の Settings がその形だった）。
+/// 選択肢ごとに行を立てない。3 設定で 9 行になり、設定が縦に伸びる。
 ///
 /// `.pickerStyle(.segmented)` は UISegmentedControl で、**Menu ではない**。
 /// この画面が Picker を避けているのは Menu が固まるからなので、
@@ -27,11 +23,14 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
     let title: String
     let values: [Value]
     let label: (Value) -> String
-    let note: (Value) -> String
     @Binding var selection: Value
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            // **名前は出す。**セグメントだけ並べると、何の設定なのかが
+            // 画面のどこにも書いていない状態になる（節を束ねたときにそうなった）。
+            // 消してよかったのは選択肢ごとの説明であって、設定の名前ではない。
+            Text(title)
             Picker(title, selection: $selection) {
                 ForEach(values) { v in
                     Text(label(v)).tag(v)
@@ -39,11 +38,6 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-
-            Text(note(selection))
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
@@ -101,10 +95,7 @@ struct ETNoticeRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: 15))
-                .foregroundStyle(iconStyle)
-                .frame(width: 20)
+            icon
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -128,6 +119,26 @@ struct ETNoticeRow: View {
                         .padding(.top, 2)
                 }
             }
+        }
+    }
+
+    /// **動いていることを動きで出す。**止まった絵だと、待っているのか
+    /// 固まっているのかが見分けられない。効果は tone で決める。
+    /// 記号ごとに指定を足さないのは、記号が増えるたびに書く場所が増えるため。
+    @ViewBuilder
+    private var icon: some View {
+        let base = Image(systemName: systemImage)
+            .font(.system(size: 15))
+            .foregroundStyle(iconStyle)
+            .frame(width: 20)
+        switch tone {
+        // **記号ぜんぶを動かさない。**breathe（拡大縮小）と wiggle（揺れ）は
+        // 記号そのものが動くので、一覧の中で目に刺さる。
+        // 層を順に光らせる variableColor だけにする。indefinite なので
+        // 引き金を渡さなくても回り続ける。
+        case .active:  base.symbolEffect(.variableColor.iterative.reversing)
+        case .normal:  base.symbolEffect(.variableColor.iterative)
+        case .warning: base
         }
     }
 

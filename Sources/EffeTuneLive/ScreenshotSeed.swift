@@ -100,6 +100,26 @@ enum ETScreenshotSeed {
     /// 起動と同時に出すシート。`-ETSheet settings` のように渡す。
     /// エフェクトのカードだけでなく、設定やプリセットの画面も撮るために要る。
     /// 実機では引数が付かないので nil。
+    /// 起動してしばらくしてから、先頭のエフェクトを自分で開く。
+    /// **動きを撮るために要る。**シミュレータへタップを送る手が無いので、
+    /// アプリ側で開いて、その間を連写する。実機では引数が付かないので何もしない。
+    static var autoExpand: Bool {
+        UserDefaults.standard.bool(forKey: "ETAutoExpand")
+    }
+
+    /// 何番目のエフェクトを開くか（Section を除いて数える）。既定は先頭。
+    /// **2 番目以降も確かめるために要る。**図を持つものは畳み方が 1 段多く、
+    /// 高さの動きも大きいので、先頭だけ見ても足りない。
+    static var autoExpandIndex: Int {
+        UserDefaults.standard.integer(forKey: "ETAutoExpandIndex")
+    }
+
+    /// 組の位置を色で出す。**確かめるためだけのもの。**
+    /// 実機では引数が付かないので false。
+    static var debugBlocks: Bool {
+        UserDefaults.standard.bool(forKey: "ETDebugBlocks")
+    }
+
     static var sheet: String? {
         UserDefaults.standard.string(forKey: "ETSheet")
     }

@@ -148,6 +148,11 @@ final class AudioIO: ObservableObject {
         // 拡張はいつ繋いでくるか分からないので、起動と同時に待ち受ける。
         _ = ETLinkReceiver.shared.start()
         Preferences.shared.onAudioChange = { [weak self] in self?.rebuild() }
+        // 組み直さずに差し替える。押しっぱなしでも音が切れない。
+        Preferences.shared.onSilenceThresholdChange = { [weak self] in
+            self?.render?.gate.thresholdLinear =
+                Float(pow(10.0, Preferences.shared.silenceThresholdDb / 20.0))
+        }
         observeSession()
 
         // DSP のエンジンは音と関係なく用意しておく。
