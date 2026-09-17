@@ -311,6 +311,20 @@ final class EffeTuneDSP: ObservableObject {
         // まとめ待ちを潰してから書く。待っていた内容はいまの chain に入っている。
         pendingPersist?.cancel()
         pendingPersist = nil
+
+        // **restore() が置いた既定の 1 本は残さない。**
+        // 「まだ何も残していない（hasSaved が false）」かつ「並んでいるのが
+        // 既定そのもの」は、人が組んだ鎖ではなく restore() の第二の枝が
+        // 置いたものしかありえない。これを書くと 2 つ壊れる:
+        //   - iCloud 側の鎖が Level Meter 1 本で上書きされる（CloudMirror）
+        //   - "pipeline.last" が埋まるので、遅れて降りてくる鎖を受ける口
+        //     （CloudMirror.seed の「手元が空の鍵だけ」）が閉じる
+        // 入れ直した端末では、この 2 つが同じ起動の数ミリ秒差で起きていた。
+        //
+        // 人が消して既定に戻した場合は hasSaved が true なので、ここは通る。
+        // 何も触らずに終了した場合は次の起動でまた既定が並ぶ。見え方は同じ。
+        guard !(isDefaultChain && !PipelineStore.hasSaved) else { return }
+
         PipelineStore.saveLast(chain)
         persistExpanded()
     }
@@ -397,6 +411,22 @@ final class EffeTuneDSP: ObservableObject {
                 add(meter)
             }
         }
+    }
+
+    /// iCloud から遅れて降りてきた鎖を、いま画面に出す。
+    /// 呼ぶのは CloudMirror（onChainRestored）で、手元が空だった鍵を
+    /// 埋めた直後だけ。
+    ///
+    /// **まだ何も組んでいないときだけ入れる。**入れ直した直後の起動では
+    /// restore() が既定の Level Meter を 1 本置いただけの状態で、失うものが無い。
+    /// 人が何か足していれば isDefaultChain が false になり、ここは素通りする。
+    /// 遅れて届いた古い鎖で、いま触っている鎖を潰さないため。
+    func adoptSeededChain() {
+        guard ready, isDefaultChain else { return }
+        guard let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty else { return }
+        replaceChain(with: saved)
+        // 鎖に載っている IR を入れ直す（restore() の第一の枝と同じ）。
+        reloadAssets()
     }
 
     /// 鎖に残っている鍵から、資産（いまは IR だけ）を入れ直す。

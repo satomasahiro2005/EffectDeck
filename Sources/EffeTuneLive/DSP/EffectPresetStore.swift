@@ -27,7 +27,9 @@ final class EffectPresetStore: ObservableObject {
     static let shared = EffectPresetStore()
 
     /// 上流と同じ綴り（plugin-preset-store.js:1）。
-    private static let key = "effetune_plugin_presets"
+    /// **private ではない。** CloudMirror が iCloud 側を同じ鍵で読む
+    /// （PipelineStore.lastKey と同じ理由）。
+    static let key = "effetune_plugin_presets"
 
     /// 上流が名前として弾くもの（plugin-preset-store.js:3, 13-17）。
     /// Swift の Dictionary では害は無いが、同じ中身を web 版が読む前提なので
@@ -53,6 +55,14 @@ final class EffectPresetStore: ObservableObject {
         UserDefaults.standard.dictionary(forKey: Self.key) ?? [:]
     }
 
+    /// 手元へ書いて一覧を引き直す。**iCloud へは写さない。**
+    ///
+    /// 写すのは触った項目だけ（CloudMirror.patch）。理由は PresetStore.write と同じ。
+    private func write(_ all: [String: Any]) {
+        UserDefaults.standard.set(all, forKey: Self.key)
+        reload()
+    }
+
     /// そのエフェクトに保存してある名前。
     func names(of effect: String) -> [String] { saved[effect] ?? [] }
 
@@ -75,8 +85,8 @@ final class EffectPresetStore: ObservableObject {
         var mine = all[node.spec.name] as? [String: Any] ?? [:]
         mine[trimmed] = params
         all[node.spec.name] = mine
-        UserDefaults.standard.set(all, forKey: Self.key)
-        reload()
+        write(all)
+        CloudMirror.patch(key: Self.key, path: [node.spec.name, trimmed], value: params)
     }
 
     /// 保存してある params。読むのは EffectPresetApply。
@@ -94,8 +104,49 @@ final class EffectPresetStore: ObservableObject {
         } else {
             all[effect] = mine
         }
-        UserDefaults.standard.set(all, forKey: Self.key)
-        reload()
+        write(all)
+        CloudMirror.patch(key: Self.key, path: [effect, name], value: nil)
+    }
+
+    // MARK: - ファイルとのやり取り（ETBackup）
+
+    /// 書き出し用。入れ物の中身をそのまま返す。
+    /// 上流の入れ子（表示名 → プリセット名 → params）で既に入っているので被せ物は要らない。
+    func exported() -> [String: Any] { dict() }
+
+    /// 読み込み。**プリセット名ごとに入れ替える。**ファイルに無い名前はそのまま残す。
+    /// 返すのは入れた本数。
+    @discardableResult
+    func merge(_ incoming: [String: [String: [String: Any]]]) -> Int {
+        var all = dict()
+        var count = 0
+        var touched: [(String, String, [String: Any])] = []
+        for (effect, presets) in incoming {
+            // **エフェクトの名前も normalize に通す。**上流は外側の鍵にも
+            // normalizeName を掛けている（plugin-preset-store.js:94 の
+            // `const pluginKey = normalizeName(pluginName);`）。プリセット名だけ
+            // 通していると、ファイル由来の `__proto__` が外側の鍵として入り、
+            // save() が絶対に作らない形が入れ物に残る（上の :34-37 の方針に反する）。
+            let key = Self.normalize(effect)
+            // Section は上流も preset の UI を出さない（save の注記）。
+            guard !key.isEmpty, key != ETSection.name else { continue }
+            var mine = all[key] as? [String: Any] ?? [:]
+            for (name, params) in presets {
+                let trimmed = Self.normalize(name)
+                guard !trimmed.isEmpty else { continue }
+                mine[trimmed] = params
+                touched.append((key, trimmed, params))
+                count += 1
+            }
+            if !mine.isEmpty { all[key] = mine }
+        }
+        guard count > 0 else { return 0 }
+        write(all)
+        // 入れた項目だけ写す。まるごと写すと別の端末に在るものが消える。
+        for (effect, name, params) in touched {
+            CloudMirror.patch(key: Self.key, path: [effect, name], value: params)
+        }
+        return count
     }
 
     // 上流には名前を付け替える口もある（plugin-preset-dialog.js:152-154 の ✎）が、
