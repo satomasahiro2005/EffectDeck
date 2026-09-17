@@ -547,7 +547,7 @@ private struct ConnectBanner: View {
                     // 揃えないと、どれを押せばよいのか分からない。
                     //
                     // 鳴らしてから選ぶ順も落とさない。止まっていると系が
-                    // 1.5 秒で経路を戻す（README の Picking it, and keeping it）。
+                    // 1.5 秒で経路を戻す（README の If it says Unable to Connect）。
                     Text("""
                          Play something in another app first, then pick EffeTune as \
                          the output in Control Center.

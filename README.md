@@ -48,39 +48,22 @@ app                                  ← runs EffeTune's DSP
 built-in speaker
 ```
 
-## Picking it, and keeping it
+## If it says Unable to Connect
 
-The one most people hit first is **Spotify with Canvas turned on.** Canvas is the short
-looping video behind some tracks. While one is playing the session counts as video
-output, and iOS sends the route to AirPlay instead of here. That shows up as
-"Unable to Connect", or as a route that drops a few tracks in.
+Almost always **Spotify with Canvas on.** Canvas is the short looping video behind some
+tracks, and while one plays the session counts as video output, so iOS sends the route to
+AirPlay instead of here. It fails on the tracks that have a Canvas and works on the ones
+that do not, and Spotify does not have to be on screen for it. Turn Canvas off in
+Spotify's settings.
 
-**Spotify does not have to be on screen.** The Canvas is decided per track whether the
-app is in front or in the background, so it fails on the tracks that happen to have one
-and works on the tracks that do not, with nothing on screen to explain why. Turning
-Canvas off in Spotify's settings removes it.
-
-The rest of it is the general rule. iOS decides whether to hand the audio to a
-third-party output device every time the device is activated, and it re-activates
-whenever playback stops and starts. If the decision goes the wrong way the system spends
-1.5 seconds looking for an AirPlay receiver instead, finds none, and puts the route back
-on the speaker.
-
-What makes the decision go the right way, in the order the system checks them:
-
-- the playing app lists this app's protocol identifier in `MDESupportedProtocols`
-  (no third-party app does)
-- the playing app sets `MDESupportsUniversalURLPlayback` in its `Info.plist`
-  (Safari does, which is why audio from a page is allowed through)
-- **music is actually playing**: the system keeps a music voice-activity detector while
-  it is, and its presence alone is enough to allow the route
-- the playing app is a long-form video app with `AVPlayer.allowsExternalPlayback` set
-  to `false`
-
-In practice the third one is what carries it. Pick EffeTune Live while music is playing,
-not while it is paused. Pausing and resuming re-activates the device, and if the detector
-is gone at that moment the route drops back to the speaker. That is also why a Canvas
-track can take the route away in the middle of a listening session.
+Otherwise, **pick EffeTune while music is playing, not while it is paused.** iOS decides
+whether a third-party output device gets the audio each time the device is activated, and
+it re-activates whenever playback stops and starts. What carries it in practice is the
+system's music voice-activity detector, which is only up while music plays. The other ways
+in are `MDESupportedProtocols` (no third-party app lists us) and
+`MDESupportsUniversalURLPlayback` (Safari sets it, which is why audio from a page gets
+through). When the decision goes the other way the system spends 1.5 seconds looking for
+an AirPlay receiver, finds none, and puts the route back on the speaker.
 
 None of the arguments `MediaOutputDevice` takes are read when that decision is made, so
 there is nothing on this side to set.

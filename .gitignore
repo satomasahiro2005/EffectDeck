@@ -18,3 +18,10 @@ shots-store/
 xcuserdata/
 node_modules/
 package-lock.json
+
+# 手元の記録。公開しない。
+docs/connect-log.md
+docs/next.md
+docs/session-*.md
+docs/which-apps.md
+docs/altstore/timing.md
