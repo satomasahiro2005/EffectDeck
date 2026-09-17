@@ -4,9 +4,9 @@
 &nbsp;&nbsp;&nbsp;&nbsp;
 <img src="docs/icon-dark.png" width="104" alt="">
 
-# EffeTune Live
+# EffectDeck
 
-**[EffeTune](https://github.com/Frieve-A/effetune) for iOS (Unofficial)**
+**Effects for any player on your phone**
 
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/effetune-live?label=release&color=3B82F6)](https://github.com/satomasahiro2005/effetune-live/releases)
 [![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
@@ -28,7 +28,7 @@
 
 </div>
 
-> **An independent project.** EffeTune Live is built by nemut.ai. It is **not affiliated
+> **An independent project.** EffectDeck is built by nemut.ai. It is **not affiliated
 > with, endorsed by, or supported by
 > [EffeTune](https://github.com/Frieve-A/effetune) or its author (Frieve-A / Yoshiyuki
 > Kobayashi).** It bundles EffeTune's DSP core under the MIT license and says so.
@@ -39,12 +39,12 @@
 **Effects for any player on your phone.** Anything with a transport in Control Center,
 the Now Playing kind, goes through the chain: it takes that audio, runs it through
 EffeTune's effects, and sends it to the built-in speaker. No virtual cable, no input
-device to configure. Pick **EffeTune** as the output in Control Center and that is the
+device to configure. Pick **EffectDeck** as the output in Control Center and that is the
 whole setup.
 
 ```
 Spotify / a podcast app / Safari
-  ↓ pick EffeTune as the output in Control Center
+  ↓ pick EffectDeck as the output in Control Center
 extension (Media Device Extension)   ← receives
   ↓ 127.0.0.1:47101
 app                                  ← runs EffeTune's DSP
@@ -60,7 +60,7 @@ AirPlay instead of here. It fails on the tracks that have a Canvas and works on 
 that do not, and Spotify does not have to be on screen for it. Turn Canvas off in
 Spotify's settings.
 
-Otherwise, **pick EffeTune while music is playing, not while it is paused.** iOS decides
+Otherwise, **pick EffectDeck while music is playing, not while it is paused.** iOS decides
 whether a third-party output device gets the audio each time the device is activated, and
 it re-activates whenever playback stops and starts. What carries it in practice is the
 system's music voice-activity detector, which is only up while music plays. The other ways
@@ -75,7 +75,7 @@ there is nothing on this side to set.
 ## The iOS 27 Media Device Extension
 
 iOS 27 added `MediaDevice.framework`, which lets an app present itself as an output
-device the way an AirPlay speaker does. EffeTune Live advertises itself that way, and
+device the way an AirPlay speaker does. EffectDeck advertises itself that way, and
 once it is picked the system hands it the audio as samples.
 
 It runs as two processes. The extension advertises the device and receives the audio;

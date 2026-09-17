@@ -5,7 +5,7 @@
 //  止め方も分からなくなる。だから出す。
 //
 //  ただし曲名やアートワークは元のアプリのもので、こちらは持っていない。
-//  出せるのは「EffeTune Live が処理している」ことと、鎖の入切だけ。
+//  出せるのは「EffectDeck が処理している」ことと、鎖の入切だけ。
 //  曲の情報を偽って出すと、いま流れている曲だと誤解されるので出さない。
 
 import Foundation
@@ -50,7 +50,7 @@ enum NowPlaying {
     /// タスクキル後に選び直す。どちらも「仮想デバイスが選ばれている最中に
     /// こちらがセッションを開く」並びになる。
     ///
-    /// **失うものは無い。** 名乗っていた頃もロック画面に EffeTune Live の
+    /// **失うものは無い。** 名乗っていた頃もロック画面に EffectDeck の
     /// 再生/一時停止は出ていなかった（2026-09-16 ユーザー確認）。
     /// 鳴らしているアプリが Now Playing を握っているので、こちらは出番が無い。
     /// そもそも鎖の入切は、コントロールセンターで出力先を iPhone Speaker と
@@ -87,7 +87,7 @@ enum NowPlaying {
     static func claimBeforeSession() {
         guard mode == .first else { return }
         var info: [String: Any] = [:]
-        info[MPMediaItemPropertyTitle] = "EffeTune Live"
+        info[MPMediaItemPropertyTitle] = "EffectDeck"
         info[MPNowPlayingInfoPropertyIsLiveStream] = true
         info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -139,7 +139,7 @@ enum NowPlaying {
         guard running else { stop(); return }
 
         var info: [String: Any] = [:]
-        info[MPMediaItemPropertyTitle] = "EffeTune Live"
+        info[MPMediaItemPropertyTitle] = "EffectDeck"
         info[MPMediaItemPropertyArtist] = active
             ? (count == 1 ? "1 effect" : "\(count) effects")
             : "Bypassed"

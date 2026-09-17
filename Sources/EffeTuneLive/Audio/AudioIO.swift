@@ -4,7 +4,7 @@
 //  なぜこのアプリが鳴らす役なのか（実機のログで確定）:
 //    Media Device Extension を同梱したアプリは AVAudioSession を開けない（'!pla'）。
 //    拡張プロセス自身も開けない（'msrv'）。
-//    だから拡張は EffeTune Live Bridge が運び、音はこのアプリが出す。
+//    だから拡張は EffectDeck Bridge が運び、音はこのアプリが出す。
 //
 //  開始/停止のボタンは持たない。拡張が繋がったら自分で鳴らし始め、切れたら畳む。
 //  鎖を切りたいときは Effect Pipeline の ON を切る（素通しになる）。
@@ -262,7 +262,7 @@ final class AudioIO: ObservableObject {
     ///
     /// **訂正。** ここには「繋がらないからシステムが 1.5 秒で諦めて Unable to Connect に
     /// なる」と書いてあったが、違う。本体が居ない区間——04:29:47.817036 の
-    /// destroy_session(EffeTune Live(530)) から 04:30:25.812872 の create_session まで
+    /// destroy_session(EffectDeck(530)) から 04:30:25.812872 の create_session まで
     /// ——でも endpoint は同じように切られている:
     ///   et.log:51269 04:29:52.648007 / et.log:56349 04:29:57.736604
     ///     FigRoutingManagerDeactivateEndpointFromPickedContexts ... a different endpoint got picked
@@ -333,7 +333,7 @@ final class AudioIO: ObservableObject {
             // 起きるので、いちばん効かせたい瞬間に「システムの選択に従う」と
             // 宣言していることになる。
             let onVirtualNow = session.currentRoute.outputs.contains {
-                $0.portName.localizedCaseInsensitiveContains("EffeTune")
+                $0.portName.localizedCaseInsensitiveContains(ET_NAME_STEM)
             }
             if !onVirtualNow {
                 try session.overrideOutputAudioPort(.none)
@@ -678,7 +678,7 @@ final class AudioIO: ObservableObject {
     private func escapeVirtualDevice(_ session: AVAudioSession) {
         let outs = session.currentRoute.outputs
         let onVirtual = outs.contains {
-            $0.portName.localizedCaseInsensitiveContains("EffeTune")
+            $0.portName.localizedCaseInsensitiveContains(ET_NAME_STEM)
         }
         let onSpeaker = outs.contains { $0.portType == .builtInSpeaker }
         let now = ProcessInfo.processInfo.systemUptime
@@ -762,12 +762,12 @@ final class AudioIO: ObservableObject {
         // 名前で見る。ドライバは kAudioDeviceTransportTypeRemoteStreaming で名乗るので
         // portType は .airPlay になるが、本物の AirPlay スピーカーも同じ型で出る。
         // 型だけで判ると、実際には鳴っている相手に「戻っている」と警告してしまう。
-        // ドライバが出す名前は "EffeTune Live" 固定（EffeTuneDriver.m の
+        // ドライバが出す名前は "EffectDeck" 固定（EffeTuneDriver.m の
         // kAudioObjectPropertyName）。**前方一致ではなく包含で見る。**
         // ルートピッカーに出る名前（MediaOutputDevice.displayName）は
-        // "EffeTune" で、こちらとは別系統。どちらも "EffeTune" を含む。
+        // どちらも ET_NAME_STEM を含む。別系統だが名前は同じ字にしてある。
         let nowLoopback = outs.contains {
-            $0.portName.localizedCaseInsensitiveContains("EffeTune")
+            $0.portName.localizedCaseInsensitiveContains(ET_NAME_STEM)
         }
         if loopback != nowLoopback { loopback = nowLoopback }
 

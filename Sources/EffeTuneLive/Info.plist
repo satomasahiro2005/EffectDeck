@@ -19,9 +19,9 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>EffeTune Live</string>
+	<string>EffectDeck</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>EffeTune Live uses playAndRecord so it can send the processed sound back to the built-in speaker. It never records or stores audio.</string>
+	<string>EffectDeck uses playAndRecord so it can send the processed sound back to the built-in speaker. It never records or stores audio.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

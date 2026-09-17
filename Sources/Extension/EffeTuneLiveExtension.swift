@@ -1,4 +1,4 @@
-//  EffeTune Live — Media Device Extension (iOS 27+)
+//  EffectDeck — Media Device Extension (iOS 27+)
 //
 //  ルートピッカーに EffeTune を1台出し、選ばれたらシステム音声のサンプルを受け取る。
 //  API は Xcode 27 の MediaDevice.swiftinterface から起こしたもので、推測は含まない。
@@ -127,7 +127,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     ///
     /// 127.0.0.1:47101 なら実在していて、拡張から実際に繋がっている:
     ///   et.log:9681 EffeTuneLiveExtension[564] ET connect 成功 port=47101（7 回）
-    ///   et.log:65193 EffeTune Live[601] ET receiver 待ち受け開始 port=47101
+    ///   et.log:65193 EffectDeck[601] ET receiver 待ち受け開始 port=47101
     ///   Sources/Shared/LocalLink.m:285-300（本体側の bind/listen）
     /// 音はこの口を通らない（AudioServerPlugIn 経由で来る）。名乗るためだけに使う。
     ///

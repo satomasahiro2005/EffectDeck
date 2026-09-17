@@ -29,7 +29,7 @@ rm -rf /tmp/live-ipa
   -exportOptionsPlist /tmp/export.plist \
   -allowProvisioningUpdates 2>&1 | grep -E "EXPORT SUCCEEDED|EXPORT FAILED|error:" | tail -5
 
-IPA="/tmp/live-ipa/EffeTune Live.ipa"
+IPA="/tmp/live-ipa/EffectDeck.ipa"
 [ -f "$IPA" ] || { echo "!! ipa が無い。画面のロックを解いたか確認する"; exit 1; }
 
 echo "=== 上げる ==="

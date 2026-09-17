@@ -37,7 +37,7 @@ xcrun simctl bootstatus "$DEV" -b >/dev/null 2>&1
   CONFIGURATION_BUILD_DIR="$ROOT/out-sim" build 2>&1 \
   | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -10
 
-APP="$ROOT/out-sim/EffeTune Live.app"
+APP="$ROOT/out-sim/EffectDeck.app"
 [ -d "$APP" ] || { echo "!! $APP が無い"; exit 1; }
 
 xcrun simctl install "$DEV" "$APP"

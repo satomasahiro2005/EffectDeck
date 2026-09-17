@@ -555,14 +555,14 @@ private struct ConnectBanner: View {
                     // コンテキストへ参加して、帰還ループに引きずられる）。
                     // 出す先を選べるのはコントロールセンターだけ。
                     //
-                    // **名乗っている名前は「EffeTune」。**「EffeTune Live」ではない
+                    // **名乗っている名前は ET_ROUTE_NAME（EffectDeck）。**アプリ名と同じ字にしてある
                     // （Sources/Extension の displayName）。一覧に出る字と
                     // 揃えないと、どれを押せばよいのか分からない。
                     //
                     // 鳴らしてから選ぶ順も落とさない。止まっていると系が
                     // 1.5 秒で経路を戻す（README の If it says Unable to Connect）。
                     Text("""
-                         Play something in another app first, then pick EffeTune as \
+                         Play something in another app first, then pick EffectDeck as \
                          the output in Control Center.
                          """)
                         .font(.system(size: 12))

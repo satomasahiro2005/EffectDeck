@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT="$PWD"
 OUT="$ROOT/shots-store"
 APPID=ai.nemut.effetune
-APPNAME="EffeTune Live.app"
+APPNAME="EffectDeck.app"
 
 DEV=$(xcrun simctl list devices available | grep -F "${SIM:-iPhone 18 Pro Max} (" | head -1 \
       | sed -n 's/.*(\([0-9A-F-]\{36\}\)).*/\1/p')

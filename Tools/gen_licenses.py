@@ -11,7 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "Licenses.swift"
 
 ITEMS = [
-    ("EffeTune Live", "MIT", "nemut.ai", "LICENSE"),
+    ("EffectDeck", "MIT", "nemut.ai", "LICENSE"),
     ("EffeTune", "MIT", "Yoshiyuki Kobayashi", "Vendor/effetune/LICENSE"),
     ("PFFFT", "BSD-3-Clause", "Julien Pommier", "Vendor/effetune/dsp/vendor/pffft/LICENSE.txt"),
 ]

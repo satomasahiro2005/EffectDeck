@@ -52,7 +52,7 @@ struct ETRouteEscape {
     var gaveUp: Bool { attempts >= Self.maxAttempts }
 
     /// - Parameters:
-    ///   - onVirtual: 出力先に "EffeTune" を含む名前の口が居るか。
+    ///   - onVirtual: 出力先に ET_NAME_STEM を含む名前の口が居るか。
     ///   - onSpeaker: 出力先に内蔵スピーカーが居るか。
     ///   - now: `ProcessInfo.processInfo.systemUptime`。
     /// - Returns: 打つべき手。何もしないときは nil。

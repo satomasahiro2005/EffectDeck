@@ -125,7 +125,7 @@ struct SettingsView: View {
         Section {
             Toggle("Keep the screen on", isOn: $prefs.keepScreenAwake)
         } footer: {
-            Text("The screen will not lock while EffeTune Live is in front.")
+            Text("The screen will not lock while EffectDeck is in front.")
         }
     }
 
@@ -195,7 +195,7 @@ private struct StatusSection: View {
         } footer: {
             Text("""
                  Audio from the player you are listening to arrives here at 48 kHz \
-                 through the EffeTune output in Control Center.
+                 through the EffectDeck output in Control Center.
                  """)
         }
     }

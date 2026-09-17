@@ -36,7 +36,7 @@ xcodegen generate --spec project.yml 2>&1 | tail -1
   CONFIGURATION_BUILD_DIR="$ROOT/out-sim" build 2>&1 \
   | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -8
 
-APP="$ROOT/out-sim/EffeTune Live.app"
+APP="$ROOT/out-sim/EffectDeck.app"
 [ -d "$APP" ] || { echo "!! 成果物が無い"; exit 1; }
 
 rm -rf "$OUT" && mkdir -p "$OUT"

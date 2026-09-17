@@ -134,7 +134,7 @@ enum ETRunState {
         case .interrupted:
             return "A call or another app took the audio device. Play something again to restart."
         case .waiting:
-            return "Open Control Center, press and hold the audio card, then choose EffeTune "
+            return "Open Control Center, press and hold the audio card, then choose EffectDeck "
                  + "as the output for the app you are playing."
         case .idle:
             return "The input has been silent, so the effects are paused. They start again "
@@ -286,7 +286,7 @@ struct ETIssue: Identifiable {
                 id: "loopback",
                 tone: .warning,
                 systemImage: "arrow.triangle.2.circlepath",
-                title: "Output is set to EffeTune Live",
+                title: "Output is set to EffectDeck",
                 detail: "The processed sound is going back into this app instead of to a "
                       + "speaker, so you hear nothing and the level keeps rising. Open "
                       + "Control Center, press and hold the audio card, and pick a real "
@@ -356,7 +356,7 @@ struct ETDiagnostics {
     let device: String
 
     var text: String {
-        var out = ["EffeTune Live \(ETAppInfo.display) diagnostics", device, ""]
+        var out = ["EffectDeck \(ETAppInfo.display) diagnostics", device, ""]
         out.append("Settings")
         out += settings.map { "  \($0.label): \($0.value)" }
         out.append("")

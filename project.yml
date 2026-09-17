@@ -13,7 +13,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CLANG_ENABLE_OBJC_ARC: YES
     TARGETED_DEVICE_FAMILY: "1,2"
-    MARKETING_VERSION: "2.9.1"
+    MARKETING_VERSION: "2026.09.17"
     CURRENT_PROJECT_VERSION: "13"
 
 # EffeTune の DSP コアは host-neutral な C++20 なので、そのまま arm64 で建つ。
@@ -68,7 +68,7 @@ targets:
       base:
         <<: *dspSettings
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune
-        PRODUCT_NAME: EffeTune Live
+        PRODUCT_NAME: EffectDeck
         INFOPLIST_FILE: Sources/EffeTuneLive/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: EffeTuneLive
         CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLive/EffeTuneLive.entitlements

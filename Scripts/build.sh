@@ -1,5 +1,5 @@
 #!/bin/bash
-# EffeTune Live をビルドして実機に入れる。
+# EffectDeck をビルドして実機に入れる。
 #
 # 使い方:
 #   bash Scripts/build.sh              つないである実機を自動で探す
@@ -96,7 +96,7 @@ install_one() {
       xcrun devicectl device uninstall app --device "$DEV_ID" "$old" >/dev/null 2>&1
     done
   fi
-  install_one "out/EffeTune Live.app"        ai.nemut.effetune
+  install_one "out/EffectDeck.app"        ai.nemut.effetune
 
   echo "=== done $(date) ==="
 } > "$LOG" 2>&1

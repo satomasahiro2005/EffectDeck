@@ -17,6 +17,7 @@
   python3 asc.py get <path>                   任意の GET（path は /v1/... から）
   python3 asc.py patch <path> <body.json>     任意の PATCH（本体はファイル）
   python3 asc.py post <path> <body.json>      任意の POST
+  python3 asc.py delete <path> [body.json]    任意の DELETE
 """
 import json
 import subprocess
@@ -263,6 +264,15 @@ def main() -> int:
 
     if cmd == "get":
         print(json.dumps(call("GET", sys.argv[2]), indent=2, ensure_ascii=False))
+        return 0
+
+    if cmd == "delete":
+        # 関係を外す DELETE は本体が要る（betaGroups の builds など）。
+        body = None
+        if len(sys.argv) > 3:
+            body = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+        d = call("DELETE", sys.argv[2], body)
+        print(json.dumps(d, indent=2, ensure_ascii=False) if d else "ok")
         return 0
 
     if cmd in ("patch", "post"):

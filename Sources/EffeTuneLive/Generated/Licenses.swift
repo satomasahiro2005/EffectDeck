@@ -16,7 +16,7 @@ struct ETLicense: Identifiable {
 
 let ETLicenses: [ETLicense] = [
     ETLicense(
-      name: "EffeTune Live",
+      name: "EffectDeck",
       license: "MIT",
       author: "nemut.ai",
       text: #"""

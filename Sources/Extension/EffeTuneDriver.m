@@ -451,7 +451,7 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 case kAudioObjectPropertyBaseClass: PUT(AudioClassID, kAudioObjectClassID);
                 case kAudioObjectPropertyClass:     PUT(AudioClassID, kAudioDeviceClassID);
                 case kAudioObjectPropertyOwner:     PUT(AudioObjectID, kObjectID_PlugIn);
-                // 仮想デバイスの名前。**アプリと同じ「EffeTune Live」を名乗る。**
+                // 仮想デバイスの名前。**アプリと同じ「EffectDeck」を名乗る。**
                 // 出るのは出力先を出す所（アプリの Settings の Device、音量の
                 // 表示など）。MediaOutputDevice.displayName（ルートピッカーに
                 // 出る「EffeTune」）とは別系統で、コントロールセンターの行は

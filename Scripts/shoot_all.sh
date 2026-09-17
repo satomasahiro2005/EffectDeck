@@ -48,7 +48,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
     | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -5
 fi
 
-APP="$ROOT/out-sim/EffeTune Live.app"
+APP="$ROOT/out-sim/EffectDeck.app"
 [ -d "$APP" ] || { echo "!! 成果物が無い"; exit 1; }
 xcrun simctl uninstall "$DEV" "$APPID" >/dev/null 2>&1
 xcrun simctl install "$DEV" "$APP"

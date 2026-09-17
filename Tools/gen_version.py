@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""上流 EffeTune の版に追従する。ただし**末尾はこちらの番号**。
+"""同梱している EffeTune の版を Swift から読めるようにする。
 
-このアプリは EffeTune の dsp/ をそのまま積んでいるので、
-効果の中身は上流の版で決まる。表示する版もそこに合わせる。
+**アプリの版は上流に追従しない。**以前は上流の `major.minor` に合わせていたが、
+やめた。理由は 2 つ。
 
-**合わせるのは上 2 つ（major.minor）だけ。** 末尾（patch）はこちらの配布の回数。
-上流が動いていないあいだもアプリ側の直しは出るし、**App Store Connect は
-同じ版を二度公証に出せない**（版が READY_FOR_DISTRIBUTION になると、
-ビルドの差し替えが 409 ENTITY_ERROR.RELATIONSHIP.INVALID.INVALID_STATE で弾かれる。
-2026-09-17 に実測）。上流の版をそのまま名乗ると、上流が動くまで出し直せない。
+  1. 上流の名前を冠さなくなったので、番号だけ揃える意味が無い
+  2. App Store Connect は同じ版を二度出せない。上流が動かないあいだ、
+     こちらの直しを出すたびに末尾を足していく形になっていた
 
-  上流 2.9.0、こちら 2.9.0 → 2.9.1 → 2.9.2 …
-  上流が 2.10.0 になったら 2.10.0 から数え直す
+いまは**出した日**を版にする（`2026.09.17`）。`project.yml` の
+`MARKETING_VERSION` を手で書くか、`--today` で今日の日付にする。
+
+  python3 Tools/gen_version.py            UpstreamVersion.swift を書くだけ
+  python3 Tools/gen_version.py --today    版も今日の日付にする
+
+**同じ日に 2 回は出せない。**版の番号は使い回せず、区切りは 3 つまでなので
+4 つ目を足すこともできない。同じ日に出し直すなら、ビルド番号だけ上げる
+（版を替えずに差し替えられるのは、まだ審査へ出していないあいだだけ）。
 
 ビルド番号（CURRENT_PROJECT_VERSION）はこちらの都合なので触らない。
 「どの EffeTune を積んだか」は UpstreamVersion.swift に別の事実として残る。
 """
+import datetime
 import json
 import pathlib
 import re
@@ -24,9 +30,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "Vendor" / "effetune" / "package.json"
 DST = ROOT / "project.yml"
-# 上流の版を Swift からも読めるようにする。MARKETING_VERSION と同じ値になるが、
-# あちらは「このアプリの版」でこちらは「どの EffeTune の dsp を積んだか」。
-# 意味が違うので別の事実として持つ。
+# 上流の版を Swift からも読めるようにする。
+# **アプリの版とは別の事実。**あちらは「このアプリを出した日」で、
+# こちらは「どの EffeTune の dsp を積んだか」。
 SWIFT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "UpstreamVersion.swift"
 
 
@@ -44,31 +50,32 @@ def main() -> int:
     if not found:
         print("!! MARKETING_VERSION が見つからない", file=sys.stderr)
         return 1
+    app = found.group(1)
 
-    # 上 2 つが同じなら、末尾はこちらのものなので触らない。
-    def head(v: str) -> str:
-        return ".".join(v.split(".")[:2])
+    if "--today" in sys.argv:
+        today = datetime.date.today().strftime("%Y.%m.%d")
+        if today != app:
+            s = s[:found.start(1)] + today + s[found.end(1):]
+            DST.write_text(s, encoding="utf-8", newline="\n")
+            print("版を %s から %s へ" % (app, today))
+            app = today
+        else:
+            print("版は既に %s" % app)
 
-    current = found.group(1)
-    app = current if head(current) == head(version) else head(version) + ".0"
-    if app != current:
-        s = s[:found.start(1)] + app + s[found.end(1):]
-        DST.write_text(s, encoding="utf-8", newline="\n")
     header = [
         "//  UpstreamVersion.swift",
         "//  Tools/gen_version.py が作る。手で直さないこと。",
         "//",
         "//  同梱している EffeTune の版（Vendor/effetune/package.json）。",
-        "//  アプリの版は同じ数字に揃えてあるが、意味が違う。",
-        "//  あちらは「このアプリの何度目の配布か」、",
-        "//  こちらは「どの EffeTune の dsp を積んだか」。",
+        "//  **アプリの版とは別の事実。**あちらは出した日で、",
+        "//  こちらは積んだ EffeTune の dsp の版。",
         "",
         'let ETUpstreamVersion = "%s"' % version,
         "",
     ]
     SWIFT.write_text(chr(10).join(header), encoding="utf-8", newline=chr(10))
 
-    # README のバッジも同じ版にする。手で書くと古くなる。
+    # README のバッジは上流の版を出す。手で書くと古くなる。
     readme = ROOT / "README.md"
     if readme.is_file():
         text = readme.read_text(encoding="utf-8")
@@ -76,7 +83,7 @@ def main() -> int:
                               r"\g<1>%s\g<2>" % version.replace("-", "--"),
                               text, count=1)
         if hits == 1 and fixed != text:
-            readme.write_text(fixed, encoding="utf-8", newline=chr(10))
+            readme.write_text(fixed, encoding="utf-8", newline="\n")
             print("README のバッジを直した")
     print("version: app %s / upstream %s" % (app, version))
     return 0

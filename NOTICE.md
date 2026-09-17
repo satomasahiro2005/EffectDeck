@@ -1,6 +1,6 @@
 # What is bundled
 
-**This app is not part of the EffeTune project.** It is a separate app built by nemut.ai
+**EffectDeck is not part of the EffeTune project.** It is a separate app built by nemut.ai
 that bundles EffeTune's DSP core under the MIT license. It is not endorsed by or supported
 by the author of EffeTune. Send anything about this app to nemut.ai, and do not open
 issues about it on the EffeTune repository.
