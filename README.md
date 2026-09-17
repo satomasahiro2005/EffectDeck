@@ -22,9 +22,7 @@
 
 <p>
   <img src="docs/shot-effects.png" width="220" alt="">
-  &nbsp;&nbsp;
   <img src="docs/shot-analyzers.png" width="220" alt="">
-  &nbsp;&nbsp;
   <img src="docs/shot-routing.png" width="220" alt="">
 </p>
 
