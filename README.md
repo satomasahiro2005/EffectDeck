@@ -1,6 +1,7 @@
 <div align="center">
 
 <img src="docs/icon.png" width="104" alt="">
+&nbsp;&nbsp;&nbsp;&nbsp;
 <img src="docs/icon-dark.png" width="104" alt="">
 
 # EffeTune Live
@@ -21,7 +22,9 @@
 
 <p>
   <img src="docs/shot-effects.png" width="220" alt="">
+  &nbsp;&nbsp;
   <img src="docs/shot-analyzers.png" width="220" alt="">
+  &nbsp;&nbsp;
   <img src="docs/shot-routing.png" width="220" alt="">
 </p>
 
