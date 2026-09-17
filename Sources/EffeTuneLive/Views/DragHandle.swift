@@ -251,13 +251,21 @@ struct ETDragHandle: UIViewRepresentable {
         /// だから「当たった所から器まで遡って、UIControl か、自前の pan を
         /// 持つものが居たら譲る」で足りる。つまみに限らず、後から足した
         /// 何かが自分でドラッグを受けるなら同じように譲る。
+        ///
+        /// **止まるのは自分が付いている器だけ。**「UIScrollView を見たら
+        /// 器まで来た」と書いていたら、Matrix のように横へスクロールする
+        /// 入れ子の器が全部「誰も居ない」扱いになり、横スクロールを
+        /// 奪っていた（2026-09-18）。入れ子の器こそ譲る相手。
         private func ownsDrag(under g: UIGestureRecognizer) -> Bool {
             guard let anchor, let window = anchor.window else { return false }
+            let host = panRecognizer?.view ?? recognizer?.view
             var v = window.hitTest(g.location(in: window), with: nil)
             while let cur = v {
-                // **器より先は見ない。**HostingScrollView 自身が pan を
-                // 持っているので、ここで止めないと必ず譲ることになる。
-                if cur is UIScrollView { return false }
+                // 自分が付いている器まで来た＝間に誰も居なかった。
+                // ここで止めないと、器自身が持っている pan を見て必ず譲る。
+                if cur === host { return false }
+                // 入れ子の器（Matrix の横スクロールなど）。
+                if cur is UIScrollView { return true }
                 if cur is UIControl { return true }
                 if (cur.gestureRecognizers ?? []).contains(where: { $0 is UIPanGestureRecognizer }) {
                     return true
