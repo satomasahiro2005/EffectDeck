@@ -11,8 +11,11 @@
 //      横に並べられない幅なので、ここだけ変えてある
 
 import Combine
+import OSLog
 import SwiftUI
 import UIKit
+
+private let dragLog = Logger(subsystem: "ai.nemut.effetune", category: "drag")
 
 enum ETLayout {
     /// 鎖に許す横幅。
@@ -70,22 +73,44 @@ struct PipelineView: View {
     @State private var hasPeer = false
     @State private var processingRate: Double = 48000
 
-    /// 長押しで並べ替えた回数。**行の身元に混ぜる**（下の Row.dragKey）。
-    ///
-    /// SwiftUI の List は長押しの並べ替えで、自分が抱えているセルを先に動かし、
-    /// その並びを残す。**onMove の中身を空にしても行は動いたままになる**
-    /// （onMove を `{ _, _ in }` にして測った。鎖は一度も動いていないのに、
-    ///  画面だけが 3 回とも落としたとおりに並び替わった）。
-    /// こちらは onMove で鎖も同じだけ動かすので、**同じ移動が 2 回かかる**。
-    /// 4 本の鎖で「先頭を末尾へ」を 1 回やると、鎖は T,C,R,V なのに画面は C,R,V,T になり、
-    /// 次からは掴んだつもりの無い段が動く。⋯ の Move Up / Move Down は
-    /// List の掴みを通らないので、そちらは前から一致している（testRepeatedMenuMoves）。
-    ///
-    /// ここを増やすと ForEach へ渡す身元が全部変わるので、SwiftUI は
-    ///「動かす」ではなく「入れ替える」として組み直す。List が先に動かした並びは捨てられ、
-    /// 鎖の並びがそのまま出る。増やすのは**長押しの並べ替えのときだけ**で、
-    /// 削除やパラメータの変更では増やさない（あちらは身元が変わらないほうが良い）。
-    @State private var dragGeneration = 0
+    // MARK: - 並べ替え
+    //
+    // **Shortcuts と同じ形にしてある。**あちらは WorkflowEditor.framework の中で
+    // 全部自作していて、reorderable も onMove も UICollectionView の drag & drop も
+    // 使っていない（ipsw swift-dump で数えて 0 件）。要はこの 3 つ:
+    //
+    //   - 掴んだものの矩形を掴んだ時点で確保し、ドラッグ中ずっと持ち回る
+    //     （EditorDragItem が height / initialWidth を持つ）
+    //   - 落とし先は**点ではなく矩形の重なり**で決める
+    //     （OverlayLayer.State の dragFormationRect と dropItemRects）
+    //   - 掴んだものは行の中ではなく**別の層**に描く（overlayHost）
+    //
+    // 標準の並べ替えはどれも指の点で判定するので、掴んだものが相手より大きいと
+    // 中心とのズレぶん判定が早く反転し、釣り合う所で上下に行き来する（実機で
+    // session.location を出して確かめた）。面で見れば起きない。
+
+    /// 掴んでいる行。
+    @State private var dragging: UUID?
+    /// **掴んだ時点の矩形。**入れ替えても動かさない。
+    @State private var anchorRect: CGRect = .zero
+    /// 指の縦の移動量。
+    @State private var dragShift: CGSize = .zero
+    /// 行ごとの矩形。落とし先の判定に使う。
+    @State private var rowRects: [UUID: CGRect] = [:]
+
+    /// 左スワイプを開いている行。
+    @State private var swiping: UUID?
+    /// その行がどれだけ左へずれているか（0 以下）。
+    @State private var swipeX: CGFloat = 0
+    /// 払い始めた時点のずれ。開いた所から払い直しても飛ばないように。
+    @State private var swipeStart: CGFloat = 0
+
+    /// 鎖の中での座標。行の位置も指の位置もこれで測る。
+    private static let chainSpace = "chain"
+    /// 開いたときに行が左へ寄る量。
+    private static let swipeWidth: CGFloat = 78
+    /// 行と赤い面のあいだ。カードどうしの間と同じだけ空ける。
+    private static let swipeGap: CGFloat = 10
 
     /// 状態の見直し。ルートの問い合わせなど重いものはこちら。
     /// **図はこちらでは動かさない**（ETDisplayPump が面に合わせて汲む）。
@@ -183,36 +208,43 @@ struct PipelineView: View {
         // 「画面の行数」の両方を要るので、行ごとに組み直すと本数ぶん無駄になる。
         let visible = rows
 
-        return List {
+        // **List ではなく ScrollView + VStack。**
+        //
+        // List は行の高さを動かす間も中身を切るので掴んだカードが欠ける。
+        // それとは別に、**行の区切り線が視覚上どうしても出る**。
+        // .listRowSeparator(.hidden) を付けても仕様として引かれる場所が残る。
+        //
+        // その代わり .swipeActions が使えない（List の行でしか効かない）ので、
+        // 左スワイプの削除はここで自前でやる。判定は ETDragHandle の
+        // UIPanGestureRecognizer（横向きのときだけ立つ）。
+        return ScrollView {
+            VStack(spacing: 0) {
             ClipboardBanner(dsp: dsp)
-                .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
 
             if !hasPeer {
                 ConnectBanner()
-                    .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
             }
 
             // 鎖の真上に出す。ここより下のカードが効いていない、という話なので。
             // 鎖が空のときは出さない。EmptyChainRow が同じことを既に言っている。
             if dsp.bypass && !dsp.chain.isEmpty {
                 BypassBanner { dsp.bypass = false }
-                    .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
             }
 
             if dsp.chain.isEmpty {
                 EmptyChainRow { insertAt = nil; sheet = .picker }
-                    .listRowInsets(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 20)
             } else {
-                // **身元は id ではなく dragKey。** 理由は上の dragGeneration。
-                ForEach(visible, id: \.dragKey) { row in
+                ForEach(visible) { row in
                     // **配下だと分かる印。**左に線を引いて内側へ寄せる。
                     // 続く行で線が繋がるので、Section から次の Section の手前までが
                     // 一組に見える。囲まないし、行間も詰めない。
@@ -239,16 +271,37 @@ struct PipelineView: View {
                     }
                         // 線のぶんは外側の余白から取る。カードの左端は
                         // どちらの行でも 14 に揃う（ETSectionBracket の頭）。
-                        .listRowInsets(EdgeInsets(
-                            top: 5,
-                            leading: row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14,
-                            bottom: 5, trailing: 14))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        // **.onDelete は使わない。** 詳しくは下の remove(_:)。
-                        // こちらは押されたら閉じるだけで、行を消すのは鎖が変わった結果。
-                        .swipeActions(edge: .trailing) {
-                            Button("Delete", role: .destructive) { remove(row.node.id) }
+                        .padding(.leading,
+                                 row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14)
+                        .padding(.trailing, 14)
+                        .padding(.vertical, 5)
+                        // **左スワイプで削除。**行だけをずらし、後ろに赤い面を敷く。
+                        // .onDelete は使わない（詳しくは下の remove(_:)）。
+                        //
+                        // **順番が要る。**.background を先に付けると赤い面も
+                        // 一緒にずれて、ずっと行の裏に隠れたままになる。
+                        // .offset は配置を変えないので、後から付けた
+                        // .background は元の位置に残り、行だけが滑って見える。
+                        .offset(x: swiping == row.node.id ? swipeX : 0)
+                        .background(alignment: .trailing) { deleteAction(row) }
+                        // 落とし先の判定に要る。開閉で高さが変わるたびに来る。
+                        .onGeometryChange(for: CGRect.self) {
+                            $0.frame(in: .named(Self.chainSpace))
+                        } action: { rowRects[row.node.id] = $0 }
+                                .opacity(dragging == row.node.id ? 0 : 1)
+                        // 掴みは UIKit の長押しで受ける（DragHandle.swift の頭）。
+                        // 面は素通しなので、カードのタップも下へ届く。
+                        .overlay {
+                            ETDragHandle(
+                                began: { beginDrag(row) },
+                                moved: { d in
+                                    dragShift = d
+                                    settle(row.node.id)
+                                },
+                                ended: { endDrag() },
+                                swipeBegan: { swipeBegan(row.node.id) },
+                                swiped: { dx in swipeChanged(row.node.id, dx) },
+                                swipeEnded: { dx, vx in swipeSettled(row.node.id, dx, vx) })
                         }
                         // **ピッカーからつまんだものを受ける。**
                         // カードには何も足さない。落ちたときだけ効く。
@@ -262,11 +315,7 @@ struct PipelineView: View {
                             return true
                         }
                 }
-                .onMove { source, destination in
-                    // 先に身元を振り直す。List が自分で動かした並びを捨てさせるため。
-                    dragGeneration &+= 1
-                    move(source, to: destination)
-                }
+
 
                 // **最後の行より下の余白も受ける。**
                 // 行にしか落とし所が無いと、鎖の下の空いている所へ落としたときに
@@ -277,9 +326,6 @@ struct PipelineView: View {
                 // 最後のカードのすぐ下に帯があれば、そこを狙って落とせる。
                 Color.clear
                     .frame(height: 96)
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
                     .dropDestination(for: String.self) { items, _ in
                         guard let type = items.first,
                               let spec = EffeTuneDSP.spec(forType: type) else { return false }
@@ -288,9 +334,213 @@ struct PipelineView: View {
                         return true
                     }
             }
+            }
         }
-        .listStyle(.plain)
-        .environment(\.defaultMinListRowHeight, 0)
+        .coordinateSpace(name: Self.chainSpace)
+        // **掴んだものは別の層に描く。**行の中に重ねると、はみ出したぶんが
+        // 切られて位置もずれる（List は行の高さを動かす間も中身を切る）。
+        // ここが List の外なので切られない。
+        .overlay(alignment: .topLeading) {
+            if let id = dragging,
+               let row = visible.first(where: { $0.node.id == id }) {
+                ETSectionBracket(active: row.block != .alone,
+                                 extendsUp: !row.block.roundsTop,
+                                 extendsDown: !row.block.roundsBottom) {
+                    EffectCardView(
+                        index: row.index, node: row.node, dsp: dsp,
+                        isExpanded: expanded.contains(row.node.id),
+                        isCollapsedFully: dsp.collapsedFully.contains(row.node.id),
+                        toggleExpanded: {}, moveUp: {}, moveDown: {},
+                        canMoveUp: false, canMoveDown: false, block: row.block)
+                }
+                // 行と同じ余白を付ける。rowRects は余白の外側で測っているので、
+                // 付けないと左右に広く見える。
+                .padding(.leading,
+                         row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14)
+                .padding(.trailing, 14)
+                .padding(.vertical, 5)
+                .frame(width: anchorRect.width, height: anchorRect.height)
+                .offset(x: anchorRect.minX + dragShift.width,
+                        y: anchorRect.minY + dragShift.height)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    // MARK: - 左スワイプで削除
+    //
+    // List をやめたので .swipeActions が使えない。同じ見え方を自前で作る。
+    // 指の向きを見て立てるのは UIKit 側（DragHandle.swift の swipe(_:)）。
+
+    /// 行の後ろに敷く赤い面。
+    ///
+    /// **幅は開いたぶんについてくる。**決め打ちにすると、払っている途中は
+    /// 行の下から出たり引っ込んだりするだけで、伸びている感じが出ない。
+    /// 行の左端との間は swipeGap ぶん空ける（カードどうしの間と揃える）。
+    @ViewBuilder
+    private func deleteAction(_ row: Row) -> some View {
+        let shown = swiping == row.node.id ? swipeX : 0
+        let width = max(0, -shown - Self.swipeGap)
+        if width > 0 {
+            // 細いうちに角を 16 のままにすると丸が潰れて見える。半分で頭打ち。
+            let radius = min(16, width / 2)
+            Button(role: .destructive) { remove(row.node.id) } label: {
+                Image(systemName: "trash")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: width)
+                    .frame(maxHeight: .infinity)
+                    .clipped()
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .padding(.vertical, 5)
+            .padding(.trailing, 14)
+        }
+    }
+
+    /// 払い始め。**始点を覚える。**渡ってくる移動量は払い始めからの量なので、
+    /// 開いた所から払い直したときに覚えていないと 0 へ飛ぶ。
+    private func swipeBegan(_ id: UUID) {
+        guard dragging == nil else { return }
+        if swiping != id {
+            swiping = id
+            swipeX = 0
+        }
+        swipeStart = swipeX
+    }
+
+    /// 払っている最中。**左にだけ開く。**開き切ったところから先は重くする。
+    private func swipeChanged(_ id: UUID, _ dx: CGFloat) {
+        guard dragging == nil, swiping == id else { return }
+        let x = swipeStart + dx
+        let open = -Self.swipeWidth
+        if x >= 0 {
+            swipeX = 0
+        } else if x > open {
+            swipeX = x
+        } else {
+            // 開き切ってから先は 1/3 しか付いてこない。
+            swipeX = open + (x - open) / 3
+        }
+    }
+
+    /// 離した。開くか閉じるかだけを決める。
+    private func swipeSettled(_ id: UUID, _ dxRaw: CGFloat, _ vx: CGFloat) {
+        guard swiping == id else { return }
+        let dx = swipeStart + dxRaw
+        let open = -Self.swipeWidth
+        // **払い切りでは消さない。**一発で消えると取り返しがつかない。
+        // 開くところまでで止めて、ゴミ箱を押させる。
+        withAnimation(.snappy(duration: 0.24)) {
+            if dx < open / 2 {
+                swipeX = open
+            } else {
+                swipeX = 0
+                swiping = nil
+            }
+        }
+    }
+
+    /// 開いているものを閉じる。掴み始めや消したあとに通す。
+    private func closeSwipe() {
+        guard swiping != nil else { return }
+        withAnimation(.snappy(duration: 0.2)) { swipeX = 0; swiping = nil }
+    }
+
+    // MARK: - 並べ替え（矩形の重なりで決める）
+
+    /// 掴み始め。掴んだ時点の矩形を確保する。
+    private func beginDrag(_ row: Row) {
+        guard dragging != row.node.id else { return }
+        closeSwipe()
+        dragging = row.node.id
+        anchorRect = rowRects[row.node.id] ?? .zero
+        dragShift = .zero
+        dragLog.notice("掴む at=\(row.visible, privacy: .public) rect=\(Int(anchorRect.minY), privacy: .public)..\(Int(anchorRect.maxY), privacy: .public)")
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+    }
+
+    /// 掴みを終える。**どの道から来ても必ずここを通す。**
+    ///
+    /// 戻す先は掴んだ時点の位置ではなく、**いまその行がいる枠**。入れ替えた
+    /// あとに元の位置へ帰すと、行と絵が別の場所に出て一瞬ちらつく。
+    ///
+    /// `dragging` を同じ withAnimation の中で nil にしてはいけない。層が
+    /// その場で消えるだけで戻る動きが出ない（絵が瞬間的に飛ぶ）。
+    /// 戻りきってから畳む。
+    ///
+    /// **畳むのを withAnimation の completion に任せてはいけない。**
+    /// 動く値が無いとき（掴んで動かさずに離した、など）completion が
+    /// 来ないことがある。来ないと層が出たままになり、その行は
+    /// `.opacity(0)` で消えたまま、代わりに出ている層は
+    /// `.allowsHitTesting(false)` の絵なので、カードごと操作できなくなる。
+    /// 実機で Bit Crusher がそうなった（2026-09-17、`離す` はログに出ていた）。
+    /// 時間で必ず畳む。
+    private func endDrag() {
+        guard let id = dragging else { return }
+        dragLog.notice("離す")
+        let slot = rowRects[id] ?? anchorRect
+        withAnimation(.snappy(duration: Self.returnDuration)) {
+            anchorRect = slot
+            dragShift = .zero
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.returnDuration))
+            // 戻っている間に掴み直されていたら、そちらを消さない。
+            if dragging == id {
+                dragging = nil
+                dragLog.notice("畳む")
+            }
+        }
+    }
+
+    /// 離してから層を畳むまで。戻りの動きと同じ長さ。
+    private static let returnDuration: Double = 0.26
+
+    /// 掴んだものの矩形が隣の矩形とどれだけ重なったかで入れ替える。
+    private func settle(_ id: UUID) {
+        let visible = rows
+        guard let at = visible.firstIndex(where: { $0.node.id == id }) else { return }
+        // 判定は縦だけ見る。鎖は 1 列なので横は絵の都合でしかない。
+        let moving = anchorRect.offsetBy(dx: 0, dy: dragShift.height)
+
+        if at > 0, let above = rowRects[visible[at - 1].node.id] {
+            let overlap = moving.intersection(above).height
+            if moving.minY < above.minY || overlap > above.height / 2 {
+                swap(at, to: at - 1)
+                return
+            }
+        }
+        if at < visible.count - 1, let below = rowRects[visible[at + 1].node.id] {
+            let overlap = moving.intersection(below).height
+            if moving.maxY > below.maxY || overlap > below.height / 2 {
+                // 下へは 2 つ先。move(_:to:) は List の onMove と同じ数え方。
+                swap(at, to: at + 2)
+            }
+        }
+    }
+
+    /// 入れ替える。**基準（anchorRect）には手を触れない。**
+    ///
+    /// 一度、入れ替えのたびに基準を相手の高さぶん送り、同じだけ dragShift を
+    /// 引いて打ち消していた。入替の瞬間だけは合うが、次の moved が
+    /// `dragShift = dy`（掴んだ時点からの絶対量）で上書きするので、
+    /// 打ち消しの側だけが 1 フレームで消えて基準のズラしが残る。
+    /// 実機で 1 回測って確かめた（2026-09-17）:
+    ///
+    ///     掴む at=1 rect=345..448
+    ///     入替 1->0 delta=-254 shift=-256
+    ///     → 入替の瞬間 91+(-2)=89 は正しいが、次のフレームは 91+(-256)=-165
+    ///
+    /// 掴んだものは別の層に描いている。絵の位置は「掴んだ時点の矩形＋指の
+    /// 移動量」で決まりきっていて、下の並びがどう動こうと関係ない。
+    /// 補正そのものが要らなかった。
+    private func swap(_ at: Int, to destination: Int) {
+        dragLog.notice("入替 \(at, privacy: .public)->\(destination, privacy: .public) shift=\(Int(dragShift.height), privacy: .public)")
+        withAnimation(.snappy(duration: 0.22)) { moveRow(at, to: destination) }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     // MARK: - 行の組み立て
@@ -306,8 +556,6 @@ struct PipelineView: View {
         let node: EffeTuneDSP.Node
         /// 段そのものの身元。remove(_:) やスワイプ削除はこちらを使う。
         var id: UUID { node.id }
-        /// 長押しで並べ替えた回数。ForEach へ渡す身元に混ぜる（dragGeneration を読むこと）。
-        let drag: Int
         /// **ForEach に渡す身元。** 並べ替えのたびに変わるので、List は
         /// 行を動かすのではなく組み直す。
 
@@ -319,7 +567,6 @@ struct PipelineView: View {
         /// 畳んだ Section（配下が画面に無い）に線だけ残った。
         var block: ETBlockPosition = .alone
 
-        var dragKey: String { "\(drag)|\(node.id)" }
     }
 
     /// 畳んでいる Section の配下を落としたもの。
@@ -370,7 +617,7 @@ struct PipelineView: View {
         }
         return shown.indices.map {
             Row(visible: $0, index: shown[$0], node: dsp.chain[shown[$0]],
-                drag: dragGeneration, block: position($0))
+                block: position($0))
         }
     }
 
