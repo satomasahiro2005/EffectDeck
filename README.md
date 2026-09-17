@@ -13,13 +13,6 @@
 ![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-2.9.0-3B82F6)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<a href="https://altstore.io/source/nemut.ai/source.json?app=ai.nemut.effetune">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/altstore-badge-dark.png">
-    <img src="docs/altstore-badge-light.png" alt="Download on AltStore" height="52">
-  </picture>
-</a>
-
 <p>
   <img src="docs/shot-effects.png" width="31%" alt="">
   <img src="docs/shot-analyzers.png" width="31%" alt="">
