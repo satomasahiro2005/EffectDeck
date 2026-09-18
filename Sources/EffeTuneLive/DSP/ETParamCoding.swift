@@ -53,6 +53,11 @@ enum ETParamCoding {
                     rows[i][member] = tidy(values[k], p)
                 }
                 objects[group] = rows
+            } else if let key = p.flatArrayKey {
+                o[key] = (0..<p.count).map { i in
+                    let k = p.offset + i
+                    return tidy(values.indices.contains(k) ? values[k] : p.defaultValue, p)
+                }
             } else if p.isArray {
                 // **添字を付けて 1 本ずつ書く。** `"f": [...]` ではなく `f0 f1 f2 …`。
                 // 上流は params['f' + i] で書き、同じ形でしか読まない
@@ -95,6 +100,15 @@ enum ETParamCoding {
         var values = defaults
 
         for p in params {
+            if let key = p.flatArrayKey {
+                if let array = dict[key] as? [Any] {
+                    for (i, item) in array.prefix(p.count).enumerated() {
+                        let k = p.offset + i
+                        if values.indices.contains(k) { values[k] = number(item, p) }
+                    }
+                }
+                continue
+            }
             // オブジェクト配列。上流・同梱プリセット・いまの保存形式はこちら。
             if p.isObjectMember, let group = p.objectArrayKey, let member = p.memberKey,
                let rows = dict[group] as? [[String: Any]] {

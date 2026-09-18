@@ -55,6 +55,7 @@ enum ETSliderScale {
         "AMRadioSimulatorPlugin.fd", "AMRadioSimulatorPlugin.dt",
         // lofi/fm_radio_simulator.js:1251
         "FMRadioSimulatorPlugin.dl",
+        "TVAudioSimulatorPlugin.dl",
         // lofi/sw_radio_simulator.js:1901,1903,1909,1935
         "SWRadioSimulatorPlugin.fd", "SWRadioSimulatorPlugin.ds",
         "SWRadioSimulatorPlugin.io", "SWRadioSimulatorPlugin.dt",

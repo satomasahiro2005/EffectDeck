@@ -2,4 +2,5 @@
 #import "LocalLink.h"
 #import "ETPipeline.h"
 #import "ETResample.h"
+#import "ETPreviewTone.h"
 #import "effetune/abi.h"

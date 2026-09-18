@@ -51,6 +51,11 @@ struct SettingsView: View {
                 case .audio:
                     StatusSection(io: io, dsp: dsp)
                     processing
+                    Section {
+                        Toggle("Sync Visuals to Audio", isOn: $prefs.syncVisualsToAudio)
+                    } footer: {
+                        Text("Delay graphs to match the audio output latency.")
+                    }
                     power
                     // **音の数字は Audio に置く。**レート・バッファ・遅延の内訳・
                     // 出力先なので、探しに来るのはこの面。報告に貼る値でもあるが、

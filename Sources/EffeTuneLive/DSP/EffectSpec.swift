@@ -72,6 +72,9 @@ struct ETParam: Identifiable {
     /// objectArrayKey を持つのは params.json 8 本・57 フィールド。
     var objectArrayKey: String? = nil
 
+    /// Spatial Mapper 2.10.0 stores each 16×16 routing matrix as a flat array.
+    var flatArrayKey: String? = nil
+
     /// そのオブジェクトの中での名前。
     var memberKey: String? = nil
 

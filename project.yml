@@ -108,6 +108,7 @@ targets:
         excludes:
           - "ETPipeline.*"
           - "ETResample.*"
+          - "ETPreviewTone.*"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.extension

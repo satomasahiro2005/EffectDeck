@@ -26,6 +26,8 @@ final class EffectPresetTests: XCTestCase {
         for p in spec.params {
             if p.isObjectMember, let group = p.objectArrayKey {
                 keys.insert(group)
+            } else if let key = p.flatArrayKey {
+                keys.insert(key)
             } else if p.isArray {
                 for i in 0..<p.count { keys.insert(p.key + String(i)) }
             } else {
@@ -45,8 +47,8 @@ final class EffectPresetTests: XCTestCase {
             XCTAssertNotNil(ETCatalog.first { $0.name == name }, "\(name) が catalog に無い")
         }
         // 数が変わったら、上流を進めたということ。意図した変更か確かめる。
-        XCTAssertEqual(names.count, 26)
-        XCTAssertEqual(ETEffectPresetList.count, 131)
+        XCTAssertEqual(names.count, 28)
+        XCTAssertEqual(ETEffectPresetList.count, 146)
     }
 
     /// 131 件の params が全部読めて、鍵が catalog に届いていること。

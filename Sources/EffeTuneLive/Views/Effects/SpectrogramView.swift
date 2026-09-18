@@ -50,6 +50,7 @@ import CoreGraphics
 /// DSP へは送らない。升目は常に対数で来るので、描く側だけの切り替えになる。
 enum ETSpectrogramScale: String, CaseIterable, Identifiable {
     case log
+    case logHQ
     case linear
 
     var id: String { rawValue }
@@ -58,6 +59,7 @@ enum ETSpectrogramScale: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .log:    return "Log"
+        case .logHQ:  return "Log (HQ)"
         case .linear: return "Linear"
         }
     }
@@ -75,12 +77,17 @@ struct SpectrogramView: View {
 
     @State private var scale: ETSpectrogramScale = .log
 
+    private var effectiveScale: ETSpectrogramScale {
+        let hq = node.spec.params.first(where: { $0.key == "hq" })
+        return hq.map { node.values[$0.offset] >= 0.5 } == true ? .logHQ : (scale == .logHQ ? .log : scale)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB, scale: scale)
+            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB, scale: effectiveScale)
             // 上流は DB Range・Points・Frequency Scale の順に並べている
             // （spectrogram.js:631-678）。同じ順にする。
-            ForEach(node.spec.params) { param in
+            ForEach(node.spec.params.filter { $0.key != "hq" }) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
             if !graphOnly { scalePicker }
@@ -94,9 +101,12 @@ struct SpectrogramView: View {
                 .font(.system(size: 14))
             HStack(spacing: 6) {
                 ForEach(ETSpectrogramScale.allCases) { option in
-                    let isSelected = scale == option
+                    let isSelected = effectiveScale == option
                     Button {
                         scale = option
+                        if let hq = node.spec.params.first(where: { $0.key == "hq" }) {
+                            dsp.setValue(option == .logHQ ? 1 : 0, at: index, offset: hq.offset)
+                        }
                     } label: {
                         Text(option.label)
                             .font(.system(size: 13, weight: isSelected ? .bold : .regular))
@@ -208,12 +218,14 @@ private struct SpectrogramGraph: View {
     /// Log は升目の並びそのまま。Linear の目盛りは spectrogram.js:995-1000 の狭い方を写す。
     private var axis: ETAxis {
         switch scale {
-        case .log:
+        case .log, .logHQ:
             return ETAxis.frequency(ETSpectrogramBand.minHz, ETSpectrogramBand.maxHz)
         case .linear:
-            return ETAxis.linear(ETSpectrogramBand.minHz...ETSpectrogramBand.maxHz,
+            var axis = ETAxis.linear(ETSpectrogramBand.minHz...ETSpectrogramBand.maxHz,
                                  ticks: [20, 10000, 20000, 30000, 40000],
                                  label: { ETFormat.hzTick($0) })
+            axis.isFrequency = true
+            return axis
         }
     }
 
@@ -275,6 +287,15 @@ struct ETSpectrogramColumn {
     let sequence: UInt32
 
     init?(_ frame: ETFrame?) {
+        if let frame, frame.version == 2 {
+            guard let hq = ETHQSpectrumHeader(frame: frame, spectrum: false) else { return nil }
+            sampleRate = hq.rate
+            time = hq.time
+            points = hq.points
+            cells = Array(frame.payload[48...])
+            sequence = frame.sequence
+            return
+        }
         guard let frame = frame, frame.matches(version: 1), frame.hasPayload(bytes: 268) else { return nil }
 
         let payload = frame.payloadView
@@ -467,7 +488,7 @@ final class ETSpectrogramBand: ObservableObject {
 
     private func displayValue(row: Int, column: Int) -> UInt8 {
         switch scale {
-        case .log:
+        case .log, .logHQ:
             return canonical[row * Self.columns + column]
         case .linear:
             // 読み替えた行は整数にならない。spectrogram.js:229-236 と同じく上下を混ぜる。
