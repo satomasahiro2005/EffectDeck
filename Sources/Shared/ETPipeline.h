@@ -123,6 +123,10 @@ void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor);
 void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
                                        uint32_t count);
 
+/// Publish the ordered external segment that runs before native EffeTune.
+void ETPipeline_SetPreExternalProcessors(const ETExternalProcessor *processors,
+                                          uint32_t count);
+
 /// Clear the external processor. Safe to call from the control thread; the
 /// render thread observes the change at the next block boundary.
 void ETPipeline_ClearExternalProcessor(void);

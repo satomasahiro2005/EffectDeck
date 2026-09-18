@@ -44,6 +44,8 @@ static _Atomic uint_least32_t gLatency = 0;
 // by the caller after the render thread has stopped using the old context.
 static ETExternalProcessor gExternal[ET_EXTERNAL_MAX_PROCESSORS];
 static uint32_t gExternalCount = 0;
+static ETExternalProcessor gPreExternal[ET_EXTERNAL_MAX_PROCESSORS];
+static uint32_t gPreExternalCount = 0;
 static _Atomic int gExternalEnabled = 0;
 static _Atomic uint64_t gExternalRateBits = 0;
 
@@ -104,12 +106,27 @@ void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
     atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
 }
 
+void ETPipeline_SetPreExternalProcessors(const ETExternalProcessor *processors,
+                                         uint32_t count)
+{
+    if (processors == NULL || count == 0) {
+        gPreExternalCount = 0;
+        return;
+    }
+    if (count > ET_EXTERNAL_MAX_PROCESSORS) count = ET_EXTERNAL_MAX_PROCESSORS;
+    for (uint32_t i = 0; i < count; ++i) gPreExternal[i] = processors[i];
+    gPreExternalCount = count;
+}
+
 void ETPipeline_ClearExternalProcessor(void)
 {
     atomic_store_explicit(&gExternalEnabled, 0, memory_order_release);
     gExternalCount = 0;
     for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i)
         ETExternalProcessor_Clear(&gExternal[i]);
+    gPreExternalCount = 0;
+    for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i)
+        ETExternalProcessor_Clear(&gPreExternal[i]);
 }
 
 void ETPipeline_SetExternalSampleRate(double sampleRate)
@@ -121,6 +138,8 @@ uint32_t ETPipeline_ExternalLatency(void)
 {
     if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0;
     uint32_t total = 0;
+    for (uint32_t i = 0; i < gPreExternalCount; ++i)
+        total += ETExternalProcessor_Latency(&gPreExternal[i]);
     for (uint32_t i = 0; i < gExternalCount; ++i)
         total += ETExternalProcessor_Latency(&gExternal[i]);
     return total;
@@ -130,6 +149,10 @@ double ETPipeline_ExternalTailTime(void)
 {
     if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0.0;
     double tail = 0.0;
+    for (uint32_t i = 0; i < gPreExternalCount; ++i) {
+        const double value = ETExternalProcessor_TailTime(&gPreExternal[i]);
+        if (value > tail) tail = value;
+    }
     for (uint32_t i = 0; i < gExternalCount; ++i) {
         const double value = ETExternalProcessor_TailTime(&gExternal[i]);
         if (value > tail) tail = value;
@@ -275,13 +298,18 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     const uint32_t bypass = atomic_load_explicit(&gBypass, memory_order_relaxed) ? 1u : 0u;
     // process のエラーは gStatus に入れない。入れると configure の結果を潰してしまい、
     // 「組めなかった」のか「組めたが処理に失敗した」のか読めなくなる。戻り値で返す。
+    float *bus = et_arena_combined_ptr(engine);
+    const double sampleRate = bitsDouble(atomic_load_explicit(&gExternalRateBits,
+                                                               memory_order_relaxed));
+    for (uint32_t i = 0; i < gPreExternalCount; ++i) {
+        const int32_t externalStatus = ETExternalProcessor_Process(
+            &gPreExternal[i], bus, channels, frames, sampleRate, timeSeconds);
+        if (externalStatus != 0) return externalStatus;
+    }
     const int32_t status = (int32_t)et_pipeline_process(engine, channels, frames,
                                                          timeSeconds, bypass);
     if (status != ET_OK) return status;
     if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) {
-        float *bus = et_arena_combined_ptr(engine);
-        const double sampleRate = bitsDouble(atomic_load_explicit(&gExternalRateBits,
-                                                                   memory_order_relaxed));
         for (uint32_t i = 0; i < gExternalCount; ++i) {
             const int32_t externalStatus = ETExternalProcessor_Process(
                 &gExternal[i], bus, channels, frames, sampleRate, timeSeconds);
