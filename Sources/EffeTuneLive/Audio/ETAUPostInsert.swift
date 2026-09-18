@@ -33,6 +33,7 @@ final class ETAUPostInsert: ObservableObject {
     @Published var bypass = false
 
     private(set) var audioUnit: AVAudioUnit?
+    private var units: [String: AVAudioUnit] = [:]
     private let selectedKey = "audio.auPostInsert"
     private let bypassKey = "audio.auPostInsert.bypass"
     private let parametersKey = "audio.auPostInsert.parameters"
@@ -64,12 +65,20 @@ final class ETAUPostInsert: ObservableObject {
         Task { await load(entry) }
     }
 
+    /// Restore an AU referenced by an external pipeline node without changing
+    /// the picker selection. Multiple AU nodes can therefore coexist.
+    func ensureLoaded(id: String) {
+        guard let entry = entries.first(where: { $0.id == id }) else { return }
+        Task { await load(entry, select: false) }
+    }
+
     func externalIndex(for entry: Entry) -> UInt8 {
         ETAUExternalBridge.shared.index(for: entry.id)
     }
 
     func clear() {
         audioUnit = nil
+        units.removeAll()
         ETAUExternalBridge.shared.clear()
         selectedID = nil
         loadedTitle = nil
@@ -100,20 +109,28 @@ final class ETAUPostInsert: ObservableObject {
         objectWillChange.send()
     }
 
-    private func load(_ entry: Entry) async {
+    private func load(_ entry: Entry, select: Bool = true) async {
         status = "Loading…"
         do {
-            let unit = try await AVAudioUnit.instantiate(with: entry.description)
-            audioUnit = unit
+            let unit: AVAudioUnit
+            if let cached = units[entry.id] {
+                unit = cached
+            } else {
+                unit = try await AVAudioUnit.instantiate(with: entry.description)
+                units[entry.id] = unit
+            }
             ETAUExternalBridge.shared.install(unit,
                                               index: ETAUExternalBridge.shared.index(for: entry.id))
-            audioUnit?.auAudioUnit.shouldBypassEffect = bypass
-            restoreParameters()
-            selectedID = entry.id
-            loadedTitle = entry.title
+            unit.auAudioUnit.shouldBypassEffect = bypass
+            if select {
+                audioUnit = unit
+                restoreParameters()
+                selectedID = entry.id
+                loadedTitle = entry.title
+                UserDefaults.standard.set(entry.id, forKey: selectedKey)
+                AudioIO.shared.rebuildForExternalProcessor()
+            }
             status = "Loaded"
-            UserDefaults.standard.set(entry.id, forKey: selectedKey)
-            AudioIO.shared.rebuildForExternalProcessor()
         } catch {
             status = "Failed: \(error.localizedDescription)"
         }

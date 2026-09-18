@@ -679,6 +679,7 @@ final class EffeTuneDSP: ObservableObject {
         node.externalID = item.externalID.isEmpty ? nil : item.externalID
         if node.isExternal {
             node.externalIndex = ETAUExternalBridge.shared.index(for: item.externalID)
+            ETAUPostInsert.shared.ensureLoaded(id: item.externalID)
         }
         if node.isExternal {
             chain.append(node)

@@ -11,6 +11,7 @@
 //  class に section を足して枠の色を変えている（js/ui/pipeline/pipeline-item-builder.js:28-29）。
 
 import SwiftUI
+import AVFoundation
 
 struct EffectCardView: View {
     let index: Int
@@ -84,7 +85,9 @@ struct EffectCardView: View {
                 }
                 if isExpanded && hasBody {
                     Group {
-                        if ETEffectViews.has(node.spec.type) {
+                        if node.isExternal {
+                            ExternalProcessorBody()
+                        } else if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
                             ETEffectViews.view(index: index, node: node, dsp: dsp)
                                 .environment(\.etGraphOnly, false)
@@ -311,7 +314,7 @@ struct EffectCardView: View {
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
     private var hasBody: Bool {
-        !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
+        node.isExternal || !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
@@ -347,6 +350,41 @@ struct EffectCardView: View {
     private func valueText(_ param: ETParam, _ v: Float) -> String {
         if case .toggle = param.kind { return v >= 0.5 ? "On" : "Off" }
         return param.format(v)
+    }
+}
+
+/// AU parameters are deliberately presented by the external node rather than
+/// by a fixed post-insert settings screen. The selected AU host owns the
+/// parameter tree and persists values; this view only provides the same inline
+/// editing affordance as native EffeTune parameters.
+private struct ExternalProcessorBody: View {
+    @ObservedObject private var au = ETAUPostInsert.shared
+
+    var body: some View {
+        if au.parameters.isEmpty {
+            Text(au.status == "Loaded" ? "No parameters" : au.status)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(au.parameters, id: \.address) { parameter in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(parameter.displayName)
+                                .font(.footnote)
+                            Spacer()
+                            Text(String(format: "%.3g", parameter.value))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(parameter.value) },
+                            set: { au.setParameter(parameter, value: $0) }),
+                            in: Double(parameter.minValue)...Double(parameter.maxValue))
+                    }
+                }
+            }
+        }
     }
 }
 
