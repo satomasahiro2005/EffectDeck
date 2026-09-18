@@ -51,7 +51,9 @@ fi
 # position where their descriptor node appears. Keep this as a reversible
 # patch because Vendor/effetune is a pinned submodule until the change lands
 # upstream.
-if git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --check ../../Patches/effetune-external-node.diff 2>/dev/null; then
+if grep -q "et_pipeline_set_external_callback" Vendor/effetune/dsp/core/abi.cpp 2>/dev/null; then
+  echo "当たっている: effetune-external-node.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --check ../../Patches/effetune-external-node.diff 2>/dev/null; then
   git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace ../../Patches/effetune-external-node.diff \
     && echo "当てた: effetune-external-node.diff"
 elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --reverse --check ../../Patches/effetune-external-node.diff 2>/dev/null; then
