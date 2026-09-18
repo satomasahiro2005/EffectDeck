@@ -125,6 +125,10 @@ final class Preferences: ObservableObject {
         }
     }
 
+    @Published var syncVisualsToAudio: Bool {
+        didSet { save(syncVisualsToAudio, "pref.syncVisualsToAudio") }
+    }
+
     /// しきい値だけが変わったときに呼ばれる。組み直さずに値を差し替える。
     var onSilenceThresholdChange: (() -> Void)?
 
@@ -138,6 +142,7 @@ final class Preferences: ObservableObject {
         powerMode = ETPowerMode(rawValue: d.string(forKey: "pref.power") ?? "") ?? .balanced
         silenceThresholdDb = d.object(forKey: "pref.silence") as? Double ?? -80
         keepScreenAwake = d.object(forKey: "pref.awake") as? Bool ?? false
+        syncVisualsToAudio = d.bool(forKey: "pref.syncVisualsToAudio")
 
         // **init の代入では didSet が走らない。**
         // そのため、保存値が true でも起動直後だけ画面が落ちていた。

@@ -404,6 +404,7 @@ private struct NoteSpectrogramGraph: View {
     @StateObject private var band = ETNoteBand()
 
     @State private var probe: ETNoteProbe?
+    @GestureState private var previewActive = false
 
     var body: some View {
         // 枠を読むのは 1 回だけ。指で触っている間も body は回るので、
@@ -454,11 +455,21 @@ private struct NoteSpectrogramGraph: View {
                     .contentShape(Rectangle())
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
+                            .updating($previewActive) { _, active, _ in active = true }
                             .onChanged { touch in
                                 probe = sample(at: touch.location, plot: plot, slots: slots)
+                                if let probe {
+                                    ETPreviewTone_SetFrequency(440 * pow(2, Double(probe.midi - 69) / 12))
+                                }
                             }
-                            .onEnded { _ in probe = nil })
+                            .onEnded { _ in
+                                probe = nil
+                                ETPreviewTone_SetFrequency(0)
+                            })
             })
+            .onChange(of: previewActive) { _, active in
+                if !active { ETPreviewTone_SetFrequency(0) }
+            }
             .onAppear {
                 band.display = display
                 if let latest = snapshot { band.push(latest) }

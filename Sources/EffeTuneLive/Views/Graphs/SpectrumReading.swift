@@ -30,6 +30,7 @@ struct ETSpectrumReading {
     var points: Int
     var current: [Float]
     var peaks: [Float]
+    var highQuality = false
 
     var fftSize: Int { 1 << points }
 
@@ -43,7 +44,8 @@ struct ETSpectrumReading {
     /// 周波数に一番近い bin の値。
     func decibel(at hz: Double, floor: Double) -> Double {
         guard hzPerBin > 0, !current.isEmpty else { return floor }
-        let i = min(max(Int((hz / hzPerBin).rounded()), 0), current.count - 1)
+        let position = highQuality ? log(max(20, hz) / 20) / log(2000) * Double(current.count - 1) : hz / hzPerBin
+        let i = min(max(Int(position.rounded()), 0), current.count - 1)
         return ETdB.finite(Double(current[i]), floor: floor)
     }
 
@@ -54,7 +56,19 @@ struct ETSpectrumReading {
     /// 枠が無い・版が違う・形が合わないものは nil。
     /// 0 を返して図を描くと「値が無い」と「値が 0」の区別がつかなくなる。
     init?(frame: ETFrame?) {
-        guard let frame, frame.matches(version: 1) else { return nil }
+        guard let frame else { return nil }
+        if frame.version == 2 {
+            guard let hq = ETHQSpectrumHeader(frame: frame, spectrum: true),
+                  let cur = frame.payloadView.floats(at: 48, count: hq.count),
+                  let pk = frame.payloadView.floats(at: 48 + hq.count * 4, count: hq.count) else { return nil }
+            sampleRate = hq.rate
+            points = hq.points
+            current = cur
+            peaks = pk
+            highQuality = true
+            return
+        }
+        guard frame.matches(version: 1) else { return nil }
 
         let payload = frame.payloadView
         guard let rate = payload.f32(at: 0),
@@ -116,7 +130,8 @@ extension ETSpectrumReading {
         var bestX: CGFloat = 0
 
         for i in 0..<values.count {
-            let hz = Double(i) * hzPerBin
+            let hz = highQuality ? 20 * pow(2000, Double(i) / Double(values.count - 1)) : Double(i) * hzPerBin
+            guard hz <= sampleRate / 2 else { break }
             guard hz >= range.lowerBound else { continue }
             guard hz <= range.upperBound else { break }
             let x = plot.x(hz)

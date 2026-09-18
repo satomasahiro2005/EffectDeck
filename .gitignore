@@ -8,6 +8,8 @@
 .DS_Store
 DerivedData/
 Generated/note-models/
+Generated/dsp-check/
+Generated/host-check/
 build/
 out-sim/
 out/

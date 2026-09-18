@@ -11,6 +11,40 @@ import XCTest
 
 final class ParamCodingTests: XCTestCase {
 
+    func testSpatialMapperMatricesUseUpstreamFlatArrays() throws {
+        let s = try spec("SpatialMapperPlugin")
+        var values = s.defaults
+        for key in ["dm", "fm", "rm"] {
+            let p = try XCTUnwrap(s.params.first { $0.key == key })
+            XCTAssertEqual(p.count, 256)
+            // Output 4, input 2: output-major order, including negative gain.
+            values[p.offset + 3 * 16 + 1] = -0.375
+        }
+        let encoded = ETParamCoding.encode(params: s.params, values: values)
+        let data = try JSONSerialization.data(withJSONObject: encoded)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for key in ["dm", "fm", "rm"] {
+            let matrix = try XCTUnwrap(json[key] as? [NSNumber])
+            XCTAssertEqual(matrix.count, 256)
+            XCTAssertEqual(matrix[49].floatValue, -0.375)
+            XCTAssertNil(json[key + "0"])
+        }
+        XCTAssertEqual(ETParamCoding.decode(params: s.params, defaults: s.defaults, from: json), values)
+    }
+
+    func testOldSpectrumPresetsKeepHQDisabled() throws {
+        for type in ["SpectrumAnalyzerPlugin", "SpectrogramPlugin"] {
+            let s = try spec(type)
+            let hq = try XCTUnwrap(s.params.first { $0.key == "hq" })
+            let legacy = ETParamCoding.decode(params: s.params, defaults: s.defaults,
+                                             from: ["dr": -120, "pt": 11])
+            XCTAssertEqual(legacy[hq.offset], 0)
+            let modern = ETParamCoding.decode(params: s.params, defaults: s.defaults,
+                                             from: ["hq": true])
+            XCTAssertEqual(modern[hq.offset], 1)
+        }
+    }
+
     private func spec(_ type: String) throws -> ETEffect {
         try XCTUnwrap(ETCatalog.first { $0.type == type }, "\(type) が catalog に無い")
     }

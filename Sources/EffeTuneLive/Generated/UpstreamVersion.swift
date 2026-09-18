@@ -5,4 +5,4 @@
 //  **アプリの版とは別の事実。**あちらは出した日で、
 //  こちらは積んだ EffeTune の dsp の版。
 
-let ETUpstreamVersion = "2.9.0"
+let ETUpstreamVersion = "2.10.0"

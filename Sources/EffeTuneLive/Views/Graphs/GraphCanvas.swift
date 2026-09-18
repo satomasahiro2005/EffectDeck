@@ -90,12 +90,14 @@ struct ETAxis {
     var lower: Double
     var upper: Double
     var ticks: [ETAxisTick]
+    var isFrequency: Bool
 
-    init(scale: ETAxisScale = .linear, lower: Double, upper: Double, ticks: [ETAxisTick] = []) {
+    init(scale: ETAxisScale = .linear, lower: Double, upper: Double, ticks: [ETAxisTick] = [], isFrequency: Bool = false) {
         self.scale = scale
         self.lower = lower
         self.upper = upper
         self.ticks = ticks
+        self.isFrequency = isFrequency
     }
 
     /// 0（下端・左端）から 1（上端・右端）へ。範囲の外もそのまま返す。
@@ -141,7 +143,7 @@ struct ETAxis {
                 let show = labelsEverywhere || named.contains(hz) || hz == upper
                 return ETAxisTick(hz, show ? ETFormat.hzTick(hz) : nil)
             }
-        return ETAxis(scale: .logarithmic, lower: lower, upper: upper, ticks: ticks)
+        return ETAxis(scale: .logarithmic, lower: lower, upper: upper, ticks: ticks, isFrequency: true)
     }
 
     /// dB を線形で。0 の線だけ濃くする。
@@ -249,6 +251,8 @@ struct GraphCanvas<Overlay: View>: View {
 
     /// 畳んだカードから渡る高さの上限。nil なら height をそのまま使う。
     @Environment(\.etGraphMaxHeight) private var maxHeight
+    @Environment(\.scenePhase) private var scenePhase
+    @GestureState private var previewActive = false
     var insets: ETGraphInsets
     /// 掴んでいる値。空なら caption を出す。
     var readout: [ETReadoutItem]
@@ -301,8 +305,27 @@ struct GraphCanvas<Overlay: View>: View {
                     }
                     overlay(ETPlot(size: geo.size, x: x, y: y, insets: insets))
                 }
+                .simultaneousGesture(DragGesture(minimumDistance: 0)
+                    .updating($previewActive) { _, active, _ in active = x.isFrequency || y.isFrequency }
+                    .onChanged { touch in
+                        guard x.isFrequency || y.isFrequency else { return }
+                        let plot = ETPlot(size: geo.size, x: x, y: y, insets: insets)
+                        guard plot.rect.contains(touch.location) else {
+                            ETPreviewTone_SetFrequency(0)
+                            return
+                        }
+                        ETPreviewTone_SetFrequency(x.isFrequency ? plot.xValue(at: touch.location.x) : plot.yValue(at: touch.location.y))
+                    }
+                    .onEnded { _ in ETPreviewTone_SetFrequency(0) })
             }
             .frame(height: min(height, maxHeight ?? height))
+        }
+        .onDisappear { ETPreviewTone_SetFrequency(0) }
+        .onChange(of: previewActive) { wasActive, active in
+            if wasActive && !active { ETPreviewTone_SetFrequency(0) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { ETPreviewTone_SetFrequency(0) }
         }
     }
 

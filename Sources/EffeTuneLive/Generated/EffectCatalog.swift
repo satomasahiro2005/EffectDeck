@@ -50,28 +50,43 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "verticalOffset", key: "vo", label: "Vertical Offset", kind: .number(min: -1.0, max: 1.0, step: 0.01, unit: "", isInteger: false), defaultValue: 0.0, offset: 6, count: 1)
       ]),
     ETEffect(
+      type: "PitchMeterPlugin",
+      name: "Pitch Meter",
+      about: "Tracks the fundamental pitch of a single note",
+      category: "analyzer",
+      paramsHash: 0x9e7a2059,
+      floatCount: 3,
+      defaults: [440.0, 36.0, 96.0],
+      params: [
+        ETParam(name: "referenceA4", key: "rf", label: "Reference A4", kind: .number(min: 400.0, max: 480.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 440.0, offset: 0, count: 1),
+        ETParam(name: "minimumMidi", key: "mn", label: "Lowest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 36.0, offset: 1, count: 1),
+        ETParam(name: "maximumMidi", key: "mx", label: "Highest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 96.0, offset: 2, count: 1)
+      ]),
+    ETEffect(
       type: "SpectrogramPlugin",
       name: "Spectrogram",
       about: "Real-time spectrogram analyzer",
       category: "analyzer",
-      paramsHash: 0xc99dcc20,
-      floatCount: 2,
-      defaults: [-96.0, 12.0],
+      paramsHash: 0x3e6e0819,
+      floatCount: 3,
+      defaults: [-96.0, 12.0, 0.0],
       params: [
         ETParam(name: "dBRange", key: "dr", label: "DB Range", kind: .number(min: -144.0, max: -48.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -96.0, offset: 0, count: 1),
-        ETParam(name: "points", key: "pt", label: "Points", kind: .number(min: 8.0, max: 14.0, step: 1.0, unit: "", isInteger: true), defaultValue: 12.0, offset: 1, count: 1)
+        ETParam(name: "points", key: "pt", label: "Points", kind: .number(min: 8.0, max: 14.0, step: 1.0, unit: "", isInteger: true), defaultValue: 12.0, offset: 1, count: 1),
+        ETParam(name: "highQualityLog", key: "hq", label: "High Quality Log", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1)
       ]),
     ETEffect(
       type: "SpectrumAnalyzerPlugin",
       name: "Spectrum Analyzer",
       about: "Real-time spectrum analyzer with peak hold",
       category: "analyzer",
-      paramsHash: 0xc99dcc20,
-      floatCount: 2,
-      defaults: [-96.0, 12.0],
+      paramsHash: 0x3e6e0819,
+      floatCount: 3,
+      defaults: [-96.0, 12.0, 0.0],
       params: [
         ETParam(name: "dBRange", key: "dr", label: "DB Range", kind: .number(min: -144.0, max: -48.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -96.0, offset: 0, count: 1),
-        ETParam(name: "points", key: "pt", label: "Points", kind: .number(min: 8.0, max: 14.0, step: 1.0, unit: "", isInteger: true), defaultValue: 12.0, offset: 1, count: 1)
+        ETParam(name: "points", key: "pt", label: "Points", kind: .number(min: 8.0, max: 14.0, step: 1.0, unit: "", isInteger: true), defaultValue: 12.0, offset: 1, count: 1),
+        ETParam(name: "highQualityLog", key: "hq", label: "High Quality Log", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1)
       ]),
     ETEffect(
       type: "StereoMeterPlugin",
@@ -267,9 +282,9 @@ let ETCatalog: [ETEffect] = [
       defaults: [-24.0, 2.0, 10.0, 100.0, 3.0, 0.0],
       params: [
         ETParam(name: "threshold", key: "th", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -24.0, offset: 0, count: 1),
-        ETParam(name: "ratio", key: "rt", label: "Ratio", kind: .number(min: 0.5, max: 20.0, step: 0.01, unit: "1:", isInteger: false), defaultValue: 2.0, offset: 1, count: 1),
+        ETParam(name: "ratio", key: "rt", label: "Ratio", kind: .number(min: 0.5, max: 20.0, step: 0.01, unit: "", isInteger: false), defaultValue: 2.0, offset: 1, count: 1),
         ETParam(name: "attack", key: "at", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 10.0, offset: 2, count: 1),
-        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 1.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 3, count: 1),
+        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 3, count: 1),
         ETParam(name: "knee", key: "kn", label: "Knee", kind: .number(min: 0.0, max: 12.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: 3.0, offset: 4, count: 1),
         ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 5, count: 1)
       ]),
@@ -283,9 +298,9 @@ let ETCatalog: [ETEffect] = [
       defaults: [-24.0, 2.0, 10.0, 100.0, 3.0, 0.0],
       params: [
         ETParam(name: "threshold", key: "th", label: "Threshold", kind: .number(min: -60.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -24.0, offset: 0, count: 1),
-        ETParam(name: "ratio", key: "rt", label: "Ratio", kind: .number(min: 0.05, max: 20.0, step: 0.01, unit: "1:", isInteger: false), defaultValue: 2.0, offset: 1, count: 1),
+        ETParam(name: "ratio", key: "rt", label: "Ratio", kind: .number(min: 0.05, max: 20.0, step: 0.01, unit: "", isInteger: false), defaultValue: 2.0, offset: 1, count: 1),
         ETParam(name: "attack", key: "at", label: "Attack", kind: .number(min: 0.1, max: 100.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 10.0, offset: 2, count: 1),
-        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 1.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 3, count: 1),
+        ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 1000.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 100.0, offset: 3, count: 1),
         ETParam(name: "knee", key: "kn", label: "Knee", kind: .number(min: 0.0, max: 12.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: 3.0, offset: 4, count: 1),
         ETParam(name: "gain", key: "gn", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 5, count: 1)
       ]),
@@ -299,7 +314,7 @@ let ETCatalog: [ETEffect] = [
       defaults: [-40.0, 10.0, 1.0, 200.0, 1.0, 0.0],
       params: [
         ETParam(name: "threshold", key: "th", label: "Threshold", kind: .number(min: -96.0, max: 0.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -40.0, offset: 0, count: 1),
-        ETParam(name: "ratio", key: "rt", label: "Ratio", kind: .number(min: 1.0, max: 100.0, step: 0.1, unit: ":1", isInteger: false), defaultValue: 10.0, offset: 1, count: 1),
+        ETParam(name: "ratio", key: "rt", label: "Ratio", kind: .number(min: 1.0, max: 100.0, step: 0.1, unit: "", isInteger: false), defaultValue: 10.0, offset: 1, count: 1),
         ETParam(name: "attack", key: "at", label: "Attack", kind: .number(min: 0.01, max: 50.0, step: 0.01, unit: "ms", isInteger: false), defaultValue: 1.0, offset: 2, count: 1),
         ETParam(name: "release", key: "rl", label: "Release", kind: .number(min: 10.0, max: 2000.0, step: 10.0, unit: "ms", isInteger: true), defaultValue: 200.0, offset: 3, count: 1),
         ETParam(name: "knee", key: "kn", label: "Knee", kind: .number(min: 0.0, max: 6.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 1.0, offset: 4, count: 1),
@@ -910,6 +925,30 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "rmsJitter", key: "rj", label: "RMS Jitter", kind: .number(min: 0.0, max: 200.0, step: 1.0, unit: "", isInteger: true), defaultValue: 100.0, offset: 0, count: 1)
       ]),
     ETEffect(
+      type: "TVAudioSimulatorPlugin",
+      name: "TV Audio Simulator",
+      about: "Simulates analogue and NICAM television sound transmission and reception",
+      category: "lofi",
+      paramsHash: 0x0baee164,
+      floatCount: 14,
+      defaults: [1.0, 0.0, 0.0, 0.0, 35.0, 0.0, 230.0, 0.0, 5.0, 0.0, 0.0, -80.0, 0.0, 100.0],
+      params: [
+        ETParam(name: "standard", key: "ss", label: "Standard", kind: .enumeration(["M/EIA-J", "M/BTSC", "M/A2", "B/G A2", "B/G NICAM", "I NICAM", "D/K Mono", "L AM"]), defaultValue: 0.0, offset: 1, count: 1),
+        ETParam(name: "broadcast", key: "rd", label: "Broadcast", kind: .toggle, defaultValue: 1.0, offset: 0, count: 1),
+        ETParam(name: "txMode", key: "tx", label: "Tx Mode", kind: .enumeration(["Stereo", "Mono", "Dual"]), defaultValue: 0.0, offset: 2, count: 1),
+        ETParam(name: "receiveMode", key: "sm", label: "Receive Mode", kind: .enumeration(["Auto", "Stereo", "Main", "Sub"]), defaultValue: 0.0, offset: 10, count: 1),
+        ETParam(name: "processing", key: "pr", label: "Processing", kind: .number(min: 0.0, max: 18.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 3, count: 1),
+        ETParam(name: "signal", key: "st", label: "Signal", kind: .number(min: 0.0, max: 70.0, step: 0.1, unit: "dBµV", isInteger: false), defaultValue: 35.0, offset: 4, count: 1),
+        ETParam(name: "tuning", key: "tn", label: "Tuning", kind: .number(min: -200.0, max: 200.0, step: 0.1, unit: "kHz", isInteger: false), defaultValue: 0.0, offset: 5, count: 1),
+        ETParam(name: "ifBand", key: "bw", label: "IF Band", kind: .number(min: 80.0, max: 240.0, step: 1.0, unit: "kHz", isInteger: true), defaultValue: 230.0, offset: 6, count: 1),
+        ETParam(name: "multipath", key: "mp", label: "Multipath", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 0.0, offset: 7, count: 1),
+        ETParam(name: "pathDelay", key: "dl", label: "Path Delay", kind: .number(min: 0.5, max: 50.0, step: 0.01, unit: "µs", isInteger: false), defaultValue: 5.0, offset: 8, count: 1),
+        ETParam(name: "fading", key: "fd", label: "Fading", kind: .number(min: 0.0, max: 20.0, step: 0.1, unit: "Hz", isInteger: false), defaultValue: 0.0, offset: 9, count: 1),
+        ETParam(name: "buzz", key: "bz", label: "Buzz", kind: .number(min: -80.0, max: -20.0, step: 1.0, unit: "dB", isInteger: true), defaultValue: -80.0, offset: 11, count: 1),
+        ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -24.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 12, count: 1),
+        ETParam(name: "mix", key: "mx", label: "Mix", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 13, count: 1)
+      ]),
+    ETEffect(
       type: "TapeArtifactsPlugin",
       name: "Tape Artifacts",
       about: "Reel-to-reel tape record and reproduce chain",
@@ -1365,7 +1404,7 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "density", key: "ds", label: "Density", kind: .number(min: 4.0, max: 8.0, step: 1.0, unit: "lines", isInteger: true), defaultValue: 8.0, offset: 3, count: 1),
         ETParam(name: "diffusion", key: "df", label: "Diffusion", kind: .number(min: 0.2, max: 0.8, step: 0.01, unit: "ratio", isInteger: false), defaultValue: 0.7, offset: 4, count: 1),
         ETParam(name: "damping", key: "dp", label: "Damping", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 80.0, offset: 5, count: 1),
-        ETParam(name: "highDamp", key: "hd", label: "High Damp", kind: .number(min: 1000.0, max: 20000.0, step: 100.0, unit: "Hz", isInteger: true), defaultValue: 2000.0, offset: 6, count: 1),
+        ETParam(name: "highDamp", key: "hd", label: "High Damp", kind: .number(min: 1000.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 2000.0, offset: 6, count: 1),
         ETParam(name: "lowDamp", key: "ld", label: "Low Damp", kind: .number(min: 20.0, max: 500.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 200.0, offset: 7, count: 1),
         ETParam(name: "mix", key: "mx", label: "Mix", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 16.0, offset: 8, count: 1)
       ]),
@@ -1606,6 +1645,27 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "coreBalanceLow", key: "bl", label: "Core Balance Low", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: -100.0, offset: 60, count: 5, objectArrayKey: "regions", memberKey: "bl"),
         ETParam(name: "coreBalanceHigh", key: "bh", label: "Core Balance High", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: 100.0, offset: 65, count: 5, objectArrayKey: "regions", memberKey: "bh"),
         ETParam(name: "outerBalanceHigh", key: "obh", label: "Outer Balance High", kind: .number(min: -100.0, max: 100.0, step: 0.1, unit: "%", isInteger: false), defaultValue: 100.0, offset: 70, count: 5, objectArrayKey: "regions", memberKey: "obh")
+      ]),
+    ETEffect(
+      type: "SpatialMapperPlugin",
+      name: "Spatial Mapper",
+      about: "Separates and routes direct, diffuse, and residual spatial components",
+      category: "spatial",
+      paramsHash: 0xce48b525,
+      floatCount: 776,
+      defaults: [2.0, 2.0, 50.0, 50.0, 50.0, 50.0, 50.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+      params: [
+        ETParam(name: "inputChannels", key: "ic", label: "Input Channels", kind: .number(min: 1.0, max: 16.0, step: 1.0, unit: "ch", isInteger: true), defaultValue: 2.0, offset: 0, count: 1),
+        ETParam(name: "bands", key: "bd", label: "Analysis Bands", kind: .enumeration(["8", "16", "24", "32", "48"]), defaultValue: 2.0, offset: 1, count: 1),
+        ETParam(name: "directness", key: "dr", label: "Directness", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 50.0, offset: 2, count: 1),
+        ETParam(name: "separation", key: "sp", label: "Separation", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 50.0, offset: 3, count: 1),
+        ETParam(name: "diffuseExtraction", key: "de", label: "Diffuse Extraction", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 50.0, offset: 4, count: 1),
+        ETParam(name: "phaseSensitivity", key: "ph", label: "Phase Sensitivity", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 50.0, offset: 5, count: 1),
+        ETParam(name: "temporalSmoothing", key: "ts", label: "Temporal Smoothing", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 50.0, offset: 6, count: 1),
+        ETParam(name: "energyPreservation", key: "ep", label: "Energy Preservation", kind: .toggle, defaultValue: 1.0, offset: 7, count: 1),
+        ETParam(name: "directMatrix", key: "dm", label: "Direct Matrix", kind: .number(min: -1.0, max: 1.0, step: 0.01, unit: "", isInteger: false), defaultValue: 1.0, offset: 8, count: 256, flatArrayKey: "dm"),
+        ETParam(name: "diffuseMatrix", key: "fm", label: "Diffuse Matrix", kind: .number(min: -1.0, max: 1.0, step: 0.01, unit: "", isInteger: false), defaultValue: 1.0, offset: 264, count: 256, flatArrayKey: "fm"),
+        ETParam(name: "residualMatrix", key: "rm", label: "Residual Matrix", kind: .number(min: -1.0, max: 1.0, step: 0.01, unit: "", isInteger: false), defaultValue: 1.0, offset: 520, count: 256, flatArrayKey: "rm")
       ]),
     ETEffect(
       type: "StereoBlendPlugin",

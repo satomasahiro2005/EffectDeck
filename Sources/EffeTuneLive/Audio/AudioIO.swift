@@ -414,6 +414,8 @@ final class AudioIO: ObservableObject {
                 p[n + i] = s[i * 2 + 1]
             }
 
+            ETPreviewTone_Render(p, UInt32(n), state.sampleRate)
+
             // 3. 無音が続いていたら鎖を通さない。
             //    無音に何を掛けても無音なので、聞こえ方は変わらない。
             //    セッションは手放さない。手放すと出力先が戻ってしまう。
@@ -506,6 +508,7 @@ final class AudioIO: ObservableObject {
     }
 
     func stop(keepListening: Bool = false) {
+        ETPreviewTone_SetFrequency(0)
         escape.reset()
         reportedGaveUp = false
         node.map { engine.detach($0) }
@@ -534,7 +537,11 @@ final class AudioIO: ObservableObject {
     /// body を 33ms ごとに作り直し、開いた Menu が提示を終えられなくなる。
     /// 図は Telemetry を直接読んでいるので、ここは poll だけでよい。
     func pollTelemetry() {
-        Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine)
+        let session = AVAudioSession.sharedInstance()
+        let delay = Preferences.shared.syncVisualsToAudio
+            ? session.outputLatency + session.ioBufferDuration
+              + Double(resamplerLatency) / max(session.sampleRate, 1) : 0
+        Telemetry.shared.poll(engine: EffeTuneDSP.shared.engine, displayDelay: delay)
     }
 
     /// 状態の見直し。重いものはこちら。

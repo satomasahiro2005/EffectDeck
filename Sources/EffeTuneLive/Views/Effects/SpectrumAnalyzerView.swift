@@ -23,6 +23,7 @@ import Foundation
 /// DSP へは送らないので EffectCatalog には無い。
 enum ETSpectrumScale: String, CaseIterable, Identifiable {
     case log
+    case logHQ
     case linear
 
     var id: String { rawValue }
@@ -31,6 +32,7 @@ enum ETSpectrumScale: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .log:    return "Log"
+        case .logHQ:  return "Log (HQ)"
         case .linear: return "Linear"
         }
     }
@@ -45,13 +47,19 @@ struct SpectrumAnalyzerView: View {
     @Environment(\.etGraphOnly) private var graphOnly
 
     @State private var scale: ETSpectrumScale = .log
+    @State private var bars = false
+
+    private var effectiveScale: ETSpectrumScale {
+        let hq = node.spec.params.first(where: { $0.key == "hq" })
+        return hq.map { node.values[$0.offset] >= 0.5 } == true ? .logHQ : (scale == .logHQ ? .log : scale)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SpectrumAnalyzerGraph(tapId: node.tapId, floorDB: floorDB, scale: scale)
+            SpectrumAnalyzerGraph(tapId: node.tapId, floorDB: floorDB, scale: effectiveScale, bars: bars)
             // 上流は DB Range・Points・Frequency Scale の順に並べている
             // （spectrum_analyzer.js:465-519）。同じ順にする。
-            ForEach(node.spec.params) { param in
+            ForEach(node.spec.params.filter { $0.key != "hq" }) { param in
                 if param.name == "points" {
                     if !graphOnly {
                         PointsRow(param: param, nodeIndex: index,
@@ -62,6 +70,7 @@ struct SpectrumAnalyzerView: View {
                 }
             }
             if !graphOnly { scalePicker }
+            if !graphOnly { Toggle("Bar display", isOn: $bars) }
         }
     }
 
@@ -72,9 +81,12 @@ struct SpectrumAnalyzerView: View {
                 .font(.system(size: 14))
             HStack(spacing: 6) {
                 ForEach(ETSpectrumScale.allCases) { option in
-                    let isSelected = scale == option
+                    let isSelected = effectiveScale == option
                     Button {
                         scale = option
+                        if let hq = node.spec.params.first(where: { $0.key == "hq" }) {
+                            dsp.setValue(option == .logHQ ? 1 : 0, at: index, offset: hq.offset)
+                        }
                     } label: {
                         Text(option.label)
                             .font(.system(size: 13, weight: isSelected ? .bold : .regular))
@@ -214,6 +226,7 @@ private struct SpectrumAnalyzerGraph: View {
     let tapId: UInt32
     let floorDB: Double
     let scale: ETSpectrumScale
+    let bars: Bool
 
     @ObservedObject private var telemetry = Telemetry.shared
 
@@ -248,7 +261,21 @@ private struct SpectrumAnalyzerGraph: View {
 
                 let columns = r.columns(r.current, plot: plot, floor: floorDB,
                                         range: Self.floorHz...Self.ceilingHz)
-                if columns.count > 1 {
+                if bars {
+                    let count = plot.rect.width < 500 ? 24 : 48
+                    let width = plot.rect.width / CGFloat(count)
+                    var bands = [Double](repeating: floorDB, count: count)
+                    for column in columns {
+                        let band = min(count - 1, max(0, Int((column.x - plot.rect.minX) / width)))
+                        bands[band] = max(bands[band], column.db)
+                    }
+                    for (band, db) in bands.enumerated() {
+                        let y = plot.y(db)
+                        context.fill(Path(CGRect(x: plot.rect.minX + CGFloat(band) * width + 1,
+                                                 y: y, width: max(1, width - 2), height: max(0, bottom - y))),
+                                     with: ETGraphShading.curve)
+                    }
+                } else if columns.count > 1 {
                     var path = Path()
                     for (i, column) in columns.enumerated() {
                         let pt = CGPoint(x: column.x, y: plot.y(column.db))
@@ -317,7 +344,7 @@ private struct SpectrumAnalyzerGraph: View {
             return ETAxisTick(hz, edge ? nil : ETFormat.hzTick(hz))
         }
         return ETAxis(scale: scale == .linear ? .linear : .logarithmic,
-                      lower: Self.floorHz, upper: Self.ceilingHz, ticks: ticks)
+                      lower: Self.floorHz, upper: Self.ceilingHz, ticks: ticks, isFrequency: true)
     }
 
     /// spectrum_analyzer.js:733-742。0 から dr まで 24dB 刻み。

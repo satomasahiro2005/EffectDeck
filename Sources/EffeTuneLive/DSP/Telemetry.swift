@@ -40,6 +40,7 @@ enum ETFrameType: UInt16 {
     case swRadioSimulator   = 18
     case tubeSimulator      = 19
     case phaseSelectMap     = 20
+    case pitchMeter         = 26
 }
 
 struct ETFrame {
@@ -87,6 +88,9 @@ final class Telemetry: ObservableObject {
 
     private init() {}
 
+    private var pending: [(time: TimeInterval, frames: [UInt64: ETFrame])] = []
+    private var synchronized = false
+
     static func key(tap: UInt32, type: ETFrameType) -> UInt64 {
         UInt64(tap) << 16 | UInt64(type.rawValue)
     }
@@ -98,18 +102,24 @@ final class Telemetry: ObservableObject {
     func clear() {
         latest.removeAll()
         droppedFrames = 0
+        pending.removeAll()
     }
 
     /// 溜まっているぶんを読み出して、種類ごとに最新だけ残す。
-    func poll(engine: UInt32) {
+    func poll(engine: UInt32, displayDelay: TimeInterval = 0) {
         guard engine != 0 else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let delay = displayDelay.isFinite ? min(5, max(0, displayDelay)) : 0
+        if synchronized != (delay > 0) {
+            pending.removeAll()
+            synchronized = delay > 0
+        }
 
         var dropped: UInt32 = 0
         let read = buffer.withUnsafeMutableBufferPointer { buf -> UInt32 in
             et_telemetry_read(engine, buf.baseAddress, UInt32(buf.count), &dropped)
         }
         if dropped > 0 { droppedFrames &+= dropped }
-        guard read > 0 else { return }
 
         var offset = 0
         let bytes = Int(read)
@@ -136,9 +146,15 @@ final class Telemetry: ObservableObject {
             offset += frameBytes
         }
 
-        if !found.isEmpty {
-            latest.merge(found) { _, new in new }
+        if !found.isEmpty { pending.append((now + delay, found)) }
+        var ready: [UInt64: ETFrame] = [:]
+        while let first = pending.first, first.time <= now {
+            ready.merge(first.frames) { _, new in new }
+            pending.removeFirst()
         }
+        // Bound memory even if the output route changes to an unusually long delay.
+        if pending.count > 180 { pending.removeFirst(pending.count - 180) }
+        if !ready.isEmpty { latest.merge(ready) { _, new in new } }
     }
 
     private func load16(_ o: Int) -> UInt16 {

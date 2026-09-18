@@ -15,6 +15,7 @@ enum ETEffectViews {
     /// 畳んだときに「図だけ」の段を作れないので、開く↔畳むの 2 つになる。
     /// 増えたらここに足す。
     private static let withoutGraph: Set<String> = [
+        "SpatialMapperPlugin",
         // 取り込む口と状態行だけ。曲線は IR が無いと描けない
         // （IRReverbView.swift の冒頭に理由がある）。
         "IRReverbPlugin",
@@ -36,6 +37,8 @@ enum ETEffectViews {
     static func has(_ type: String) -> Bool { types.contains(type) }
 
     private static let types: Set<String> = [
+        "PitchMeterPlugin",
+        "SpatialMapperPlugin",
         "AutoLevelerPlugin",
         "ChannelDividerPlugin",
         "CompressorPlugin",
@@ -83,6 +86,10 @@ enum ETEffectViews {
     static func view(index: Int, node: EffeTuneDSP.Node,
                      dsp: EffeTuneDSP) -> some View {
         switch node.spec.type {
+        case "PitchMeterPlugin":
+            PitchMeterView(index: index, node: node, dsp: dsp)
+        case "SpatialMapperPlugin":
+            SpatialMapperView(index: index, node: node, dsp: dsp)
         case "AutoLevelerPlugin":
             AutoLevelerView(index: index, node: node, dsp: dsp)
         case "ChannelDividerPlugin":
