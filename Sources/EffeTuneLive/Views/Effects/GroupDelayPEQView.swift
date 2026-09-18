@@ -104,7 +104,7 @@ final class GroupDelayPEQDesigners {
         var next = designer.settings
         next.sampleRate = dsp.sampleRate
         next.processingChannels = GroupDelayPEQSettings.routedChannels(
-            channelSpec: node.channelSpec, engineChannels: 2)
+            channelSpec: node.channelSpec, engineChannels: Int(dsp.maxChannels))
         designer.update(next.clampingDelaysToLimit(), debounce: 0)
 
         markAttached(node.id, instance: node.instance)
@@ -158,7 +158,7 @@ struct GroupDelayPEQView: View {
         GroupDelayPEQSettings(latencySamples: seededLatency,
                               sampleRate: dsp.sampleRate,
                               processingChannels: GroupDelayPEQSettings.routedChannels(
-                                  channelSpec: node.channelSpec, engineChannels: 2))
+                                  channelSpec: node.channelSpec, engineChannels: Int(dsp.maxChannels)))
     }
 
     /// lt の初期値。node.values の lt は選択肢の添字（EffectCatalog.swift:541）。
@@ -264,7 +264,8 @@ private struct GroupDelayPEQBody: View {
     /// で 16 も対に数える。designer 側の routedChannels（GroupDelayPEQDesigner.swift:206-213）が
     /// そちらに合わせてあるので、それを呼ぶ。
     private var routedChannels: Int {
-        GroupDelayPEQSettings.routedChannels(channelSpec: node.channelSpec, engineChannels: 2)
+        GroupDelayPEQSettings.routedChannels(channelSpec: node.channelSpec,
+                                             engineChannels: Int(dsp.maxChannels))
     }
 
     private func pushRouting() {

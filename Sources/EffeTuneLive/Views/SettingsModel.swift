@@ -408,6 +408,7 @@ struct ETDiagnostics {
             ETDiagnosticLine(label: "Effects running",
                              value: "\(io.applied) of \(dsp.chain.filter { !$0.isSection }.count)"),
             ETDiagnosticLine(label: "Output", value: io.outputRoute),
+            ETDiagnosticLine(label: "Output channels", value: "\(io.outputChannels)"),
             // **名乗っている字はここに出さない。**
             // ET_ROUTE_NAME も ET_DRIVER_NAME もコンパイル時の定数で、
             // 出しても定数を書き戻すだけ。動的に取る手も無い:

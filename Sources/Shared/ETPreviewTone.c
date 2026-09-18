@@ -10,8 +10,8 @@ void ETPreviewTone_SetFrequency(double hz) {
     atomic_store_explicit(&frequency, isfinite(hz) && hz > 0 ? hz : 0, memory_order_relaxed);
 }
 
-void ETPreviewTone_Render(float *planar, uint32_t frames, double rate) {
-    if (!planar || !isfinite(rate) || rate <= 0) return;
+void ETPreviewTone_Render(float *planar, uint32_t frames, uint32_t channels, double rate) {
+    if (!planar || channels == 0 || !isfinite(rate) || rate <= 0) return;
     const double hz = atomic_load_explicit(&frequency, memory_order_relaxed);
     const double target = hz > 0 && hz < rate * 0.49 ? 0.0630957344 : 0; // -24 dBFS
     if (target > 0) lastFrequency = hz;
@@ -20,7 +20,7 @@ void ETPreviewTone_Render(float *planar, uint32_t frames, double rate) {
         amplitude += fmax(-step, fmin(step, target - amplitude));
         const float tone = (float)(sin(phase) * amplitude);
         planar[i] += tone;
-        planar[frames + i] += tone;
+        if (channels > 1) planar[frames + i] += tone;
         phase += 6.283185307179586 * lastFrequency / rate;
         if (phase >= 6.283185307179586) phase = fmod(phase, 6.283185307179586);
     }

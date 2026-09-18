@@ -113,6 +113,8 @@ final class EffeTuneDSP: ObservableObject {
     private var nextTap: UInt32 = 1
     /// 組んであるレート。IR を送るときの解決に要る（IRLoader）。
     private(set) var sampleRate: Double = 48000
+    /// et_engine_prepare に渡した幅。実際の出力IFと同じ（DSPの上限16ch）。
+    private(set) var maxChannels: UInt32 = 2
     private var maxFrames: UInt32 = 4096
     private var kernelIndex: [String: UInt32] = [:]
 
@@ -134,6 +136,7 @@ final class EffeTuneDSP: ObservableObject {
 
     func prepare(sampleRate: Double, maxChannels: UInt32 = 2, maxFrames: UInt32 = 4096) {
         self.sampleRate = sampleRate
+        self.maxChannels = maxChannels
         self.maxFrames = maxFrames
 
         if engine == 0 {
@@ -469,11 +472,11 @@ final class EffeTuneDSP: ObservableObject {
     /// `channelSpec == -1 || channelSpec >= 16 ? 2 : 1`。
     /// 16 は「1ch 目と 2ch 目の対」で、17 以降が "34"、"56" と続く。
     /// 16 を 1 に数えると、対に置いた段へ 1ch ぶんの形で資産を送ることになる。
-    /// -2（All）は engine の幅そのもので、この app は 2ch で組んである
-    /// （AudioIO.swift:157 と :383 がどちらも maxChannels: 2）。
+    /// -2（All）は接続中の出力IFに合わせた engine の幅そのもの。
     static func routedChannels(of node: Node) -> Int {
         switch node.channelSpec {
-        case -2, -1: return 2
+        case -2: return Int(shared.maxChannels)
+        case -1: return min(2, Int(shared.maxChannels))
         case 16...:  return 2
         default:     return 1
         }

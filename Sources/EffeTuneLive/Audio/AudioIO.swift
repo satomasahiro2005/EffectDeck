@@ -21,10 +21,11 @@ private final class RenderState {
     let capacity: Int          // 入力レートでのフレーム数の上限
     let factor: Int
     let sampleRate: Double     // 出力（＝入力）レート
+    let channels: Int          // DSP と出力の本数。入力リンクだけは常に stereo
 
     let interleaved: UnsafeMutablePointer<Float>   // capacity * 2
-    let planar: UnsafeMutablePointer<Float>        // capacity * 2
-    let hi: UnsafeMutablePointer<Float>            // capacity * factor * 2
+    let planar: UnsafeMutablePointer<Float>        // capacity * channels
+    let hi: UnsafeMutablePointer<Float>            // capacity * factor * channels
     var resampler: OpaquePointer?
 
     var meter: Float = 0
@@ -43,20 +44,21 @@ private final class RenderState {
 
     private var timebase = mach_timebase_info_data_t()
 
-    init(capacity: Int, sampleRate: Double, factor: Int) {
+    init(capacity: Int, sampleRate: Double, factor: Int, channels: Int) {
         self.capacity = capacity
         self.sampleRate = sampleRate
         self.factor = factor
+        self.channels = channels
 
         interleaved = .allocate(capacity: capacity * 2)
-        planar      = .allocate(capacity: capacity * 2)
-        hi          = .allocate(capacity: capacity * factor * 2)
+        planar      = .allocate(capacity: capacity * channels)
+        hi          = .allocate(capacity: capacity * factor * channels)
         interleaved.initialize(repeating: 0, count: capacity * 2)
-        planar.initialize(repeating: 0, count: capacity * 2)
-        hi.initialize(repeating: 0, count: capacity * factor * 2)
+        planar.initialize(repeating: 0, count: capacity * channels)
+        hi.initialize(repeating: 0, count: capacity * factor * channels)
 
         if factor > 1 {
-            resampler = ETResampler_Create(UInt32(factor), 2, UInt32(capacity))
+            resampler = ETResampler_Create(UInt32(factor), UInt32(channels), UInt32(capacity))
         }
         if ETMockSource.enabled { mock = ETMockSource(sampleRate: sampleRate) }
     }
@@ -101,6 +103,9 @@ final class AudioIO: ObservableObject {
     @Published var running = false
     @Published var sampleRate: Double = 48000
     @Published var processingRate: Double = 48000
+    /// DSP から AVAudioEngine へ渡している本数。ステレオ入力を Spatial Mapper 等で
+    /// 広げるため、接続中の出力が 4ch 以上なら同じ本数で処理する。
+    @Published var outputChannels: Int = 2
     @Published var status = "Stopped"
     @Published var route = "—"
     @Published var listening = false
@@ -141,6 +146,8 @@ final class AudioIO: ObservableObject {
     /// ハードウェアのレートが組んだときと食い違っている目盛りの数。
     /// 一瞬の食い違いで組み直すと音が切れ続けるので、続いたものだけを見る。
     private var rateMismatchTicks = 0
+    /// 出力IFの抜き差しで本数が変わったときも、レートと同じく落ち着いてから組み直す。
+    private var channelMismatchTicks = 0
     /// NotificationCenter の購読。singleton なので外す機会は無いが、持っておく。
     private var observers: [NSObjectProtocol] = []
 
@@ -324,6 +331,7 @@ final class AudioIO: ObservableObject {
             try session.setPreferredSampleRate(48000)
             try session.setPreferredIOBufferDuration(prefs.latency.bufferDuration)
             try session.setActive(true)
+            configureMultichannelOutput(session)
             pinInputToBuiltInMic(session)
             // 出力先はシステムに任せる。
             // .speaker を無条件に当てると、イヤホンを繋いでいても
@@ -381,20 +389,24 @@ final class AudioIO: ObservableObject {
             log.notice("device rate \(sr) != 48000, link is fixed at 48k")
         }
         let factor = Int(prefs.processingRate.factor)
-        let state = RenderState(capacity: Self.capacity, sampleRate: sr, factor: factor)
+        let channels = Self.processingChannels(for: session.outputNumberOfChannels)
+        let state = RenderState(capacity: Self.capacity, sampleRate: sr, factor: factor,
+                                channels: channels)
         state.gate.idleSeconds = prefs.powerMode.idleSeconds
         state.gate.thresholdLinear = Float(pow(10.0, prefs.silenceThresholdDb / 20.0))
         render = state
 
-        EffeTuneDSP.shared.prepare(sampleRate: sr * Double(factor), maxChannels: 2,
+        EffeTuneDSP.shared.prepare(sampleRate: sr * Double(factor), maxChannels: UInt32(channels),
                                    maxFrames: UInt32(Self.capacity * factor))
 
-        let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)!
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: sr,
+                                channels: AVAudioChannelCount(channels))!
         let src = AVAudioSourceNode { _, _, frameCount, ablPtr -> OSStatus in
             let began = state.now()
             let abl = UnsafeMutableAudioBufferListPointer(ablPtr)
             let n = min(Int(frameCount), state.capacity)
             let f = state.factor
+            let channels = state.channels
 
             // 1. リンクから受ける（インターリーブ・48kHz）
             //    撮影のときはリンクの代わりに作り物を流す。シミュレータには
@@ -409,12 +421,13 @@ final class AudioIO: ObservableObject {
             //    EffeTune のカーネルは offset = channel * frame_count で読む。
             let p = state.planar
             let s = state.interleaved
+            p.update(repeating: 0, count: n * channels)
             for i in 0..<n {
                 p[i]     = s[i * 2]
                 p[n + i] = s[i * 2 + 1]
             }
 
-            ETPreviewTone_Render(p, UInt32(n), state.sampleRate)
+            ETPreviewTone_Render(p, UInt32(n), UInt32(channels), state.sampleRate)
 
             // 3. 無音が続いていたら鎖を通さない。
             //    無音に何を掛けても無音なので、聞こえ方は変わらない。
@@ -442,12 +455,12 @@ final class AudioIO: ObservableObject {
             if awake, let main = ETPipeline_MainBus() {
                 if f > 1, let rs = state.resampler {
                     ETResampler_Up(rs, p, main, UInt32(n))
-                    state.pipeStatus = ETPipeline_Process(2, UInt32(n * f), state.elapsed)
+                    state.pipeStatus = ETPipeline_Process(UInt32(channels), UInt32(n * f), state.elapsed)
                     ETResampler_Down(rs, main, p, UInt32(n))
                 } else {
-                    main.update(from: p, count: n * 2)
-                    state.pipeStatus = ETPipeline_Process(2, UInt32(n), state.elapsed)
-                    p.update(from: main, count: n * 2)
+                    main.update(from: p, count: n * channels)
+                    state.pipeStatus = ETPipeline_Process(UInt32(channels), UInt32(n), state.elapsed)
+                    p.update(from: main, count: n * channels)
                 }
                 // ETPipeline_Process が返すのは et_status で、ET_OK は 0（ETPipeline.h）。
                 // これを件数として読むと「効いている数」が成功時にちょうど 0 になる。
@@ -462,18 +475,23 @@ final class AudioIO: ObservableObject {
 
             // 5. 出力へ書く
             var peak: Float = 0
-            let l = abl[0].mData!.assumingMemoryBound(to: Float.self)
-            let r = abl.count > 1 ? abl[1].mData!.assumingMemoryBound(to: Float.self) : l
-            for i in 0..<n {
-                let a = p[i], b = p[n + i]
-                l[i] = a
-                if abl.count > 1 { r[i] = b }
-                let m = max(abs(a), abs(b))
-                if m > peak { peak = m }
-            }
-            for i in n..<Int(frameCount) {
-                l[i] = 0
-                if abl.count > 1 { r[i] = 0 }
+            var sourceChannel = 0
+            for buffer in abl {
+                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                let lanes = max(1, Int(buffer.mNumberChannels))
+                for i in 0..<Int(frameCount) {
+                    for lane in 0..<lanes {
+                        let value: Float
+                        if i < n, sourceChannel + lane < channels {
+                            value = p[(sourceChannel + lane) * n + i]
+                            peak = max(peak, abs(value))
+                        } else {
+                            value = 0
+                        }
+                        data[i * lanes + lane] = value
+                    }
+                }
+                sourceChannel += lanes
             }
             state.meter = peak
 
@@ -499,12 +517,13 @@ final class AudioIO: ObservableObject {
         interrupted = false
         sampleRate = sr
         processingRate = sr * Double(factor)
+        outputChannels = channels
         resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
         status = rateOK ? "Running"
                         : String(format: "Running at %.0f Hz, input is 48000 Hz", sr)
         refreshRoute()
         updateNowPlaying()
-        log.notice("start sr=\(sr) x\(factor) route=\(self.route, privacy: .public)")
+        log.notice("start sr=\(sr) x\(factor) ch=\(channels) route=\(self.route, privacy: .public)")
     }
 
     func stop(keepListening: Bool = false) {
@@ -644,6 +663,20 @@ final class AudioIO: ObservableObject {
             rateMismatchTicks = 0
             log.notice("hardware rate \(session.sampleRate) != built \(built ?? 0), rebuilding")
             rebuild()
+            return
+        }
+
+        let actualChannels = Self.processingChannels(for: session.outputNumberOfChannels)
+        if running, let builtChannels = render?.channels, actualChannels != builtChannels {
+            channelMismatchTicks += 1
+        } else {
+            channelMismatchTicks = 0
+        }
+        if channelMismatchTicks >= 3,
+           ProcessInfo.processInfo.systemUptime - lastStartAttempt >= 1 {
+            channelMismatchTicks = 0
+            log.notice("hardware channels \(actualChannels) != built \(self.render?.channels ?? 0), rebuilding")
+            rebuild()
         }
     }
 
@@ -713,6 +746,32 @@ final class AudioIO: ObservableObject {
             let ns = error as NSError
             log.notice("入力を内蔵マイクに固定できない code=\(ns.code) \(ns.domain, privacy: .public)")
         }
+    }
+
+    /// Apple の規則どおり category / mode / active の後に要求する。要求が受理されても
+    /// 実際の本数は別なので、呼び出し後は outputNumberOfChannels を正として使う。
+    private func configureMultichannelOutput(_ session: AVAudioSession) {
+        do {
+            try session.setSupportsMultichannelContent(true)
+        } catch {
+            let ns = error as NSError
+            log.notice("multichannel content flag failed code=\(ns.code) \(ns.domain, privacy: .public)")
+        }
+
+        let requested = min(16, max(1, session.maximumOutputNumberOfChannels))
+        do {
+            try session.setPreferredOutputNumberOfChannels(requested)
+        } catch {
+            let ns = error as NSError
+            log.notice("preferred output channels failed code=\(ns.code) \(ns.domain, privacy: .public)")
+        }
+        log.notice("output channels max=\(session.maximumOutputNumberOfChannels) requested=\(requested) actual=\(session.outputNumberOfChannels)")
+    }
+
+    /// 入力は常に L/R なので、モノラル経路でもDSPまでは2chを保ち、ミキサーに
+    /// ダウンミックスさせる。EffeTune DSPの上限は16ch。
+    private static func processingChannels(for actualOutputChannels: Int) -> Int {
+        min(16, max(2, actualOutputChannels))
     }
 
     private func escapeVirtualDevice(_ session: AVAudioSession) {
