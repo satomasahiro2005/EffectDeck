@@ -75,7 +75,7 @@ final class ETAUExternalBridge {
         deinit {
             scratch.deinitialize(count: maxFrames * maxChannels)
             scratch.deallocate()
-            outputList.deallocate()
+            outputList.unsafeMutablePointer.deallocate()
         }
 
         func process(_ planar: UnsafeMutablePointer<Float>, channels: Int,
@@ -94,7 +94,7 @@ final class ETAUExternalBridge {
             var timestamp = AudioTimeStamp()
             timestamp.mSampleTime = sampleTime * sampleRate
 
-            let buffers = UnsafeMutableAudioBufferListPointer(outputList)
+            let buffers = outputList
             buffers.count = channels
             for c in 0..<channels {
                 buffers[c].mNumberChannels = 1
@@ -102,7 +102,7 @@ final class ETAUExternalBridge {
                 buffers[c].mData = UnsafeMutableRawPointer(scratch.advanced(by: c * maxFrames))
             }
             let status = render(&flags, &timestamp, AUAudioFrameCount(frames), 0,
-                                outputList.unsafeMutablePointer, nil, pullInput)
+                                outputList.unsafeMutablePointer, pullInput)
             guard status == noErr else { return Int32(status) }
 
             for c in 0..<channels {
