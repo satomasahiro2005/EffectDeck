@@ -56,10 +56,10 @@ if git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --chec
     && echo "当てた: effetune-external-node.diff"
 elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --reverse --check ../../Patches/effetune-external-node.diff 2>/dev/null; then
   echo "当たっている: effetune-external-node.diff"
-elif patch --dry-run --ignore-whitespace -p1 -d Vendor/effetune < ../../Patches/effetune-external-node.diff >/dev/null 2>&1; then
-  patch --ignore-whitespace -p1 -d Vendor/effetune < ../../Patches/effetune-external-node.diff \
+elif patch --dry-run --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-external-node.diff >/dev/null 2>&1; then
+  patch --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-external-node.diff \
     && echo "当てた: effetune-external-node.diff (patch)"
-elif patch --dry-run --ignore-whitespace -R -p1 -d Vendor/effetune < ../../Patches/effetune-external-node.diff >/dev/null 2>&1; then
+elif patch --dry-run --ignore-whitespace -R -p1 -d Vendor/effetune < Patches/effetune-external-node.diff >/dev/null 2>&1; then
   echo "当たっている: effetune-external-node.diff (patch)"
 else
   echo "!! effetune-external-node.diff が当たらない。Vendor/effetune の版を確かめること"
