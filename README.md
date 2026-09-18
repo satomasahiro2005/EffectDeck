@@ -20,6 +20,11 @@
   <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" width="180" alt="Download on the App Store">
 </a>
 
+<!-- バッジの下に余白を空ける。Apple はバッジの高さの 1/4 を空けろと言う
+     （180px 幅なら高さ 60.2px なので 15.1px）。空行だけでは 5.3px しか
+     空かなかった。 -->
+<br>
+
 <p>
   <img src="docs/shot-effects.png" width="31%" alt="">
   <img src="docs/shot-analyzers.png" width="31%" alt="">
