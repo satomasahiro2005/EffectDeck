@@ -14,7 +14,10 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <a href="https://apps.apple.com/app/effectdeck/id6812467517">
-  <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="60" alt="Download on the App Store">
+  <!-- 高さではなく幅で指定する。GitHub は img に height:auto を注入するので
+       height 属性は効かず、max-height が上限になるだけ。119.66:40 の比で
+       幅 180 が高さ 60。 -->
+  <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" width="180" alt="Download on the App Store">
 </a>
 
 <p>
