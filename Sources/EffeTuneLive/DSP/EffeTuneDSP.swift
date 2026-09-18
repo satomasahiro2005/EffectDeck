@@ -946,7 +946,7 @@ final class EffeTuneDSP: ObservableObject {
                                         outputBus: n.inputBus,
                                         channelSpec: n.channelSpec,
                                         sectionGate: n.sectionGate,
-                                        kind: ET_PIPE_NODE_NATIVE,
+                                        kind: UInt8(ET_PIPE_NODE_NATIVE),
                                         externalIndex: 0))
             }
             nodes.append(ETPipeNode(instance: n.instance,
@@ -955,7 +955,7 @@ final class EffeTuneDSP: ObservableObject {
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
                                     sectionGate: n.sectionGate,
-                                    kind: ET_PIPE_NODE_NATIVE,
+                                    kind: UInt8(ET_PIPE_NODE_NATIVE),
                                     externalIndex: 0))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
@@ -1046,7 +1046,7 @@ final class EffeTuneDSP: ObservableObject {
                                         outputBus: n.inputBus,
                                         channelSpec: n.channelSpec,
                                         sectionGate: n.sectionGate,
-                                        kind: ET_PIPE_NODE_NATIVE,
+                                        kind: UInt8(ET_PIPE_NODE_NATIVE),
                                         externalIndex: 0))
             }
             nodes.append(ETPipeNode(instance: n.instance,
@@ -1055,7 +1055,7 @@ final class EffeTuneDSP: ObservableObject {
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
                                     sectionGate: n.sectionGate,
-                                    kind: ET_PIPE_NODE_NATIVE,
+                                    kind: UInt8(ET_PIPE_NODE_NATIVE),
                                     externalIndex: 0))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
