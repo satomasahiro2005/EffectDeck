@@ -223,12 +223,7 @@ struct PipelineView: View {
         // その代わり .swipeActions が使えない（List の行でしか効かない）ので、
         // 左スワイプの削除はここで自前でやる。判定は ETDragHandle の
         // UIPanGestureRecognizer（横向きのときだけ立つ）。
-        // **中身を画面の高さまで伸ばす。**伸ばさないと、鎖が短いときに
-        // 最後の帯より下が「どこにも属さない余白」になり、そこへ落としても
-        // 何も起きない（List は行が画面いっぱいに広がるので起きなかった。
-        // 器を替えたときに戻ってしまった不具合）。
-        return GeometryReader { outer in
-        ScrollView {
+        return ScrollView {
             VStack(spacing: 0) {
             ClipboardBanner(dsp: dsp)
                 .padding(.horizontal, 14)
@@ -356,11 +351,8 @@ struct PipelineView: View {
                 //
                 // 高さは指が届くぶん。画面の残り全部にはできない（List の行なので）が、
                 // 最後のカードのすぐ下に帯があれば、そこを狙って落とせる。
-                // **画面の底まで受ける。**高さを決め打ちにすると、
-                // 鎖が短いときに下が空く。残り全部を落とし先にする。
                 Color.clear
-                    .frame(minHeight: 96)
-                    .frame(maxHeight: .infinity)
+                    .frame(height: 96)
                     .dropDestination(for: String.self) { items, _ in
                         guard let type = items.first else { return false }
                         if let preset = presetPayload(type) {
@@ -375,7 +367,26 @@ struct PipelineView: View {
                     }
             }
             }
-            .frame(minHeight: outer.size.height, alignment: .top)
+        }
+        // **器の背面で落とし先を受ける。**鎖が短いと、最後の段より下は
+        // どの行にも属さない余白になる。中身を画面の高さまで伸ばす手もあるが、
+        // GeometryReader で包むと外側の寸法の決まり方が変わって余白が崩れた。
+        // 背面なら、行に落ちたものは行が先に受け、余った所だけここへ来る。
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .dropDestination(for: String.self) { items, _ in
+                    guard let type = items.first else { return false }
+                    if let preset = presetPayload(type) {
+                        dsp.addPreset(named: preset.0, items: preset.1)
+                        sheet = nil
+                        return true
+                    }
+                    guard let spec = EffeTuneDSP.spec(forType: type) else { return false }
+                    dsp.add(spec)          // 位置を渡さない = 末尾
+                    sheet = nil
+                    return true
+                }
         }
         .coordinateSpace(name: Self.chainSpace)
         // **掴んだものは別の層に描く。**行の中に重ねると、はみ出したぶんが
@@ -406,7 +417,6 @@ struct PipelineView: View {
                         y: anchorRect.minY + dragShift.height)
                 .allowsHitTesting(false)
             }
-        }
         }
     }
 

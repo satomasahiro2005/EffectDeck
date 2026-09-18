@@ -98,18 +98,20 @@ struct SettingsView: View {
                                                             prefs.processingRate = $0 } }))
             // preferredIOBufferDuration は要求で、約束ではない。
             // 実際に通った長さは下の "Total delay" で返す。
-            ETSegmentedChoice(title: "Latency to aim for",
+            ETSegmentedChoice(title: "Buffer size",
                               values: ETLatency.allCases,
-                              // **ms を出す。**Low / Mid / High だけだと、
-                              // 何がどれだけ動くのかが画面のどこにも無い。
-                              label: \.msLabel,
+                              // **フレーム数を出す。**DAW と同じ数字なので、
+                              // 触っている人はそのまま読める。実際に通った
+                              // 長さは下の "Total delay" が返す。
+                              label: \.label,
                               selection: Binding(get: { prefs.latency },
                                                  set: { if $0 != prefs.latency {
                                                             prefs.latency = $0 } }))
             // **操作子を先、読む数字を後ろ。**あいだに数字を挟むと、
             // 2 つの操作子が離れて一組に見えなくなる。
-            ProcessingTimeRow(io: io)
+            // 遅延は操作子と直に繋がる数字なので先、CPU は節の締めに置く。
             DelayRow(io: io)
+            ProcessingTimeRow(io: io)
         } header: {
             Text("Processing")
         }
