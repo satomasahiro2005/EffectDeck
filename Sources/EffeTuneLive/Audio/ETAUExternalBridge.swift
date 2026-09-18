@@ -76,15 +76,15 @@ final class ETAUExternalBridge {
             guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate,
                                               channels: channelCount),
                   unit.auAudioUnit.inputBusses.count > 0,
-                  unit.auAudioUnit.outputBusses.count > 0,
-                  unit.auAudioUnit.inputBusses[0].setFormat(format, error: nil),
-                  unit.auAudioUnit.outputBusses[0].setFormat(format, error: nil) else {
+                  unit.auAudioUnit.outputBusses.count > 0 else {
                 self.outputList.unsafeMutablePointer.deallocate()
                 self.scratch.deinitialize(count: maxFrames * maxChannels)
                 self.scratch.deallocate()
                 return nil
             }
             do {
+                try unit.auAudioUnit.inputBusses[0].setFormat(format)
+                try unit.auAudioUnit.outputBusses[0].setFormat(format)
                 try unit.auAudioUnit.allocateRenderResources()
             } catch {
                 self.outputList.unsafeMutablePointer.deallocate()
