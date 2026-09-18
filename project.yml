@@ -75,6 +75,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Sources/EffeTuneLive/EffeTuneLive-Bridging-Header.h
     dependencies:
       - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
       # **拡張をここに同梱する。**
       # 以前は別のアプリ（Bridge）に入れていた。
       # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否される、

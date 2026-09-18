@@ -237,6 +237,7 @@ struct ETDelayReading {
     let linkMs: Double
     let blockMs: Double
     let filterMs: Double
+    let auMs: Double
     /// 積んでいるエフェクトが足す遅れ。**処理レートで数える。**
     let fxMs: Double
     let blockFrames: Int
@@ -255,7 +256,8 @@ struct ETDelayReading {
         // pipelineLatency は処理レートのサンプル数なので、そちらで割る。
         let procRate = io.processingRate > 0 ? io.processingRate : rate
         fxMs = Double(io.pipelineLatency) / procRate * 1000
-        totalMs = Int(((link + block + filter) / rate * 1000 + fxMs).rounded())
+        auMs = Double(io.postInsertLatency) / rate * 1000
+        totalMs = Int(((link + block + filter) / rate * 1000 + fxMs + auMs).rounded())
         linkMs = link / rate * 1000
         blockMs = block / rate * 1000
         filterMs = filter / rate * 1000
@@ -266,8 +268,8 @@ struct ETDelayReading {
 
     var note: String {
         String(format: "%.1f ms between the extension and this app, %.1f ms in the block "
-                     + "iOS gave (%d samples), %.1f ms in the oversampling filter.",
-               linkMs, blockMs, blockFrames, filterMs)
+                     + "iOS gave (%d samples), %.1f ms in the oversampling filter, %.1f ms in AU.",
+               linkMs, blockMs, blockFrames, filterMs, auMs)
     }
 }
 
@@ -409,6 +411,9 @@ struct ETDiagnostics {
                              value: "\(io.applied) of \(dsp.chain.filter { !$0.isSection }.count)"),
             ETDiagnosticLine(label: "Output", value: io.outputRoute),
             ETDiagnosticLine(label: "Output channels", value: "\(io.outputChannels)"),
+            ETDiagnosticLine(label: "AU post-insert latency",
+                             value: io.postInsertLatency > 0
+                                    ? samples(io.postInsertLatency, decimals: 2) : "none"),
             // **名乗っている字はここに出さない。**
             // ET_ROUTE_NAME も ET_DRIVER_NAME もコンパイル時の定数で、
             // 出しても定数を書き戻すだけ。動的に取る手も無い:

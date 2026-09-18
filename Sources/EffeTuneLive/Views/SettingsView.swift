@@ -27,6 +27,7 @@ struct SettingsView: View {
     let io: AudioIO
     @StateObject private var prefs = Preferences.shared
     @StateObject private var dsp = EffeTuneDSP.shared
+    @StateObject private var au = ETAUPostInsert.shared
 
     /// **横で束ねる。**縦に全部並べると、一度に読めない長さになる。
     /// 下位画面へ押し出すと、よく見る Status まで 1 タップ遠くなる。
@@ -56,6 +57,7 @@ struct SettingsView: View {
                     } footer: {
                         Text("Delay graphs to match the audio output latency.")
                     }
+                    auPostInsert
                     power
                     // **音の数字は Audio に置く。**レート・バッファ・遅延の内訳・
                     // 出力先なので、探しに来るのはこの面。報告に貼る値でもあるが、
@@ -79,6 +81,61 @@ struct SettingsView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+        }
+    }
+
+    private var auPostInsert: some View {
+        Section {
+            Menu {
+                Button("Off") { au.clear() }
+                if !au.entries.isEmpty { Divider() }
+                ForEach(au.entries) { entry in
+                    Button {
+                        au.choose(entry)
+                    } label: {
+                        if au.selectedID == entry.id {
+                            Label(entry.title, systemImage: "checkmark")
+                        } else {
+                            Text(entry.title)
+                        }
+                    }
+                }
+                Divider()
+                Button("Refresh list", systemImage: "arrow.clockwise") { au.refresh() }
+            } label: {
+                LabeledContent("AU post-insert") {
+                    Text(au.loadedTitle ?? "Off")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if au.loadedTitle != nil {
+                Toggle("Bypass AU", isOn: Binding(
+                    get: { au.bypass },
+                    set: { au.setBypass($0) }))
+                ForEach(au.parameters, id: \.address) { parameter in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(parameter.displayName)
+                            Spacer()
+                            Text(String(format: "%.3g", au.parameterValue(parameter)))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { au.parameterValue(parameter) },
+                            set: { au.setParameter(parameter, value: $0) }),
+                               in: Double(parameter.minValue)...Double(parameter.maxValue))
+                    }
+                }
+            }
+            if au.status != "Off" && au.status != "Loaded" {
+                Text(au.status).font(.footnote).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Audio Unit")
+        } footer: {
+            Text("The selected AU runs after the EffeTune chain.")
         }
     }
 

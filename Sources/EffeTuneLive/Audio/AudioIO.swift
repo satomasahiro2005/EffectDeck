@@ -96,6 +96,7 @@ final class AudioIO: ObservableObject {
     /// 作り直せるように let ではなく var。
     private var engine = AVAudioEngine()
     private var node: AVAudioSourceNode?
+    private var postInsertNode: AVAudioUnit?
     private var render: RenderState?
 
     private static let capacity = 4096
@@ -133,6 +134,8 @@ final class AudioIO: ObservableObject {
     /// 読んでいなかったので、Phase Select EQ のように実際に遅延を増やす
     /// エフェクトを入れても帯の数字が動かなかった。
     @Published var pipelineLatency: Int = 0
+    /// AU post-insertが報告する遅延（出力レートのサンプル数）。
+    @Published var postInsertLatency: Int = 0
     /// 無音で休んでいるか。
     @Published var resting = false
 
@@ -181,6 +184,11 @@ final class AudioIO: ObservableObject {
         guard running else { return }
         stop(keepListening: true)
         start()
+    }
+
+    /// AUv3のpost-insert選択が変わったときに音声グラフだけを組み直す。
+    func rebuildForExternalProcessor() {
+        rebuild()
     }
 
     // MARK: - セッション側の出来事
@@ -502,7 +510,15 @@ final class AudioIO: ObservableObject {
         }
 
         engine.attach(src)
-        engine.connect(src, to: engine.mainMixerNode, format: fmt)
+        if let postInsert = ETAUPostInsert.shared.audioUnit {
+            engine.attach(postInsert)
+            engine.connect(src, to: postInsert, format: fmt)
+            engine.connect(postInsert, to: engine.mainMixerNode, format: fmt)
+            postInsertNode = postInsert
+        } else {
+            engine.connect(src, to: engine.mainMixerNode, format: fmt)
+            postInsertNode = nil
+        }
         node = src
 
         do {
@@ -518,6 +534,9 @@ final class AudioIO: ObservableObject {
         sampleRate = sr
         processingRate = sr * Double(factor)
         outputChannels = channels
+        postInsertLatency = ETAUPostInsert.shared.audioUnit.map {
+            Int(($0.auAudioUnit.latency * sr).rounded())
+        } ?? 0
         resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
         status = rateOK ? "Running"
                         : String(format: "Running at %.0f Hz, input is 48000 Hz", sr)
@@ -530,13 +549,16 @@ final class AudioIO: ObservableObject {
         ETPreviewTone_SetFrequency(0)
         escape.reset()
         reportedGaveUp = false
+        postInsertNode.map { engine.detach($0) }
         node.map { engine.detach($0) }
+        postInsertNode = nil
         node = nil
         engine.stop()
         try? AVAudioSession.sharedInstance().setActive(false)
         if !keepListening { ETLinkReceiver.shared.stop() }
         EffeTuneDSP.shared.reset()
         render = nil
+        postInsertLatency = 0
         level = 0
         // start() は毎回ここを通るので、同じ値を書かない（publish が増えるだけ）。
         if running { running = false }
