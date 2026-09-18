@@ -406,6 +406,10 @@ final class AudioIO: ObservableObject {
 
         EffeTuneDSP.shared.prepare(sampleRate: sr * Double(factor), maxChannels: UInt32(channels),
                                    maxFrames: UInt32(Self.capacity * factor))
+        // External processors run at the same processing rate as the native
+        // pipeline. Adapters reject unsupported rates instead of inserting an
+        // implicit SRC.
+        ETPipeline_SetExternalSampleRate(sr * Double(factor))
 
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sr,
                                 channels: AVAudioChannelCount(channels))!

@@ -21,6 +21,7 @@
 #define ETPipeline_h
 
 #include <stdint.h>
+#include "ETExternalProcessor.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,6 +110,21 @@ int ETPipeline_IsBypassed(void);
 /// いま鎖が組めているか。直近の configure が ET_OK だったかどうか。
 /// engine を差し替えると 0 に戻る。
 int ETPipeline_HasConfigured(void);
+
+/// Attach one external processor to the pipeline's final planar bus.
+/// The descriptor is borrowed and must remain valid until replaced or cleared.
+/// This first ABI stage is deliberately post-pipeline; arbitrary insertion
+/// points require native engine support and will be added separately.
+void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor);
+
+/// Clear the external processor. Safe to call from the control thread; the
+/// render thread observes the change at the next block boundary.
+void ETPipeline_ClearExternalProcessor(void);
+
+void ETPipeline_SetExternalSampleRate(double sampleRate);
+
+uint32_t ETPipeline_ExternalLatency(void);
+double ETPipeline_ExternalTailTime(void);
 
 #ifdef __cplusplus
 }

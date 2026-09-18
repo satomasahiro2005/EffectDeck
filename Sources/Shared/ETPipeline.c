@@ -39,6 +39,26 @@ static _Atomic uint_least32_t gActive = 0;
 // FIR を持つエフェクト（Phase Select EQ など）を入れると増える。
 // configure のあとに読む。音のスレッドが書き、UI が読む。
 static _Atomic uint_least32_t gLatency = 0;
+// The descriptor is published by the control thread and read by the render
+// thread. Its context is owned by the adapter; replacement must be coordinated
+// by the caller after the render thread has stopped using the old context.
+static ETExternalProcessor gExternal;
+static _Atomic int gExternalEnabled = 0;
+static _Atomic uint64_t gExternalRateBits = 0;
+
+static uint64_t doubleBits(double value)
+{
+    uint64_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+static double bitsDouble(uint64_t bits)
+{
+    double value = 0.0;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
 
 static void writeU32(uint8_t *p, uint32_t v)
 {
@@ -59,6 +79,39 @@ void ETPipeline_SetEngine(uint32_t engine)
     // et_engine_prepare の destroyAllInstances でもう消えている。
     // 残すと次のブロックで ET_ERR_DESC になる（engine.cpp:674 slot == nullptr）。
     atomic_store_explicit(&gPending, -1, memory_order_relaxed);
+}
+
+void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor)
+{
+    if (processor == NULL || processor->process == NULL) {
+        ETPipeline_ClearExternalProcessor();
+        return;
+    }
+    gExternal = *processor;
+    atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
+}
+
+void ETPipeline_ClearExternalProcessor(void)
+{
+    atomic_store_explicit(&gExternalEnabled, 0, memory_order_release);
+    ETExternalProcessor_Clear(&gExternal);
+}
+
+void ETPipeline_SetExternalSampleRate(double sampleRate)
+{
+    atomic_store_explicit(&gExternalRateBits, doubleBits(sampleRate), memory_order_relaxed);
+}
+
+uint32_t ETPipeline_ExternalLatency(void)
+{
+    if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0;
+    return ETExternalProcessor_Latency(&gExternal);
+}
+
+double ETPipeline_ExternalTailTime(void)
+{
+    if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0.0;
+    return ETExternalProcessor_TailTime(&gExternal);
 }
 
 void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
@@ -133,9 +186,10 @@ uint32_t ETPipeline_Latency(void)
     // 読むだけの呼び出しで、音のスレッドは通らない。
     const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
     if (engine != 0 && atomic_load_explicit(&gConfigured, memory_order_relaxed)) {
-        return (uint32_t)et_pipeline_latency(engine);
+        return (uint32_t)et_pipeline_latency(engine) + ETPipeline_ExternalLatency();
     }
-    return (uint32_t)atomic_load_explicit(&gLatency, memory_order_relaxed);
+    return (uint32_t)atomic_load_explicit(&gLatency, memory_order_relaxed)
+         + ETPipeline_ExternalLatency();
 }
 
 int ETPipeline_IsBypassed(void)
@@ -198,5 +252,15 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     const uint32_t bypass = atomic_load_explicit(&gBypass, memory_order_relaxed) ? 1u : 0u;
     // process のエラーは gStatus に入れない。入れると configure の結果を潰してしまい、
     // 「組めなかった」のか「組めたが処理に失敗した」のか読めなくなる。戻り値で返す。
-    return (int32_t)et_pipeline_process(engine, channels, frames, timeSeconds, bypass);
+    const int32_t status = (int32_t)et_pipeline_process(engine, channels, frames,
+                                                         timeSeconds, bypass);
+    if (status != ET_OK) return status;
+    if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) {
+        return ETExternalProcessor_Process(&gExternal, et_arena_combined_ptr(engine),
+                                           channels, frames,
+                                           bitsDouble(atomic_load_explicit(&gExternalRateBits,
+                                                                           memory_order_relaxed)),
+                                           timeSeconds);
+    }
+    return status;
 }
