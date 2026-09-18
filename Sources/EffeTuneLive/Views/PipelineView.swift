@@ -141,6 +141,11 @@ struct PipelineView: View {
                         // 検索が出ている間、シートではなく検索を閉じる。
                         // 検索から選んだときだけ閉じない、という形になっていた。
                         sheet = nil
+                    }, onPickAU: { entry in
+                        dsp.addExternal(id: entry.id, name: entry.title,
+                                        category: "Audio Units", at: insertAt)
+                        insertAt = nil
+                        sheet = nil
                     }, onPickPreset: { name, items in
                         // 名前の付いた Section に包んで挿す。置き換えない。
                         // 鎖ごと置き換えたいときは Presets 画面のほう。

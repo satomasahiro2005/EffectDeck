@@ -15,6 +15,7 @@ import SwiftUI
 
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
+    let onPickAU: (ETAUPostInsert.Entry) -> Void
     /// プリセットを選んだ。名前と中身を渡す。受けた側が Section に包んで挿す。
     let onPickPreset: (String, [PipelineStore.Loaded]) -> Void
 
@@ -22,6 +23,7 @@ struct EffectPickerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
+    @StateObject private var au = ETAUPostInsert.shared
     @State private var query = ""
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
@@ -224,6 +226,28 @@ struct EffectPickerView: View {
                             }
                     }
                     .id(Self.newKey)
+                }
+
+                if !au.entries.isEmpty {
+                    Section("Audio Units") {
+                        ForEach(au.entries) { entry in
+                            Button {
+                                onPickAU(entry)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "pianokeys")
+                                    VStack(alignment: .leading) {
+                                        Text(entry.name)
+                                        if !entry.manufacturer.isEmpty {
+                                            Text(entry.manufacturer)
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 ForEach(categories, id: \.self) { name in

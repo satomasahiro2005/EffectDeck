@@ -37,6 +37,12 @@ final class EffeTuneDSP: ObservableObject {
         /// （plugins/reverb/ir_reverb.js:866）。
         var irId: String = ""
 
+        /// Native EffeTune nodeではない外部processor。instanceは持たず、
+        /// publish時にexternal callback nodeへ変換する。
+        var externalID: String? = nil
+        var externalIndex: UInt8 = 0
+        var isExternal: Bool { externalID != nil }
+
         // --- 鎖の形 ---
         // 普通の使い方では全部 0→0 の All なので、既定から外れたものだけ画面に出す。
         var inputBus: UInt8 = 0
@@ -235,6 +241,25 @@ final class EffeTuneDSP: ObservableObject {
         // 画面には何も出ない。上の expanded.insert は自分のパラメータを開く印で、
         // 包んでいる Section は畳んだままなので効かない。
         revealHidden([id])
+    }
+
+    /// AU/JSFXをEffectDeckの鎖へ追加するための共通入口。
+    /// 実行アダプタはexternalIDをキーに別レジストリから解決する。
+    func addExternal(id: String, name: String, category: String, at index: Int? = nil) {
+        let spec = ETEffect.external(type: "External:(id)", name: name, category: category)
+        var node = Node(spec: spec, values: [])
+        node.externalID = id
+        node.externalIndex = 0
+        let placed: Int
+        if let index, index >= 0, index < chain.count {
+            chain.insert(node, at: index)
+            placed = index
+        } else {
+            chain.append(node)
+            placed = chain.count - 1
+        }
+        publish()
+        expanded.insert(chain[placed].id)
     }
 
     /// 1 本足すだけ。publish はしない。
@@ -933,7 +958,7 @@ final class EffeTuneDSP: ObservableObject {
         // descriptor に入れない（dsp-pipeline-descriptor.js:194-198）。
         var nodes: [ETPipeNode] = []
         nodes.reserveCapacity(chain.count * 2)
-        for n in chain where n.instance != 0 {
+        for n in chain where n.instance != 0 || n.isExternal {
             // 探りは相手の**直前**。engine.cpp:917 は descriptor の順に回すので、
             // 直前の段が見ている音 = その段に入る音。
             if let probe = probes[n.id] {
@@ -949,14 +974,14 @@ final class EffeTuneDSP: ObservableObject {
                                         kind: UInt8(ET_PIPE_NODE_NATIVE),
                                         externalIndex: 0))
             }
-            nodes.append(ETPipeNode(instance: n.instance,
+            nodes.append(ETPipeNode(instance: n.isExternal ? 0 : n.instance,
                                     enabled: n.enabled ? 1 : 0,
                                     inputBus: n.inputBus,
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
                                     sectionGate: n.sectionGate,
-                                    kind: UInt8(ET_PIPE_NODE_NATIVE),
-                                    externalIndex: 0))
+                                    kind: UInt8(n.isExternal ? ET_PIPE_NODE_EXTERNAL : ET_PIPE_NODE_NATIVE),
+                                    externalIndex: n.externalIndex))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
@@ -1035,7 +1060,7 @@ final class EffeTuneDSP: ObservableObject {
         guard engine != 0 else { return }
         var nodes: [ETPipeNode] = []
         nodes.reserveCapacity(chain.count * 2)
-        for n in chain where n.instance != 0 {
+        for n in chain where n.instance != 0 || n.isExternal {
             if let probe = probes[n.id] {
                 // enabled: 2 = 音は通すが「動いている数」には入れない
                 // （ETPipeline.h の enabled）。人が置いた段ではないので、
@@ -1049,14 +1074,14 @@ final class EffeTuneDSP: ObservableObject {
                                         kind: UInt8(ET_PIPE_NODE_NATIVE),
                                         externalIndex: 0))
             }
-            nodes.append(ETPipeNode(instance: n.instance,
+            nodes.append(ETPipeNode(instance: n.isExternal ? 0 : n.instance,
                                     enabled: n.enabled ? 1 : 0,
                                     inputBus: n.inputBus,
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
                                     sectionGate: n.sectionGate,
-                                    kind: UInt8(ET_PIPE_NODE_NATIVE),
-                                    externalIndex: 0))
+                                    kind: UInt8(n.isExternal ? ET_PIPE_NODE_EXTERNAL : ET_PIPE_NODE_NATIVE),
+                                    externalIndex: n.externalIndex))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         let line = "republish nodes=\(nodes.count) （\(reason)）"
