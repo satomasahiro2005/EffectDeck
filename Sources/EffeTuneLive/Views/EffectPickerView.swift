@@ -15,10 +15,28 @@ import SwiftUI
 
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
+    /// プリセットを選んだ。名前と中身を渡す。受けた側が Section に包んで挿す。
+    let onPickPreset: (String, [PipelineStore.Loaded]) -> Void
+
+    @StateObject private var presets = PresetStore.shared
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
     @State private var query = ""
+
+    /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
+    enum Pane: String, CaseIterable, Identifiable {
+        case effects, user, system
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .effects: return "Effects"
+            case .user:    return "User Presets"
+            case .system:  return "System Presets"
+            }
+        }
+    }
+    @State private var pane: Pane = .effects
     /// 検索が出ているか。**畳むために持つ。**
     /// 検索が出ている間はシートを閉じられない（下の row のコメント）ので、
     /// 先にこれを false にしてから閉じる。`.searchable(text:isPresented:)` は
@@ -86,9 +104,27 @@ struct EffectPickerView: View {
                 // 切り取られるだけで済む。
                 if query.isEmpty {
                     VStack(spacing: 0) {
-                        categoryStrip
-                        Divider()
-                        allSections
+                        // **上の段階で 3 つに分ける。**効果とプリセットは
+                        // 探し方が違う。同じ一覧に混ぜると、効果を探しに来た人が
+                        // プリセットまで流し見ることになる。
+                        Picker("", selection: $pane) {
+                            ForEach(Pane.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
+
+                        switch pane {
+                        case .effects:
+                            categoryStrip
+                            Divider()
+                            allSections
+                        case .user:
+                            userPresetList
+                        case .system:
+                            systemPresetList
+                        }
                     }
                 } else {
                     searchList
@@ -136,11 +172,11 @@ struct EffectPickerView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(categories, id: \.self) { name in
+                    ForEach(stripNames, id: \.self) { name in
                         Button {
                             jump = Jump(name: name, count: jump.count + 1)
                         } label: {
-                            Text(name.categoryLabel)
+                            Text(Self.stripLabel(name))
                                 .font(.system(size: 13,
                                               weight: current == name ? .semibold : .regular))
                                 .foregroundStyle(current == name ? AnyShapeStyle(.white)
@@ -176,6 +212,20 @@ struct EffectPickerView: View {
     private var allSections: some View {
         ScrollViewReader { proxy in
             List {
+                if !newEffects.isEmpty {
+                    Section {
+                        ForEach(newEffects) { effect in
+                            row(effect, showCategory: true)
+                        }
+                    } header: {
+                        Text("New")
+                            .onScrollVisibilityChange(threshold: 0.1) { v in
+                                if v { current = Self.newKey }
+                            }
+                    }
+                    .id(Self.newKey)
+                }
+
                 ForEach(categories, id: \.self) { name in
                     Section {
                         ForEach(effects(in: name)) { effect in
@@ -191,6 +241,7 @@ struct EffectPickerView: View {
                     }
                     .id(name)
                 }
+
             }
             .listStyle(.plain)
             .onChange(of: jump) { _, now in
@@ -198,6 +249,162 @@ struct EffectPickerView: View {
                 withAnimation { proxy.scrollTo(now.name, anchor: .top) }
             }
         }
+    }
+
+    /// 自分で保存したプリセット。`/` で仕切るとフォルダに束ねる。
+    private var userPresetList: some View {
+        Group {
+            if presets.names.isEmpty {
+                ContentUnavailableView("No user presets", systemImage: "square.stack",
+                                       description: Text("Save a chain from Presets to see it here."))
+            } else {
+                ScrollViewReader { proxy in
+                VStack(spacing: 0) {
+                // フォルダが 1 つだけ（＝仕切っていない）なら帯は出さない。
+                if userFolders.count > 1 {
+                    jumpStrip(userFolders.map(\.name).map { $0.isEmpty ? Self.looseKey : $0 })
+                    Divider()
+                }
+                List {
+                    ForEach(userFolders, id: \.name) { folder in
+                        Section {
+                            ForEach(folder.items, id: \.self) { name in
+                                presetRow(name: ETUserPresetName.leaf(name),
+                                          payload: "preset:user:" + name) {
+                                    PresetStore.shared.load(name)
+                                }
+                            }
+                        } header: {
+                            if !folder.name.isEmpty { Text(folder.name) }
+                        }
+                        .id(folder.name.isEmpty ? Self.looseKey : folder.name)
+                    }
+                }
+                .listStyle(.plain)
+                }
+                .onChange(of: jump) { _, now in
+                    guard !now.name.isEmpty else { return }
+                    withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+                }
+                }
+            }
+        }
+    }
+
+    /// 同梱のプリセット。上流の分け方をそのまま見出しにする。
+    private var systemPresetList: some View {
+        ScrollViewReader { proxy in
+        VStack(spacing: 0) {
+        jumpStrip(systemCategories)
+        Divider()
+        List {
+            ForEach(systemCategories, id: \.self) { category in
+                Section {
+                    ForEach(ETSystemPresets.filter { $0.category == category }) { preset in
+                        presetRow(name: preset.name,
+                                  payload: "preset:system:" + preset.name) {
+                            ETShareLink.parse(preset.json, catalog: ETCatalog)
+                        }
+                    }
+                } header: {
+                    Text(category.categoryLabel)
+                }
+                .id(category)
+            }
+        }
+        .listStyle(.plain)
+        }
+        .onChange(of: jump) { _, now in
+            guard !now.name.isEmpty else { return }
+            withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+        }
+        }
+    }
+
+    /// 仕切っていないプリセットをまとめる見出しの鍵。
+    static let looseKey = "__loose"
+
+    /// 面の上に出す飛び先の帯。効果のジャンル帯と同じ作り。
+    private func jumpStrip(_ names: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(names, id: \.self) { name in
+                    Button {
+                        jump = Jump(name: name, count: jump.count + 1)
+                    } label: {
+                        Text(name == Self.looseKey ? "Others" : name.categoryLabel)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 7)
+                            .frame(minHeight: ETMetrics.hitTarget)
+                            .background(AnyShapeStyle(.quaternary), in: .capsule)
+                            .contentShape(.capsule)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+        }
+    }
+
+    private var systemCategories: [String] {
+        var seen = Set<String>()
+        return ETSystemPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
+    }
+
+    /// 一覧に出すプリセットの見出し用の鍵。カテゴリ名と衝突しない字にする。
+    static let userKey = "__user_presets"
+    static let systemKey = "__system_presets"
+
+    /// 上の帯に並べるもの。**新しいものを先頭に置く。**
+    /// 上流が増やした効果は、ジャンルに散らばると見つけられない。
+    private var stripNames: [String] {
+        (newEffects.isEmpty ? [] : [Self.newKey]) + categories
+    }
+
+    /// この版で増えた効果。増えるたびにここを書き替える。
+    static let newTypes = ["PitchMeterPlugin", "TVAudioSimulatorPlugin", "SpatialMapperPlugin"]
+    static let newKey = "__new"
+
+    private var newEffects: [ETEffect] {
+        Self.newTypes.compactMap { t in catalog.first { $0.type == t } }
+    }
+
+    static func stripLabel(_ name: String) -> String {
+        switch name {
+        case newKey:    return "New"
+        case userKey:   return "User Presets"
+        case systemKey: return "System Presets"
+        default:        return name.categoryLabel
+        }
+    }
+
+    /// User プリセットを `/` で仕切って束ねる（ETUserPresetName）。
+    private var userFolders: [(name: String, items: [String])] {
+        ETUserPresetName.folders(presets.names)
+    }
+
+    /// プリセット 1 件の行。押すと入り、つまんで鎖へ落とすこともできる。
+    private func presetRow(name: String, payload: String,
+                           load: @escaping () -> [PipelineStore.Loaded]) -> some View {
+        Button {
+            searching = false
+            Task { @MainActor in onPickPreset(name, load()) }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.primary)
+                Text("Adds its effects as a group named “\(name)”.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .onDrag { NSItemProvider(object: payload as NSString) }
     }
 
     private func effects(in category: String) -> [ETEffect] {

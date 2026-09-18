@@ -31,6 +31,17 @@ enum ETProcessingRate: Int, CaseIterable, Identifiable {
         }
     }
 
+    /// 入口の 48 kHz に対する倍率。選ばせるのはレートのほうで、これは
+    /// その隣に添える。「96 kHz」だけだと 2 倍なのか 1 倍なのかは、
+    /// 入口のレートを覚えていないと出てこない。
+    var factorLabel: String {
+        switch self {
+        case .r48:  return "1×"
+        case .r96:  return "2×"
+        case .r192: return "4×"
+        }
+    }
+
     var note: String {
         switch self {
         case .r48:
@@ -52,11 +63,18 @@ enum ETLatency: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var label: String {
+    /// **DAW と同じ言い方にする。**「Low / Mid / High」では何がどれだけ
+    /// 動くのか読めない。バッファの大きさなら、DAW を触っている人は
+    /// そのまま意味が分かるし、触っていない人にも「大きいほど安定」が伝わる。
+    var label: String { "\(frames) spls" }
+
+    /// 48 kHz で狙う 1 コールバックの長さ。**2 の冪に合わせてある。**
+    /// DAW が並べるのと同じ数字にしないと、見覚えのある数として読めない。
+    var frames: Int {
         switch self {
-        case .interactive: return "Low"
-        case .balanced:    return "Mid"
-        case .playback:    return "High"
+        case .interactive: return 256
+        case .balanced:    return 512
+        case .playback:    return 1024
         }
     }
 
@@ -64,25 +82,19 @@ enum ETLatency: String, CaseIterable, Identifiable {
     /// bufferDuration から作るので、画面側は AudioIO を読まずに済む。
     var choiceTitle: String { "\(label) · \(msLabel)" }
 
-    var msLabel: String { String(format: "%.0f ms", bufferDuration * 1000) }
+    var msLabel: String { String(format: "%.1f ms", bufferDuration * 1000) }
 
     var note: String {
         switch self {
-        case .interactive: return "Shortest delay. Most likely to break up under load."
+        case .interactive: return "Lowest latency. Most likely to glitch under load."
         case .balanced:    return "A compromise."
-        case .playback:    return "Most stable."
+        case .playback:    return "Most headroom. Least likely to glitch."
         }
     }
 
     /// 1 コールバックの長さ。短いほど遅延が減り、途切れやすくなる。
     /// **要求でしかない。** 実際に通った長さは AudioIO.blockFrames を見る。
-    var bufferDuration: TimeInterval {
-        switch self {
-        case .interactive: return 0.005
-        case .balanced:    return 0.010
-        case .playback:    return 0.023
-        }
-    }
+    var bufferDuration: TimeInterval { Double(frames) / 48000 }
 }
 
 @MainActor
@@ -100,6 +112,7 @@ final class Preferences: ObservableObject {
     /// これより上げると、静かな小節を無音と読んで頭を切る。
     static let silenceRange: ClosedRange<Double> = (-90)...(-20)
     static let silenceStep: Double = 10
+
 
     @Published var processingRate: ETProcessingRate {
         didSet { save(processingRate.rawValue, "pref.rate"); onAudioChange?() }

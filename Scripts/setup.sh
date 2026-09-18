@@ -27,10 +27,20 @@ fi
 #
 # 既に当たっていれば --check が落ちるので、そのときは何もしない（二度当てない）。
 echo "--- 上流のパッチ ---"
-if git -C Vendor/effetune apply --ignore-space-change --check ../../Patches/abi-begin-ptr.diff 2>/dev/null; then
+# **まず中身を見る。**判定を git apply だけに任せると、submodule の実体
+# （.git/modules）が無い写し（別の機械へコピーした作業ツリーなど）では
+# git がリポジトリを開けず、当たっているのに「当たらない」になって止まる。
+# 足しているのは関数 1 つなので、それが居るかどうかが当たっているかの答え。
+if grep -q et_instance_asset_begin_ptr Vendor/effetune/dsp/core/abi.cpp 2>/dev/null; then
+  echo "当たっている: abi-begin-ptr.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --check ../../Patches/abi-begin-ptr.diff 2>/dev/null; then
   git -C Vendor/effetune apply --ignore-space-change ../../Patches/abi-begin-ptr.diff && echo "当てた: abi-begin-ptr.diff"
 elif git -C Vendor/effetune apply --ignore-space-change --reverse --check ../../Patches/abi-begin-ptr.diff 2>/dev/null; then
   echo "当たっている: abi-begin-ptr.diff"
+elif patch -p1 -d Vendor/effetune --forward --dry-run <Patches/abi-begin-ptr.diff >/dev/null 2>&1; then
+  # git が開けない写し用の逃げ道。当てる中身は同じ。
+  patch -p1 -d Vendor/effetune --forward <Patches/abi-begin-ptr.diff >/dev/null \
+    && echo "当てた: abi-begin-ptr.diff (patch)"
 else
   echo "!! abi-begin-ptr.diff が当たらない。Vendor/effetune の版を確かめること"
   echo "   当たっていないと、資産を使う 7 種が黙って素通しになる"

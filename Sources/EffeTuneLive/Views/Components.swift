@@ -323,3 +323,26 @@ extension EnvironmentValues {
     /// GraphCanvas の 1 箇所で当たるので、12 本ある図に個別の細工は要らない。
     @Entry var etGraphMaxHeight: CGFloat? = nil
 }
+
+/// 組（Section とその配下）の上と下に引く横線。
+///
+/// **終わりの印を持たない構造の埋め合わせ。**鎖はフラットな配列で、
+/// Section は「ここから」の印しか持たない。だから画面の上では、どこまでが
+/// ひと組なのかが線でしか分からない。掴んだものを組の中へ入れるのか
+/// 外へ出すのかも、この線を越えたかどうかで読む。
+struct ETGroupRule: View {
+    var body: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(height: 1 / UIScreen.main.scale)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+    }
+}
+
+extension String {
+    /// 頭が prefix なら、その先を返す。違えば nil。
+    func dropPrefixIfPresent(_ prefix: String) -> String? {
+        hasPrefix(prefix) ? String(dropFirst(prefix.count)) : nil
+    }
+}

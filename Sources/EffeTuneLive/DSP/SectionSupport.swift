@@ -72,6 +72,17 @@ enum ETSection {
 
     static func isSection(_ spec: ETEffect) -> Bool { spec.type == type }
 
+    /// 名前を持たない Section か。
+    ///
+    /// **組を閉じるためだけに置くもの。**鎖はフラットな配列で、Section は
+    /// 「ここから」の印しか持たない（range(after:) を読むこと）。だから
+    /// 「組の外」という状態が形式に無い。名前の無い Section を置けば、
+    /// 上流はただの新しい組として読み、こちらは組の終わりとして描ける。
+    /// 形式を変えないので web と行き来しても壊れない。
+    static func isUnnamed(_ comment: String) -> Bool {
+        comment.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     /// ヘッダに出す文字。pipeline-item-builder.js:238-239 と同じ。
     static func title(_ comment: String) -> String {
         let cm = comment.trimmingCharacters(in: .whitespaces)
@@ -112,5 +123,53 @@ enum ETSection {
         var end = index + 1
         while end < types.count && types[end] != type { end += 1 }
         return (index + 1)..<end
+    }
+}
+
+/// ユーザープリセットの名前の読み方。
+///
+/// **フォルダは名前の付け方だけで作る。**`Rock/Heavy` なら `Rock` の中の
+/// `Heavy`。保存の形（PresetStore の鍵）は変えていないので、既に保存した
+/// ものも、web と行き来したものもそのまま読める。
+enum ETUserPresetName {
+    /// `Rock/Heavy` の `Rock`。区切りが無ければ空（＝フォルダ無し）。
+    static func folder(_ full: String) -> String {
+        guard let i = full.firstIndex(of: "/") else { return "" }
+        return String(full[full.startIndex..<i])
+    }
+
+    /// `Rock/Heavy` の `Heavy`。区切りが無ければそのまま。
+    static func leaf(_ full: String) -> String {
+        guard let i = full.firstIndex(of: "/") else { return full }
+        return String(full[full.index(after: i)...])
+    }
+
+    /// 名前から `/` を落とす。**入れ子のフォルダは作らない。**
+    static func clean(_ s: String) -> String {
+        s.replacingOccurrences(of: "/", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `フォルダ/名前` の形に整える。2 段目より深い `/` は落とす。
+    static func normalized(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let i = t.firstIndex(of: "/") else { return t }
+        let head = clean(String(t[t.startIndex..<i]))
+        let tail = clean(String(t[t.index(after: i)...]))
+        if head.isEmpty { return tail }
+        return tail.isEmpty ? head : head + "/" + tail
+    }
+
+    /// フォルダごとに束ねる。**並びは渡された順のまま。**
+    /// 並べ替えると、保存した順に慣れた人の当てが外れる。
+    static func folders(_ names: [String]) -> [(name: String, items: [String])] {
+        var order: [String] = []
+        var bag: [String: [String]] = [:]
+        for full in names {
+            let f = folder(full)
+            if bag[f] == nil { order.append(f) }
+            bag[f, default: []].append(full)
+        }
+        return order.map { ($0, bag[$0] ?? []) }
     }
 }

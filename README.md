@@ -14,8 +14,17 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <a href="https://apps.apple.com/app/effectdeck/id6812467517">
-  <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="60" alt="Download on the App Store">
+  <!-- 高さではなく幅で指定する。GitHub は img に height:auto を注入するので
+       height 属性は効かず、max-height が上限になるだけ。119.66:40 の比で
+       幅 180 が高さ 60。 -->
+  <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" width="180" alt="Download on the App Store">
 </a>
+
+<!-- バッジの下に余白を空ける。Apple はバッジの高さの 1/4 を空けろと言う
+     （180px 幅なら高さ 60.2px なので 15.1px）。空行では 5.3px しか空かず、
+     <br> だけでは次の <p> の margin-top が 0 なので変わらなかった。
+     高さを持つ行を 1 つ挟む。 -->
+<p>&nbsp;</p>
 
 <p>
   <img src="docs/shot-effects.png" width="31%" alt="">

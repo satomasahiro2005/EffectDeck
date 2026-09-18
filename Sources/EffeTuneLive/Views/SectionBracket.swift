@@ -46,7 +46,10 @@ struct ETSectionBracket<Content: View>: View {
         // 形は常に同じにして、線の幅と色だけを変える。
         HStack(spacing: active ? Self.gap : 0) {
             Capsule()
-                .fill(active ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(.clear))
+                // **半透明にしない。**行ごとに描いた線を行間ぶん伸ばして
+                // 繋げているので、重なった所だけ色が濃くなって縞に見える。
+                // 不透明なら何枚重なっても同じ色になる。
+                .fill(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
                 .frame(width: active ? Self.rule : 0)
                 // 行の上下の余白（listRowInsets の 5）を打ち消して、
                 // 隣の行の線と繋げる。端は打ち消さないので丸いまま残る。
