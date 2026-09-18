@@ -84,34 +84,66 @@ struct SettingsView: View {
 
     // MARK: - 変えるもの
 
-    /// **処理まわりを 1 つの節にまとめる。**レートとブロックは
-    /// どちらも「どれだけ計算して、どれだけ遅れるか」の話で、
-    /// 節を分けると見出しのぶんだけ縦が伸びる。
+    /// **入口から耳まで、通る順に並べる。**
+    ///
+    ///   Oversampling … 何倍にして計算するか
+    ///   Input        … 届く形。選べないので読むだけ。下の spls の基準
+    ///   Input buffer … 入口で溜める量。遅れの大半がここ。選べない
+    ///   DSP buffer   … 一度に計算する量
+    ///   CPU          … その枠にどれだけ使ったか。バッファと表裏
+    ///   Total delay  … 上の足し算
+    ///
+    /// **一組にして並べる。**どの操作子も、名前の右にその結果の数字が来る。
+    /// 要求と実測を別の行に分けると同じ名前が 2 度出て、どちらが効いて
+    /// いる値なのか読めなくなる（前はそうなっていた）。
     private var processing: some View {
         Section {
             // 同じものを選び直しても組み直さない。押すたびに音が切れると故障に見える。
-            ETSegmentedChoice(title: "Processing rate",
+            //
+            // **触るものを先に置く。**読むだけの Input を上に挟むと、
+            // 操作子のあいだに動かない行が入って一組に見えない。
+            // レートを選ばせるのは、倍率だけだと何 kHz になるのか
+            // 出てこないから。下の spls がこのレートの数でないことは、
+            // すぐ下の Input の行が受け持つ。
+            ETSegmentedChoice(title: "Oversampling",
                               values: ETProcessingRate.allCases,
                               label: \.label,
+                              detail: prefs.processingRate.factorLabel,
                               selection: Binding(get: { prefs.processingRate },
                                                  set: { if $0 != prefs.processingRate {
                                                             prefs.processingRate = $0 } }))
+            // **基準を最初に置く。**この節の spls がどのレートで数えた数かは、
+            // 入口のレートが見えていないと決められない。届く形は決まっていて
+            // 選べないので、読むだけの行にする。
+            LabeledContent("Input") {
+                Text("48 kHz · 32-bit float")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            // **遅れの大半はここ。**選ばせるものではないので操作子は無いが、
+            // 出さないと 21.3 ms がどこから来たのか辿れない。枯れて 2048 へ
+            // 逃げたときに、それが見えるのもこの行だけ。
+            InputBufferRow(io: io)
             // preferredIOBufferDuration は要求で、約束ではない。
-            // 実際に通った長さは下の "Total delay" で返す。
-            ETSegmentedChoice(title: "Buffer size",
+            // 実際に通った長さを名前の右に出す。
+            // **「DSP」を付ける。**入口の溜まり（Total delay の input）と
+            // 区別が付かないと、どちらの話か読めない。実体は
+            // preferredIOBufferDuration だが、それがそのまま鎖を通す単位。
+            ETSegmentedChoice(title: "DSP buffer",
                               values: ETLatency.allCases,
                               // **フレーム数を出す。**DAW と同じ数字なので、
-                              // 触っている人はそのまま読める。実際に通った
-                              // 長さは下の "Total delay" が返す。
+                              // 触っている人はそのまま読める。
                               label: \.label,
+                              detail: ETDelayReading(io: io).map {
+                                  String(format: "%d spls · %.1f ms", $0.blockFrames, $0.blockMs)
+                              },
                               selection: Binding(get: { prefs.latency },
                                                  set: { if $0 != prefs.latency {
                                                             prefs.latency = $0 } }))
-            // **操作子を先、読む数字を後ろ。**あいだに数字を挟むと、
-            // 2 つの操作子が離れて一組に見えなくなる。
-            // 遅延は操作子と直に繋がる数字なので先、CPU は節の締めに置く。
-            DelayRow(io: io)
+            // **バッファのすぐ下。**この 2 つは表裏で、詰めるほど 1 枠あたりの
+            // 猶予が減り、同じ鎖でも間に合わなくなる。離すと結び付かない。
             ProcessingTimeRow(io: io)
+            DelayRow(io: io)
         } header: {
             Text("Processing")
         }
@@ -239,24 +271,34 @@ private struct ProcessingTimeRow: View {
 }
 
 /// 実際に出るまでの遅れと、その内訳。
+/// 入口で溜めている量。**選ばせない。**1024 で始めて、枯れたら黙って
+/// 2048 へ逃げる（LocalLink.m）。その逃げた先が見えるのがこの行。
+///
+/// io を観測するのは、値が走っている最中に変わるから。
+private struct InputBufferRow: View {
+    @ObservedObject var io: AudioIO
+
+    var body: some View {
+        let frames = Int(ETLinkReceiver.targetFrames)
+        LabeledContent("Input buffer") {
+            Text(String(format: "%d spls · %.1f ms",
+                        frames, Double(frames) / 48000 * 1000))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 private struct DelayRow: View {
     @ObservedObject var io: AudioIO
 
     var body: some View {
-        // **名前は中の言葉にしない。**"Block" は使う人の語ではない。
-        // サンプル数で出すのは、Low / Mid / High で動いているのがここで、
-        // ms だけだと何が変わったのか見えないから。
-        let d = ETDelayReading(io: io)
-        LabeledContent("Buffer size") {
-            Text(d.map { String(format: "%d samples · %.1f ms", $0.blockFrames, $0.blockMs) }
-                 ?? "—")
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
-        // 実際に耳へ届くまでの遅れ。内訳（Extension link / Oversampling filter）は
-        // Details に在る。あそこは畳んであるので縦を食わない。
-        LabeledContent("Total delay") {
-            Text(d?.value ?? "—")
+        // **名前の付いた行を作らない。**link も buffer も、選ぶ操作子の
+        // 名前の右に同じ数字が出ている。合計だけの行を足すと、画面に
+        // 同じ値が 2 度並ぶ。合計と足し算を 1 行にまとめる。
+        if let d = ETDelayReading(io: io) {
+            Text(d.summary)
+                .font(.system(size: 12))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }

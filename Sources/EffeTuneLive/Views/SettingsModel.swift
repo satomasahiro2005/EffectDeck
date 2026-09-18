@@ -245,8 +245,8 @@ struct ETDelayReading {
     init?(io: AudioIO) {
         guard io.blockFrames > 0 else { return nil }
         let rate = io.sampleRate > 0 ? io.sampleRate : 48000
-        // 拡張と本体のあいだ。再同期でここへ置き直すので設計上の定数
-        // （LocalLink.m の +targetFrames は 2048 固定＝48kHz で 43ms）。
+        // 拡張と本体のあいだ。再同期でここへ置き直すので、その瞬間の
+        // 溜まりではなく狙いの値（設定の Extension link）。
         let link = Double(ETLinkReceiver.targetFrames)
         let block = Double(io.blockFrames)
         let filter = Double(io.resamplerLatency)
@@ -264,10 +264,24 @@ struct ETDelayReading {
 
     var value: String { "\(totalMs) ms" }
 
+    /// 合計と足し算を 1 行で。**合計だけの行は置かない。**link と buffer は
+    /// 操作子の名前の右に出ていて、同じ数字をもう一度並べることになる。
+    /// 足し算が見えないと、どれを削れば効くのか分からない。Fx は
+    /// エフェクト自身の遅れで、鎖の中身で変わる。
+    /// 0 のものは出さない（オーバーサンプルを切っていれば filter は無い）。
+    var summary: String {
+        var parts = [String(format: "input %.1f", linkMs),
+                     String(format: "buffer %.1f", blockMs)]
+        if filterMs > 0.05 { parts.append(String(format: "filter %.1f", filterMs)) }
+        if fxMs > 0.05     { parts.append(String(format: "Fx %.1f", fxMs)) }
+        return "Total delay \(totalMs) ms · " + parts.joined(separator: " · ")
+    }
+
     var note: String {
         String(format: "%.1f ms between the extension and this app, %.1f ms in the block "
-                     + "iOS gave (%d samples), %.1f ms in the oversampling filter.",
-               linkMs, blockMs, blockFrames, filterMs)
+                     + "iOS gave (%d samples), %.1f ms in the oversampling filter, "
+                     + "%.1f ms in the effects themselves.",
+               linkMs, blockMs, blockFrames, filterMs, fxMs)
     }
 }
 
@@ -309,7 +323,15 @@ struct ETIssue: Identifiable {
                 tone: .warning,
                 systemImage: "exclamationmark.triangle.fill",
                 title: "The device is running at \(hz) Hz",
-                detail: "Audio arrives at 48 kHz, so pitch and speed are off. Another app is "
+                // **16 k / 32 k は Bluetooth のハンズフリー。**そこに落ちる
+                // のは、通話用のマイクを掴むアプリが動いているとき。
+                // 「他のアプリが握っている」だけでは、何を止めればいいのか
+                // 分からない。出る値そのものが手がかりになる。
+                detail: io.sampleRate <= 32000
+                      ? "Audio arrives at 48 kHz, so pitch and speed are off. Bluetooth "
+                      + "headphones drop to this rate when an app takes their microphone "
+                      + "— a call, voice input or a recorder. Quit it, then play again."
+                      : "Audio arrives at 48 kHz, so pitch and speed are off. Another app is "
                       + "holding the hardware at that rate. Stop it, then play again."))
         }
 
@@ -383,22 +405,38 @@ struct ETDiagnostics {
         var lines: [ETDiagnosticLine] = [
             ETDiagnosticLine(label: "Version", value: ETAppInfo.display),
             // 拡張から来る形は LocalLink.h の定数で、走っている間も変わらない。
+            // **ここから音が通る順に並べる。**設定の節と同じ順にしておくと、
+            // どれを動かすとどの行が変わるかが引き合わせられる。
             ETDiagnosticLine(label: "Incoming", value: "48 kHz · 32-bit float · 2 ch"),
-            ETDiagnosticLine(label: "Device rate",
-                             value: io.sampleRate > 0
-                                    ? "\(Int(io.sampleRate.rounded()).formatted()) Hz" : "—"),
-            ETDiagnosticLine(label: "Processing rate",
-                             value: "\(Int((io.processingRate / 1000).rounded())) kHz"),
             // 拡張から本体へ TCP で渡すぶん。再同期でここへ置き直すので
-            // 設計上の固定値（LocalLink.m の +targetFrames）。遅延の大半はここ。
+            // 狙いの値（設定の Extension link）。遅延の大半はここ。
             ETDiagnosticLine(label: "Extension link",
                              value: samples(Int(ETLinkReceiver.targetFrames), decimals: 1)),
-            ETDiagnosticLine(label: "Buffer size",
-                             value: io.blockFrames > 0 ? samples(io.blockFrames, decimals: 1) : "—"),
             // 拡張と本体のあいだに溜まっているぶん。払うたびに動くので、
             // 判断には使えない。だから常設ではなくここに置いてある。
             ETDiagnosticLine(label: "Queued from the extension",
                              value: samples(Int(io.bufferedFrames), decimals: 0)),
+            // **詰めすぎたかはこれで決まる。**尽きたら無音を書いて黙って
+            // 進むので、耳では数えられない。繋ぎ直すと 0 に戻る。
+            ETDiagnosticLine(label: "Ran dry",
+                             value: ETLinkReceiver.starveCount == 0
+                                    ? "never"
+                                    : "\(ETLinkReceiver.starveCount)× · "
+                                      + samples(Int(ETLinkReceiver.starveFrames), decimals: 0)),
+            // 送り手と読み手のクロックのずれで溜まりが漂うぶん。
+            // 頻度がそのままずれの速さになる。
+            ETDiagnosticLine(label: "Trimmed",
+                             value: ETLinkReceiver.trimCount == 0
+                                    ? "never"
+                                    : "\(ETLinkReceiver.trimCount)× · "
+                                      + samples(Int(ETLinkReceiver.trimFrames), decimals: 0)),
+            ETDiagnosticLine(label: "DSP buffer",
+                             value: io.blockFrames > 0 ? samples(io.blockFrames, decimals: 1) : "—"),
+            ETDiagnosticLine(label: "Processing rate",
+                             value: "\(Int((io.processingRate / 1000).rounded())) kHz"),
+            ETDiagnosticLine(label: "Device rate",
+                             value: io.sampleRate > 0
+                                    ? "\(Int(io.sampleRate.rounded()).formatted()) Hz" : "—"),
             ETDiagnosticLine(label: "Oversampling filter",
                              value: io.resamplerLatency > 0
                                     ? samples(io.resamplerLatency, decimals: 2) : "none"),

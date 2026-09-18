@@ -31,6 +31,17 @@ enum ETProcessingRate: Int, CaseIterable, Identifiable {
         }
     }
 
+    /// 入口の 48 kHz に対する倍率。選ばせるのはレートのほうで、これは
+    /// その隣に添える。「96 kHz」だけだと 2 倍なのか 1 倍なのかは、
+    /// 入口のレートを覚えていないと出てこない。
+    var factorLabel: String {
+        switch self {
+        case .r48:  return "1×"
+        case .r96:  return "2×"
+        case .r192: return "4×"
+        }
+    }
+
     var note: String {
         switch self {
         case .r48:
@@ -101,6 +112,7 @@ final class Preferences: ObservableObject {
     /// これより上げると、静かな小節を無音と読んで頭を切る。
     static let silenceRange: ClosedRange<Double> = (-90)...(-20)
     static let silenceStep: Double = 10
+
 
     @Published var processingRate: ETProcessingRate {
         didSet { save(processingRate.rawValue, "pref.rate"); onAudioChange?() }

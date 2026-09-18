@@ -23,6 +23,9 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
     let title: String
     let values: [Value]
     let label: (Value) -> String
+    /// 名前の右に出す実測。**要求と実測を別の行にしない。**分けると同じ
+    /// 名前が画面に 2 度出て、どちらが効いている値なのか読めなくなる。
+    var detail: String? = nil
     @Binding var selection: Value
 
     var body: some View {
@@ -30,7 +33,15 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
             // **名前は出す。**セグメントだけ並べると、何の設定なのかが
             // 画面のどこにも書いていない状態になる（節を束ねたときにそうなった）。
             // 消してよかったのは選択肢ごとの説明であって、設定の名前ではない。
-            Text(title)
+            HStack(spacing: 8) {
+                Text(title)
+                if let detail {
+                    Spacer(minLength: 8)
+                    Text(detail)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
             Picker(title, selection: $selection) {
                 ForEach(values) { v in
                     Text(label(v)).tag(v)

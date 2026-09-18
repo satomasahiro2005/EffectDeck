@@ -44,9 +44,26 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) uint32_t bufferedFrames;
 
 /// 再同期のときに置く、書き位置からの遅れ（フレーム）。
-/// 設計上の定数なので、遅れの表示にはこちらを使う。
-/// bufferedFrames はその瞬間の溜まりで、払うたびに動く。
+/// 遅れの表示にはこちらを使う。bufferedFrames はその瞬間の溜まりで、
+/// 払うたびに動く。
+///
+/// **経路の遅れの大半がここ。**1024 で始め、枯れたら黙って 2048 へ逃げる。
+/// 選ばせるものではないので設定には出さない。繋ぎ直すと 1024 に戻る。
 @property (class, nonatomic, readonly) uint32_t targetFrames;
+
+/// 溜まりが尽きて無音を書いた回数と、そのフレーム数。
+/// **耳では数えられない。**数百ミリ秒に 1 度の枯れは聞き取れない。
+@property (class, nonatomic, readonly) uint32_t starveCount;
+@property (class, nonatomic, readonly) uint64_t starveFrames;
+
+/// 溜まりすぎて捨てた回数と、そのフレーム数。
+/// 送り手と読み手のクロックはぴたりとは合わないので、放っておくと
+/// 溜まりが漂う。狙いの 2 倍を越えたら置き直す。
+@property (class, nonatomic, readonly) uint32_t trimCount;
+@property (class, nonatomic, readonly) uint64_t trimFrames;
+
+/// 繋ぎ直したときに浅い側から始め直す。数えたものも 0 に戻す。
++ (void)resetLinkState;
 - (BOOL)start;
 - (void)stop;
 /// 受信済みのサンプルを取り出す。足りない分は無音で埋める。

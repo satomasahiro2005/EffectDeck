@@ -90,8 +90,12 @@ static os_log_t ETLinkLog(void) {
     // 「送信=188万」のように見えて、ログで判断を誤る。
     _sentFrames = 0;
     _timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _q);
-    // 10ms ごとに溜まったぶんを送る。接続が無ければ張り直す。
-    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC, 2 * NSEC_PER_MSEC);
+    // **ここが受け手の詰められる下限を決める。**音は滑らかに流れず、
+    // この周期ぶんの塊で届く。10ms なら 480 フレームの塊で、受け手は
+    // 塊と塊の谷を埋めるだけ溜めていないと読み切ってしまう（実測で
+    // 384 フレームが下限だった）。2ms なら 96 フレーム。
+    // leeway を 0 にするのは、合流で遅れると谷がその分深くなるから。
+    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 2 * NSEC_PER_MSEC, 0);
     __weak typeof(self) weak = self;
     dispatch_source_set_event_handler(_timer, ^{ [weak pump]; });
     dispatch_resume(_timer);
@@ -258,7 +262,63 @@ static os_log_t ETLinkLog(void) {
 - (BOOL)listening { return _listenFd >= 0; }
 - (BOOL)hasPeer   { return _peerFd >= 0; }
 
-+ (uint32_t)targetFrames { return 2048; }
+/// 貼り直すときに書き位置から下げる量。**経路の遅れの大半がここ。**
+/// 1024 は 48 kHz で 21.3 ms。実機で刻んで測った結果、384 は取りこぼし、
+/// 512 で枯れ、576 でもたまに枯れる。谷の深さは一定ではないので、
+/// 一度 never になった値が安全とは限らない。たまに出る値の倍を取った。
+#define TARGET_FRAMES 1024u
+/// 枯れたときに逃げる先。**設定には出さない。**選ばせるものではなく、
+/// 1024 で保たない機械や場面のための逃げ道。繋ぎ直すと戻る。
+#define TARGET_FALLBACK 2048u
+/// 溜め直しを諦めるまでの回数。**無限に待たない。**条件を満たせない
+/// 状態に落ちたときに、永久に無音を出し続ける口を残さないため。
+#define REFILL_GIVE_UP 200
+/// 深い側へ移るまでに要る枯れの回数と、「続いた」と見なす間隔。
+/// **散発的な 1 回では移らない。**9 秒に 1 度の 5 ms の欠けは聴こえず、
+/// そこで遅れを倍にするのは損。短い間に繰り返すなら 1024 では保たない。
+#define STARVE_TO_FALL_BACK 3
+#define STARVE_NEAR_FRAMES (48000u * 5u)
+/// 繋がってからこれだけ受け取るまでは枯れとして数えない。
+/// **立ち上がりは必ず通る。**溜まりは 0 から始まるので、最初の数回は
+/// 読みに行くほうが早い（実機のログで 107 ms と 533 ms の 2 回）。
+#define SETTLE_FRAMES 48000u
+
+/// 前に枯れたときの受信フレーム数と、近いうちに続いた回数。
+/// オーディオスレッドだけが書くが、繋ぎ直しで 0 に戻すので atomic。
+static _Atomic uint64_t gLastStarveAt = 0;
+static _Atomic uint32_t gStarveRun = 0;
+
+static _Atomic uint32_t gTarget = TARGET_FRAMES;
+/// 尽きて無音を書いた回数と、そのフレーム数。**耳では数えられない。**
+static _Atomic uint32_t gStarveCount = 0;
+static _Atomic uint64_t gStarveFrames = 0;
+/// 溜まりすぎて捨てた回数と、そのフレーム数。クロックのずれの速さが読める。
+static _Atomic uint32_t gTrimCount = 0;
+static _Atomic uint64_t gTrimFrames = 0;
+/// 溜め直している最中か。枯れた瞬間は読み位置が書き位置に追いついていて、
+/// そのまま読み続けると届くそばから読み切る。1 度まとめて待つ。
+static _Atomic bool gRefilling = false;
+/// 溜め直しで待った回数。REFILL_GIVE_UP で諦める。
+static _Atomic uint32_t gRefillWaits = 0;
+
++ (uint32_t)targetFrames { return atomic_load_explicit(&gTarget, memory_order_relaxed); }
++ (uint32_t)starveCount  { return atomic_load_explicit(&gStarveCount, memory_order_relaxed); }
++ (uint64_t)starveFrames { return atomic_load_explicit(&gStarveFrames, memory_order_relaxed); }
++ (uint32_t)trimCount    { return atomic_load_explicit(&gTrimCount, memory_order_relaxed); }
++ (uint64_t)trimFrames   { return atomic_load_explicit(&gTrimFrames, memory_order_relaxed); }
+
+/// 繋ぎ直したときに、浅い側から始め直す。
++ (void)resetLinkState {
+    atomic_store_explicit(&gTarget, TARGET_FRAMES, memory_order_relaxed);
+    atomic_store_explicit(&gStarveCount, 0, memory_order_relaxed);
+    atomic_store_explicit(&gStarveFrames, 0, memory_order_relaxed);
+    atomic_store_explicit(&gTrimCount, 0, memory_order_relaxed);
+    atomic_store_explicit(&gTrimFrames, 0, memory_order_relaxed);
+    atomic_store_explicit(&gRefilling, false, memory_order_relaxed);
+    atomic_store_explicit(&gRefillWaits, 0, memory_order_relaxed);
+    atomic_store_explicit(&gLastStarveAt, 0, memory_order_relaxed);
+    atomic_store_explicit(&gStarveRun, 0, memory_order_relaxed);
+}
 
 - (uint32_t)bufferedFrames {
     uint64_t w = atomic_load_explicit(&_w, memory_order_acquire);
@@ -302,7 +362,8 @@ static os_log_t ETLinkLog(void) {
     os_log_error(ETLinkLog(), "ET receiver 待ち受け開始 port=%d", ET_LINK_PORT);
 
     _timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _q);
-    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 5 * NSEC_PER_MSEC, 1 * NSEC_PER_MSEC);
+    // 受け取る側の周期も溜まりに足し算される。送り手と同じく詰める。
+    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 1 * NSEC_PER_MSEC, 0);
     __weak typeof(self) weak = self;
     dispatch_source_set_event_handler(_timer, ^{ [weak pump]; });
     dispatch_resume(_timer);
@@ -389,6 +450,9 @@ static os_log_t ETLinkLog(void) {
             fcntl(c, F_SETFL, fl | O_NONBLOCK);
             _peerFd = c;
             _rxLen = 0;     // 前の相手の書きかけを新しいストリームに混ぜない
+            // **浅い側から始め直す。**前の相手で枯れて深くしたぶんを
+            // 引き継ぐと、一度の混み合いで遅れが増えたまま固定される。
+            [ETLinkReceiver resetLinkState];
             os_log_error(ETLinkLog(), "ET 接続を受けた");
         }
         return;
@@ -421,14 +485,82 @@ static os_log_t ETLinkLog(void) {
     uint64_t w = atomic_load_explicit(&_w, memory_order_acquire);
     uint64_t r = _r;
     uint32_t want = frames * 2;
-    if (r == 0 || w > r + RECV_RING_SAMPLES) {
-        uint64_t behind = (uint64_t)[ETLinkReceiver targetFrames] * 2ull;
+    uint64_t behind = (uint64_t)atomic_load_explicit(&gTarget,
+                                                     memory_order_relaxed) * 2ull;
+
+    // **貼り直しを先に済ませる。**溜め直しの判定より前に置くこと。
+    // 逆にすると、読み位置が 0 のまま（初回や繋ぎ直しの直後）は
+    // 貼り直しに届かず、条件を満たせないまま無音を出し続ける。
+    //
+    // 溜まりすぎたら捨てるのもここ。送り手と読み手のクロックはぴたりとは
+    // 合わず、読んだぶんだけ進めるだけでは溜まりが漂う。上限が無かった
+    // ときは、狙い 128 に対して実測 3000 まで伸びていた。
+    if (r == 0 || w > r + RECV_RING_SAMPLES || (w > r && w - r > behind * 2)) {
+        uint64_t was = r;
         r = (w > behind) ? (w - behind) : 0;
+        if (was != 0 && r > was) {
+            atomic_fetch_add_explicit(&gTrimCount, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&gTrimFrames, (r - was) / 2, memory_order_relaxed);
+        }
     }
+
+    // **溜め直しの途中は読まない。**枯れた直後は読み位置が書き位置に
+    // 追いついていて、そのまま読み続けると届くそばから読み切る。
+    // 細かく途切れ続けるより、1 度まとめて待って立て直す。
+    // **待ち続けない。**溜まらないまま REFILL_GIVE_UP 回まで来たら諦めて読む。
+    if (atomic_load_explicit(&gRefilling, memory_order_acquire)) {
+        uint32_t waits = atomic_fetch_add_explicit(&gRefillWaits, 1, memory_order_relaxed);
+        if ((w > r && w - r >= behind) || waits >= REFILL_GIVE_UP) {
+            atomic_store_explicit(&gRefilling, false, memory_order_release);
+            atomic_store_explicit(&gRefillWaits, 0, memory_order_relaxed);
+        } else {
+            for (uint32_t i = 0; i < want; i++) out[i] = 0.0f;
+            _r = r;
+            return 0;
+        }
+    }
+
     uint64_t avail = (w > r) ? (w - r) : 0;
     uint32_t got = (uint32_t)MIN(avail, (uint64_t)want);
     for (uint32_t i = 0; i < got; i++) out[i] = _ring[(r + i) % RECV_RING_SAMPLES];
     for (uint32_t i = got; i < want; i++) out[i] = 0.0f;
+    // **埋めたことを残す。**ここは無音を書いて黙って進むので、
+    // 記録しないと詰めすぎたのか足りているのか分からない。
+    //
+    // **鳴る前の空回りは枯れではない。**相手が繋がる前も音のコールバックは
+    // 回っていて、当然データが無いので毎枠ここへ来る。数えると Ran dry が
+    // 本物と見分けられなくなり、狙いまで 2048 へ逃げて遅れが無駄に増える
+    // （実機のログで、枯れ 4 件が全部「受信=0」だった）。
+    BOOL live = (_peerFd >= 0) && (_receivedFrames > SETTLE_FRAMES);
+    if (got < want && live) {
+        atomic_fetch_add_explicit(&gStarveCount, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&gStarveFrames,
+                                  (uint64_t)(want - got) / 2, memory_order_relaxed);
+        // **最初の何回かだけ書き出す。**毎枠出すと洪水になって、
+        // 肝心の間隔が読めなくなる。頻度は Diagnostics の数で見る。
+        static int logged = 0;
+        if (logged++ < 40) {
+            os_log_error(ETLinkLog(),
+                         "ET 枯れ 埋め=%u/%u 溜まり=%llu 狙い=%u 受信=%llu 連=%u",
+                         (want - got) / 2, want / 2,
+                         (unsigned long long)((w > r) ? (w - r) / 2 : 0),
+                         atomic_load_explicit(&gTarget, memory_order_relaxed),
+                         (unsigned long long)_receivedFrames,
+                         atomic_load_explicit(&gStarveRun, memory_order_relaxed) + 1);
+        }
+        // **続いたときだけ深い側へ移る。**離れて 1 回なら聴こえないので、
+        // そこで遅れを倍にする意味がない。前の枯れからの間隔で見る。
+        uint64_t last = atomic_load_explicit(&gLastStarveAt, memory_order_relaxed);
+        uint32_t run = (last != 0 && _receivedFrames - last < STARVE_NEAR_FRAMES)
+                     ? atomic_load_explicit(&gStarveRun, memory_order_relaxed) + 1 : 1;
+        atomic_store_explicit(&gStarveRun, run, memory_order_relaxed);
+        atomic_store_explicit(&gLastStarveAt, _receivedFrames, memory_order_relaxed);
+        if (run >= STARVE_TO_FALL_BACK) {
+            atomic_store_explicit(&gTarget, TARGET_FALLBACK, memory_order_relaxed);
+        }
+        atomic_store_explicit(&gRefillWaits, 0, memory_order_relaxed);
+        atomic_store_explicit(&gRefilling, true, memory_order_release);
+    }
     _r = r + got;
     return got / 2;
 }
