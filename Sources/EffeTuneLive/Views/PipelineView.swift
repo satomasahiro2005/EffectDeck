@@ -142,9 +142,11 @@ struct PipelineView: View {
                         // 検索から選んだときだけ閉じない、という形になっていた。
                         sheet = nil
                     }, onPickAU: { entry in
+                        let externalIndex = ETAUPostInsert.shared.externalIndex(for: entry)
                         ETAUPostInsert.shared.choose(entry)
                         dsp.addExternal(id: entry.id, name: entry.title,
-                                        category: "Audio Units", at: insertAt)
+                                        category: "Audio Units",
+                                        externalIndex: externalIndex, at: insertAt)
                         insertAt = nil
                         sheet = nil
                     }, onPickPreset: { name, items in

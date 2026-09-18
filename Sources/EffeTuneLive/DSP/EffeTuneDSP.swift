@@ -245,11 +245,12 @@ final class EffeTuneDSP: ObservableObject {
 
     /// AU/JSFXをEffectDeckの鎖へ追加するための共通入口。
     /// 実行アダプタはexternalIDをキーに別レジストリから解決する。
-    func addExternal(id: String, name: String, category: String, at index: Int? = nil) {
+    func addExternal(id: String, name: String, category: String,
+                     externalIndex: UInt8 = 0, at index: Int? = nil) {
         let spec = ETEffect.external(type: "External:(id)", name: name, category: category)
         var node = Node(spec: spec, values: [])
         node.externalID = id
-        node.externalIndex = 0
+        node.externalIndex = externalIndex
         let placed: Int
         if let index, index >= 0, index < chain.count {
             chain.insert(node, at: index)
@@ -675,6 +676,14 @@ final class EffeTuneDSP: ObservableObject {
         node.channelSpec = item.channelSpec
         node.sectionName = item.sectionName
         node.irId = item.irId
+        node.externalID = item.externalID.isEmpty ? nil : item.externalID
+        if node.isExternal {
+            node.externalIndex = ETAUExternalBridge.shared.index(for: item.externalID)
+        }
+        if node.isExternal {
+            chain.append(node)
+            return true
+        }
         guard instantiate(&node) else { return false }
         chain.append(node)
         return true

@@ -64,6 +64,10 @@ final class ETAUPostInsert: ObservableObject {
         Task { await load(entry) }
     }
 
+    func externalIndex(for entry: Entry) -> UInt8 {
+        ETAUExternalBridge.shared.index(for: entry.id)
+    }
+
     func clear() {
         audioUnit = nil
         ETAUExternalBridge.shared.clear()
@@ -101,7 +105,8 @@ final class ETAUPostInsert: ObservableObject {
         do {
             let unit = try await AVAudioUnit.instantiate(with: entry.description)
             audioUnit = unit
-            ETAUExternalBridge.shared.install(unit)
+            ETAUExternalBridge.shared.install(unit,
+                                              index: ETAUExternalBridge.shared.index(for: entry.id))
             audioUnit?.auAudioUnit.shouldBypassEffect = bypass
             restoreParameters()
             selectedID = entry.id

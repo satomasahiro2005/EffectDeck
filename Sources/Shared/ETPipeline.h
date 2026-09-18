@@ -130,6 +130,11 @@ void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor);
 void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
                                        uint32_t count);
 
+/// Replace one slot in the ordered external registry. Slots are stable, so a
+/// pipeline node can keep its externalIndex while another AU is added.
+void ETPipeline_SetExternalProcessorAt(uint32_t index,
+                                        const ETExternalProcessor *processor);
+
 /// Publish the ordered external segment that runs before native EffeTune.
 void ETPipeline_SetPreExternalProcessors(const ETExternalProcessor *processors,
                                           uint32_t count);

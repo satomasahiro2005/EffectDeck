@@ -513,16 +513,14 @@ final class AudioIO: ObservableObject {
             return noErr
         }
 
+        // AU/JSFX external processors run as nodes inside EffeTune's
+        // descriptor. Keeping the AVAudioEngine graph as Source -> Mixer is
+        // essential: inserting the selected AU here would make it a fixed
+        // post-insert and would also process it a second time when its
+        // External node appears in the chain.
         engine.attach(src)
-        if let postInsert = ETAUPostInsert.shared.audioUnit {
-            engine.attach(postInsert)
-            engine.connect(src, to: postInsert, format: fmt)
-            engine.connect(postInsert, to: engine.mainMixerNode, format: fmt)
-            postInsertNode = postInsert
-        } else {
-            engine.connect(src, to: engine.mainMixerNode, format: fmt)
-            postInsertNode = nil
-        }
+        engine.connect(src, to: engine.mainMixerNode, format: fmt)
+        postInsertNode = nil
         node = src
 
         do {
@@ -538,9 +536,8 @@ final class AudioIO: ObservableObject {
         sampleRate = sr
         processingRate = sr * Double(factor)
         outputChannels = channels
-        postInsertLatency = ETAUPostInsert.shared.audioUnit.map {
-            Int(($0.auAudioUnit.latency * sr).rounded())
-        } ?? 0
+        postInsertLatency = Int(Double(ETPipeline_ExternalLatency())
+                                 .rounded())
         resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
         status = rateOK ? "Running"
                         : String(format: "Running at %.0f Hz, input is 48000 Hz", sr)

@@ -10,23 +10,32 @@ import AudioToolbox
 final class ETAUExternalBridge {
     static let shared = ETAUExternalBridge()
 
-    private var adapter: Adapter?
+    private var adapters: [UInt8: Adapter] = [:]
+    private var indices: [String: UInt8] = [:]
 
     private init() {}
 
-    func install(_ unit: AVAudioUnit, sampleRate: Double = 48_000,
+    func index(for id: String) -> UInt8 {
+        if let value = indices[id] { return value }
+        let used = Set(indices.values)
+        let value = (0..<UInt8(8)).first { !used.contains($0) } ?? 0
+        indices[id] = value
+        return value
+    }
+
+    func install(_ unit: AVAudioUnit, index: UInt8 = 0, sampleRate: Double = 48_000,
                  maxFrames: Int = 4096, maxChannels: Int = 16) {
         let next = Adapter(unit: unit, sampleRate: sampleRate,
                            maxFrames: maxFrames, maxChannels: maxChannels)
-        adapter = next
+        adapters[index] = next
         var descriptor = next.descriptor
         withUnsafePointer(to: &descriptor) { ptr in
-            ETPipeline_SetExternalProcessor(ptr)
+            ETPipeline_SetExternalProcessorAt(UInt32(index), ptr)
         }
     }
 
     func clear() {
-        adapter = nil
+        adapters.removeAll()
         ETPipeline_ClearExternalProcessor()
     }
 
@@ -36,6 +45,7 @@ final class ETAUExternalBridge {
         let maxFrames: Int
         let maxChannels: Int
         let scratch: UnsafeMutablePointer<Float>
+        let outputList: UnsafeMutablePointer<AudioBufferList>
 
         var descriptor: ETExternalProcessor
 
@@ -46,6 +56,7 @@ final class ETAUExternalBridge {
             self.maxChannels = maxChannels
             self.scratch = .allocate(capacity: maxFrames * maxChannels)
             self.scratch.initialize(repeating: 0, count: maxFrames * maxChannels)
+            self.outputList = AudioBufferList.allocate(maximumBuffers: maxChannels)
             self.descriptor = ETExternalProcessor()
             self.descriptor.context = Unmanaged.passUnretained(self).toOpaque()
             self.descriptor.process = etaProcess
@@ -56,6 +67,7 @@ final class ETAUExternalBridge {
         deinit {
             scratch.deinitialize(count: maxFrames * maxChannels)
             scratch.deallocate()
+            outputList.deallocate()
         }
 
         func process(_ planar: UnsafeMutablePointer<Float>, channels: Int,
@@ -74,12 +86,15 @@ final class ETAUExternalBridge {
             var timestamp = AudioTimeStamp()
             timestamp.mSampleTime = sampleTime * sampleRate
 
-            var outputBuffers = makeBufferList(channels: channels, frames: frames,
-                                               base: scratch, stride: maxFrames)
-            let status = withUnsafeMutablePointer(to: &outputBuffers) { output in
-                render(&flags, &timestamp, AUAudioFrameCount(frames), 0, output, nil,
-                       pullInput)
+            let buffers = UnsafeMutableAudioBufferListPointer(outputList)
+            buffers.count = channels
+            for c in 0..<channels {
+                buffers[c].mNumberChannels = 1
+                buffers[c].mDataByteSize = UInt32(frames * MemoryLayout<Float>.size)
+                buffers[c].mData = UnsafeMutableRawPointer(scratch.advanced(by: c * maxFrames))
             }
+            let status = render(&flags, &timestamp, AUAudioFrameCount(frames), 0,
+                                outputList, nil, pullInput)
             guard status == noErr else { return Int32(status) }
 
             for c in 0..<channels {
@@ -89,18 +104,6 @@ final class ETAUExternalBridge {
             return 0
         }
 
-        private func makeBufferList(channels: Int, frames: Int,
-                                    base: UnsafeMutablePointer<Float>, stride: Int) -> AudioBufferList {
-            var list = AudioBufferList()
-            list.mNumberBuffers = UInt32(channels)
-            // AudioBufferList.audioBuffer is a one-element tuple in Swift;
-            // the AU callback accepts the first buffer for stereo and uses the
-            // supplied channel count. The current AU path is stereo-first.
-            list.mBuffers.mNumberChannels = UInt32(channels)
-            list.mBuffers.mDataByteSize = UInt32(frames * MemoryLayout<Float>.size * channels)
-            list.mBuffers.mData = UnsafeMutableRawPointer(base)
-            return list
-        }
     }
 }
 

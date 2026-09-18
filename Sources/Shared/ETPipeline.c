@@ -47,6 +47,10 @@ static uint32_t gExternalCount = 0;
 static ETExternalProcessor gPreExternal[ET_EXTERNAL_MAX_PROCESSORS];
 static uint32_t gPreExternalCount = 0;
 static _Atomic int gExternalEnabled = 0;
+// 1 when the vendor engine has the external-node callback API. In that mode
+// external nodes are executed at their descriptor position; the legacy
+// post-insert pass must not run as well (otherwise the AU is processed twice).
+static _Atomic int gNativeExternalCallback = 0;
 static _Atomic uint64_t gExternalRateBits = 0;
 static double bitsDouble(uint64_t bits);
 
@@ -114,6 +118,9 @@ void ETPipeline_SetEngine(uint32_t engine)
     // et_engine_prepare の destroyAllInstances でもう消えている。
     // 残すと次のブロックで ET_ERR_DESC になる（engine.cpp:674 slot == nullptr）。
     atomic_store_explicit(&gPending, -1, memory_order_relaxed);
+    atomic_store_explicit(&gNativeExternalCallback,
+                          et_pipeline_set_external_callback != NULL ? 1 : 0,
+                          memory_order_release);
     if (et_pipeline_set_external_callback != NULL) {
         et_pipeline_set_external_callback(engine, pipelineExternalCallback, NULL);
     }
@@ -138,6 +145,19 @@ void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
     if (count > ET_EXTERNAL_MAX_PROCESSORS) count = ET_EXTERNAL_MAX_PROCESSORS;
     for (uint32_t i = 0; i < count; ++i) gExternal[i] = processors[i];
     gExternalCount = count;
+    atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
+}
+
+void ETPipeline_SetExternalProcessorAt(uint32_t index,
+                                       const ETExternalProcessor *processor)
+{
+    if (index >= ET_EXTERNAL_MAX_PROCESSORS) return;
+    if (processor == NULL || processor->process == NULL) {
+        ETExternalProcessor_Clear(&gExternal[index]);
+        return;
+    }
+    gExternal[index] = *processor;
+    if (index + 1 > gExternalCount) gExternalCount = index + 1;
     atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
 }
 
@@ -346,7 +366,8 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     const int32_t status = (int32_t)et_pipeline_process(engine, channels, frames,
                                                          timeSeconds, bypass);
     if (status != ET_OK) return status;
-    if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) {
+    if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire) &&
+        !atomic_load_explicit(&gNativeExternalCallback, memory_order_acquire)) {
         for (uint32_t i = 0; i < gExternalCount; ++i) {
             const int32_t externalStatus = ETExternalProcessor_Process(
                 &gExternal[i], bus, channels, frames, sampleRate, timeSeconds);
