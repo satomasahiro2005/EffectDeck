@@ -21,8 +21,14 @@ enum ETShareLink {
 
     // MARK: - 書く
 
+    /// Make a link which the official EffeTune web app can read.
+    ///
+    /// External processors are an EffectDeck extension and must never leak into
+    /// an official EffeTune link. An in-place processor can simply disappear.
+    /// A processor which routes between buses is replaced by a 0 dB Volume so
+    /// that removing the AU does not also disconnect the remaining graph.
     static func url(for chain: [EffeTuneDSP.Node]) -> URL? {
-        let short = PipelineStore.shortForm(chain)
+        let short = effeTuneForm(chain)
         guard !short.isEmpty,
               let data = try? JSONSerialization.data(withJSONObject: short,
                                                      options: [.withoutEscapingSlashes,
@@ -44,6 +50,32 @@ enum ETShareLink {
         let encoded = data.base64EncodedString().replacingOccurrences(of: "+", with: "%2B")
         comps.percentEncodedQuery = "p=" + encoded
         return comps.url
+    }
+
+    /// An upstream-compatible projection of an EffectDeck chain.
+    /// The sound will necessarily differ where an external processor was used,
+    /// but native effects and bus topology remain loadable by EffeTune.
+    static func effeTuneForm(_ chain: [EffeTuneDSP.Node]) -> [[String: Any]] {
+        let encoded = PipelineStore.shortForm(chain)
+        return zip(chain, encoded).compactMap { node, entry in
+            guard node.isExternal else { return entry }
+
+            // With no bus crossing, bypassing the processor is deletion.
+            guard node.inputBus != node.outputBus else { return nil }
+
+            // A disabled routed node contributes nothing in EffectDeck, so its
+            // replacement must also remain disabled. Routing and channel keys
+            // use the official short-form spelling already present in entry.
+            var passthrough: [String: Any] = [
+                "nm": "Volume",
+                "en": node.enabled,
+                "vl": 0.0,
+            ]
+            for key in ["ib", "ob", "ch"] {
+                if let value = entry[key] { passthrough[key] = value }
+            }
+            return passthrough
+        }
     }
 
     // MARK: - 読む

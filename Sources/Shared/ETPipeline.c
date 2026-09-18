@@ -5,6 +5,7 @@
 
 #include <string.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 
 #define ET_PIPE_SLOTS 4
 #define ET_PIPE_HEADER 8
@@ -42,10 +43,15 @@ static _Atomic uint_least32_t gLatency = 0;
 // The descriptor is published by the control thread and read by the render
 // thread. Its context is owned by the adapter; replacement must be coordinated
 // by the caller after the render thread has stopped using the old context.
-static ETExternalProcessor gExternal[ET_EXTERNAL_MAX_PROCESSORS];
-static uint32_t gExternalCount = 0;
-static ETExternalProcessor gPreExternal[ET_EXTERNAL_MAX_PROCESSORS];
-static uint32_t gPreExternalCount = 0;
+// Descriptors are immutable after publication. Control-thread replacements
+// allocate a fresh descriptor and publish its pointer atomically. Published
+// descriptors intentionally live until process exit: a render callback may
+// already have loaded an older pointer, and freeing it here would be a UAF.
+// Updates are user-driven and tiny (one descriptor), so this is preferable to
+// locks or reclamation on the realtime thread.
+static _Atomic(ETExternalProcessor *) gExternal[ET_EXTERNAL_MAX_PROCESSORS];
+static _Atomic uint_least64_t gExternalProcessCount[ET_EXTERNAL_MAX_PROCESSORS];
+static _Atomic int gExternalLastStatus[ET_EXTERNAL_MAX_PROCESSORS];
 static _Atomic int gExternalEnabled = 0;
 // 1 when the vendor engine has the external-node callback API. In that mode
 // external nodes are executed at their descriptor position; the legacy
@@ -56,11 +62,14 @@ static double bitsDouble(uint64_t bits);
 
 typedef int32_t (*ETPipelineExternalCallback)(void *, uint32_t, float *, uint32_t,
                                               uint32_t, double, int8_t);
+typedef uint32_t (*ETPipelineExternalLatencyCallback)(void *, uint32_t);
 #if defined(__clang__) || defined(__GNUC__)
-extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback, void *)
+extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback,
+                                               ETPipelineExternalLatencyCallback, void *)
     __attribute__((weak_import));
 #else
-extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback, void *);
+extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback,
+                                               ETPipelineExternalLatencyCallback, void *);
 #endif
 
 static int32_t pipelineExternalCallback(void *context, uint32_t index, float *audio,
@@ -68,7 +77,12 @@ static int32_t pipelineExternalCallback(void *context, uint32_t index, float *au
                                         int8_t channelSpec)
 {
     (void)context;
-    if (index >= gExternalCount) return ET_ERR_ARGS;
+    if (index >= ET_EXTERNAL_MAX_PROCESSORS) return ET_ERR_ARGS;
+    ETExternalProcessor *processor = atomic_load_explicit(&gExternal[index],
+                                                           memory_order_acquire);
+    // AU/JSFX instantiation is asynchronous. Until the adapter is ready the
+    // node is a bypass, not a pipeline-wide render failure.
+    if (processor == NULL || processor->process == NULL) return ET_OK;
     uint32_t first = 0;
     uint32_t selected = channels;
     if (channelSpec != ET_CHANNEL_ALL) {
@@ -77,12 +91,23 @@ static int32_t pipelineExternalCallback(void *context, uint32_t index, float *au
                                   : (channelSpec >= 0 ? (uint32_t)channelSpec : 0u);
         if (first + selected > channels) return ET_ERR_ARGS;
     }
-    const int32_t status = ETExternalProcessor_Process(&gExternal[index],
+    const int32_t status = ETExternalProcessor_Process(processor,
                                                        audio + first * frames, selected,
                                                        frames, bitsDouble(atomic_load_explicit(
                                                            &gExternalRateBits, memory_order_relaxed)),
                                                        timeSeconds);
+    atomic_fetch_add_explicit(&gExternalProcessCount[index], 1, memory_order_relaxed);
+    atomic_store_explicit(&gExternalLastStatus[index], status, memory_order_relaxed);
     return status;
+}
+
+static uint32_t pipelineExternalLatencyCallback(void *context, uint32_t index)
+{
+    (void)context;
+    if (index >= ET_EXTERNAL_MAX_PROCESSORS) return 0;
+    ETExternalProcessor *processor = atomic_load_explicit(&gExternal[index],
+                                                           memory_order_acquire);
+    return ETExternalProcessor_Latency(processor);
 }
 
 static uint64_t doubleBits(double value)
@@ -122,7 +147,8 @@ void ETPipeline_SetEngine(uint32_t engine)
                           et_pipeline_set_external_callback != NULL ? 1 : 0,
                           memory_order_release);
     if (et_pipeline_set_external_callback != NULL) {
-        et_pipeline_set_external_callback(engine, pipelineExternalCallback, NULL);
+        et_pipeline_set_external_callback(engine, pipelineExternalCallback,
+                                           pipelineExternalLatencyCallback, NULL);
     }
 }
 
@@ -143,9 +169,10 @@ void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
         return;
     }
     if (count > ET_EXTERNAL_MAX_PROCESSORS) count = ET_EXTERNAL_MAX_PROCESSORS;
-    for (uint32_t i = 0; i < count; ++i) gExternal[i] = processors[i];
-    gExternalCount = count;
-    atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
+    for (uint32_t i = 0; i < count; ++i)
+        ETPipeline_SetExternalProcessorAt(i, &processors[i]);
+    for (uint32_t i = count; i < ET_EXTERNAL_MAX_PROCESSORS; ++i)
+        ETPipeline_ClearExternalProcessorAt(i);
 }
 
 void ETPipeline_SetExternalProcessorAt(uint32_t index,
@@ -153,35 +180,39 @@ void ETPipeline_SetExternalProcessorAt(uint32_t index,
 {
     if (index >= ET_EXTERNAL_MAX_PROCESSORS) return;
     if (processor == NULL || processor->process == NULL) {
-        ETExternalProcessor_Clear(&gExternal[index]);
+        ETPipeline_ClearExternalProcessorAt(index);
         return;
     }
-    gExternal[index] = *processor;
-    if (index + 1 > gExternalCount) gExternalCount = index + 1;
+    ETExternalProcessor *copy = (ETExternalProcessor *)malloc(sizeof(*copy));
+    if (copy == NULL) return;
+    *copy = *processor;
+    atomic_store_explicit(&gExternal[index], copy, memory_order_release);
     atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
 }
 
-void ETPipeline_SetPreExternalProcessors(const ETExternalProcessor *processors,
-                                         uint32_t count)
+void ETPipeline_ClearExternalProcessorAt(uint32_t index)
 {
-    if (processors == NULL || count == 0) {
-        gPreExternalCount = 0;
-        return;
-    }
-    if (count > ET_EXTERNAL_MAX_PROCESSORS) count = ET_EXTERNAL_MAX_PROCESSORS;
-    for (uint32_t i = 0; i < count; ++i) gPreExternal[i] = processors[i];
-    gPreExternalCount = count;
+    if (index >= ET_EXTERNAL_MAX_PROCESSORS) return;
+    atomic_store_explicit(&gExternal[index], NULL, memory_order_release);
 }
 
 void ETPipeline_ClearExternalProcessor(void)
 {
     atomic_store_explicit(&gExternalEnabled, 0, memory_order_release);
-    gExternalCount = 0;
     for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i)
-        ETExternalProcessor_Clear(&gExternal[i]);
-    gPreExternalCount = 0;
-    for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i)
-        ETExternalProcessor_Clear(&gPreExternal[i]);
+        ETPipeline_ClearExternalProcessorAt(i);
+}
+
+uint64_t ETPipeline_ExternalProcessCount(uint32_t index)
+{
+    if (index >= ET_EXTERNAL_MAX_PROCESSORS) return 0;
+    return atomic_load_explicit(&gExternalProcessCount[index], memory_order_relaxed);
+}
+
+int32_t ETPipeline_ExternalLastStatus(uint32_t index)
+{
+    if (index >= ET_EXTERNAL_MAX_PROCESSORS) return ET_ERR_ARGS;
+    return atomic_load_explicit(&gExternalLastStatus[index], memory_order_relaxed);
 }
 
 void ETPipeline_SetExternalSampleRate(double sampleRate)
@@ -193,10 +224,11 @@ uint32_t ETPipeline_ExternalLatency(void)
 {
     if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0;
     uint32_t total = 0;
-    for (uint32_t i = 0; i < gPreExternalCount; ++i)
-        total += ETExternalProcessor_Latency(&gPreExternal[i]);
-    for (uint32_t i = 0; i < gExternalCount; ++i)
-        total += ETExternalProcessor_Latency(&gExternal[i]);
+    for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i) {
+        ETExternalProcessor *processor = atomic_load_explicit(&gExternal[i],
+                                                               memory_order_acquire);
+        total += ETExternalProcessor_Latency(processor);
+    }
     return total;
 }
 
@@ -204,12 +236,10 @@ double ETPipeline_ExternalTailTime(void)
 {
     if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0.0;
     double tail = 0.0;
-    for (uint32_t i = 0; i < gPreExternalCount; ++i) {
-        const double value = ETExternalProcessor_TailTime(&gPreExternal[i]);
-        if (value > tail) tail = value;
-    }
-    for (uint32_t i = 0; i < gExternalCount; ++i) {
-        const double value = ETExternalProcessor_TailTime(&gExternal[i]);
+    for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i) {
+        ETExternalProcessor *processor = atomic_load_explicit(&gExternal[i],
+                                                               memory_order_acquire);
+        const double value = ETExternalProcessor_TailTime(processor);
         if (value > tail) tail = value;
     }
     return tail;
@@ -289,10 +319,13 @@ uint32_t ETPipeline_Latency(void)
     // 読むだけの呼び出しで、音のスレッドは通らない。
     const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
     if (engine != 0 && atomic_load_explicit(&gConfigured, memory_order_relaxed)) {
-        return (uint32_t)et_pipeline_latency(engine) + ETPipeline_ExternalLatency();
+        const uint32_t native = (uint32_t)et_pipeline_latency(engine);
+        return atomic_load_explicit(&gNativeExternalCallback, memory_order_acquire)
+            ? native : native + ETPipeline_ExternalLatency();
     }
-    return (uint32_t)atomic_load_explicit(&gLatency, memory_order_relaxed)
-         + ETPipeline_ExternalLatency();
+    const uint32_t cached = (uint32_t)atomic_load_explicit(&gLatency, memory_order_relaxed);
+    return atomic_load_explicit(&gNativeExternalCallback, memory_order_acquire)
+        ? cached : cached + ETPipeline_ExternalLatency();
 }
 
 int ETPipeline_IsBypassed(void)
@@ -358,19 +391,16 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     float *bus = et_arena_combined_ptr(engine);
     const double sampleRate = bitsDouble(atomic_load_explicit(&gExternalRateBits,
                                                                memory_order_relaxed));
-    for (uint32_t i = 0; i < gPreExternalCount; ++i) {
-        const int32_t externalStatus = ETExternalProcessor_Process(
-            &gPreExternal[i], bus, channels, frames, sampleRate, timeSeconds);
-        if (externalStatus != 0) return externalStatus;
-    }
     const int32_t status = (int32_t)et_pipeline_process(engine, channels, frames,
                                                          timeSeconds, bypass);
     if (status != ET_OK) return status;
     if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire) &&
         !atomic_load_explicit(&gNativeExternalCallback, memory_order_acquire)) {
-        for (uint32_t i = 0; i < gExternalCount; ++i) {
+        for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i) {
+            ETExternalProcessor *processor = atomic_load_explicit(&gExternal[i],
+                                                                   memory_order_acquire);
             const int32_t externalStatus = ETExternalProcessor_Process(
-                &gExternal[i], bus, channels, frames, sampleRate, timeSeconds);
+                processor, bus, channels, frames, sampleRate, timeSeconds);
             if (externalStatus != 0) return externalStatus;
         }
     }

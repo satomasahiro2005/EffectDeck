@@ -134,10 +134,7 @@ void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
 /// pipeline node can keep its externalIndex while another AU is added.
 void ETPipeline_SetExternalProcessorAt(uint32_t index,
                                         const ETExternalProcessor *processor);
-
-/// Publish the ordered external segment that runs before native EffeTune.
-void ETPipeline_SetPreExternalProcessors(const ETExternalProcessor *processors,
-                                          uint32_t count);
+void ETPipeline_ClearExternalProcessorAt(uint32_t index);
 
 /// Clear the external processor. Safe to call from the control thread; the
 /// render thread observes the change at the next block boundary.
@@ -147,6 +144,8 @@ void ETPipeline_SetExternalSampleRate(double sampleRate);
 
 uint32_t ETPipeline_ExternalLatency(void);
 double ETPipeline_ExternalTailTime(void);
+uint64_t ETPipeline_ExternalProcessCount(uint32_t index);
+int32_t ETPipeline_ExternalLastStatus(uint32_t index);
 
 #ifdef __cplusplus
 }

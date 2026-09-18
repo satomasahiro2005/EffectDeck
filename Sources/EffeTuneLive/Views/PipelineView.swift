@@ -45,7 +45,7 @@ struct PipelineView: View {
     /// 同じビューに .sheet を何枚も積むと、後から付けたものが効かなくなる。
     /// 実機で ⋯ の項目が全部押せなくなったのがそれ。ひとつにまとめる。
     /// ツールバーを別の型へ出したので、その型からも見えるところに置く。
-    enum Sheet: String, Identifiable {
+    enum Sheet: String, Identifiable, Equatable {
         case picker, settings, routing, presets, ir
         var id: String { rawValue }
     }
@@ -91,6 +91,7 @@ struct PipelineView: View {
 
     /// 掴んでいる行。
     @State private var dragging: UUID?
+    @State private var dragExternalSnapshot: UIImage?
     /// **掴んだ時点の矩形。**入れ替えても動かさない。
     @State private var anchorRect: CGRect = .zero
     /// 指の縦の移動量。
@@ -125,6 +126,16 @@ struct PipelineView: View {
                 .frame(maxWidth: ETScreenshotSeed.requested == nil
                                  ? ETLayout.chainMaxWidth : ETScreenshotSeed.phoneWidth)
                 .frame(maxWidth: .infinity)
+                .overlay {
+                    if sheet == .picker {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                insertAt = nil
+                                sheet = nil
+                            }
+                    }
+                }
             // タイトルは出さない。アプリの中でアプリ名を読む人は居ないし、
             // その 1 行ぶん鎖が見える。
             .navigationTitle("")
@@ -142,11 +153,14 @@ struct PipelineView: View {
                         // 検索から選んだときだけ閉じない、という形になっていた。
                         sheet = nil
                     }, onPickAU: { entry in
-                        let externalIndex = ETAUPostInsert.shared.externalIndex(for: entry)
-                        ETAUPostInsert.shared.choose(entry)
-                        dsp.addExternal(id: entry.id, name: entry.title,
+                        let instanceID = UUID().uuidString
+                        guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
+                            instanceID: instanceID) else { return }
+                        dsp.addExternal(id: entry.id, instanceID: instanceID,
+                                        name: entry.title,
                                         category: "Audio Units",
                                         externalIndex: externalIndex, at: insertAt)
+                        ETAUHost.shared.create(entry, instanceID: instanceID)
                         insertAt = nil
                         sheet = nil
                     }, onPickPreset: { name, items in
@@ -336,16 +350,7 @@ struct PipelineView: View {
                         // 落とした段の手前に入れる（上流の並べ替えと同じ向き）。
                         .dropDestination(for: String.self) { items, _ in
                             guard let type = items.first else { return false }
-                            if let preset = presetPayload(type) {
-                                dsp.addPreset(named: preset.0, items: preset.1, at: row.index)
-                                sheet = nil
-                                return true
-                            }
-                            guard let spec = EffeTuneDSP.spec(forType: type) else { return false }
-                            dsp.add(spec, at: row.index)
-                            // 落ちたら閉じる。足したものをすぐ見られる。
-                            sheet = nil
-                            return true
+                            return addDropped(type, at: row.index)
                         }
                     if row.block == .bottom { ETGroupRule() }
                     }
@@ -363,15 +368,7 @@ struct PipelineView: View {
                     .frame(height: 96)
                     .dropDestination(for: String.self) { items, _ in
                         guard let type = items.first else { return false }
-                        if let preset = presetPayload(type) {
-                            dsp.addPreset(named: preset.0, items: preset.1)
-                            sheet = nil
-                            return true
-                        }
-                        guard let spec = EffeTuneDSP.spec(forType: type) else { return false }
-                        dsp.add(spec)          // 位置を渡さない = 末尾
-                        sheet = nil
-                        return true
+                        return addDropped(type, at: nil)
                     }
             }
             }
@@ -385,15 +382,7 @@ struct PipelineView: View {
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
                     guard let type = items.first else { return false }
-                    if let preset = presetPayload(type) {
-                        dsp.addPreset(named: preset.0, items: preset.1)
-                        sheet = nil
-                        return true
-                    }
-                    guard let spec = EffeTuneDSP.spec(forType: type) else { return false }
-                    dsp.add(spec)          // 位置を渡さない = 末尾
-                    sheet = nil
-                    return true
+                    return addDropped(type, at: nil)
                 }
         }
         .coordinateSpace(name: Self.chainSpace)
@@ -408,10 +397,15 @@ struct PipelineView: View {
                                  extendsDown: !row.block.roundsBottom) {
                     EffectCardView(
                         index: row.index, node: row.node, dsp: dsp,
+                        // A drag snapshot must never mount the same AU view
+                        // controller as the real card. Doing so reparents the
+                        // controller into the overlay and leaves the row blank
+                        // after drop until it is collapsed and reopened.
                         isExpanded: expanded.contains(row.node.id),
                         isCollapsedFully: dsp.collapsedFully.contains(row.node.id),
                         toggleExpanded: {}, moveUp: {}, moveDown: {},
-                        canMoveUp: false, canMoveDown: false, block: row.block)
+                        canMoveUp: false, canMoveDown: false,
+                        externalSnapshot: dragExternalSnapshot, block: row.block)
                 }
                 // 行と同じ余白を付ける。rowRects は余白の外側で測っているので、
                 // 付けないと左右に広く見える。
@@ -441,6 +435,30 @@ struct PipelineView: View {
             return items.isEmpty ? nil : (name, items)
         }
         return nil
+    }
+
+    private func addDropped(_ payload: String, at index: Int?) -> Bool {
+        if let preset = presetPayload(payload) {
+            dsp.addPreset(named: preset.0, items: preset.1, at: index)
+            sheet = nil
+            return true
+        }
+        if let componentID = payload.dropPrefixIfPresent("au:"),
+           let entry = ETAUHost.shared.entry(id: componentID) {
+            let instanceID = UUID().uuidString
+            guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
+                instanceID: instanceID) else { return false }
+            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.title,
+                            category: "Audio Units", externalIndex: externalIndex,
+                            at: index)
+            ETAUHost.shared.create(entry, instanceID: instanceID)
+            sheet = nil
+            return true
+        }
+        guard let spec = EffeTuneDSP.spec(forType: payload) else { return false }
+        if let index { dsp.add(spec, at: index) } else { dsp.add(spec) }
+        sheet = nil
+        return true
     }
 
     // MARK: - 左スワイプで削除
@@ -531,6 +549,8 @@ struct PipelineView: View {
     private func beginDrag(_ row: Row) {
         guard dragging != row.node.id else { return }
         closeSwipe()
+        dragExternalSnapshot = row.node.isExternal
+            ? ETAUHost.shared.viewSnapshot(instanceID: row.node.externalInstanceID) : nil
         dragging = row.node.id
         anchorRect = rowRects[row.node.id] ?? .zero
         dragShift = .zero
@@ -567,6 +587,7 @@ struct PipelineView: View {
             // 戻っている間に掴み直されていたら、そちらを消さない。
             if dragging == id {
                 dragging = nil
+                dragExternalSnapshot = nil
                 dragLog.notice("畳む")
             }
         }

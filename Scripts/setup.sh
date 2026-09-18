@@ -68,6 +68,42 @@ else
   exit 1
 fi
 
+# External nodes participate in the same latency graph as native nodes.  The
+# first external-node patch deliberately only added processing; this follow-up
+# gives the engine a per-node latency callback so parallel buses get correct
+# delay compensation as well (a host-side post sum cannot do that).
+if grep -q "et_pipeline_external_latency latency" Vendor/effetune/dsp/core/abi.cpp 2>/dev/null; then
+  echo "当たっている: effetune-external-latency.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --check ../../Patches/effetune-external-latency.diff 2>/dev/null; then
+  git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace ../../Patches/effetune-external-latency.diff \
+    && echo "当てた: effetune-external-latency.diff"
+elif patch --batch --dry-run --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-external-latency.diff >/dev/null 2>&1; then
+  patch --batch --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-external-latency.diff \
+    && echo "当てた: effetune-external-latency.diff (patch)"
+else
+  echo "!! effetune-external-latency.diff が当たらない。Vendor/effetune の版を確かめること"
+  exit 1
+fi
+
+# External nodes must terminate their own processing branch.  They also need
+# the same selected-channel merge/PDC rules as native nodes when routing from
+# one bus into another.  Without the continue below an external node falls
+# through to processSlot with a null native instance and crashes the audio
+# thread immediately.
+if grep -A45 "if (node.external)" Vendor/effetune/dsp/core/engine.cpp 2>/dev/null \
+    | grep -q "actual_channel"; then
+  echo "当たっている: effetune-external-routing.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --check ../../Patches/effetune-external-routing.diff 2>/dev/null; then
+  git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace ../../Patches/effetune-external-routing.diff \
+    && echo "当てた: effetune-external-routing.diff"
+elif patch --batch --dry-run --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-external-routing.diff >/dev/null 2>&1; then
+  patch --batch --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-external-routing.diff \
+    && echo "当てた: effetune-external-routing.diff (patch)"
+else
+  echo "!! effetune-external-routing.diff が当たらない。Vendor/effetune の版を確かめること"
+  exit 1
+fi
+
 echo "--- エフェクトのカタログを作る ---"
 python3 Tools/gen_catalog.py 2>&1 | tail -5
 python3 Tools/gen_presets.py 2>&1 | tail -1

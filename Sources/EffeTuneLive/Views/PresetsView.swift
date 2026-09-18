@@ -572,10 +572,25 @@ struct PresetsView: View {
     }
 
     private var webSection: some View {
-        Section {
+        let externalCount = dsp.chain.lazy.filter(\.isExternal).count
+        return Section {
+            HStack {
+                Text("Compatibility")
+                Spacer()
+                HStack(spacing: 5) {
+                    Image(systemName: externalCount == 0 ? "checkmark.circle.fill"
+                                                           : "exclamationmark.triangle.fill")
+                    Text(externalCount == 0 ? "EffeTune" : "EffectDeck only")
+                        .font(.subheadline.weight(.medium))
+                }
+                .foregroundStyle(externalCount == 0 ? Color.green : Color.orange)
+            }
             if let url = ETShareLink.url(for: dsp.chain) {
                 ShareLink(item: url) {
-                    Label("Share this chain", systemImage: "square.and.arrow.up")
+                    Label(externalCount == 0
+                          ? "Share this chain"
+                          : "Export to EffeTune without \(externalCount) external effect\(externalCount == 1 ? "" : "s")",
+                          systemImage: "square.and.arrow.up")
                 }
             }
             Button {
@@ -590,7 +605,11 @@ struct PresetsView: View {
         } header: {
             Text("EffeTune on the web")
         } footer: {
-            Text("A shared chain opens in EffeTune, and one made there opens here.")
+            if externalCount == 0 {
+                Text("A shared chain opens in EffeTune, and one made there opens here.")
+            } else {
+                Text("EffeTune export omits external effects. EffectDeck saves keep them.")
+            }
         }
     }
 }

@@ -40,6 +40,10 @@ final class EffeTuneDSP: ObservableObject {
         /// Native EffeTune nodeではない外部processor。instanceは持たず、
         /// publish時にexternal callback nodeへ変換する。
         var externalID: String? = nil
+        /// AU component IDとは別の、チェーン上の1インスタンス固有ID。
+        var externalInstanceID: String = ""
+        /// AUAudioUnit.fullStateForDocument のアーカイブ。
+        var externalState: Data? = nil
         var externalIndex: UInt8 = 0
         var isExternal: Bool { externalID != nil }
 
@@ -122,6 +126,7 @@ final class EffeTuneDSP: ObservableObject {
     /// et_engine_prepare に渡した幅。実際の出力IFと同じ（DSPの上限16ch）。
     private(set) var maxChannels: UInt32 = 2
     private var maxFrames: UInt32 = 4096
+    var maximumFrames: UInt32 { maxFrames }
     private var kernelIndex: [String: UInt32] = [:]
 
     /// 利用できるエフェクト。カーネルとして登録されているものだけ。
@@ -245,11 +250,12 @@ final class EffeTuneDSP: ObservableObject {
 
     /// AU/JSFXをEffectDeckの鎖へ追加するための共通入口。
     /// 実行アダプタはexternalIDをキーに別レジストリから解決する。
-    func addExternal(id: String, name: String, category: String,
-                     externalIndex: UInt8 = 0, at index: Int? = nil) {
-        let spec = ETEffect.external(type: "External:(id)", name: name, category: category)
+    func addExternal(id: String, instanceID: String, name: String, category: String,
+                     externalIndex: UInt8, at index: Int? = nil) {
+        let spec = ETEffect.external(type: "External:\(id)", name: name, category: category)
         var node = Node(spec: spec, values: [])
         node.externalID = id
+        node.externalInstanceID = instanceID
         node.externalIndex = externalIndex
         let placed: Int
         if let index, index >= 0, index < chain.count {
@@ -279,8 +285,11 @@ final class EffeTuneDSP: ObservableObject {
 
     func remove(at offsets: IndexSet) {
         let doomed = offsets.map { chain[$0].instance }.filter { $0 != 0 }
+        let external = offsets.compactMap { chain[$0].isExternal
+            ? chain[$0].externalInstanceID : nil }
         chain.remove(atOffsets: offsets)
         publish()
+        for id in external { ETAUHost.shared.remove(instanceID: id) }
         retire(doomed)
     }
 
@@ -354,6 +363,10 @@ final class EffeTuneDSP: ObservableObject {
         // 何も触らずに終了した場合は次の起動でまた既定が並ぶ。見え方は同じ。
         guard !(isDefaultChain && !PipelineStore.hasSaved) else { return }
 
+        for index in chain.indices where chain[index].isExternal {
+            chain[index].externalState = ETAUHost.shared.stateData(
+                instanceID: chain[index].externalInstanceID)
+        }
         PipelineStore.saveLast(chain)
         persistExpanded()
     }
@@ -602,6 +615,23 @@ final class EffeTuneDSP: ObservableObject {
             node.channelSpec = item.channelSpec
             node.sectionName = item.sectionName
             node.irId = item.irId
+            node.externalID = item.externalID.isEmpty ? nil : item.externalID
+            if node.isExternal {
+                // Adding a preset creates new processor instances. Reusing the
+                // IDs stored in the preset would make two cards share one AU,
+                // one parameter tree and one external slot.
+                node.externalInstanceID = UUID().uuidString
+                node.externalState = item.externalState
+                guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
+                    instanceID: node.externalInstanceID) else { continue }
+                node.externalIndex = externalIndex
+                ETAUHost.shared.restore(componentID: item.externalID,
+                                        instanceID: node.externalInstanceID,
+                                        state: item.externalState,
+                                        channels: Self.routedChannels(of: node))
+                made.append(node)
+                continue
+            }
             guard instantiate(&node) else { continue }
             made.append(node)
         }
@@ -620,7 +650,12 @@ final class EffeTuneDSP: ObservableObject {
     func replaceChain(with items: [PipelineStore.Loaded]) {
         guard ready else { return }
         let doomed = chain.map(\.instance).filter { $0 != 0 }
+        let external = chain.filter(\.isExternal).map(\.externalInstanceID)
         chain.removeAll()
+        // Tear down old host identities before constructing replacements. A
+        // saved/imported chain may legitimately contain the same IDs; removing
+        // afterward would clear the freshly-created adapters as well.
+        for id in external { ETAUHost.shared.remove(instanceID: id) }
         // 丸ごと入れ替えたら全部畳む。前の鎖の id は残っていても指す先が無い。
         restoring = true
         expanded.removeAll()
@@ -649,6 +684,7 @@ final class EffeTuneDSP: ObservableObject {
     func resetToDefault() {
         guard ready else { return }
         let doomed = chain.map(\.instance).filter { $0 != 0 }
+        let external = chain.filter(\.isExternal).map(\.externalInstanceID)
         chain.removeAll()
         // 前の鎖の id は残っていても指す先が無いので捨てる（replaceChain と同じ）。
         restoring = true
@@ -663,6 +699,7 @@ final class EffeTuneDSP: ObservableObject {
         // publish() のあとに入れるのは add(_:) と同じで、didSet の persistExpanded に
         // 確定した鎖の位置を書かせるため。
         if let id = chain.last?.id { expanded.insert(id) }
+        for id in external { ETAUHost.shared.remove(instanceID: id) }
         retire(doomed)
     }
 
@@ -678,8 +715,19 @@ final class EffeTuneDSP: ObservableObject {
         node.irId = item.irId
         node.externalID = item.externalID.isEmpty ? nil : item.externalID
         if node.isExternal {
-            node.externalIndex = ETAUExternalBridge.shared.index(for: item.externalID)
-            ETAUPostInsert.shared.ensureLoaded(id: item.externalID)
+            let requestedID = item.externalInstanceID.isEmpty
+                ? UUID().uuidString : item.externalInstanceID
+            node.externalInstanceID = chain.contains(where: {
+                $0.isExternal && $0.externalInstanceID == requestedID
+            }) ? UUID().uuidString : requestedID
+            node.externalState = item.externalState
+            guard let index = try? ETAUExternalBridge.shared.reserve(
+                instanceID: node.externalInstanceID) else { return false }
+            node.externalIndex = index
+            ETAUHost.shared.restore(componentID: item.externalID,
+                                    instanceID: node.externalInstanceID,
+                                    state: item.externalState,
+                                    channels: Self.routedChannels(of: node))
         }
         if node.isExternal {
             chain.append(node)
@@ -704,6 +752,16 @@ final class EffeTuneDSP: ObservableObject {
         guard chain.indices.contains(index), chain[index].irId != id else { return }
         chain[index].irId = id
         persist()
+    }
+
+    func externalStateDidChange(instanceID: String) {
+        guard chain.contains(where: {
+            $0.isExternal && $0.externalInstanceID == instanceID
+        }) else { return }
+        // Capturing fullStateForDocument can archive a sizeable object. Parameter
+        // observers fire continuously while a native AU knob is dragged, so let
+        // the existing debounce capture it once in persist() instead.
+        persistSoon()
     }
 
     /// Section の名前を変える。DSP には伝えない（section.js の `cm` は音に効かない）。
@@ -763,8 +821,10 @@ final class EffeTuneDSP: ObservableObject {
 
     func clear() {
         let doomed = chain.map(\.instance).filter { $0 != 0 }
+        let external = chain.filter(\.isExternal).map(\.externalInstanceID)
         chain.removeAll()
         publish()
+        for id in external { ETAUHost.shared.remove(instanceID: id) }
         retire(doomed)
     }
 
@@ -835,6 +895,7 @@ final class EffeTuneDSP: ObservableObject {
         for i in chain.indices {
             chain[i].instance = 0
             chain[i].tapId = 0
+            if chain[i].isExternal { continue }
             if !instantiate(&chain[i]) { failed.append(chain[i].spec.type) }
         }
         if !failed.isEmpty {
@@ -1015,11 +1076,20 @@ final class EffeTuneDSP: ObservableObject {
     func setRouting(at index: Int, inputBus: UInt8? = nil, outputBus: UInt8? = nil,
                     channelSpec: Int8? = nil, sectionGate: UInt8? = nil) {
         guard chain.indices.contains(index) else { return }
+        let previousChannels = Self.routedChannels(of: chain[index])
         if let v = inputBus    { chain[index].inputBus = v }
         if let v = outputBus   { chain[index].outputBus = v }
         if let v = channelSpec { chain[index].channelSpec = v }
         if let v = sectionGate { chain[index].sectionGate = v }
         publish()
+        if chain[index].isExternal {
+            let channels = Self.routedChannels(of: chain[index])
+            if channels != previousChannels {
+                ETAUHost.shared.setChannels(channels,
+                                            instanceID: chain[index].externalInstanceID)
+                AudioIO.shared.rebuildForExternalProcessor()
+            }
+        }
     }
 
     /// 外した instance を、音のスレッドが読み終えてから壊す。
