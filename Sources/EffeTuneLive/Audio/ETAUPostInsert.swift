@@ -66,6 +66,7 @@ final class ETAUPostInsert: ObservableObject {
 
     func clear() {
         audioUnit = nil
+        ETAUExternalBridge.shared.clear()
         selectedID = nil
         loadedTitle = nil
         status = "Off"
@@ -100,6 +101,7 @@ final class ETAUPostInsert: ObservableObject {
         do {
             let unit = try await AVAudioUnit.instantiate(with: entry.description)
             audioUnit = unit
+            ETAUExternalBridge.shared.install(unit)
             audioUnit?.auAudioUnit.shouldBypassEffect = bypass
             restoreParameters()
             selectedID = entry.id
