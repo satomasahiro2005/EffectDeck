@@ -147,11 +147,10 @@ final class RoomEQStore: ObservableObject {
     static let notRouted =
         "This effect is not routed to any channel. Change Routing first."
 
-    /// この段が処理する幅。engine は 2ch で組んである
-    /// （AudioIO.swift:157 と :383 がどちらも maxChannels: 2 で prepare する）。
+    /// この段が処理する幅。All は接続中の出力IFの本数。
     static func processingChannels(of node: EffeTuneDSP.Node) -> Int {
         BandFIRPEQDesigner.processingChannels(channelSpec: node.channelSpec,
-                                              engineChannels: 2)
+                                              engineChannels: Int(EffeTuneDSP.shared.maxChannels))
     }
 
     /// lt の保存値（列挙の番号）を headBlock へ読み替える。

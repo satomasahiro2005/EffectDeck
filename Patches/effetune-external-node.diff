@@ -1,0 +1,192 @@
+diff --git a/dsp/core/abi.cpp b/dsp/core/abi.cpp
+index 53c5ed2..1775de1 100644
+--- a/dsp/core/abi.cpp
++++ b/dsp/core/abi.cpp
+@@ -393,6 +393,15 @@ et_status et_pipeline_configure(et_engine engine, const std::uint8_t *descriptor
+   return target == nullptr ? ET_ERR_ARGS : target->configurePipeline(descriptor, descriptor_bytes);
+ }
+ 
++void et_pipeline_set_external_callback(et_engine engine,
++                                       et_pipeline_external_process process,
++                                       void *context) {
++  effetune::Engine *target = findEngine(engine);
++  if (target != nullptr) {
++    target->setPipelineExternalCallback(process, context);
++  }
++}
++
+ std::uint32_t et_pipeline_latency(et_engine engine) {
+   const effetune::Engine *target = findEngine(engine);
+   return target == nullptr ? 0u : target->pipelineLatency();
+diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
+index 63976da..9fb368f 100644
+--- a/dsp/core/engine.cpp
++++ b/dsp/core/engine.cpp
+@@ -665,20 +665,22 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+     const std::uint8_t *record = descriptor + kDescriptorHeaderBytes + index * kDescriptorNodeBytes;
+     PipelineNode node{};
+     node.instance = readU32(record);
++    node.external = record[9] == 1u ? 1u : 0u;
++    node.externalIndex = record[10];
+     node.enabled = record[4];
+     node.inputBus = record[5];
+     node.outputBus = record[6];
+     node.channelSpec = static_cast<std::int8_t>(record[7]);
+     node.sectionGate = record[8];
+-    const InstanceSlot *slot = findInstance(node.instance);
++    const InstanceSlot *slot = node.external ? nullptr : findInstance(node.instance);
+     if (node.enabled > 1u || node.sectionGate > 1u || node.inputBus >= Arena::kBusCount ||
+         node.outputBus >= Arena::kBusCount || !validChannelSpec(node.channelSpec) ||
+-        record[9] != 0u || record[10] != 0u || record[11] != 0u || slot == nullptr ||
+-        slot->graphOwned) {
++        record[11] != 0u || (!node.external && (record[9] != 0u || record[10] != 0u ||
++        slot == nullptr || slot->graphOwned)) || (node.external && node.instance != 0u)) {
+       return ET_ERR_DESC;
+     }
+     for (std::uint32_t prior = 0; prior < index; ++prior) {
+-      if (parsed[prior].instance == node.instance) {
++      if (!node.external && !parsed[prior].external && parsed[prior].instance == node.instance) {
+         return ET_ERR_DESC;
+       }
+     }
+@@ -691,7 +693,7 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+   snapshot.node_count_ = node_count;
+   snapshot.channel_count_ = max_channels_;
+   for (std::uint32_t index = 0u; index < node_count; ++index) {
+-    snapshot.latencies_[index] = instanceLatency(parsed[index].instance);
++    snapshot.latencies_[index] = parsed[index].external ? 0u : instanceLatency(parsed[index].instance);
+   }
+   PipelineLatencyUpdate update;
+   const et_status status = preparePipelineLatencyUpdate(snapshot, update);
+@@ -710,6 +712,12 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+   return ET_OK;
+ }
+ 
++void Engine::setPipelineExternalCallback(et_pipeline_external_process process,
++                                          void *context) noexcept {
++  pipeline_external_process_ = process;
++  pipeline_external_context_ = context;
++}
++
+ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapshot) const noexcept {
+   snapshot = {};
+   if (!pipeline_configured_) {
+@@ -721,7 +729,9 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
+   snapshot.node_count_ = pipeline_count_;
+   snapshot.channel_count_ = max_channels_;
+   for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
+-    snapshot.latencies_[index] = instanceLatency(pipeline_[index].instance);
++    snapshot.latencies_[index] = pipeline_[index].external
++                                     ? 0u
++                                     : instanceLatency(pipeline_[index].instance);
+   }
+   return ET_OK;
+ }
+@@ -854,7 +864,10 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
+     return ET_ERR_STATE;
+   }
+   for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
+-    if (snapshot.latencies_[index] != instanceLatency(pipeline_[index].instance)) {
++    const std::uint32_t current_latency = pipeline_[index].external
++                                              ? 0u
++                                              : instanceLatency(pipeline_[index].instance);
++    if (snapshot.latencies_[index] != current_latency) {
+       return ET_ERR_STATE;
+     }
+   }
+@@ -919,15 +932,35 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+     if (node.enabled == 0u || node.sectionGate == 0u) {
+       continue;
+     }
+-    InstanceSlot *slot = findInstance(node.instance);
+-    if (slot == nullptr) {
++    InstanceSlot *slot = node.external ? nullptr : findInstance(node.instance);
++    if (!node.external && slot == nullptr) {
+       return ET_ERR_DESC;
+     }
+     float *input = arena_.bus(node.inputBus);
+     float *output = arena_.bus(node.outputBus);
+     PipelineMergeCompensation &compensation = pipeline_compensation_[index];
+ 
+-    if (node.channelSpec == -2) {
++    if (node.external) {
++      if (pipeline_external_process_ == nullptr) return ET_ERR_STATE;
++      float *target = input;
++      if (node.inputBus != node.outputBus) {
++        target = arena_.scratch(0);
++        std::memcpy(target, input, total_floats * sizeof(float));
++      }
++      const et_status external_status = pipeline_external_process_(
++          pipeline_external_context_, node.externalIndex, target, channel_count, frame_count,
++          time_seconds, node.channelSpec);
++      if (external_status != ET_OK) return external_status;
++      if (node.inputBus != node.outputBus) {
++        for (std::uint32_t channel = 0u; channel < channel_count; ++channel) {
++          float *destination = output + channel * frame_count;
++          const float *source = target + channel * frame_count;
++          for (std::uint32_t frame = 0u; frame < frame_count; ++frame) {
++            destination[frame] += source[frame];
++          }
++        }
++      }
++    } else if (node.channelSpec == -2) {
+       if (node.inputBus == node.outputBus) {
+         processSlot(*slot, input, channel_count, frame_count, time_seconds);
+       } else {
+diff --git a/dsp/core/engine.h b/dsp/core/engine.h
+index 99f988a..6e75dc2 100644
+--- a/dsp/core/engine.h
++++ b/dsp/core/engine.h
+@@ -64,6 +64,7 @@ public:
+ 
+   et_status configurePipeline(const std::uint8_t *descriptor,
+                               std::uint32_t descriptor_bytes) noexcept;
++  void setPipelineExternalCallback(et_pipeline_external_process process, void *context) noexcept;
+   class PipelineLatencySnapshot;
+   class PipelineLatencyUpdate;
+   // Capture/apply run on the engine's owning thread between process calls. Preparation
+@@ -132,6 +133,8 @@ private:
+ 
+   struct PipelineNode {
+     et_instance instance = 0;
++    std::uint8_t external = 0;
++    std::uint8_t externalIndex = 0;
+     std::uint8_t enabled = 0;
+     std::uint8_t inputBus = 0;
+     std::uint8_t outputBus = 0;
+@@ -190,6 +193,8 @@ private:
+   bool prepared_ = false;
+   bool pipeline_configured_ = false;
+   bool pipeline_delay_history_dirty_ = false;
++  et_pipeline_external_process pipeline_external_process_ = nullptr;
++  void *pipeline_external_context_ = nullptr;
+ };
+ 
+ // Fixed-size value for caller-owned, synchronized transfer to the preparation thread.
+diff --git a/dsp/include/effetune/abi.h b/dsp/include/effetune/abi.h
+index e681152..1aecb32 100644
+--- a/dsp/include/effetune/abi.h
++++ b/dsp/include/effetune/abi.h
+@@ -17,7 +17,12 @@ extern "C" {
+ 
+ typedef uint32_t et_engine;
+ typedef uint32_t et_instance;
++
+ typedef int32_t et_status;
++typedef et_status (*et_pipeline_external_process)(void *context, uint32_t external_index,
++                                                   float *audio, uint32_t channel_count,
++                                                   uint32_t frame_count, double time_seconds,
++                                                   int8_t channel_spec);
+ typedef struct et_runtime_event_state {
+   uint32_t generation;
+   uint32_t latched;
+@@ -165,6 +170,9 @@ ET_EXPORT uint32_t et_telemetry_read(et_engine engine, uint8_t *output, uint32_t
+ 
+ ET_EXPORT et_status et_pipeline_configure(et_engine engine, const uint8_t *descriptor,
+                                           uint32_t descriptor_bytes);
++ET_EXPORT void et_pipeline_set_external_callback(et_engine engine,
++                                                  et_pipeline_external_process process,
++                                                  void *context);
+ ET_EXPORT uint32_t et_pipeline_latency(et_engine engine);
+ ET_EXPORT et_status et_pipeline_process(et_engine engine, uint32_t channel_count,
+                                         uint32_t frame_count, double time_seconds,

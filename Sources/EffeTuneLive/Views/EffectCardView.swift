@@ -11,6 +11,8 @@
 //  class に section を足して枠の色を変えている（js/ui/pipeline/pipeline-item-builder.js:28-29）。
 
 import SwiftUI
+import AVFoundation
+import UIKit
 
 struct EffectCardView: View {
     let index: Int
@@ -30,6 +32,8 @@ struct EffectCardView: View {
     /// 画面の端の行か。鎖の本数ではなく**見えている行**で決める。
     let canMoveUp: Bool
     let canMoveDown: Bool
+    /// Frozen AU UI used only by the floating reorder card.
+    var externalSnapshot: UIImage? = nil
     /// 組の中での位置。内側を向く角を角にする。
     var block: ETBlockPosition = .alone
 
@@ -84,7 +88,10 @@ struct EffectCardView: View {
                 }
                 if isExpanded && hasBody {
                     Group {
-                        if ETEffectViews.has(node.spec.type) {
+                        if node.isExternal {
+                            ExternalProcessorView(instanceID: node.externalInstanceID,
+                                                  snapshot: externalSnapshot)
+                        } else if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
                             ETEffectViews.view(index: index, node: node, dsp: dsp)
                                 .environment(\.etGraphOnly, false)
@@ -215,11 +222,13 @@ struct EffectCardView: View {
                 // 絵はしおり（上流 :360 の SVG も bookmark の d）。
                 // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
                 // プリセットの一覧に混ぜない。
-                Button { sheet = .presets } label: {
-                    Label("Effect Presets", systemImage: "bookmark")
-                }
-                Button { dsp.resetParams(at: index) } label: {
-                    Label("Reset Parameters", systemImage: "arrow.counterclockwise")
+                if !node.isExternal {
+                    Button { sheet = .presets } label: {
+                        Label("Effect Presets", systemImage: "bookmark")
+                    }
+                    Button { dsp.resetParams(at: index) } label: {
+                        Label("Reset Parameters", systemImage: "arrow.counterclockwise")
+                    }
                 }
                 Button(action: moveUp) {
                     Label("Move Up", systemImage: "arrow.up")
@@ -311,7 +320,7 @@ struct EffectCardView: View {
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
     private var hasBody: Bool {
-        !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
+        node.isExternal || !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
@@ -347,6 +356,211 @@ struct EffectCardView: View {
     private func valueText(_ param: ETParam, _ v: Float) -> String {
         if case .toggle = param.kind { return v >= 0.5 ? "On" : "Off" }
         return param.format(v)
+    }
+}
+
+/// AU parameters are deliberately presented by the external node rather than
+/// by a fixed post-insert settings screen. The selected AU host owns the
+/// parameter tree and persists values; this view only provides the same inline
+/// editing affordance as native EffeTune parameters.
+private struct ExternalProcessorView: View {
+    @ObservedObject private var au = ETAUHost.shared
+    let instanceID: String
+    let snapshot: UIImage?
+    @State private var controller: UIViewController?
+    @State private var requestingView = false
+    @State private var fullScreen = false
+    @State private var movingToFullScreen = false
+
+    var body: some View {
+        let parameters = au.parameters(instanceID: instanceID)
+        Group {
+        if let snapshot {
+            Image(uiImage: snapshot)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(minHeight: 260, idealHeight: 360, maxHeight: 520)
+        } else if let controller {
+            ZStack(alignment: .topTrailing) {
+                if movingToFullScreen {
+                    Color.clear.frame(height: 260)
+                } else {
+                    ETAUViewControllerHost(controller: controller)
+                        .frame(minHeight: 260, idealHeight: 360, maxHeight: 520)
+                }
+                Button {
+                    movingToFullScreen = true
+                    Task { @MainActor in
+                        // Rotate the scene before presenting the AU. This
+                        // avoids drawing one portrait frame of the plug-in
+                        // and then snapping it sideways.
+                        await Task.yield()
+                        ETInterfaceOrientation.request(.landscapeRight)
+                        for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
+                            try? await Task.sleep(nanoseconds: 20_000_000)
+                        }
+                        fullScreen = true
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .accessibilityLabel("Full Screen")
+                .padding(8)
+            }
+            .fullScreenCover(isPresented: $fullScreen, onDismiss: {
+                ETInterfaceOrientation.request(.portrait)
+                movingToFullScreen = false
+            }) {
+                ETAUFullScreenEditor(controller: controller, isPresented: $fullScreen)
+            }
+        } else if parameters.isEmpty {
+            Text(au.status(instanceID: instanceID))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(parameters, id: \.address) { parameter in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(parameter.displayName)
+                                .font(.footnote)
+                            Spacer()
+                            Text(String(format: "%.3g", parameter.value))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(parameter.value) },
+                            set: { au.setParameter(parameter, value: $0) }),
+                            in: Double(parameter.minValue)...Double(parameter.maxValue))
+                    }
+                }
+            }
+        }
+        }
+        .task(id: au.revision) {
+            // The card normally opens before asynchronous AU instantiation has
+            // finished. Retry when the host revision changes; the old one-shot
+            // onAppear permanently missed every native view in that common case.
+            guard controller == nil, !requestingView,
+                  au.providesUserInterface(instanceID: instanceID) == true else { return }
+            requestingView = true
+            au.requestViewController(instanceID: instanceID) {
+                controller = $0
+                requestingView = false
+            }
+        }
+    }
+}
+
+private struct ETAUFullScreenEditor: View {
+    let controller: UIViewController
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ETAUViewControllerHost(controller: controller)
+                .padding(.top, 8)
+                .background(Color(uiColor: .systemBackground))
+            Button { isPresented = false } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+            }
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .accessibilityLabel("Close")
+                .padding(.top, 8)
+                .padding(.trailing, 12)
+        }
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+    }
+}
+
+@MainActor
+private enum ETInterfaceOrientation {
+    static var isLandscape: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })?
+            .interfaceOrientation.isLandscape == true
+    }
+
+    static func request(_ mask: UIInterfaceOrientationMask) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        ETAppDelegate.supportedOrientations = mask
+        for window in scene.windows {
+            window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+            print("orientation request failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+private struct ETAUViewControllerHost: UIViewControllerRepresentable {
+    let controller: UIViewController
+
+    func makeUIViewController(context: Context) -> ETAUContainerViewController {
+        let container = ETAUContainerViewController()
+        container.attach(controller)
+        return container
+    }
+
+    func updateUIViewController(_ container: ETAUContainerViewController, context: Context) {
+        container.attach(controller)
+    }
+
+    static func dismantleUIViewController(_ container: ETAUContainerViewController,
+                                           coordinator: ()) {
+        container.detach()
+    }
+}
+
+/// Owns the AU view explicitly. SwiftUI may destroy/recreate a card while it is
+/// reordered; returning the AU controller itself leaves it parented to the old
+/// representable and the new card becomes blank. This container reparents it
+/// and pins the plug-in view to every edge for both inline and full-screen use.
+private final class ETAUContainerViewController: UIViewController {
+    private weak var hosted: UIViewController?
+
+    func attach(_ controller: UIViewController) {
+        guard hosted !== controller || controller.parent !== self else { return }
+        if let parent = controller.parent, parent !== self {
+            controller.willMove(toParent: nil)
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+        }
+        if hosted !== controller { detach() }
+        hosted = controller
+        guard controller.parent !== self else { return }
+        addChild(controller)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        controller.didMove(toParent: self)
+    }
+
+    func detach() {
+        guard let controller = hosted, controller.parent === self else {
+            hosted = nil
+            return
+        }
+        controller.willMove(toParent: nil)
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        hosted = nil
     }
 }
 

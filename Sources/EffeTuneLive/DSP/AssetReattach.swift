@@ -10,9 +10,8 @@
 //  **カードを畳んでいるとビューが組み立てられないので、一度も走らない。**
 //  IR Reverb で同じことが起きたのと同じ形（EffeTuneLive の reloadAssets の頭）。
 //
-//  FIR Crossover はここに載せない。出口が 4ch 以上でないとカーネルが
-//  受け取らず（fir_crossover/kernel.cpp:323-325）、この app は 2ch で組んである。
-//  送り込みが最初から一度も走らないので、入れ直すものが無い。
+//  FIR Crossover も処理幅を含む Target を持つため、出力IFの本数が変わったときは
+//  ここから繋ぎ直す。これならカードが畳まれていても新しい instance へ戻せる。
 
 import Foundation
 
@@ -40,6 +39,8 @@ enum ETAssetReattach {
             ETGroupDelayEQDesigners.shared.sync(node: node)
         case "GroupDelayPEQPlugin":
             GroupDelayPEQDesigners.shared.sync(node: node)
+        case "FIRCrossoverPlugin":
+            FIRCrossoverDesigners.shared.sync(node: node)
         case "FiveBandFIRPEQPlugin":
             // この置き場は designer を引くついでに繋ぎ直す。tapId が変わっていれば
             // 設定を引き継いだまま作り直して start() まで進む
@@ -47,7 +48,7 @@ enum ETAssetReattach {
             _ = BandFIRPEQDesignerStore.shared.designer(
                 for: node,
                 sampleRate: EffeTuneDSP.shared.sampleRate,
-                outputChannelCount: 2)
+                outputChannelCount: Int(EffeTuneDSP.shared.maxChannels))
         default:
             break
         }

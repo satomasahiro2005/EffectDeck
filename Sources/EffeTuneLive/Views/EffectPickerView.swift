@@ -15,6 +15,7 @@ import SwiftUI
 
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
+    let onPickAU: (ETAUHost.Entry) -> Void
     /// プリセットを選んだ。名前と中身を渡す。受けた側が Section に包んで挿す。
     let onPickPreset: (String, [PipelineStore.Loaded]) -> Void
 
@@ -22,17 +23,19 @@ struct EffectPickerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
+    @StateObject private var au = ETAUHost.shared
     @State private var query = ""
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
     enum Pane: String, CaseIterable, Identifiable {
-        case effects, user, system
+        case effects, plugins, user, system
         var id: String { rawValue }
         var label: String {
             switch self {
             case .effects: return "Effects"
-            case .user:    return "User Presets"
-            case .system:  return "System Presets"
+            case .plugins: return "Plugins"
+            case .user:    return "User"
+            case .system:  return "Factory"
             }
         }
     }
@@ -42,18 +45,10 @@ struct EffectPickerView: View {
     /// 先にこれを false にしてから閉じる。`.searchable(text:isPresented:)` は
     /// iOS 17 から。
     @State private var searching = false
-    /// つまんでいる間の高さ。**見出しの行だけを残す。**
-    /// 掴んだものは指に付いたままなので、一覧が隠れても運べる。
-    /// 鎖を隠さないのが目的なので、これ以上は残さない。
-    private static let lifted = PresentationDetent.height(90)
     /// 開いたときの高さ。一覧を探すのが主な用途なので広めに取る。
     /// 半分だと一度に 4〜5 行しか見えず、カテゴリを跨ぐのに何度も擦ることになる。
     private static let opened = PresentationDetent.fraction(0.75)
-    /// いまのシートの高さ。つまんだら lifted まで下げる。
     @State private var detent: PresentationDetent = Self.opened
-    /// 掴む前の高さ。**落とし損ねたらここへ戻す。**
-    /// 戻さないと 90pt のまま残り、中身も出さないので何も無い板になる。
-    @State private var detentBeforeDrag: PresentationDetent?
 
     /// 帯を押したときの飛び先。
     /// 同じ名前を連打しても飛べるよう、回数も一緒に持つ。
@@ -120,48 +115,35 @@ struct EffectPickerView: View {
                             categoryStrip
                             Divider()
                             allSections
+                        case .plugins:
+                            pluginList
                         case .user:
                             userPresetList
                         case .system:
                             systemPresetList
                         }
                     }
+                } else if pane == .plugins {
+                    pluginSearchList
                 } else {
                     searchList
                 }
             }
-            .onAppear { if current.isEmpty { current = categories.first ?? "" } }
+            .onAppear { if current.isEmpty { current = firstCategory(for: pane) } }
+            .onChange(of: pane) { _, selected in
+                current = firstCategory(for: selected)
+                jump = Jump()
+            }
             .searchable(text: $query, isPresented: $searching, prompt: "Search effects")
             .navigationTitle("Available Effects")
             .navigationBarTitleDisplayMode(.inline)
-            // **縮めている間だけ、触ったら戻す。**
-            // 落とし損ねると 90pt のまま残る。中身は見えているが、
-            // その高さで一覧を触らせても選べないので、まず戻す。
-            // 終わりを教えてくれる API は onDragSessionUpdated（iOS 27）だけだが、
-            // .onDrag と同じビューに付けると掴んだものが出なくなった（実機）。
-            .overlay {
-                if detent == Self.lifted {
-                    Color.clear
-                        .contentShape(.rect)
-                        .onTapGesture {
-                            let back = detentBeforeDrag ?? Self.opened
-                            detentBeforeDrag = nil
-                            withAnimation(.snappy(duration: 0.2)) { detent = back }
-                        }
-                }
-            }
-            // **縮めている間は見出しごと消す。**
-            // 中身は上で Color.clear にしているが、見出しと検索の欄は
-            // ナビゲーションバーの持ち物なのでそちらでは消えない。
-            // 90pt に題と検索の欄が両方載って重なっていた。
-            // つまんで運んでいる最中なので、どちらも要らない。
-            .toolbar(detent == Self.lifted ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
-            .presentationDetents([Self.lifted, Self.opened, .large], selection: $detent)
+            .presentationDetents([Self.opened, .large], selection: $detent)
+            .presentationDragIndicator(.visible)
             .presentationBackgroundInteraction(.enabled(upThrough: Self.opened))
         }
     }
@@ -214,8 +196,10 @@ struct EffectPickerView: View {
             List {
                 if !newEffects.isEmpty {
                     Section {
-                        ForEach(newEffects) { effect in
+                        ForEach(Array(newEffects.enumerated()), id: \.element.id) { offset, effect in
                             row(effect, showCategory: true)
+                                .id(offset == 0 ? Self.jumpTarget(Self.newKey)
+                                                : "effect-" + effect.type)
                         }
                     } header: {
                         Text("New")
@@ -223,13 +207,15 @@ struct EffectPickerView: View {
                                 if v { current = Self.newKey }
                             }
                     }
-                    .id(Self.newKey)
                 }
 
                 ForEach(categories, id: \.self) { name in
                     Section {
-                        ForEach(effects(in: name)) { effect in
+                        let entries = effects(in: name)
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { offset, effect in
                             row(effect)
+                                .id(offset == 0 ? Self.jumpTarget(name)
+                                                : "effect-" + effect.type)
                         }
                     } header: {
                         Text(name.categoryLabel)
@@ -239,15 +225,122 @@ struct EffectPickerView: View {
                                 if visible { current = name }
                             }
                     }
-                    .id(name)
                 }
 
             }
             .listStyle(.plain)
             .onChange(of: jump) { _, now in
                 guard !now.name.isEmpty else { return }
-                withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+                withAnimation { proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top) }
             }
+        }
+    }
+
+    private var pluginList: some View {
+        Group {
+            if au.entries.isEmpty {
+                ContentUnavailableView("No Plugins", systemImage: "waveform",
+                                       description: Text("Install an AUv3 plug-in to see it here."))
+            } else {
+                ScrollViewReader { proxy in
+                    VStack(spacing: 0) {
+                        jumpStrip(audioUnitVendors)
+                        Divider()
+                        List {
+                            ForEach(audioUnitVendors, id: \.self) { vendor in
+                                Section {
+                                    let entries = audioUnits(vendor: vendor)
+                                    ForEach(Array(entries.enumerated()), id: \.element.id) {
+                                        offset, entry in
+                                        auRow(entry)
+                                            .id(offset == 0 ? Self.jumpTarget(vendor)
+                                                            : "au-entry-" + entry.id)
+                                    }
+                                } header: {
+                                    Text(vendor)
+                                        .onScrollVisibilityChange(threshold: 0.1) { visible in
+                                            if visible { current = vendor }
+                                        }
+                                }
+                            }
+                        }
+                        .listStyle(.plain)
+                    }
+                    .onChange(of: jump) { _, now in
+                        guard !now.name.isEmpty else { return }
+                        withAnimation {
+                            proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var audioUnitVendors: [String] {
+        Array(Set(au.entries.map { vendorName($0) })).sorted {
+            $0.localizedStandardCompare($1) == .orderedAscending
+        }
+    }
+
+    private func vendorName(_ entry: ETAUHost.Entry) -> String {
+        let name = entry.manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Other" : name
+    }
+
+    private func audioUnits(vendor: String) -> [ETAUHost.Entry] {
+        au.entries.filter { vendorName($0) == vendor }
+    }
+
+    /// AUv3 and JSFX use the same secondary-line grammar on the Plugins page.
+    /// Do not leave a separator behind when a script has no author metadata.
+    private func pluginDetail(format: String, author: String) -> String {
+        let author = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        return author.isEmpty ? format : "\(format) · \(author)"
+    }
+
+    private var pluginSearchList: some View {
+        let q = query.lowercased()
+        let matches = au.entries.filter {
+            $0.name.lowercased().contains(q) || $0.manufacturer.lowercased().contains(q)
+        }
+        return Group {
+            if matches.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else {
+                List(matches) { auRow($0) }.listStyle(.plain)
+            }
+        }
+    }
+
+    private func auRow(_ entry: ETAUHost.Entry) -> some View {
+        Button {
+            searching = false
+            Task { @MainActor in onPickAU(entry) }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.badge.plus")
+                    .foregroundStyle(.tint)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name).font(.system(size: 15)).foregroundStyle(.primary)
+                    Text(pluginDetail(format: "AUv3", author: entry.manufacturer))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .onDrag {
+            dismissAfterDragBegins()
+            return NSItemProvider(object: ("au:" + entry.id) as NSString)
+        } preview: {
+            Text(entry.name)
+                .font(.system(size: 14, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.thickMaterial, in: .capsule)
         }
     }
 
@@ -268,23 +361,34 @@ struct EffectPickerView: View {
                 List {
                     ForEach(userFolders, id: \.name) { folder in
                         Section {
-                            ForEach(folder.items, id: \.self) { name in
+                            ForEach(Array(folder.items.enumerated()), id: \.element) {
+                                offset, name in
                                 presetRow(name: ETUserPresetName.leaf(name),
                                           payload: "preset:user:" + name) {
                                     PresetStore.shared.load(name)
                                 }
+                                .id(offset == 0
+                                    ? Self.jumpTarget(folder.name.isEmpty
+                                                        ? Self.looseKey : folder.name)
+                                    : "user-preset-" + name)
                             }
                         } header: {
-                            if !folder.name.isEmpty { Text(folder.name) }
+                            Text(folder.name.isEmpty ? "Others" : folder.name)
+                                .onScrollVisibilityChange(threshold: 0.1) { visible in
+                                    if visible {
+                                        current = folder.name.isEmpty ? Self.looseKey : folder.name
+                                    }
+                                }
                         }
-                        .id(folder.name.isEmpty ? Self.looseKey : folder.name)
                     }
                 }
                 .listStyle(.plain)
                 }
                 .onChange(of: jump) { _, now in
                     guard !now.name.isEmpty else { return }
-                    withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+                    withAnimation {
+                        proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top)
+                    }
                 }
                 }
             }
@@ -300,23 +404,28 @@ struct EffectPickerView: View {
         List {
             ForEach(systemCategories, id: \.self) { category in
                 Section {
-                    ForEach(ETSystemPresets.filter { $0.category == category }) { preset in
+                    let presets = ETSystemPresets.filter { $0.category == category }
+                    ForEach(Array(presets.enumerated()), id: \.element.id) { offset, preset in
                         presetRow(name: preset.name,
                                   payload: "preset:system:" + preset.name) {
                             ETShareLink.parse(preset.json, catalog: ETCatalog)
                         }
+                        .id(offset == 0 ? Self.jumpTarget(category)
+                                        : "system-preset-" + preset.name)
                     }
                 } header: {
                     Text(category.categoryLabel)
+                        .onScrollVisibilityChange(threshold: 0.1) { visible in
+                            if visible { current = category }
+                        }
                 }
-                .id(category)
             }
         }
         .listStyle(.plain)
         }
         .onChange(of: jump) { _, now in
             guard !now.name.isEmpty else { return }
-            withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+            withAnimation { proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top) }
         }
         }
     }
@@ -330,15 +439,20 @@ struct EffectPickerView: View {
             HStack(spacing: 8) {
                 ForEach(names, id: \.self) { name in
                     Button {
+                        current = name
                         jump = Jump(name: name, count: jump.count + 1)
                     } label: {
                         Text(name == Self.looseKey ? "Others" : name.categoryLabel)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13,
+                                          weight: current == name ? .semibold : .regular))
+                            .foregroundStyle(current == name ? AnyShapeStyle(.white)
+                                                             : AnyShapeStyle(.secondary))
                             .padding(.horizontal, 13)
                             .padding(.vertical, 7)
                             .frame(minHeight: ETMetrics.hitTarget)
-                            .background(AnyShapeStyle(.quaternary), in: .capsule)
+                            .background(current == name ? AnyShapeStyle(.tint)
+                                                        : AnyShapeStyle(.quaternary),
+                                        in: .capsule)
                             .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)
@@ -404,7 +518,10 @@ struct EffectPickerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .onDrag { NSItemProvider(object: payload as NSString) }
+        .onDrag {
+            dismissAfterDragBegins()
+            return NSItemProvider(object: payload as NSString)
+        }
     }
 
     private func effects(in category: String) -> [ETEffect] {
@@ -472,19 +589,7 @@ struct EffectPickerView: View {
         // 貼り付くので、直後にシートを縮めると指より下にずれる。
         // 小さな札にすれば指の下に付く。
         .onDrag {
-            if detent != Self.lifted {
-                detentBeforeDrag = detent
-                // **検索してからつまむと縮まなかった。**
-                // `.searchable` が出ている間は UIKit の検索コントローラが
-                // シートを一番上に張り付かせるので、detent を下げても効かない。
-                // 先に検索を畳んで、**その次の回**で下げる。
-                DispatchQueue.main.async {
-                    searching = false
-                    DispatchQueue.main.async {
-                        withAnimation(.snappy(duration: 0.2)) { detent = Self.lifted }
-                    }
-                }
-            }
+            dismissAfterDragBegins()
             return NSItemProvider(object: effect.type as NSString)
         } preview: {
             Text(effect.name)
@@ -492,6 +597,31 @@ struct EffectPickerView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)
+        }
+    }
+
+    private static func jumpTarget(_ name: String) -> String {
+        "category-target:" + name
+    }
+
+    private func firstCategory(for pane: Pane) -> String {
+        switch pane {
+        case .effects:    return stripNames.first ?? ""
+        case .plugins:    return audioUnitVendors.first ?? ""
+        case .user:
+            guard let first = userFolders.first?.name else { return "" }
+            return first.isEmpty ? Self.looseKey : first
+        case .system:     return systemCategories.first ?? ""
+        }
+    }
+
+    /// `.onDrag` is called once UIKit has accepted the long press as a drag.
+    /// Dismiss on the next run loop so the item provider/preview is installed
+    /// before its source view disappears.
+    private func dismissAfterDragBegins() {
+        DispatchQueue.main.async {
+            searching = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { dismiss() }
         }
     }
 }

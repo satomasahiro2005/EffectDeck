@@ -129,6 +129,13 @@ struct ETEffect: Identifiable {
     var isAnalyzer: Bool { category == "analyzer" }
 }
 
+extension ETEffect {
+    static func external(type: String, name: String, category: String) -> ETEffect {
+        ETEffect(type: type, name: name, about: "External processor", category: category,
+                 paramsHash: 0, floatCount: 0, defaults: [], params: [])
+    }
+}
+
 extension Array where Element == ETEffect {
     /// カテゴリごとに、名前順で。
     var byCategory: [(String, [ETEffect])] {

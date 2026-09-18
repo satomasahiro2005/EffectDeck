@@ -21,12 +21,19 @@
 #define ETPipeline_h
 
 #include <stdint.h>
+#include "ETExternalProcessor.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define ET_PIPE_MAX_NODES 64
+#define ET_EXTERNAL_MAX_PROCESSORS 8
+
+enum {
+    ET_PIPE_NODE_NATIVE = 0,
+    ET_PIPE_NODE_EXTERNAL = 1,
+};
 
 /// channelSpec の値。EffeTune の descriptor と同じ。
 enum {
@@ -46,6 +53,8 @@ typedef struct {
     uint8_t  outputBus;    // 0〜4
     int8_t   channelSpec;
     uint8_t  sectionGate;  // 0 or 1
+    uint8_t  kind;         // ET_PIPE_NODE_NATIVE / ET_PIPE_NODE_EXTERNAL
+    uint8_t  externalIndex;
 } ETPipeNode;
 
 /// engine を渡す。組めている状態を 0 に戻すので、et_engine_prepare のたびに呼ぶ。
@@ -109,6 +118,34 @@ int ETPipeline_IsBypassed(void);
 /// いま鎖が組めているか。直近の configure が ET_OK だったかどうか。
 /// engine を差し替えると 0 に戻る。
 int ETPipeline_HasConfigured(void);
+
+/// Attach one external processor to the pipeline's final planar bus.
+/// The descriptor is borrowed and must remain valid until replaced or cleared.
+/// This first ABI stage is deliberately post-pipeline; arbitrary insertion
+/// points require native engine support and will be added separately.
+void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor);
+
+/// Publish an ordered external-processor segment. The array is copied in the
+/// control plane and executed in this order on every successful native block.
+void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
+                                       uint32_t count);
+
+/// Replace one slot in the ordered external registry. Slots are stable, so a
+/// pipeline node can keep its externalIndex while another AU is added.
+void ETPipeline_SetExternalProcessorAt(uint32_t index,
+                                        const ETExternalProcessor *processor);
+void ETPipeline_ClearExternalProcessorAt(uint32_t index);
+
+/// Clear the external processor. Safe to call from the control thread; the
+/// render thread observes the change at the next block boundary.
+void ETPipeline_ClearExternalProcessor(void);
+
+void ETPipeline_SetExternalSampleRate(double sampleRate);
+
+uint32_t ETPipeline_ExternalLatency(void);
+double ETPipeline_ExternalTailTime(void);
+uint64_t ETPipeline_ExternalProcessCount(uint32_t index);
+int32_t ETPipeline_ExternalLastStatus(uint32_t index);
 
 #ifdef __cplusplus
 }

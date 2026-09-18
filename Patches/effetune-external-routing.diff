@@ -1,0 +1,49 @@
+diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
+--- a/dsp/core/engine.cpp
++++ b/dsp/core/engine.cpp
+@@ -947,5 +947,18 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+     if (node.external) {
+       if (pipeline_external_process_ == nullptr) return ET_ERR_STATE;
++      std::uint32_t first_channel = 0u;
++      std::uint32_t routed_channels = channel_count;
++      if (node.channelSpec != -2) {
++        routed_channels = node.channelSpec == -1 || node.channelSpec >= 16 ? 2u : 1u;
++        if (node.channelSpec >= 16) {
++          first_channel = static_cast<std::uint32_t>(node.channelSpec - 16) * 2u;
++        } else if (node.channelSpec >= 0) {
++          first_channel = static_cast<std::uint32_t>(node.channelSpec);
++        }
++        if (first_channel + routed_channels > channel_count) {
++          continue;
++        }
++      }
+       float *target = input;
+       if (node.inputBus != node.outputBus) {
+         target = arena_.scratch(0);
+@@ -956,14 +969,23 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+           time_seconds, node.channelSpec);
+       if (external_status != ET_OK) return external_status;
+       if (node.inputBus != node.outputBus) {
+-        for (std::uint32_t channel = 0u; channel < channel_count; ++channel) {
+-          float *destination = output + channel * frame_count;
+-          const float *source = target + channel * frame_count;
++        for (std::uint32_t channel = 0u; channel < routed_channels; ++channel) {
++          const std::uint32_t actual_channel = first_channel + channel;
++          float *destination = output + actual_channel * frame_count;
++          float *source = target + actual_channel * frame_count;
++          if (compensation.targets[actual_channel] == DelayTarget::Destination) {
++            applyDelay(compensation.delayLine, actual_channel,
++                       compensation.delays[actual_channel], destination, frame_count);
++          } else if (compensation.targets[actual_channel] == DelayTarget::Incoming) {
++            applyDelay(compensation.delayLine, actual_channel,
++                       compensation.delays[actual_channel], source, frame_count);
++          }
+           for (std::uint32_t frame = 0u; frame < frame_count; ++frame) {
+             destination[frame] += source[frame];
+           }
+         }
+       }
++      continue;
+     } else if (node.channelSpec == -2) {
+       if (node.inputBus == node.outputBus) {
+         processSlot(*slot, input, channel_count, frame_count, time_seconds);

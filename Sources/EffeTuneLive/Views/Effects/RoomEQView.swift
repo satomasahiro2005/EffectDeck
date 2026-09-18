@@ -377,8 +377,7 @@ struct RoomEQView: View {
 
     // MARK: 数
 
-    /// このエフェクトが処理する幅。engine は 2ch で組んである
-    /// （AudioIO.swift:157 と :383 がどちらも maxChannels: 2 で prepare する）。
+    /// このエフェクトが処理する幅。All の場合は接続中の出力IFの本数になる。
     private var processingChannels: Int { RoomEQStore.processingChannels(of: node) }
 
     /// 実際に送る面の数。処理幅を超えた測定は落とす（apply と同じ数え方）。

@@ -20,18 +20,13 @@
 //  だから段（Node.id）ごとの置き場に入れて、両方の位置から同じものを引く。
 //  Matrix の経路が同じ理由で MatrixRouting に入っている（MatrixView.swift:246-255）。
 //
-//  --- この build では音が変わらない ---
+//  --- 出力IFの本数 ---
 //  帯ごとにステレオ 1 対を吐くので、出口が 4〜16 の偶数でないと成り立たない。
 //  カーネルは channelCount == 2 のとき何もせずに戻り
 //  （dsp/plugins/basics/fir_crossover/kernel.cpp:105-106）、
 //  validateBegin も processingChannels < 4 と > max_channels_ を弾く（同 :323-325）。
-//  この app は et_engine_prepare に maxChannels: 2 を渡し（AudioIO.swift:157,383）、
-//  ETPipeline_Process にも 2 を渡している（同 :437,441）。
-//  designer 側もそれを知っていて、settings.config が nil を返し
-//  （FIRCrossoverDesigner.swift:494-503）、refresh が AssetUpload.clear して
-//  status = .unavailable で止まる（同 :709-718）。
-//  **つまり配線は通っているが、送り込みは一度も走らない。**
-//  走らせるには engine を 4ch 以上で prepare し直すしかなく、それは app 全体に効く。
+//  engine と処理幅は接続中の出力IFに合わせる。4ch 以上のIFを接続し、
+//  Routing を All にしたときだけ designer が資産を送れる。
 //  上流も同じ条件で _renderBusError（fir_crossover.js:615-622）を出すので、
 //  文言はそれに合わせた。
 //
@@ -58,7 +53,6 @@
 //
 //  並びは上流と同じで、error → Latency → Band Count。
 //  error の場所には、出口が足りているときだけ designer の状態を出す。
-//  足りていないとき（いまはいつも）は上流の文言の busError に置き換える。
 //  .unavailable の文は busError の 1 行目と同じことを言うので、重ねない。
 
 import SwiftUI
@@ -89,13 +83,11 @@ private struct FIRCrossoverBody: View {
     @ObservedObject var dsp: EffeTuneDSP
     @ObservedObject var designer: FIRCrossoverDesigner
 
-    /// この app が engine に渡している幅。AudioIO.swift:157,383 と :437,441。
-    /// EffeTuneDSP は maxChannels を保存していないので、ここに書くしかない。
-    private static let processingChannels = 2
+    private var processingChannels: Int { EffeTuneDSP.routedChannels(of: node) }
 
     /// fir_crossover.js:76-78 の _maximumBandCount。0 なら成り立たない。
     private var maximumBandCount: Int {
-        FIRCrossoverSettings.maximumBandCount(processingChannels: Self.processingChannels)
+        FIRCrossoverSettings.maximumBandCount(processingChannels: processingChannels)
     }
 
     /// fir_crossover.js:26 の maxBands（出口が変わると同 561 で入れ直す）。0 のときは 2 に倒れる。
@@ -119,6 +111,9 @@ private struct FIRCrossoverBody: View {
         // 鎖を組み直すと instance が変わる（EffeTuneDSP.swift:594-607 の rebuildAll）。
         // 送り先が別物になっているので繋ぎ直す。
         .onChange(of: node.instance) { _, _ in connect() }
+        // Routing を Stereo / All 間で切り替えたときも instance は同じなので、
+        // Target が持つ処理チャンネル数だけを更新する。
+        .onChange(of: processingChannels) { _, _ in connect() }
     }
 
     // MARK: designer へ繋ぐ
@@ -127,43 +122,7 @@ private struct FIRCrossoverBody: View {
     /// （FIRCrossoverDesigner.swift:649）。
     private func connect() {
         FIRCrossoverDesigners.shared.prune(keeping: dsp.chain.map(\.id))
-
-        // 鎖へ書き戻す口。繋がないと designer が et_instance_set_params を直に叩いて、
-        // EffeTuneDSP が持つ values とずれる（FIRCrossoverDesigner.swift:615-617）。
-        //
-        // index ではなく instance で引き直す。並べ替えで index はずれるが、
-        // この閉包は attach したときのものが designer に残り続けるため。
-        let instance = node.instance
-        designer.parameterWriter = { values in
-            let shared = EffeTuneDSP.shared
-            guard let at = shared.chain.firstIndex(where: { $0.instance == instance }) else {
-                return
-            }
-            // 並びは EffectCatalog.swift:124-126 の offset 0/1/2 と同じ。
-            for (offset, value) in values.enumerated() {
-                shared.setValue(value, at: at, offset: offset)
-            }
-        }
-
-        // commit で instance の遅延が変わる。descriptor を出し直して
-        // et_pipeline_configure に教える（AssetUpload.swift:64-68）。
-        designer.onAssetCommitted = { EffeTuneDSP.shared.republish() }
-
-        // 端末に残っているのは lt と bc だけ。designer の既定ではなく、
-        // そちらを先に入れてから attach する（attach がその場で設計を始めるので）。
-        designer.update {
-            $0.latencyModeIndex = Int(value(param("lt")).rounded())
-            $0.bandCount = Int(value(param("bc")).rounded())
-        }
-
-        designer.attach(FIRCrossoverDesigner.Target(
-            engine: dsp.engine,
-            instance: node.instance,
-            // **処理レート。機器のレートではない。**
-            // カーネルはペイロードの +12 がこの値と一致するかを見る（kernel.cpp:345）。
-            // fir_crossover は IR Reverb と違って rate_divider で割らない。
-            sampleRate: dsp.sampleRate,
-            processingChannels: Self.processingChannels))
+        FIRCrossoverDesigners.shared.sync(node: node)
     }
 
     // MARK: Latency
@@ -412,6 +371,49 @@ final class FIRCrossoverDesigners {
         let made = FIRCrossoverDesigner()
         byNode[id] = made
         return made
+    }
+
+    /// 既にビューで作られた designer だけを、現在の engine / instance / 処理幅へ繋ぐ。
+    /// rebuildAll 後はカードが畳まれていても ETAssetReattach から呼ばれる。
+    func sync(node: EffeTuneDSP.Node) {
+        guard let designer = byNode[node.id] else { return }
+
+        // index ではなく instance で引き直す。並べ替え後も正しい段へ書き戻せる。
+        let instance = node.instance
+        designer.parameterWriter = { values in
+            let shared = EffeTuneDSP.shared
+            guard let at = shared.chain.firstIndex(where: { $0.instance == instance }) else {
+                return
+            }
+            for (offset, value) in values.enumerated() {
+                shared.setValue(value, at: at, offset: offset)
+            }
+        }
+
+        // commit で変わった遅延を pipeline descriptor に反映する。
+        designer.onAssetCommitted = { EffeTuneDSP.shared.republish() }
+
+        func parameterValue(_ key: String, fallback: Float) -> Float {
+            guard let parameter = node.spec.params.first(where: { $0.key == key }),
+                  node.values.indices.contains(parameter.offset) else {
+                return fallback
+            }
+            return node.values[parameter.offset]
+        }
+
+        // Node に保存される lt / bc を attach より先に復元する。
+        designer.update {
+            $0.latencyModeIndex = Int(parameterValue("lt", fallback: 1).rounded())
+            $0.bandCount = Int(parameterValue("bc", fallback: 2).rounded())
+        }
+
+        let dsp = EffeTuneDSP.shared
+        designer.attach(FIRCrossoverDesigner.Target(
+            engine: dsp.engine,
+            instance: node.instance,
+            // FIR 資産は rate divider 前ではなく DSP の処理レートで設計する。
+            sampleRate: dsp.sampleRate,
+            processingChannels: EffeTuneDSP.routedChannels(of: node)))
     }
 
     /// 鎖から外れた段のぶんを捨てる。

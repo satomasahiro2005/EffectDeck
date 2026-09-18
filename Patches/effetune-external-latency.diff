@@ -1,0 +1,104 @@
+diff --git a/dsp/core/abi.cpp b/dsp/core/abi.cpp
+--- a/dsp/core/abi.cpp
++++ b/dsp/core/abi.cpp
+@@ -417,10 +417,11 @@ et_status et_pipeline_configure(et_engine engine, const std::uint8_t *descriptor
+ 
+ void et_pipeline_set_external_callback(et_engine engine,
+                                        et_pipeline_external_process process,
++                                       et_pipeline_external_latency latency,
+                                        void *context) {
+   effetune::Engine *target = findEngine(engine);
+   if (target != nullptr) {
+-    target->setPipelineExternalCallback(process, context);
++    target->setPipelineExternalCallback(process, latency, context);
+   }
+ }
+ 
+diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
+--- a/dsp/core/engine.cpp
++++ b/dsp/core/engine.cpp
+@@ -693,7 +693,9 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+   snapshot.node_count_ = node_count;
+   snapshot.channel_count_ = max_channels_;
+   for (std::uint32_t index = 0u; index < node_count; ++index) {
+-    snapshot.latencies_[index] = parsed[index].external ? 0u : instanceLatency(parsed[index].instance);
++    snapshot.latencies_[index] = parsed[index].external
++                                     ? externalPipelineLatency(parsed[index].externalIndex)
++                                     : instanceLatency(parsed[index].instance);
+   }
+   PipelineLatencyUpdate update;
+   const et_status status = preparePipelineLatencyUpdate(snapshot, update);
+@@ -712,8 +714,10 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+ }
+ 
+ void Engine::setPipelineExternalCallback(et_pipeline_external_process process,
++                                          et_pipeline_external_latency latency,
+                                           void *context) noexcept {
+   pipeline_external_process_ = process;
++  pipeline_external_latency_ = latency;
+   pipeline_external_context_ = context;
+ }
+ 
+@@ -729,7 +733,7 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
+   snapshot.channel_count_ = max_channels_;
+   for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
+     snapshot.latencies_[index] = pipeline_[index].external
+-                                     ? 0u
++                                     ? externalPipelineLatency(pipeline_[index].externalIndex)
+                                      : instanceLatency(pipeline_[index].instance);
+   }
+   return ET_OK;
+@@ -864,7 +868,7 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
+   }
+   for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
+     const std::uint32_t current_latency = pipeline_[index].external
+-                                              ? 0u
++                                              ? externalPipelineLatency(pipeline_[index].externalIndex)
+                                               : instanceLatency(pipeline_[index].instance);
+     if (snapshot.latencies_[index] != current_latency) {
+       return ET_ERR_STATE;
+diff --git a/dsp/core/engine.h b/dsp/core/engine.h
+--- a/dsp/core/engine.h
++++ b/dsp/core/engine.h
+@@ -64,6 +64,8 @@ public:
+ 
+   et_status configurePipeline(const std::uint8_t *descriptor,
+                               std::uint32_t descriptor_bytes) noexcept;
+-  void setPipelineExternalCallback(et_pipeline_external_process process, void *context) noexcept;
++  void setPipelineExternalCallback(et_pipeline_external_process process,
++                                   et_pipeline_external_latency latency,
++                                   void *context) noexcept;
+   class PipelineLatencySnapshot;
+   class PipelineLatencyUpdate;
+@@ -104,3 +106,8 @@ private:
+   [[nodiscard]] std::uint32_t instanceLatency(et_instance instance) const noexcept;
++  [[nodiscard]] std::uint32_t externalPipelineLatency(std::uint8_t index) const noexcept {
++    return pipeline_external_latency_ == nullptr
++               ? 0u
++               : pipeline_external_latency_(pipeline_external_context_, index);
++  }
+ 
+   static constexpr std::uint32_t kMaxPipelineNodes = 128;
+@@ -193,5 +200,6 @@ private:
+   bool pipeline_configured_ = false;
+   bool pipeline_delay_history_dirty_ = false;
+   et_pipeline_external_process pipeline_external_process_ = nullptr;
++  et_pipeline_external_latency pipeline_external_latency_ = nullptr;
+   void *pipeline_external_context_ = nullptr;
+ };
+diff --git a/dsp/include/effetune/abi.h b/dsp/include/effetune/abi.h
+--- a/dsp/include/effetune/abi.h
++++ b/dsp/include/effetune/abi.h
+@@ -23,3 +23,5 @@ typedef et_status (*et_pipeline_external_process)(void *context, uint32_t externa
+                                                    uint32_t frame_count, double time_seconds,
+                                                    int8_t channel_spec);
++typedef uint32_t (*et_pipeline_external_latency)(void *context,
++                                                 uint32_t external_index);
+ typedef struct et_runtime_event_state {
+@@ -172,5 +174,6 @@ ET_EXPORT et_status et_pipeline_configure(et_engine engine, const uint8_t *descri
+                                           uint32_t descriptor_bytes);
+ ET_EXPORT void et_pipeline_set_external_callback(et_engine engine,
+                                                   et_pipeline_external_process process,
++                                                  et_pipeline_external_latency latency,
+                                                   void *context);
+ ET_EXPORT uint32_t et_pipeline_latency(et_engine engine);

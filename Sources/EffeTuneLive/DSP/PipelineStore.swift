@@ -40,6 +40,13 @@ enum PipelineStore {
             var o: [String: Any] = parameters(of: node)
             o["nm"] = node.spec.name
             o["en"] = node.enabled
+            if let externalID = node.externalID {
+                o["external"] = externalID
+                o["externalInstance"] = node.externalInstanceID
+                if let state = node.externalState {
+                    o["externalState"] = state.base64EncodedString()
+                }
+            }
             if node.inputBus  != 0 { o["ib"] = Int(node.inputBus) }
             if node.outputBus != 0 { o["ob"] = Int(node.outputBus) }
             if let ch = ETChannel.channel(from: node.channelSpec) { o["ch"] = ch }
@@ -62,6 +69,13 @@ enum PipelineStore {
                 o = ETParamCoding.encode(params: item.spec.params, values: item.values)
                 if !item.irId.isEmpty { o[ETIRLoader.presetKey] = item.irId }
             }
+            if !item.externalID.isEmpty {
+                o["external"] = item.externalID
+                o["externalInstance"] = item.externalInstanceID
+                if let state = item.externalState {
+                    o["externalState"] = state.base64EncodedString()
+                }
+            }
             o["nm"] = item.spec.name
             o["en"] = item.enabled
             if item.inputBus  != 0 { o["ib"] = Int(item.inputBus) }
@@ -79,6 +93,13 @@ enum PipelineStore {
                 "enabled": node.enabled,
                 "parameters": parameters(of: node),
             ]
+            if let externalID = node.externalID {
+                o["external"] = externalID
+                o["externalInstance"] = node.externalInstanceID
+                if let state = node.externalState {
+                    o["externalState"] = state.base64EncodedString()
+                }
+            }
             if node.inputBus  != 0 { o["inputBus"] = Int(node.inputBus) }
             if node.outputBus != 0 { o["outputBus"] = Int(node.outputBus) }
             if let ch = ETChannel.channel(from: node.channelSpec) { o["channel"] = ch }
@@ -114,6 +135,9 @@ enum PipelineStore {
         var sectionName: String = ""
         /// IR Reverb の素材の鍵（`ir`）。それ以外では空。
         var irId: String = ""
+        var externalID: String = ""
+        var externalInstanceID: String = ""
+        var externalState: Data? = nil
     }
 
     /// ロングでもショートでも受ける。根が配列ならショート、
@@ -134,6 +158,25 @@ enum PipelineStore {
         for entry in list {
             let isLong = entry["name"] != nil
             let name = (entry["name"] ?? entry["nm"]) as? String ?? ""
+            let externalID = entry["external"] as? String ?? ""
+
+            if !externalID.isEmpty {
+                let spec = ETEffect.external(type: "External:\(externalID)", name: name,
+                                              category: externalID.hasPrefix("jsfx:") ? "JSFX" : "Audio Units")
+                let instanceID = entry["externalInstance"] as? String ?? UUID().uuidString
+                let state = (entry["externalState"] as? String).flatMap {
+                    Data(base64Encoded: $0)
+                }
+                out.append(Loaded(spec: spec, values: [],
+                                   enabled: (entry["enabled"] ?? entry["en"]) as? Bool ?? true,
+                                   inputBus: UInt8(clamping: (entry["inputBus"] ?? entry["ib"]) as? Int ?? 0),
+                                   outputBus: UInt8(clamping: (entry["outputBus"] ?? entry["ob"]) as? Int ?? 0),
+                                   channelSpec: ETChannel.spec(from: (entry["channel"] ?? entry["ch"]) as? String),
+                                   externalID: externalID,
+                                   externalInstanceID: instanceID,
+                                   externalState: state))
+                continue
+            }
 
             let params: [String: Any] = isLong
                 ? (entry["parameters"] as? [String: Any] ?? [:])
