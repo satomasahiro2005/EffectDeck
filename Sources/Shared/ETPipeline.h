@@ -28,6 +28,7 @@ extern "C" {
 #endif
 
 #define ET_PIPE_MAX_NODES 64
+#define ET_EXTERNAL_MAX_PROCESSORS 8
 
 /// channelSpec の値。EffeTune の descriptor と同じ。
 enum {
@@ -116,6 +117,11 @@ int ETPipeline_HasConfigured(void);
 /// This first ABI stage is deliberately post-pipeline; arbitrary insertion
 /// points require native engine support and will be added separately.
 void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor);
+
+/// Publish an ordered external-processor segment. The array is copied in the
+/// control plane and executed in this order on every successful native block.
+void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
+                                       uint32_t count);
 
 /// Clear the external processor. Safe to call from the control thread; the
 /// render thread observes the change at the next block boundary.

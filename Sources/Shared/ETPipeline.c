@@ -42,7 +42,8 @@ static _Atomic uint_least32_t gLatency = 0;
 // The descriptor is published by the control thread and read by the render
 // thread. Its context is owned by the adapter; replacement must be coordinated
 // by the caller after the render thread has stopped using the old context.
-static ETExternalProcessor gExternal;
+static ETExternalProcessor gExternal[ET_EXTERNAL_MAX_PROCESSORS];
+static uint32_t gExternalCount = 0;
 static _Atomic int gExternalEnabled = 0;
 static _Atomic uint64_t gExternalRateBits = 0;
 
@@ -87,14 +88,28 @@ void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor)
         ETPipeline_ClearExternalProcessor();
         return;
     }
-    gExternal = *processor;
+    ETPipeline_SetExternalProcessors(processor, 1);
+}
+
+void ETPipeline_SetExternalProcessors(const ETExternalProcessor *processors,
+                                      uint32_t count)
+{
+    if (processors == NULL || count == 0) {
+        ETPipeline_ClearExternalProcessor();
+        return;
+    }
+    if (count > ET_EXTERNAL_MAX_PROCESSORS) count = ET_EXTERNAL_MAX_PROCESSORS;
+    for (uint32_t i = 0; i < count; ++i) gExternal[i] = processors[i];
+    gExternalCount = count;
     atomic_store_explicit(&gExternalEnabled, 1, memory_order_release);
 }
 
 void ETPipeline_ClearExternalProcessor(void)
 {
     atomic_store_explicit(&gExternalEnabled, 0, memory_order_release);
-    ETExternalProcessor_Clear(&gExternal);
+    gExternalCount = 0;
+    for (uint32_t i = 0; i < ET_EXTERNAL_MAX_PROCESSORS; ++i)
+        ETExternalProcessor_Clear(&gExternal[i]);
 }
 
 void ETPipeline_SetExternalSampleRate(double sampleRate)
@@ -105,13 +120,21 @@ void ETPipeline_SetExternalSampleRate(double sampleRate)
 uint32_t ETPipeline_ExternalLatency(void)
 {
     if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0;
-    return ETExternalProcessor_Latency(&gExternal);
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < gExternalCount; ++i)
+        total += ETExternalProcessor_Latency(&gExternal[i]);
+    return total;
 }
 
 double ETPipeline_ExternalTailTime(void)
 {
     if (!atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) return 0.0;
-    return ETExternalProcessor_TailTime(&gExternal);
+    double tail = 0.0;
+    for (uint32_t i = 0; i < gExternalCount; ++i) {
+        const double value = ETExternalProcessor_TailTime(&gExternal[i]);
+        if (value > tail) tail = value;
+    }
+    return tail;
 }
 
 void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
@@ -256,11 +279,14 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
                                                          timeSeconds, bypass);
     if (status != ET_OK) return status;
     if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire)) {
-        return ETExternalProcessor_Process(&gExternal, et_arena_combined_ptr(engine),
-                                           channels, frames,
-                                           bitsDouble(atomic_load_explicit(&gExternalRateBits,
-                                                                           memory_order_relaxed)),
-                                           timeSeconds);
+        float *bus = et_arena_combined_ptr(engine);
+        const double sampleRate = bitsDouble(atomic_load_explicit(&gExternalRateBits,
+                                                                   memory_order_relaxed));
+        for (uint32_t i = 0; i < gExternalCount; ++i) {
+            const int32_t externalStatus = ETExternalProcessor_Process(
+                &gExternal[i], bus, channels, frames, sampleRate, timeSeconds);
+            if (externalStatus != 0) return externalStatus;
+        }
     }
     return status;
 }

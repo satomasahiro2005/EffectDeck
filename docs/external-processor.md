@@ -2,12 +2,14 @@
 
 `ETExternalProcessor` is the host-neutral PCM boundary for future AUv3 and
 JSFX adapters. It accepts one planar `Float32` block and deliberately performs
-no allocation or locking on the render thread.
+no allocation or locking on the render thread. Up to eight processors can be
+published as an ordered segment, so the external part of the EffectDeck chain
+can already be reordered without changing the render callback.
 
 The first integration point is the final EffeTune bus:
 
 ```text
-native EffeTune pipeline -> ETExternalProcessor -> output
+native EffeTune pipeline -> External A -> External B -> output
 ```
 
 This is intentionally a safe staging point, not the final arbitrary-position
