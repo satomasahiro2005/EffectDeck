@@ -89,7 +89,8 @@ struct EffectCardView: View {
                 if isExpanded && hasBody {
                     Group {
                         if node.isExternal {
-                            ExternalProcessorView(instanceID: node.externalInstanceID,
+                            ExternalProcessorView(externalID: node.externalID ?? "",
+                                                  instanceID: node.externalInstanceID,
                                                   snapshot: externalSnapshot)
                         } else if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
@@ -365,6 +366,8 @@ struct EffectCardView: View {
 /// editing affordance as native EffeTune parameters.
 private struct ExternalProcessorView: View {
     @ObservedObject private var au = ETAUHost.shared
+    @ObservedObject private var jsfx = ETJSFXHost.shared
+    let externalID: String
     let instanceID: String
     let snapshot: UIImage?
     @State private var controller: UIViewController?
@@ -375,7 +378,34 @@ private struct ExternalProcessorView: View {
     var body: some View {
         let parameters = au.parameters(instanceID: instanceID)
         Group {
-        if let snapshot {
+        if externalID.hasPrefix("jsfx:") {
+            let jsfxParameters = jsfx.parameters(instanceID: instanceID)
+            if jsfxParameters.isEmpty {
+                Text(jsfx.status(instanceID: instanceID))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(jsfxParameters) { parameter in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(parameter.name).font(.footnote)
+                                Spacer()
+                                Text(String(format: "%.3g", parameter.value))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: Binding(
+                                get: { parameter.value },
+                                set: { jsfx.setParameter(instanceID: instanceID,
+                                                         parameterID: parameter.id, value: $0) }),
+                                   in: parameter.minimum...parameter.maximum,
+                                   step: parameter.step > 0 ? parameter.step : 0.001)
+                        }
+                    }
+                }
+            }
+        } else if let snapshot {
             Image(uiImage: snapshot)
                 .resizable()
                 .aspectRatio(contentMode: .fit)

@@ -163,6 +163,16 @@ struct PipelineView: View {
                         ETAUHost.shared.create(entry, instanceID: instanceID)
                         insertAt = nil
                         sheet = nil
+                    }, onPickJSFX: { entry in
+                        let instanceID = UUID().uuidString
+                        guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
+                            instanceID: instanceID) else { return }
+                        dsp.addExternal(id: entry.id, instanceID: instanceID,
+                                        name: entry.name, category: "JSFX",
+                                        externalIndex: externalIndex, at: insertAt)
+                        ETJSFXHost.shared.create(entry, instanceID: instanceID)
+                        insertAt = nil
+                        sheet = nil
                     }, onPickPreset: { name, items in
                         // 名前の付いた Section に包んで挿す。置き換えない。
                         // 鎖ごと置き換えたいときは Presets 画面のほう。
@@ -452,6 +462,17 @@ struct PipelineView: View {
                             category: "Audio Units", externalIndex: externalIndex,
                             at: index)
             ETAUHost.shared.create(entry, instanceID: instanceID)
+            sheet = nil
+            return true
+        }
+        if let componentID = payload.dropPrefixIfPresent("plugin-jsfx:"),
+           let entry = ETJSFXHost.shared.entry(id: componentID) {
+            let instanceID = UUID().uuidString
+            guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
+                instanceID: instanceID) else { return false }
+            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
+                            category: "JSFX", externalIndex: externalIndex, at: index)
+            ETJSFXHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
             return true
         }

@@ -15,6 +15,14 @@ if [ ! -d Vendor/effetune/dsp ]; then
   exit 1
 fi
 
+if [ ! -f Vendor/ysfx/include/ysfx.h ]; then
+  echo "--- JSFX runtime ---"
+  git submodule update --init --recursive Vendor/ysfx || {
+    echo "!! Vendor/ysfx を取得できない。git submodule update --init --recursive Vendor/ysfx を確認すること。"
+    exit 1
+  }
+fi
+
 # **上流のパッチを当てる。**
 #
 # et_instance_asset_begin は staging の番地を uint32 へ切り落とす。WASM では

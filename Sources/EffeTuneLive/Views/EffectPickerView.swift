@@ -16,6 +16,7 @@ import SwiftUI
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
     let onPickAU: (ETAUHost.Entry) -> Void
+    let onPickJSFX: (ETJSFXHost.Entry) -> Void
     /// プリセットを選んだ。名前と中身を渡す。受けた側が Section に包んで挿す。
     let onPickPreset: (String, [PipelineStore.Loaded]) -> Void
 
@@ -24,6 +25,7 @@ struct EffectPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
     @StateObject private var au = ETAUHost.shared
+    @StateObject private var jsfx = ETJSFXHost.shared
     @State private var query = ""
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
@@ -238,16 +240,16 @@ struct EffectPickerView: View {
 
     private var pluginList: some View {
         Group {
-            if au.entries.isEmpty {
+            if au.entries.isEmpty && jsfx.entries.isEmpty {
                 ContentUnavailableView("No Plugins", systemImage: "waveform",
-                                       description: Text("Install an AUv3 plug-in to see it here."))
+                                       description: Text("Install an AUv3 plug-in or add a JSFX to see it here."))
             } else {
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
-                        jumpStrip(audioUnitVendors)
+                        jumpStrip(pluginVendors)
                         Divider()
                         List {
-                            ForEach(audioUnitVendors, id: \.self) { vendor in
+                            ForEach(pluginVendors, id: \.self) { vendor in
                                 Section {
                                     let entries = audioUnits(vendor: vendor)
                                     ForEach(Array(entries.enumerated()), id: \.element.id) {
@@ -255,6 +257,14 @@ struct EffectPickerView: View {
                                         auRow(entry)
                                             .id(offset == 0 ? Self.jumpTarget(vendor)
                                                             : "au-entry-" + entry.id)
+                                    }
+                                    let scripts = jsfxEntries(vendor: vendor)
+                                    ForEach(Array(scripts.enumerated()), id: \.element.id) {
+                                        offset, entry in
+                                        jsfxRow(entry)
+                                            .id(entries.isEmpty && offset == 0
+                                                ? Self.jumpTarget(vendor)
+                                                : "jsfx-entry-" + entry.id)
                                     }
                                 } header: {
                                     Text(vendor)
@@ -283,6 +293,12 @@ struct EffectPickerView: View {
         }
     }
 
+    private var pluginVendors: [String] {
+        Array(Set(audioUnitVendors + jsfx.entries.map { jsfxVendor($0) })).sorted {
+            $0.localizedStandardCompare($1) == .orderedAscending
+        }
+    }
+
     private func vendorName(_ entry: ETAUHost.Entry) -> String {
         let name = entry.manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Other" : name
@@ -290,6 +306,15 @@ struct EffectPickerView: View {
 
     private func audioUnits(vendor: String) -> [ETAUHost.Entry] {
         au.entries.filter { vendorName($0) == vendor }
+    }
+
+    private func jsfxVendor(_ entry: ETJSFXHost.Entry) -> String {
+        let author = entry.author.trimmingCharacters(in: .whitespacesAndNewlines)
+        return author.isEmpty ? "JSFX" : author
+    }
+
+    private func jsfxEntries(vendor: String) -> [ETJSFXHost.Entry] {
+        jsfx.entries.filter { jsfxVendor($0) == vendor }
     }
 
     /// AUv3 and JSFX use the same secondary-line grammar on the Plugins page.
@@ -301,14 +326,20 @@ struct EffectPickerView: View {
 
     private var pluginSearchList: some View {
         let q = query.lowercased()
-        let matches = au.entries.filter {
+        let auMatches = au.entries.filter {
             $0.name.lowercased().contains(q) || $0.manufacturer.lowercased().contains(q)
         }
+        let jsfxMatches = jsfx.entries.filter {
+            $0.name.lowercased().contains(q) || $0.author.lowercased().contains(q)
+        }
         return Group {
-            if matches.isEmpty {
+            if auMatches.isEmpty && jsfxMatches.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
-                List(matches) { auRow($0) }.listStyle(.plain)
+                List {
+                    ForEach(auMatches) { auRow($0) }
+                    ForEach(jsfxMatches) { jsfxRow($0) }
+                }.listStyle(.plain)
             }
         }
     }
@@ -335,6 +366,37 @@ struct EffectPickerView: View {
         .onDrag {
             dismissAfterDragBegins()
             return NSItemProvider(object: ("au:" + entry.id) as NSString)
+        } preview: {
+            Text(entry.name)
+                .font(.system(size: 14, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.thickMaterial, in: .capsule)
+        }
+    }
+
+    private func jsfxRow(_ entry: ETJSFXHost.Entry) -> some View {
+        Button {
+            searching = false
+            Task { @MainActor in onPickJSFX(entry) }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "curlybraces")
+                    .foregroundStyle(.tint)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name).font(.system(size: 15)).foregroundStyle(.primary)
+                    Text(pluginDetail(format: "JSFX", author: entry.author))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .onDrag {
+            dismissAfterDragBegins()
+            return NSItemProvider(object: ("plugin-jsfx:" + entry.id) as NSString)
         } preview: {
             Text(entry.name)
                 .font(.system(size: 14, weight: .medium))
@@ -607,7 +669,7 @@ struct EffectPickerView: View {
     private func firstCategory(for pane: Pane) -> String {
         switch pane {
         case .effects:    return stripNames.first ?? ""
-        case .plugins:    return audioUnitVendors.first ?? ""
+        case .plugins:    return pluginVendors.first ?? ""
         case .user:
             guard let first = userFolders.first?.name else { return "" }
             return first.isEmpty ? Self.looseKey : first

@@ -410,6 +410,9 @@ final class AudioIO: ObservableObject {
         ETAUHost.shared.resume(sampleRate: sr * Double(factor),
                                outputChannels: channels,
                                maxFrames: Self.capacity * factor)
+        ETJSFXHost.shared.resume(sampleRate: sr * Double(factor),
+                                 outputChannels: channels,
+                                 maxFrames: Self.capacity * factor)
         state.gate.idleSeconds = max(state.gate.idleSeconds,
                                      ETPipeline_ExternalTailTime())
 
@@ -553,6 +556,7 @@ final class AudioIO: ObservableObject {
         node = nil
         engine.stop()
         ETAUHost.shared.suspend()
+        ETJSFXHost.shared.suspend()
         try? AVAudioSession.sharedInstance().setActive(false)
         if !keepListening { ETLinkReceiver.shared.stop() }
         EffeTuneDSP.shared.reset()

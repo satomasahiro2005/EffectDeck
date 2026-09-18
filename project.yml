@@ -29,6 +29,7 @@ dspSettings: &dspSettings
     - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
     - $(SRCROOT)/Vendor/effetune/dsp/vendor/pffft/include/pffft
     - $(SRCROOT)/Generated/note-models
+    - $(SRCROOT)/Vendor/ysfx/include
 
 targets:
 
@@ -78,6 +79,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLive/EffeTuneLive.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Sources/EffeTuneLive/EffeTuneLive-Bridging-Header.h
     dependencies:
+      - target: YSFX
       - sdk: AVFoundation.framework
       - sdk: AudioToolbox.framework
       - sdk: CoreAudioKit.framework
@@ -97,6 +99,46 @@ targets:
         embed: true
         codeSign: true
 
+  # JSFX parser/runtime. EEL_TARGET_PORTABLE is mandatory on iOS: executable
+  # memory/JIT is neither required nor permitted for this host.
+  YSFX:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: Vendor/ysfx/sources
+        includes: ["**/*.cpp", "**/*.hpp"]
+        excludes: ["lice_stb/**", "eel2-gas/**"]
+      - path: Vendor/ysfx/thirdparty/WDL/source/WDL/eel2
+        includes:
+          - nseel-caltab.c
+          - nseel-cfunc.c
+          - nseel-compiler.c
+          - nseel-eval.c
+          - nseel-lextab.c
+          - nseel-ram.c
+          - nseel-yylex.c
+      - path: Vendor/ysfx/thirdparty/WDL/source/WDL/fft.c
+    settings:
+      base:
+        CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+        CLANG_CXX_LIBRARY: "libc++"
+        OTHER_CFLAGS: ["-fsigned-char"]
+        OTHER_CPLUSPLUSFLAGS: ["-fsigned-char"]
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - EEL_TARGET_PORTABLE
+          - YSFX_NO_GFX
+          - YSFX_NO_FTS
+          - _FILE_OFFSET_BITS=64
+          - WDL_FFT_REALSIZE=8
+          - WDL_LINEPARSE_ATOF=ysfx_wdl_atof
+          - NSEEL_ATOF=ysfx_wdl_atof
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Vendor/ysfx/include
+          - $(SRCROOT)/Vendor/ysfx/sources
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/dr_libs
+
   # ------------------------------------------------------------------
   # 入れ物。Media Device Extension を運ぶためだけに在る。
   # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否されるので、
@@ -115,6 +157,7 @@ targets:
           - "ETPipeline.*"
           - "ETResample.*"
           - "ETPreviewTone.*"
+          - "ETJSFXHost.*"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.extension
