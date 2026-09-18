@@ -47,13 +47,13 @@ final class ETAUExternalBridge {
         adapters.removeAll()
     }
 
-    private final class Adapter {
-        let render: AUAudioUnitRenderBlock
+    fileprivate final class Adapter {
+        let render: AURenderBlock
         let sampleRate: Double
         let maxFrames: Int
         let maxChannels: Int
         let scratch: UnsafeMutablePointer<Float>
-        let outputList: UnsafeMutablePointer<AudioBufferList>
+        let outputList: UnsafeMutableAudioBufferListPointer
 
         var descriptor: ETExternalProcessor
 
@@ -102,7 +102,7 @@ final class ETAUExternalBridge {
                 buffers[c].mData = UnsafeMutableRawPointer(scratch.advanced(by: c * maxFrames))
             }
             let status = render(&flags, &timestamp, AUAudioFrameCount(frames), 0,
-                                outputList, nil, pullInput)
+                                outputList.unsafeMutablePointer, nil, pullInput)
             guard status == noErr else { return Int32(status) }
 
             for c in 0..<channels {
