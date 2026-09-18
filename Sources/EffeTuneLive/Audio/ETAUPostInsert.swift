@@ -97,6 +97,14 @@ final class ETAUPostInsert: ObservableObject {
         audioUnit?.auAudioUnit.parameterTree?.allParameters ?? []
     }
 
+    func parameters(for id: String) -> [AUParameter] {
+        units[id]?.auAudioUnit.parameterTree?.allParameters ?? []
+    }
+
+    func status(for id: String) -> String {
+        units[id] == nil ? "Loading…" : "No parameters"
+    }
+
     func parameterValue(_ parameter: AUParameter) -> Double {
         Double(parameter.value)
     }
@@ -106,6 +114,14 @@ final class ETAUPostInsert: ObservableObject {
         var values = UserDefaults.standard.dictionary(forKey: parametersKey) ?? [:]
         values[String(parameter.address)] = NSNumber(value: value)
         UserDefaults.standard.set(values, forKey: parametersKey)
+        objectWillChange.send()
+    }
+
+    func setParameter(_ parameter: AUParameter, for id: String, value: Double) {
+        parameter.value = AUValue(value)
+        var values = UserDefaults.standard.dictionary(forKey: "audio.au.\(id).parameters") ?? [:]
+        values[String(parameter.address)] = NSNumber(value: value)
+        UserDefaults.standard.set(values, forKey: "audio.au.\(id).parameters")
         objectWillChange.send()
     }
 
@@ -120,11 +136,13 @@ final class ETAUPostInsert: ObservableObject {
                 units[entry.id] = unit
             }
             ETAUExternalBridge.shared.install(unit,
-                                              index: ETAUExternalBridge.shared.index(for: entry.id))
+                                              index: ETAUExternalBridge.shared.index(for: entry.id),
+                                              sampleRate: AudioIO.shared.processingRate,
+                                              maxChannels: max(2, AudioIO.shared.outputChannels))
             unit.auAudioUnit.shouldBypassEffect = bypass
+            restoreParameters(for: entry.id, unit: unit)
             if select {
                 audioUnit = unit
-                restoreParameters()
                 selectedID = entry.id
                 loadedTitle = entry.title
                 UserDefaults.standard.set(entry.id, forKey: selectedKey)
@@ -137,8 +155,14 @@ final class ETAUPostInsert: ObservableObject {
     }
 
     private func restoreParameters() {
-        guard let values = UserDefaults.standard.dictionary(forKey: parametersKey) else { return }
-        for parameter in parameters {
+        guard let unit = audioUnit else { return }
+        restoreParameters(for: selectedID ?? "", unit: unit)
+    }
+
+    private func restoreParameters(for id: String, unit: AVAudioUnit) {
+        let key = id.isEmpty ? parametersKey : "audio.au.\(id).parameters"
+        guard let values = UserDefaults.standard.dictionary(forKey: key) else { return }
+        for parameter in unit.auAudioUnit.parameterTree?.allParameters ?? [] {
             if let number = values[String(parameter.address)] as? NSNumber {
                 let value = number.doubleValue
                 parameter.value = AUValue(min(max(value, Double(parameter.minValue)),

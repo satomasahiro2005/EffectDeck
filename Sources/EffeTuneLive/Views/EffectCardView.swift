@@ -86,7 +86,7 @@ struct EffectCardView: View {
                 if isExpanded && hasBody {
                     Group {
                         if node.isExternal {
-                            ExternalProcessorBody()
+                            ExternalProcessorView(externalID: node.externalID ?? "")
                         } else if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
                             ETEffectViews.view(index: index, node: node, dsp: dsp)
@@ -357,17 +357,19 @@ struct EffectCardView: View {
 /// by a fixed post-insert settings screen. The selected AU host owns the
 /// parameter tree and persists values; this view only provides the same inline
 /// editing affordance as native EffeTune parameters.
-private struct ExternalProcessorBody: View {
+private struct ExternalProcessorView: View {
     @ObservedObject private var au = ETAUPostInsert.shared
+    let externalID: String
 
     var body: some View {
-        if au.parameters.isEmpty {
-            Text(au.status == "Loaded" ? "No parameters" : au.status)
+        let parameters = au.parameters(for: externalID)
+        if parameters.isEmpty {
+            Text(au.status(for: externalID))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(au.parameters, id: \.address) { parameter in
+                ForEach(parameters, id: \.address) { parameter in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(parameter.displayName)
@@ -379,7 +381,7 @@ private struct ExternalProcessorBody: View {
                         }
                         Slider(value: Binding(
                             get: { Double(parameter.value) },
-                            set: { au.setParameter(parameter, value: $0) }),
+                            set: { au.setParameter(parameter, for: externalID, value: $0) }),
                             in: Double(parameter.minValue)...Double(parameter.maxValue))
                     }
                 }
