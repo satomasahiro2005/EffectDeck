@@ -39,6 +39,10 @@ targets:
   EffeTuneLive:
     type: application
     platform: iOS
+    preBuildScripts:
+      - name: Embed local Debug JSFX factory
+        script: bash "$SRCROOT/Scripts/embed_debug_jsfx.sh"
+        basedOnDependencyAnalysis: false
     sources:
       - path: Sources/EffeTuneLive
         excludes: ["**/*.icon/**"]
