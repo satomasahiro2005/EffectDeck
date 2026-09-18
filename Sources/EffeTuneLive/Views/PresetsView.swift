@@ -151,18 +151,16 @@ struct PresetsView: View {
                               + "None of its effects are available here.")
             return
         }
-        // **読み方が 2 通りある。**同じ経路に流してはいけない。
+        // **この画面から選んだものは、どちらも置き換える。**
         //
-        //   ユーザー … 鎖そのものを保存したもの。読んだら**置き換える**。
-        //   同梱     … 鎖の一部として足すもの。名前の付いた Section に包んで**足す**
-        //              （EffeTune の ui.pluginPresets と同じ扱い）。
+        // 足すほうはエフェクト一覧の側に移した（末尾の User Presets /
+        // System Presets）。あちらは名前の付いた Section に包んで挿す。
+        // 同じ操作が 2 か所で違う意味になると、どちらを押したのか
+        // 分からなくなるので、画面ごとに 1 つの意味に寄せる。
         //
-        // 以前は両方 addPreset に流していたので、自分で保存した鎖を読んでも
-        // いまの鎖の後ろに Section として積まれ、置き換わらなかった。
-        switch what {
-        case .user:   dsp.replaceChain(with: loaded)
-        case .system: dsp.addPreset(named: what.name, items: loaded)
-        }
+        //   この画面     … 鎖ごと置き換える
+        //   エフェクト一覧 … 組として足す
+        dsp.replaceChain(with: loaded)
         dismiss()
     }
 

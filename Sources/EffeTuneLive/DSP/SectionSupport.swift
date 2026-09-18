@@ -72,6 +72,17 @@ enum ETSection {
 
     static func isSection(_ spec: ETEffect) -> Bool { spec.type == type }
 
+    /// 名前を持たない Section か。
+    ///
+    /// **組を閉じるためだけに置くもの。**鎖はフラットな配列で、Section は
+    /// 「ここから」の印しか持たない（range(after:) を読むこと）。だから
+    /// 「組の外」という状態が形式に無い。名前の無い Section を置けば、
+    /// 上流はただの新しい組として読み、こちらは組の終わりとして描ける。
+    /// 形式を変えないので web と行き来しても壊れない。
+    static func isUnnamed(_ comment: String) -> Bool {
+        comment.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     /// ヘッダに出す文字。pipeline-item-builder.js:238-239 と同じ。
     static func title(_ comment: String) -> String {
         let cm = comment.trimmingCharacters(in: .whitespaces)

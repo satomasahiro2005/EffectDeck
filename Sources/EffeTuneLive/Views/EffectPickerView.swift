@@ -15,10 +15,28 @@ import SwiftUI
 
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
+    /// プリセットを選んだ。名前と中身を渡す。受けた側が Section に包んで挿す。
+    let onPickPreset: (String, [PipelineStore.Loaded]) -> Void
+
+    @StateObject private var presets = PresetStore.shared
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
     @State private var query = ""
+
+    /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
+    enum Pane: String, CaseIterable, Identifiable {
+        case effects, user, system
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .effects: return "Effects"
+            case .user:    return "User Presets"
+            case .system:  return "System Presets"
+            }
+        }
+    }
+    @State private var pane: Pane = .effects
     /// 検索が出ているか。**畳むために持つ。**
     /// 検索が出ている間はシートを閉じられない（下の row のコメント）ので、
     /// 先にこれを false にしてから閉じる。`.searchable(text:isPresented:)` は
@@ -86,9 +104,27 @@ struct EffectPickerView: View {
                 // 切り取られるだけで済む。
                 if query.isEmpty {
                     VStack(spacing: 0) {
-                        categoryStrip
-                        Divider()
-                        allSections
+                        // **上の段階で 3 つに分ける。**効果とプリセットは
+                        // 探し方が違う。同じ一覧に混ぜると、効果を探しに来た人が
+                        // プリセットまで流し見ることになる。
+                        Picker("", selection: $pane) {
+                            ForEach(Pane.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
+
+                        switch pane {
+                        case .effects:
+                            categoryStrip
+                            Divider()
+                            allSections
+                        case .user:
+                            userPresetList
+                        case .system:
+                            systemPresetList
+                        }
                     }
                 } else {
                     searchList
@@ -136,11 +172,11 @@ struct EffectPickerView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(categories, id: \.self) { name in
+                    ForEach(stripNames, id: \.self) { name in
                         Button {
                             jump = Jump(name: name, count: jump.count + 1)
                         } label: {
-                            Text(name.categoryLabel)
+                            Text(Self.stripLabel(name))
                                 .font(.system(size: 13,
                                               weight: current == name ? .semibold : .regular))
                                 .foregroundStyle(current == name ? AnyShapeStyle(.white)
@@ -191,6 +227,7 @@ struct EffectPickerView: View {
                     }
                     .id(name)
                 }
+
             }
             .listStyle(.plain)
             .onChange(of: jump) { _, now in
@@ -198,6 +235,112 @@ struct EffectPickerView: View {
                 withAnimation { proxy.scrollTo(now.name, anchor: .top) }
             }
         }
+    }
+
+    /// 自分で保存したプリセット。`/` で仕切るとフォルダに束ねる。
+    private var userPresetList: some View {
+        Group {
+            if presets.names.isEmpty {
+                ContentUnavailableView("No user presets", systemImage: "square.stack",
+                                       description: Text("Save a chain from Presets to see it here."))
+            } else {
+                List {
+                    ForEach(userFolders, id: \.name) { folder in
+                        Section {
+                            ForEach(folder.items, id: \.self) { name in
+                                presetRow(name: Self.leaf(name),
+                                          payload: "preset:user:" + name) {
+                                    PresetStore.shared.load(name)
+                                }
+                            }
+                        } header: {
+                            if !folder.name.isEmpty { Text(folder.name) }
+                        }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+    }
+
+    /// 同梱のプリセット。上流の分け方をそのまま見出しにする。
+    private var systemPresetList: some View {
+        List {
+            ForEach(systemCategories, id: \.self) { category in
+                Section {
+                    ForEach(ETSystemPresets.filter { $0.category == category }) { preset in
+                        presetRow(name: preset.name,
+                                  payload: "preset:system:" + preset.name) {
+                            ETShareLink.parse(preset.json, catalog: ETCatalog)
+                        }
+                    }
+                } header: {
+                    Text(category.categoryLabel)
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    private var systemCategories: [String] {
+        var seen = Set<String>()
+        return ETSystemPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
+    }
+
+    /// `Rock/Heavy` の `Heavy`。フォルダの中では後ろだけ出す。
+    static func leaf(_ full: String) -> String {
+        full.contains("/") ? String(full.split(separator: "/").dropFirst().joined(separator: "/"))
+                           : full
+    }
+
+    /// 一覧に出すプリセットの見出し用の鍵。カテゴリ名と衝突しない字にする。
+    static let userKey = "__user_presets"
+    static let systemKey = "__system_presets"
+
+    /// 上の帯に並べるもの。プリセットは別の面へ移したので効果だけ。
+    private var stripNames: [String] { categories }
+
+    static func stripLabel(_ name: String) -> String {
+        switch name {
+        case userKey:   return "User Presets"
+        case systemKey: return "System Presets"
+        default:        return name.categoryLabel
+        }
+    }
+
+    /// User プリセットを `/` で仕切って束ねる。`Rock/Heavy` なら `Rock` の中。
+    /// **保存の形は変えない。**名前の付け方だけの約束にしてあるので、
+    /// 既に保存したものも、web と行き来したものもそのまま読める。
+    private var userFolders: [(name: String, items: [String])] {
+        var order: [String] = []
+        var bag: [String: [String]] = [:]
+        for full in presets.names {
+            let folder = full.contains("/") ? String(full.split(separator: "/")[0]) : ""
+            if bag[folder] == nil { order.append(folder) }
+            bag[folder, default: []].append(full)
+        }
+        return order.map { ($0, bag[$0] ?? []) }
+    }
+
+    /// プリセット 1 件の行。押すと入り、つまんで鎖へ落とすこともできる。
+    private func presetRow(name: String, payload: String,
+                           load: @escaping () -> [PipelineStore.Loaded]) -> some View {
+        Button {
+            searching = false
+            Task { @MainActor in onPickPreset(name, load()) }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.primary)
+                Text("Adds its effects as a group named “\(name)”.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .onDrag { NSItemProvider(object: payload as NSString) }
     }
 
     private func effects(in category: String) -> [ETEffect] {

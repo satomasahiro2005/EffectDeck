@@ -134,14 +134,20 @@ struct PipelineView: View {
             .sheet(item: $sheet) { which in
                 switch which {
                 case .picker:
-                    EffectPickerView { spec in
+                    EffectPickerView(onPick: { spec in
                         dsp.add(spec, at: insertAt)
                         insertAt = nil
                         // **閉じるのはこちら。** ピッカーの中の dismiss() は
                         // 検索が出ている間、シートではなく検索を閉じる。
                         // 検索から選んだときだけ閉じない、という形になっていた。
                         sheet = nil
-                    }
+                    }, onPickPreset: { name, items in
+                        // 名前の付いた Section に包んで挿す。置き換えない。
+                        // 鎖ごと置き換えたいときは Presets 画面のほう。
+                        dsp.addPreset(named: name, items: items, at: insertAt)
+                        insertAt = nil
+                        sheet = nil
+                    })
                 case .settings:
                     SettingsView(io: io)
                 case .routing:
@@ -217,7 +223,12 @@ struct PipelineView: View {
         // その代わり .swipeActions が使えない（List の行でしか効かない）ので、
         // 左スワイプの削除はここで自前でやる。判定は ETDragHandle の
         // UIPanGestureRecognizer（横向きのときだけ立つ）。
-        return ScrollView {
+        // **中身を画面の高さまで伸ばす。**伸ばさないと、鎖が短いときに
+        // 最後の帯より下が「どこにも属さない余白」になり、そこへ落としても
+        // 何も起きない（List は行が画面いっぱいに広がるので起きなかった。
+        // 器を替えたときに戻ってしまった不具合）。
+        return GeometryReader { outer in
+        ScrollView {
             VStack(spacing: 0) {
             ClipboardBanner(dsp: dsp)
                 .padding(.horizontal, 14)
@@ -251,6 +262,17 @@ struct PipelineView: View {
                     // 伸ばす向きは位置から引く。行の中身から引くと、
                     // 組の切れ目（見出しの手前）で前の組と繋がってしまう。
                     // 線も角も同じ位置から引く。単独（.alone）には引かない。
+                    //
+                    // **組の上と下にだけ横線を引く。**どこからどこまでが
+                    // ひと組なのかが見えないと、掴んだものを組の中へ入れるのか
+                    // 外へ出すのかが分からない。終わりの印を持たない構造なので、
+                    // 線が唯一の境目になる。
+                    VStack(spacing: 0) {
+                    // **線は 1 本にする。**直前の組が下線を出していたら引かない。
+                    if row.block == .top && !(row.visible > 0
+                        && visible[row.visible - 1].block == .bottom) {
+                        ETGroupRule()
+                    }
                     ETSectionBracket(active: row.block != .alone,
                                      extendsUp: !row.block.roundsTop,
                                      extendsDown: !row.block.roundsBottom) {
@@ -274,7 +296,10 @@ struct PipelineView: View {
                         .padding(.leading,
                                  row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14)
                         .padding(.trailing, 14)
-                        .padding(.vertical, 5)
+                        // **角丸が無い辺は余白を半分にする。**組の中では
+                        // カードどうしが地続きに見えるほうが、ひと組だと分かる。
+                        .padding(.top, row.block.roundsTop ? 5 : 2.5)
+                        .padding(.bottom, row.block.roundsBottom ? 5 : 2.5)
                         // **左スワイプで削除。**行だけをずらし、後ろに赤い面を敷く。
                         // .onDelete は使わない（詳しくは下の remove(_:)）。
                         //
@@ -307,13 +332,20 @@ struct PipelineView: View {
                         // カードには何も足さない。落ちたときだけ効く。
                         // 落とした段の手前に入れる（上流の並べ替えと同じ向き）。
                         .dropDestination(for: String.self) { items, _ in
-                            guard let type = items.first,
-                                  let spec = EffeTuneDSP.spec(forType: type) else { return false }
+                            guard let type = items.first else { return false }
+                            if let preset = presetPayload(type) {
+                                dsp.addPreset(named: preset.0, items: preset.1, at: row.index)
+                                sheet = nil
+                                return true
+                            }
+                            guard let spec = EffeTuneDSP.spec(forType: type) else { return false }
                             dsp.add(spec, at: row.index)
                             // 落ちたら閉じる。足したものをすぐ見られる。
                             sheet = nil
                             return true
                         }
+                    if row.block == .bottom { ETGroupRule() }
+                    }
                 }
 
 
@@ -324,17 +356,26 @@ struct PipelineView: View {
                 //
                 // 高さは指が届くぶん。画面の残り全部にはできない（List の行なので）が、
                 // 最後のカードのすぐ下に帯があれば、そこを狙って落とせる。
+                // **画面の底まで受ける。**高さを決め打ちにすると、
+                // 鎖が短いときに下が空く。残り全部を落とし先にする。
                 Color.clear
-                    .frame(height: 96)
+                    .frame(minHeight: 96)
+                    .frame(maxHeight: .infinity)
                     .dropDestination(for: String.self) { items, _ in
-                        guard let type = items.first,
-                              let spec = EffeTuneDSP.spec(forType: type) else { return false }
+                        guard let type = items.first else { return false }
+                        if let preset = presetPayload(type) {
+                            dsp.addPreset(named: preset.0, items: preset.1)
+                            sheet = nil
+                            return true
+                        }
+                        guard let spec = EffeTuneDSP.spec(forType: type) else { return false }
                         dsp.add(spec)          // 位置を渡さない = 末尾
                         sheet = nil
                         return true
                     }
             }
             }
+            .frame(minHeight: outer.size.height, alignment: .top)
         }
         .coordinateSpace(name: Self.chainSpace)
         // **掴んだものは別の層に描く。**行の中に重ねると、はみ出したぶんが
@@ -358,13 +399,30 @@ struct PipelineView: View {
                 .padding(.leading,
                          row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14)
                 .padding(.trailing, 14)
-                .padding(.vertical, 5)
+                .padding(.top, row.block.roundsTop ? 5 : 2.5)
+                .padding(.bottom, row.block.roundsBottom ? 5 : 2.5)
                 .frame(width: anchorRect.width, height: anchorRect.height)
                 .offset(x: anchorRect.minX + dragShift.width,
                         y: anchorRect.minY + dragShift.height)
                 .allowsHitTesting(false)
             }
         }
+        }
+    }
+
+    /// ピッカーから運ばれてきた文字列がプリセットなら、名前と中身に解く。
+    /// 効果は型の文字列をそのまま運ぶので、頭に印を付けて見分ける。
+    private func presetPayload(_ text: String) -> (String, [PipelineStore.Loaded])? {
+        if let name = text.dropPrefixIfPresent("preset:user:") {
+            let items = PresetStore.shared.load(name)
+            return items.isEmpty ? nil : (name, items)
+        }
+        if let name = text.dropPrefixIfPresent("preset:system:") {
+            guard let preset = ETSystemPresets.first(where: { $0.name == name }) else { return nil }
+            let items = ETShareLink.parse(preset.json, catalog: ETCatalog)
+            return items.isEmpty ? nil : (name, items)
+        }
+        return nil
     }
 
     // MARK: - 左スワイプで削除
@@ -516,10 +574,39 @@ struct PipelineView: View {
         if at < visible.count - 1, let below = rowRects[visible[at + 1].node.id] {
             let overlap = moving.intersection(below).height
             if moving.maxY > below.maxY || overlap > below.height / 2 {
+                // **組の最後から下へ出ようとしたら、組を閉じる。**
+                // そのまま入れ替えると、次の組の見出しを飛び越えて
+                // 今度はそちらの中に入るだけで、外に出ることができない。
+                if visible[at].block == .bottom { leaveGroup(at); return }
                 // 下へは 2 つ先。move(_:to:) は List の onMove と同じ数え方。
                 swap(at, to: at + 2)
             }
+        } else if visible[at].block == .bottom, let mine = rowRects[id],
+                  moving.maxY > mine.maxY + mine.height / 2 {
+            // 鎖の末尾。下に行が無いので入れ替えでは外に出られない。
+            leaveGroup(at)
         }
+    }
+
+    /// 組から出す。**掴んでいる段の直前に、名前の無い Section を挿す。**
+    ///
+    /// 鎖はフラットな配列で Section は「ここから」の印しか持たないので、
+    /// 段の位置を動かすだけでは組の外へ出せない（次の組に入るだけ）。
+    /// 名前の無い Section を挟めば、そこで前の組が閉じる。上流はただの
+    /// 新しい組として読むので、web と行き来しても壊れない。
+    private func leaveGroup(_ at: Int) {
+        let visible = rows
+        guard visible.indices.contains(at) else { return }
+        let index = visible[at].index
+        // 直前が既に無名 Section なら、もう外に出ている。二重に挿さない。
+        if index > 0 {
+            let prev = dsp.chain[index - 1]
+            if prev.isSection && ETSection.isUnnamed(prev.sectionName) { return }
+        }
+        withAnimation(.snappy(duration: 0.22)) {
+            dsp.add(ETSection.spec, at: index)
+        }
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
 
     /// 入れ替える。**基準（anchorRect）には手を触れない。**
@@ -578,7 +665,9 @@ struct PipelineView: View {
         let types = dsp.chain.map(\.spec.type)
         var hidden: Set<Int> = []
         for i in dsp.chain.indices
-        where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
+        where dsp.chain[i].isSection
+            && (!ETSection.isUnnamed(dsp.chain[i].sectionName) || !dsp.chain[i].enabled)
+            && !expanded.contains(dsp.chain[i].id) {
             hidden.formUnion(ETSection.range(after: i, types: types))
         }
         // どの段がどの Section のものか。区切りは入れ子にならない。
@@ -587,8 +676,17 @@ struct PipelineView: View {
         // 次の Section が来たときに線が繋がって見え、入れ子だと読めてしまう。
         // 見出しから引けば 1 組がそこで閉じ、組と組のあいだに隙間ができる。
         // 配下を持たない Section には引かない（線だけ浮く）。
+        // **無名の Section は組を作らない。**組を閉じるためだけに置くもので、
+        // 画面の上では「外に戻った」ことを表す。鎖の形は上流のままなので、
+        // web と行き来しても壊れない（向こうはただの新しい組として読む）。
+        //
+        // **ただし切ってあるときは引く。**名前が無くても DSP は配下を止める
+        // （ETSection.gates は名前を見ない）。線が無いと、どこまでが
+        // 止まっているのか画面から読めない。
         var member: Set<Int> = []
-        for i in dsp.chain.indices where dsp.chain[i].isSection {
+        for i in dsp.chain.indices
+        where dsp.chain[i].isSection
+            && (!ETSection.isUnnamed(dsp.chain[i].sectionName) || !dsp.chain[i].enabled) {
             let body = ETSection.range(after: i, types: types)
             guard !body.isEmpty else { continue }
             member.insert(i)
@@ -600,7 +698,10 @@ struct PipelineView: View {
         // **見出しは必ず組の先頭。**Section が続くと、前の組の最後の配下と
         // 次の見出しが隣り合うので、member だけで見ると途切れず 1 組に見えてしまう。
         // 見出しで必ず切る。
-        func isHead(_ at: Int) -> Bool { dsp.chain[shown[at]].isSection }
+        func isHead(_ at: Int) -> Bool {
+            let n = dsp.chain[shown[at]]
+            return n.isSection && (!ETSection.isUnnamed(n.sectionName) || !n.enabled)
+        }
         func inGroup(_ at: Int) -> Bool { member.contains(shown[at]) }
         func position(_ at: Int) -> ETBlockPosition {
             guard inGroup(at) else { return .alone }
