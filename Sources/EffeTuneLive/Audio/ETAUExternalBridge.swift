@@ -12,6 +12,10 @@ final class ETAUExternalBridge {
 
     private var adapters: [UInt8: Adapter] = [:]
     private var indices: [String: UInt8] = [:]
+    // Render callbacks are C function pointers. Keep replaced adapters alive
+    // for the lifetime of the host rather than risking a use-after-free on a
+    // block that was already admitted by the audio thread.
+    private var retired: [Adapter] = []
 
     private init() {}
 
@@ -27,7 +31,7 @@ final class ETAUExternalBridge {
                  maxFrames: Int = 4096, maxChannels: Int = 16) {
         let next = Adapter(unit: unit, sampleRate: sampleRate,
                            maxFrames: maxFrames, maxChannels: maxChannels)
-        adapters[index] = next
+        if let old = adapters.updateValue(next, forKey: index) { retired.append(old) }
         var descriptor = next.descriptor
         withUnsafePointer(to: &descriptor) { ptr in
             ETPipeline_SetExternalProcessorAt(UInt32(index), ptr)
@@ -35,8 +39,12 @@ final class ETAUExternalBridge {
     }
 
     func clear() {
-        adapters.removeAll()
+        // Drop the C descriptors first. The render thread may still be
+        // finishing the current block, so keep Adapter objects alive until
+        // the registry has been detached from the pipeline.
         ETPipeline_ClearExternalProcessor()
+        retired.append(contentsOf: adapters.values)
+        adapters.removeAll()
     }
 
     private final class Adapter {
