@@ -15,12 +15,87 @@ final class PresetStore: ObservableObject {
     /// （PipelineStore.lastKey と同じ理由）。
     static let key = "presets"
 
+    /// 中身の無いフォルダを覚えておく鍵。
+    ///
+    /// **フォルダは名前の付け方だけで表す**（`Rock/Heavy`）ので、
+    /// 中身が 1 つも無いフォルダは名前のどこにも現れない。作った直後に
+    /// 消えて見えるのは分かりにくいので、空のぶんだけここに持つ。
+    /// **iCloud へは写さない。**中身が入れば名前の側に現れるし、
+    /// 空の入れ物を端末間で合わせる意味が薄い。
+    static let emptyFoldersKey = "presetEmptyFolders"
+
     @Published private(set) var names: [String] = []
+    /// 中身の無いフォルダ。名前から作られるぶんとは別に持つ。
+    @Published private(set) var emptyFolders: [String] = []
 
     private init() { reload() }
 
     private func reload() {
         names = (dict().keys.sorted())
+        let used = Set(names.map(ETUserPresetName.folder))
+        // 中身が入ったものは、もう空ではない。
+        emptyFolders = (UserDefaults.standard.stringArray(forKey: Self.emptyFoldersKey) ?? [])
+            .filter { !used.contains($0) }
+            .sorted()
+    }
+
+    /// 空のフォルダを作る。**入れ子は作らない。**`/` は名前から落とす。
+    func addFolder(_ name: String) {
+        let clean = ETUserPresetName.clean(name)
+        guard !clean.isEmpty else { return }
+        var list = UserDefaults.standard.stringArray(forKey: Self.emptyFoldersKey) ?? []
+        guard !list.contains(clean) else { return }
+        list.append(clean)
+        UserDefaults.standard.set(list, forKey: Self.emptyFoldersKey)
+        reload()
+    }
+
+    func removeFolder(_ name: String) {
+        let list = (UserDefaults.standard.stringArray(forKey: Self.emptyFoldersKey) ?? [])
+            .filter { $0 != name }
+        UserDefaults.standard.set(list, forKey: Self.emptyFoldersKey)
+        reload()
+    }
+
+    /// フォルダの名前を替える。**中のプリセットを全部付け替える。**
+    /// 入れ物という実体が無いので、まとめて名前を書き替えるのがそのまま移動になる。
+    @discardableResult
+    func renameFolder(_ old: String, to new: String) -> Bool {
+        let target = ETUserPresetName.clean(new)
+        guard !target.isEmpty, target != old else { return false }
+        let moving = names.filter { ETUserPresetName.folder($0) == old }
+        // 移す先に同じ名前が既に在るなら、何も動かさない（半端に終わらせない）。
+        for full in moving where dict()[target + "/" + ETUserPresetName.leaf(full)] != nil {
+            return false
+        }
+        for full in moving {
+            rename(full, to: target + "/" + ETUserPresetName.leaf(full))
+        }
+        if emptyFolders.contains(old) {
+            removeFolder(old)
+            addFolder(target)
+        }
+        reloadPublic()
+        return true
+    }
+
+    /// 外から一覧を引き直す（rename を重ねたあとの締め）。
+    func reloadPublic() { reload() }
+
+    /// 名前を付け替える。**フォルダの出し入れもこれ。**
+    /// 中身は動かさず鍵だけ差し替えるので、鎖は一切触らない。
+    @discardableResult
+    func rename(_ old: String, to new: String) -> Bool {
+        let target = ETUserPresetName.normalized(new)
+        guard !target.isEmpty, target != old else { return false }
+        var d = dict()
+        guard let form = d[old], d[target] == nil else { return false }
+        d.removeValue(forKey: old)
+        d[target] = form
+        write(d)
+        CloudMirror.patch(key: Self.key, path: [old], value: nil)
+        CloudMirror.patch(key: Self.key, path: [target], value: form)
+        return true
     }
 
     private func dict() -> [String: Any] {

@@ -84,6 +84,30 @@ struct PresetsView: View {
         }
     }
     @State private var dialog: Dialog?
+    /// 名前を打たせているもの。Rename と新しいフォルダで使い回す。
+    @State private var naming: Naming?
+    @State private var typed = ""
+
+    /// 名前を打たせる用件。
+    private enum Naming: Identifiable {
+        case rename(String)
+        case renameFolder(String)
+        case newFolder
+        var id: String {
+            switch self {
+            case .rename(let n):       return "rename:" + n
+            case .renameFolder(let n): return "folder:" + n
+            case .newFolder:           return "folder"
+            }
+        }
+        var title: String {
+            switch self {
+            case .rename:       return "Rename preset"
+            case .renameFolder: return "Rename folder"
+            case .newFolder:    return "New folder"
+            }
+        }
+    }
 
     private var systemCategories: [String] {
         var seen = Set<String>()
@@ -218,6 +242,42 @@ struct PresetsView: View {
             } message: { what in
                 Text(what.message)
             }
+            // **名前を打たせるのは別の提示にする。**同じ .alert に混ぜると
+            // 用件ごとにボタンの並びが変わって読みにくい。出す条件が
+            // 重ならないので、2 枚目でも潰し合わない。
+            .alert(naming?.title ?? "",
+                   isPresented: Binding(get: { naming != nil },
+                                        set: { if !$0 { naming = nil } }),
+                   presenting: naming) { what in
+                TextField("Name", text: $typed)
+                    .textInputAutocapitalization(.words)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    switch what {
+                    case .rename(let old):
+                        // 入れ物はそのまま、名前だけ替える。
+                        let folder = ETUserPresetName.folder(old)
+                        let leaf = ETUserPresetName.clean(typed)
+                        guard !leaf.isEmpty else { return }
+                        let target = folder.isEmpty ? leaf : folder + "/" + leaf
+                        if !store.rename(old, to: target) {
+                            dialog = .failed("There is already a preset called “\(target)”.")
+                        }
+                    case .renameFolder(let old):
+                        if !store.renameFolder(old, to: typed) {
+                            dialog = .failed("That folder name is already taken.")
+                        }
+                    case .newFolder:
+                        store.addFolder(typed)
+                    }
+                }
+            } message: { what in
+                switch what {
+                case .rename:       Text("A name already in use is not accepted.")
+                case .renameFolder: Text("Everything in it keeps its own name.")
+                case .newFolder:    Text("Folders cannot contain folders.")
+                }
+            }
         }
     }
 
@@ -249,41 +309,238 @@ struct PresetsView: View {
 
     private var userSection: some View {
         Section {
-            if store.names.isEmpty {
+            if store.names.isEmpty && store.emptyFolders.isEmpty {
                 // 空でも 1 行出す。上流も空のときに言う（ui.pluginPresets.noUserPresets）。
                 Text("No saved presets")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(store.names, id: \.self) { name in
-                    Button {
-                        request(.user(name))
-                    } label: {
-                        Text(name).foregroundStyle(.primary)
+                // **見出しも中身も 1 本の ForEach に混ぜる。**並べ替えは
+                // ForEach ごとに閉じているので、フォルダをまたいで動かすには
+                // 動かす範囲が 1 つでないといけない。
+                //
+                // **落とし先は自分で作らない。**dropDestination も onDrop も
+                // onInsert も、同じ List の中で完結する drag では受け取らない
+                // （実機で測ってある。掴んだ足跡は出るのに受け側が 0 件）。
+                // List が元から持っている並べ替えに乗せて、**落ちた位置の直上の
+                // 行から入る先を引く。**長押しでそのまま掴めるので、先に
+                // 編集モードへ入る必要は無い。
+                //
+                // 順番そのものは保存しない。保存は名前をキーにした辞書で、
+                // 並びは辞書順に決まる。ここで見ているのは落ちた場所だけ。
+                ForEach(entries) { entry in
+                    switch entry.kind {
+                    case .folder:
+                        // **見出しは動かさない。**フォルダの並びは名前で決まり、
+                        // 未分類は常に先頭。掴めてしまうと、動かせるのに何も
+                        // 起きない形になる。
+                        folderHeader(folderNamed(entry.name))
+                            .moveDisabled(true)
+                    case .preset:
+                        presetRow(entry.name, in: entry.folder)
+                    case .placeholder:
+                        // **空のフォルダにも行を 1 つ置く。**見出しの下が空だと
+                        // List はそこへ挿し込む位置を作らず、とくに最下部の
+                        // 空フォルダには入れようがなかった。
+                        // **ここは moveDisabled にしない。**動かせない行が並びの
+                        // 末尾にあると、その後ろへ落とす位置が作られない。
+                        // 最下部の空フォルダにだけ入れられなかったのがこれ。
+                        // 掴めてしまうが、moveEntry が中身以外を無視する。
+                        Text("Move a preset here")
+                            .font(.footnote)
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 20)
                     }
-                    // **.onDelete を使わない。** あれは消す相手を
-                    // 「ForEach の何番目か」という位置で渡し、行を消す
-                    // アニメーションを List が自分で先に走らせる。前の削除が
-                    // 終わる前に次を払うと、List が抱えている行の集合が
-                    // ForEach へ渡した配列より短くなったまま戻らず、
-                    // 位置がその短い並びの中で数えられて**別の行が消える**。
-                    // 鎖の側で同じ壊れ方を捕まえてある（PipelineView の remove(_:)）。
-                    // 身元（名前）で消せば List の内部状態に左右されない。
-                    // **上書きに名前を打たせない。** 同じ名前を入力欄へ
-                    // 打ち直す形だと、保存するたびに綴りを合わせる作業が要る。
-                    // 消すのと同じ場所に置けば、新しい作法を覚えなくて済む。
-                    // **完全スワイプで消さない**（allowsFullSwipe: false）。
-                    // 払い切っただけで消えるうえ、取り消しが無く、iCloud 経由で
-                    // 他の端末からも消える。押して選ばせる。
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("Delete", role: .destructive) { dialog = .confirmDelete(name) }
-                        Button("Overwrite") { dialog = .overwrite(name) }
-                            .tint(.blue)
-                    }
+                }
+                .onMove { source, destination in
+                    moveEntry(source, to: destination)
                 }
             }
         } header: {
-            Text("User Presets")
+            HStack(spacing: 14) {
+                Text("User Presets")
+                Spacer()
+                // **Edit は置かない。**長押しでそのまま掴めるので、
+                // 先にモードへ入る必要が無い。
+                Button("New Folder") { typed = ""; naming = .newFolder }
+                    .font(.footnote)
+                    .textCase(nil)
+            }
+        }
+    }
+
+    /// プリセット 1 行。
+    private func presetRow(_ name: String, in folder: String) -> some View {
+        Button {
+            request(.user(name))
+        } label: {
+            Text(ETUserPresetName.leaf(name))
+                .foregroundStyle(.primary)
+                // フォルダの中は字下げする。線を引かずに所属を出す。
+                .padding(.leading, folder.isEmpty ? 0 : 20)
+        }
+        // **.onDelete を使わない。** あれは消す相手を
+        // 「ForEach の何番目か」という位置で渡し、行を消す
+        // アニメーションを List が自分で先に走らせる。前の削除が
+        // 終わる前に次を払うと、List が抱えている行の集合が
+        // ForEach へ渡した配列より短くなったまま戻らず、
+        // 位置がその短い並びの中で数えられて**別の行が消える**。
+        // 鎖の側で同じ壊れ方を捕まえてある（PipelineView の remove(_:)）。
+        // 身元（名前）で消せば List の内部状態に左右されない。
+        // **上書きに名前を打たせない。** 同じ名前を入力欄へ
+        // 打ち直す形だと、保存するたびに綴りを合わせる作業が要る。
+        // 消すのと同じ場所に置けば、新しい作法を覚えなくて済む。
+        // **完全スワイプで消さない**（allowsFullSwipe: false）。
+        // 払い切っただけで消えるうえ、取り消しが無く、iCloud 経由で
+        // 他の端末からも消える。押して選ばせる。
+        //
+        // **先に書いたものが端に近い側へ出る。**画面の左から
+        // Rename / Overwrite / Delete と読めるよう逆から書く。
+        // 壊す操作は指がいちばん届く端に置かない。
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("Delete", role: .destructive) { dialog = .confirmDelete(name) }
+            Button("Overwrite") { dialog = .overwrite(name) }
+                .tint(.blue)
+            Button("Rename") {
+                typed = ETUserPresetName.leaf(name)
+                naming = .rename(name)
+            }
+            .tint(.indigo)
+        }
+    }
+
+    /// フォルダの見出し。**入れ物だと分かる形にする。**
+    @ViewBuilder
+    private func folderHeader(_ folder: (name: String, items: [String])) -> some View {
+        if folder.name.isEmpty {
+            // フォルダが 1 つも無いうちは、仕切りを出す意味が無い。
+            if orderedFolders.count > 1 {
+                Label("Uncategorized", systemImage: "tray")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Label {
+                HStack(spacing: 6) {
+                    Text(folder.name).font(.system(size: 13, weight: .semibold))
+                    if folder.items.isEmpty {
+                        Text("empty").font(.caption).foregroundStyle(.tertiary)
+                    }
+                }
+            } icon: {
+                Image(systemName: "folder")
+            }
+            .foregroundStyle(.secondary)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                // 中身が残っていても消せる。**プリセットは消さない。**
+                Button("Delete Folder", role: .destructive) {
+                    deleteFolder(folder.name, items: folder.items)
+                }
+                Button("Rename") {
+                    typed = folder.name
+                    naming = .renameFolder(folder.name)
+                }
+                .tint(.indigo)
+            }
+        }
+    }
+
+    /// 画面に出す 1 行。見出しも中身も同じ並びに入れる。
+    private struct Entry: Identifiable {
+        enum Kind { case folder, preset, placeholder }
+        let kind: Kind
+        /// 見出しと受け皿はフォルダ名、中身はプリセットのフルネーム。
+        let name: String
+        /// この行が属するフォルダ。未分類は空。
+        let folder: String
+
+        var id: String {
+            switch kind {
+            case .folder:      return "f:" + name
+            case .preset:      return "p:" + name
+            case .placeholder: return "e:" + name
+            }
+        }
+    }
+
+    private var entries: [Entry] {
+        var out: [Entry] = []
+        for f in orderedFolders {
+            out.append(Entry(kind: .folder, name: f.name, folder: f.name))
+            for item in f.items {
+                out.append(Entry(kind: .preset, name: item, folder: f.name))
+            }
+            if f.items.isEmpty && !f.name.isEmpty {
+                out.append(Entry(kind: .placeholder, name: f.name, folder: f.name))
+            }
+        }
+        return out
+    }
+
+    private func folderNamed(_ name: String) -> (name: String, items: [String]) {
+        orderedFolders.first { $0.name == name } ?? (name, [])
+    }
+
+    /// 並べ替えの着地から、入る先のフォルダを決める。
+    ///
+    /// **順番は保存しない。**保存しているのは名前をキーにした辞書で、並びは
+    /// 辞書順に決まる。ここで見ているのは「どこへ落ちたか」だけで、落ちた
+    /// 位置の直上にある行のフォルダが、入る先になる。見出しのすぐ下なら
+    /// そのフォルダ、誰かの下ならその人と同じフォルダ、いちばん上なら未分類。
+    private func moveEntry(_ source: IndexSet, to destination: Int) {
+        let list = entries
+        guard let from = source.first, from < list.count else { return }
+        let moved = list[from]
+        // 動かせるのは中身だけ。見出しも受け皿も並びを持たない。
+        guard moved.kind == .preset else { return }
+
+        // destination は**抜く前**の並びでの挿し込み位置なので、直上は
+        // そのまま destination - 1。動かしている本人は数えずに上へ辿る。
+        var folder = ""
+        var i = destination - 1
+        while i >= 0 {
+            if i != from, i < list.count {
+                folder = list[i].kind == .folder ? list[i].name : list[i].folder
+                break
+            }
+            i -= 1
+        }
+        withAnimation { move(moved.name, into: folder) }
+    }
+
+    /// `/` の前でフォルダに束ねる。**中身の無いフォルダも出す。**
+    /// 作った直後に画面から消えると、作れたのかどうか分からない。
+    private var userFolders: [(name: String, items: [String])] {
+        var out = ETUserPresetName.folders(store.names)
+        for empty in store.emptyFolders where !out.contains(where: { $0.name == empty }) {
+            out.append((empty, []))
+        }
+        return out
+    }
+
+    /// 画面に出す順。**未分類が先頭。**名前の辞書順に混ぜると、フォルダの
+    /// あいだに挟まって「どこにも入っていないもの」に見えなくなる。
+    private var orderedFolders: [(name: String, items: [String])] {
+        userFolders.sorted { a, b in
+            if a.name.isEmpty != b.name.isEmpty { return a.name.isEmpty }
+            return a.name < b.name
+        }
+    }
+
+    /// フォルダを消す。**中身のプリセットは消さない。**
+    /// 入れ物だけ無くして、中身は未分類へ出す。取り返しが付く形にしておく。
+    private func deleteFolder(_ name: String, items: [String]) {
+        for full in items { move(full, into: "") }
+        store.removeFolder(name)
+    }
+
+    /// フォルダへ入れる／出す。**名前を付け替えるだけ。**
+    private func move(_ name: String, into folder: String) {
+        let leaf = ETUserPresetName.leaf(name)
+        let target = folder.isEmpty ? leaf : folder + "/" + leaf
+        guard target != name else { return }
+        if !store.rename(name, to: target) {
+            dialog = .failed("There is already a preset called “\(target)”.")
         }
     }
 

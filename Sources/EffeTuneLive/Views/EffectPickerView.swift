@@ -212,6 +212,20 @@ struct EffectPickerView: View {
     private var allSections: some View {
         ScrollViewReader { proxy in
             List {
+                if !newEffects.isEmpty {
+                    Section {
+                        ForEach(newEffects) { effect in
+                            row(effect, showCategory: true)
+                        }
+                    } header: {
+                        Text("New")
+                            .onScrollVisibilityChange(threshold: 0.1) { v in
+                                if v { current = Self.newKey }
+                            }
+                    }
+                    .id(Self.newKey)
+                }
+
                 ForEach(categories, id: \.self) { name in
                     Section {
                         ForEach(effects(in: name)) { effect in
@@ -244,11 +258,18 @@ struct EffectPickerView: View {
                 ContentUnavailableView("No user presets", systemImage: "square.stack",
                                        description: Text("Save a chain from Presets to see it here."))
             } else {
+                ScrollViewReader { proxy in
+                VStack(spacing: 0) {
+                // フォルダが 1 つだけ（＝仕切っていない）なら帯は出さない。
+                if userFolders.count > 1 {
+                    jumpStrip(userFolders.map(\.name).map { $0.isEmpty ? Self.looseKey : $0 })
+                    Divider()
+                }
                 List {
                     ForEach(userFolders, id: \.name) { folder in
                         Section {
                             ForEach(folder.items, id: \.self) { name in
-                                presetRow(name: Self.leaf(name),
+                                presetRow(name: ETUserPresetName.leaf(name),
                                           payload: "preset:user:" + name) {
                                     PresetStore.shared.load(name)
                                 }
@@ -256,15 +277,26 @@ struct EffectPickerView: View {
                         } header: {
                             if !folder.name.isEmpty { Text(folder.name) }
                         }
+                        .id(folder.name.isEmpty ? Self.looseKey : folder.name)
                     }
                 }
                 .listStyle(.plain)
+                }
+                .onChange(of: jump) { _, now in
+                    guard !now.name.isEmpty else { return }
+                    withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+                }
+                }
             }
         }
     }
 
     /// 同梱のプリセット。上流の分け方をそのまま見出しにする。
     private var systemPresetList: some View {
+        ScrollViewReader { proxy in
+        VStack(spacing: 0) {
+        jumpStrip(systemCategories)
+        Divider()
         List {
             ForEach(systemCategories, id: \.self) { category in
                 Section {
@@ -277,9 +309,44 @@ struct EffectPickerView: View {
                 } header: {
                     Text(category.categoryLabel)
                 }
+                .id(category)
             }
         }
         .listStyle(.plain)
+        }
+        .onChange(of: jump) { _, now in
+            guard !now.name.isEmpty else { return }
+            withAnimation { proxy.scrollTo(now.name, anchor: .top) }
+        }
+        }
+    }
+
+    /// 仕切っていないプリセットをまとめる見出しの鍵。
+    static let looseKey = "__loose"
+
+    /// 面の上に出す飛び先の帯。効果のジャンル帯と同じ作り。
+    private func jumpStrip(_ names: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(names, id: \.self) { name in
+                    Button {
+                        jump = Jump(name: name, count: jump.count + 1)
+                    } label: {
+                        Text(name == Self.looseKey ? "Others" : name.categoryLabel)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 7)
+                            .frame(minHeight: ETMetrics.hitTarget)
+                            .background(AnyShapeStyle(.quaternary), in: .capsule)
+                            .contentShape(.capsule)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+        }
     }
 
     private var systemCategories: [String] {
@@ -287,39 +354,36 @@ struct EffectPickerView: View {
         return ETSystemPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
     }
 
-    /// `Rock/Heavy` の `Heavy`。フォルダの中では後ろだけ出す。
-    static func leaf(_ full: String) -> String {
-        full.contains("/") ? String(full.split(separator: "/").dropFirst().joined(separator: "/"))
-                           : full
-    }
-
     /// 一覧に出すプリセットの見出し用の鍵。カテゴリ名と衝突しない字にする。
     static let userKey = "__user_presets"
     static let systemKey = "__system_presets"
 
-    /// 上の帯に並べるもの。プリセットは別の面へ移したので効果だけ。
-    private var stripNames: [String] { categories }
+    /// 上の帯に並べるもの。**新しいものを先頭に置く。**
+    /// 上流が増やした効果は、ジャンルに散らばると見つけられない。
+    private var stripNames: [String] {
+        (newEffects.isEmpty ? [] : [Self.newKey]) + categories
+    }
+
+    /// この版で増えた効果。増えるたびにここを書き替える。
+    static let newTypes = ["PitchMeterPlugin", "TVAudioSimulatorPlugin", "SpatialMapperPlugin"]
+    static let newKey = "__new"
+
+    private var newEffects: [ETEffect] {
+        Self.newTypes.compactMap { t in catalog.first { $0.type == t } }
+    }
 
     static func stripLabel(_ name: String) -> String {
         switch name {
+        case newKey:    return "New"
         case userKey:   return "User Presets"
         case systemKey: return "System Presets"
         default:        return name.categoryLabel
         }
     }
 
-    /// User プリセットを `/` で仕切って束ねる。`Rock/Heavy` なら `Rock` の中。
-    /// **保存の形は変えない。**名前の付け方だけの約束にしてあるので、
-    /// 既に保存したものも、web と行き来したものもそのまま読める。
+    /// User プリセットを `/` で仕切って束ねる（ETUserPresetName）。
     private var userFolders: [(name: String, items: [String])] {
-        var order: [String] = []
-        var bag: [String: [String]] = [:]
-        for full in presets.names {
-            let folder = full.contains("/") ? String(full.split(separator: "/")[0]) : ""
-            if bag[folder] == nil { order.append(folder) }
-            bag[folder, default: []].append(full)
-        }
-        return order.map { ($0, bag[$0] ?? []) }
+        ETUserPresetName.folders(presets.names)
     }
 
     /// プリセット 1 件の行。押すと入り、つまんで鎖へ落とすこともできる。
