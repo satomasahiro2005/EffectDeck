@@ -30,6 +30,11 @@ extern "C" {
 #define ET_PIPE_MAX_NODES 64
 #define ET_EXTERNAL_MAX_PROCESSORS 8
 
+enum {
+    ET_PIPE_NODE_NATIVE = 0,
+    ET_PIPE_NODE_EXTERNAL = 1,
+};
+
 /// channelSpec の値。EffeTune の descriptor と同じ。
 enum {
     ET_CHANNEL_ALL    = -2,   // 全チャンネル
@@ -48,6 +53,8 @@ typedef struct {
     uint8_t  outputBus;    // 0〜4
     int8_t   channelSpec;
     uint8_t  sectionGate;  // 0 or 1
+    uint8_t  kind;         // ET_PIPE_NODE_NATIVE / ET_PIPE_NODE_EXTERNAL
+    uint8_t  externalIndex;
 } ETPipeNode;
 
 /// engine を渡す。組めている状態を 0 に戻すので、et_engine_prepare のたびに呼ぶ。

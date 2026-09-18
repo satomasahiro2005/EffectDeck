@@ -945,14 +945,18 @@ final class EffeTuneDSP: ObservableObject {
                                         inputBus: n.inputBus,
                                         outputBus: n.inputBus,
                                         channelSpec: n.channelSpec,
-                                        sectionGate: n.sectionGate))
+                                        sectionGate: n.sectionGate,
+                                        kind: ET_PIPE_NODE_NATIVE,
+                                        externalIndex: 0))
             }
             nodes.append(ETPipeNode(instance: n.instance,
                                     enabled: n.enabled ? 1 : 0,
                                     inputBus: n.inputBus,
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
-                                    sectionGate: n.sectionGate))
+                                    sectionGate: n.sectionGate,
+                                    kind: ET_PIPE_NODE_NATIVE,
+                                    externalIndex: 0))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
@@ -1041,14 +1045,18 @@ final class EffeTuneDSP: ObservableObject {
                                         inputBus: n.inputBus,
                                         outputBus: n.inputBus,
                                         channelSpec: n.channelSpec,
-                                        sectionGate: n.sectionGate))
+                                        sectionGate: n.sectionGate,
+                                        kind: ET_PIPE_NODE_NATIVE,
+                                        externalIndex: 0))
             }
             nodes.append(ETPipeNode(instance: n.instance,
                                     enabled: n.enabled ? 1 : 0,
                                     inputBus: n.inputBus,
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
-                                    sectionGate: n.sectionGate))
+                                    sectionGate: n.sectionGate,
+                                    kind: ET_PIPE_NODE_NATIVE,
+                                    externalIndex: 0))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         let line = "republish nodes=\(nodes.count) （\(reason)）"

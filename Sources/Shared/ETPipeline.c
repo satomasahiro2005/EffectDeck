@@ -48,6 +48,30 @@ static ETExternalProcessor gPreExternal[ET_EXTERNAL_MAX_PROCESSORS];
 static uint32_t gPreExternalCount = 0;
 static _Atomic int gExternalEnabled = 0;
 static _Atomic uint64_t gExternalRateBits = 0;
+static double bitsDouble(uint64_t bits);
+
+typedef int32_t (*ETPipelineExternalCallback)(void *, uint32_t, float *, uint32_t,
+                                              uint32_t, double, int8_t);
+#if defined(__clang__) || defined(__GNUC__)
+extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback, void *)
+    __attribute__((weak_import));
+#else
+extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback, void *);
+#endif
+
+static int32_t pipelineExternalCallback(void *context, uint32_t index, float *audio,
+                                        uint32_t channels, uint32_t frames, double timeSeconds,
+                                        int8_t channelSpec)
+{
+    (void)context;
+    (void)channelSpec;
+    if (index >= gExternalCount) return ET_ERR_ARGS;
+    const int32_t status = ETExternalProcessor_Process(&gExternal[index], audio, channels,
+                                                       frames, bitsDouble(atomic_load_explicit(
+                                                           &gExternalRateBits, memory_order_relaxed)),
+                                                       timeSeconds);
+    return status;
+}
 
 static uint64_t doubleBits(double value)
 {
@@ -82,6 +106,9 @@ void ETPipeline_SetEngine(uint32_t engine)
     // et_engine_prepare の destroyAllInstances でもう消えている。
     // 残すと次のブロックで ET_ERR_DESC になる（engine.cpp:674 slot == nullptr）。
     atomic_store_explicit(&gPending, -1, memory_order_relaxed);
+    if (et_pipeline_set_external_callback != NULL) {
+        et_pipeline_set_external_callback(engine, pipelineExternalCallback, NULL);
+    }
 }
 
 void ETPipeline_SetExternalProcessor(const ETExternalProcessor *processor)
@@ -181,7 +208,9 @@ void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
         rec[6] = nodes[i].outputBus;
         rec[7] = (uint8_t)nodes[i].channelSpec;
         rec[8] = nodes[i].sectionGate ? 1u : 0u;
-        // rec[9..11] は詰め物。ゼロでなければ engine に弾かれる。
+        rec[9] = nodes[i].kind == ET_PIPE_NODE_EXTERNAL ? 1u : 0u;
+        rec[10] = nodes[i].kind == ET_PIPE_NODE_EXTERNAL ? nodes[i].externalIndex : 0u;
+        // rec[11] は詰め物。
     }
     d->length = ET_PIPE_HEADER + count * ET_PIPE_NODE;
     for (uint32_t i = 0; i < count; i++) {

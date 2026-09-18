@@ -918,7 +918,9 @@ final class BandFIRPEQDesigner: ObservableObject {
                        inputBus: node.inputBus,
                        outputBus: node.outputBus,
                        channelSpec: node.channelSpec,
-                       sectionGate: node.sectionGate)
+                       sectionGate: node.sectionGate,
+                       kind: ET_PIPE_NODE_NATIVE,
+                       externalIndex: 0)
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
     }
