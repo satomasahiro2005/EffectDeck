@@ -37,6 +37,20 @@ else
   exit 1
 fi
 
+# External pipeline nodes let the host run AU/JSFX callbacks at the exact
+# position where their descriptor node appears. Keep this as a reversible
+# patch because Vendor/effetune is a pinned submodule until the change lands
+# upstream.
+if git -C Vendor/effetune apply --ignore-space-change --check ../../Patches/effetune-external-node.diff 2>/dev/null; then
+  git -C Vendor/effetune apply --ignore-space-change ../../Patches/effetune-external-node.diff \
+    && echo "当てた: effetune-external-node.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --reverse --check ../../Patches/effetune-external-node.diff 2>/dev/null; then
+  echo "当たっている: effetune-external-node.diff"
+else
+  echo "!! effetune-external-node.diff が当たらない。Vendor/effetune の版を確かめること"
+  exit 1
+fi
+
 echo "--- エフェクトのカタログを作る ---"
 python3 Tools/gen_catalog.py 2>&1 | tail -5
 python3 Tools/gen_presets.py 2>&1 | tail -1

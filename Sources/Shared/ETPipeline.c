@@ -64,9 +64,17 @@ static int32_t pipelineExternalCallback(void *context, uint32_t index, float *au
                                         int8_t channelSpec)
 {
     (void)context;
-    (void)channelSpec;
     if (index >= gExternalCount) return ET_ERR_ARGS;
-    const int32_t status = ETExternalProcessor_Process(&gExternal[index], audio, channels,
+    uint32_t first = 0;
+    uint32_t selected = channels;
+    if (channelSpec != ET_CHANNEL_ALL) {
+        selected = channelSpec == ET_CHANNEL_STEREO || channelSpec >= 16 ? 2u : 1u;
+        first = channelSpec >= 16 ? (uint32_t)(channelSpec - 16) * 2u
+                                  : (channelSpec >= 0 ? (uint32_t)channelSpec : 0u);
+        if (first + selected > channels) return ET_ERR_ARGS;
+    }
+    const int32_t status = ETExternalProcessor_Process(&gExternal[index],
+                                                       audio + first * frames, selected,
                                                        frames, bitsDouble(atomic_load_explicit(
                                                            &gExternalRateBits, memory_order_relaxed)),
                                                        timeSeconds);
