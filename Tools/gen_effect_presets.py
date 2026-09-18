@@ -103,7 +103,17 @@ def main() -> int:
     if raw.stderr:
         sys.stderr.write(raw.stderr.decode("utf-8", "replace"))
 
-    data = json.loads(raw.stdout.decode("utf-8"))
+    # **読めなければ既存を残す。**node の版が古いと、新しい書き方の plugin で
+    # 評価が途中で止まり、出力が切れたまま返る（Mac 側でこれを踏んだ。
+    # 上流 2.10.0 の追加分で切れ、追跡してある Swift が 1 つ前の版で
+    # 上書きされていた）。書き換えないほうが、欠けた表を出すよりましなので、
+    # 警告だけ出して飛ばす。
+    try:
+        data = json.loads(raw.stdout.decode("utf-8"))
+    except json.JSONDecodeError as e:
+        print("!! dump の出力が読めない（%s）。既存の Generated を使う" % e,
+              file=sys.stderr)
+        return 0
 
     lines = [HEADER.rstrip("\n")]
     count = 0
