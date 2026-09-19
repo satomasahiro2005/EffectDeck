@@ -131,16 +131,25 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func refresh() {
+        let debugRoot = try? Self.storageURL("JSFX/DebugFactory")
+        if let debugRoot { try? FileManager.default.removeItem(at: debugRoot) }
         #if DEBUG
+        if let debugRoot { try? FileManager.default.createDirectory(at: debugRoot, withIntermediateDirectories: true) }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
            let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
                                                        options: [.skipsHiddenFiles]) {
             for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
-                _ = try? Self.ownedCopy(of: source)
+                _ = try? Self.ownedCopy(of: source, root: debugRoot)
             }
         }
         #endif
-        entries = Self.ownedEntries()
+        Self.removeLegacyDebugCopies()
+        var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"))
+        #if DEBUG
+        discovered += Self.ownedEntries(at: debugRoot)
+        #endif
+        entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     /// Copies a security-scoped Files/iCloud URL into the app-owned sandbox.
@@ -464,10 +473,8 @@ final class ETJSFXHost: ObservableObject {
         }
     }
 
-    private static func ownedEntries() -> [Entry] {
-        guard let root = try? FileManager.default.url(for: .applicationSupportDirectory,
-                                                       in: .userDomainMask, appropriateFor: nil, create: true)
-                .appendingPathComponent("JSFX/Sources", isDirectory: true),
+    private static func ownedEntries(at root: URL?) -> [Entry] {
+        guard let root,
               let files = try? FileManager.default.contentsOfDirectory(at: root,
                   includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
         return files.compactMap { entry(for: $0, fallbackName: $0.deletingPathExtension().lastPathComponent) }
@@ -484,18 +491,41 @@ final class ETJSFXHost: ObservableObject {
     }
 
     private static func ownedCopy(of source: URL) throws -> URL {
+        try ownedCopy(of: source, root: storageURL("JSFX/Sources"))
+    }
+
+    private static func ownedCopy(of source: URL, root: URL?) throws -> URL {
         let data = try Data(contentsOf: source, options: .mappedIfSafe)
         guard data.count <= 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let root = try FileManager.default.url(for: .applicationSupportDirectory,
-                                               in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("JSFX/Sources", isDirectory: true)
+        guard let root else { throw CocoaError(.fileNoSuchFile) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let destination = root.appendingPathComponent(hash).appendingPathExtension("jsfx")
         if !FileManager.default.fileExists(atPath: destination.path) {
             try data.write(to: destination, options: .atomic)
         }
         return destination
+    }
+
+    private static func storageURL(_ relativePath: String) throws -> URL {
+        try FileManager.default.url(for: .applicationSupportDirectory,
+                                    in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent(relativePath, isDirectory: true)
+    }
+
+    /// Builds before the dedicated DebugFactory directory wrote its three
+    /// temporary probes into Sources. Remove exactly those known hashes once;
+    /// user-imported sources are never swept by name or directory.
+    private static func removeLegacyDebugCopies() {
+        let hashes = [
+            "36f889da0be41f69c91be9daa0aee12c1ec0de0edeedb0349ac31a28d2e7be2c",
+            "fef732cf7ee5227217176631c5b65ab08e7c8eb1ab696ddee86c3f76daa8edae",
+            "7c02bdbe8f4acd6f8c26105cdcd4bbb1ebc51b60bc0ee11821017ce041a522ed"
+        ]
+        guard let root = try? storageURL("JSFX/Sources") else { return }
+        for hash in hashes {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(hash).appendingPathExtension("jsfx"))
+        }
     }
 
     private static func metadata(_ source: String) -> (name: String?, author: String?) {
