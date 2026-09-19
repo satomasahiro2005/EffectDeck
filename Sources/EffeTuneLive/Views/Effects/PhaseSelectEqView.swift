@@ -336,6 +336,7 @@ struct PhaseSelectEqView: View {
     @ObservedObject var dsp: EffeTuneDSP
 
     @ObservedObject private var telemetry = Telemetry.shared
+    @Environment(\.etGraphOnly) private var graphOnly
 
     enum AxisMode: String, CaseIterable { case phase, balance }
     enum DragMode: String, CaseIterable { case move, resize }
@@ -367,14 +368,18 @@ struct PhaseSelectEqView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            modePickers
-            graph
-            bandRow
-            bandControls
-            DisclosureGroup("Band Boundaries", isExpanded: $showsBoundaries) {
-                boundaryRows
+            if !graphOnly {
+                modePickers
             }
-            .font(.system(size: 13, weight: .semibold))
+            graph
+            if !graphOnly {
+                bandRow
+                bandControls
+                DisclosureGroup("Band Boundaries", isExpanded: $showsBoundaries) {
+                    boundaryRows
+                }
+                .font(.system(size: 13, weight: .semibold))
+            }
         }
         .onChange(of: frameSequence) { _, _ in appendHistory() }
     }
