@@ -28,8 +28,10 @@ input_l = spl0;
 input_r = spl1;
 z1_l = input_l + coefficient * (z1_l - input_l);
 z1_r = input_r + coefficient * (z1_r - input_r);
-driven_l = tanh(z1_l * drive);
-driven_r = tanh(z1_r * drive);
+shaped_l = z1_l * drive;
+shaped_r = z1_r * drive;
+driven_l = shaped_l / (1 + abs(shaped_l));
+driven_r = shaped_r / (1 + abs(shaped_r));
 spl0 = (input_l * dry + driven_l * wet) * output;
 spl1 = (input_r * dry + driven_r * wet) * output;
 
