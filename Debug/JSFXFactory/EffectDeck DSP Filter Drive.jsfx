@@ -1,0 +1,47 @@
+desc:EffectDeck DSP Filter + Drive
+author:nemut.ai
+tags:filter distortion test
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+slider1:cutoff=1200<20,20000,1:log=1200>Low-pass cutoff (Hz)
+slider2:drive_db=12<0,36,0.1>Drive (dB)
+slider3:mix=100<0,100,0.1>Wet mix (%)
+slider4:output_db=-6<-24,6,0.1>Output (dB)
+
+@init
+z1_l = 0;
+z1_r = 0;
+
+@slider
+coefficient = exp(-2 * $pi * cutoff / srate);
+drive = 10^(drive_db / 20);
+wet = mix / 100;
+dry = 1 - wet;
+output = 10^(output_db / 20);
+
+@sample
+input_l = spl0;
+input_r = spl1;
+z1_l = input_l + coefficient * (z1_l - input_l);
+z1_r = input_r + coefficient * (z1_r - input_r);
+driven_l = tanh(z1_l * drive);
+driven_r = tanh(z1_r * drive);
+spl0 = (input_l * dry + driven_l * wet) * output;
+spl1 = (input_r * dry + driven_r * wet) * output;
+
+@gfx 560 210
+gfx_set(0.055, 0.065, 0.08, 1); gfx_rect(0, 0, gfx_w, gfx_h);
+gfx_setfont(1, "Helvetica", 20, 'b');
+gfx_set(0.35, 0.85, 1, 1); gfx_x = 20; gfx_y = 18;
+gfx_drawstr("DSP Filter + Drive");
+gfx_setfont(1, "Helvetica", 14);
+gfx_set(0.9, 0.93, 0.96, 1); gfx_x = 20; gfx_y = 62;
+gfx_drawstr(sprintf(#text, "Cutoff %.0f Hz    Drive %.1f dB    Mix %.0f%%", cutoff, drive_db, mix));
+gfx_set(0.2, 0.75, 0.42, 0.9);
+gfx_rect(20, 108, max(1, (gfx_w - 40) * min(1, abs(spl0) * 4)), 28);
+gfx_set(0.96, 0.66, 0.18, 0.9);
+gfx_rect(20, 148, max(1, (gfx_w - 40) * min(1, abs(spl1) * 4)), 28);

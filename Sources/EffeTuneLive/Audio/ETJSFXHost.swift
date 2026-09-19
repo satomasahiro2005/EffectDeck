@@ -183,7 +183,16 @@ final class ETJSFXHost: ObservableObject {
 
     func debugPresetItems() -> [PipelineStore.Loaded] {
         #if DEBUG
-        return entries.filter(\.isDebugFixture).map { entry in
+        let fixtures = entries.filter(\.isDebugFixture).sorted { lhs, rhs in
+            func rank(_ entry: Entry) -> Int {
+                if entry.name.contains("DSP") { return 0 }
+                if entry.name.contains("Conformance") { return 1 }
+                return 2
+            }
+            let a = rank(lhs), b = rank(rhs)
+            return a == b ? lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending : a < b
+        }
+        return fixtures.map { entry in
             PipelineStore.Loaded(
                 spec: ETEffect.external(type: "External:\(entry.id)", name: entry.name,
                                         category: "JSFX"),
