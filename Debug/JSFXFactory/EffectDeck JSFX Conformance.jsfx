@@ -98,6 +98,20 @@ gfx_rect(20 * s, 146 * s, bar_w, 26 * s);
 gfx_set(0.96, 0.66, 0.18, 0.85);
 gfx_circle(mouse_x, mouse_y, 9 * s, 1, 1);
 
+menu_x = 20 * s;
+menu_y = 205 * s;
+menu_w = 170 * s;
+menu_h = 42 * s;
+menu_hover = mouse_x >= menu_x && mouse_x < menu_x + menu_w &&
+             mouse_y >= menu_y && mouse_y < menu_y + menu_h;
+gfx_set(menu_hover ? 0.24 : 0.16, menu_hover ? 0.62 : 0.42, 0.85, 1);
+gfx_rect(menu_x, menu_y, menu_w, menu_h, 1);
+gfx_set(1, 1, 1, 1);
+gfx_x = menu_x + 14 * s;
+gfx_y = menu_y + 11 * s;
+gfx_drawstr("MENU API TEST");
+
 down = mouse_cap & 1;
-down && !last_down ? menu_choice = gfx_showmenu("Normal|!Checked|#Disabled|>Submenu|First|Second|<");
+down && !last_down && menu_hover ?
+  menu_choice = gfx_showmenu("Normal|!Checked|#Disabled|>Submenu|First|Second|<");
 last_down = down;

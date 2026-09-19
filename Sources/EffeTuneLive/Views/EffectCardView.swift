@@ -50,6 +50,7 @@ struct EffectCardView: View {
         case routing
         /// エフェクト 1 個ぶんのプリセット。
         case presets
+        case jsfxSource
 
         var id: String { rawValue }
     }
@@ -114,6 +115,7 @@ struct EffectCardView: View {
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
             case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
+            case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
             }
         }
     }
@@ -212,6 +214,11 @@ struct EffectCardView: View {
             }
 
             Menu {
+                if node.externalID?.hasPrefix("jsfx:") == true {
+                    Button { sheet = .jsfxSource } label: {
+                        Label("View Source", systemImage: "doc.text.magnifyingglass")
+                    }
+                }
                 // 並びは上流に合わせて routing → preset → reset
                 // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
                 //
@@ -375,7 +382,6 @@ private struct ExternalProcessorView: View {
     @State private var requestingView = false
     @State private var fullScreen = false
     @State private var movingToFullScreen = false
-    @State private var showSource = false
     @State private var isOnScreen = true
 
     var body: some View {
@@ -397,13 +403,7 @@ private struct ExternalProcessorView: View {
                             JSFXGFXView(instanceID: instanceID,
                                         isVisible: isOnScreen && !fullScreen)
                         }
-                        HStack(spacing: 8) {
-                            Button { showSource = true } label: {
-                                Image(systemName: "doc.text.magnifyingglass")
-                                    .font(.system(size: 14, weight: .semibold))
-                            }
-                            .accessibilityLabel("View Source")
-                            Button {
+                        Button {
                                 movingToFullScreen = true
                                 Task { @MainActor in
                                     await Task.yield()
@@ -413,12 +413,11 @@ private struct ExternalProcessorView: View {
                                     }
                                     fullScreen = true
                                 }
-                            } label: {
-                                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                    .font(.system(size: 14, weight: .semibold))
-                            }
-                            .accessibilityLabel("Full Screen")
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 14, weight: .semibold))
                         }
+                        .accessibilityLabel("Full Screen")
                         .buttonStyle(.glass(.regular.interactive()))
                         .buttonBorderShape(.circle)
                         .controlSize(.large)
@@ -436,7 +435,6 @@ private struct ExternalProcessorView: View {
                 }
             } else if jsfxParameters.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    jsfxSourceButton
                     Text(jsfx.status(instanceID: instanceID))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -444,7 +442,6 @@ private struct ExternalProcessorView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    jsfxSourceButton
                     jsfxParameterRows(jsfxParameters)
                     jsfxTriggers
                 }
@@ -516,7 +513,6 @@ private struct ExternalProcessorView: View {
             }
         }
         }
-        .sheet(isPresented: $showSource) { JSFXSourceView(instanceID: instanceID) }
         .onScrollVisibilityChange(threshold: 0.01) { isOnScreen = $0 }
         .task(id: au.revision) {
             // The card normally opens before asynchronous AU instantiation has
@@ -529,19 +525,6 @@ private struct ExternalProcessorView: View {
                 controller = $0
                 requestingView = false
             }
-        }
-    }
-
-    private var jsfxSourceButton: some View {
-        HStack {
-            Spacer()
-            Button { showSource = true } label: {
-                Image(systemName: "doc.text.magnifyingglass")
-            }
-            .buttonStyle(.glass(.regular.interactive()))
-            .buttonBorderShape(.circle)
-            .controlSize(.large)
-            .accessibilityLabel("View Source")
         }
     }
 
@@ -630,14 +613,18 @@ private struct JSFXGFXView: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    let scale = retina ? UIScreen.main.scale : 1
+                    let scale = jsfx.gfxPixelScale(instanceID: instanceID,
+                                                   size: geometry.size,
+                                                   screenScale: UIScreen.main.scale)
                     jsfx.updateMouse(instanceID: instanceID,
                                      point: CGPoint(x: value.location.x * scale,
                                                     y: value.location.y * scale),
                                      buttons: 1)
                 }
                 .onEnded { value in
-                    let scale = retina ? UIScreen.main.scale : 1
+                    let scale = jsfx.gfxPixelScale(instanceID: instanceID,
+                                                   size: geometry.size,
+                                                   screenScale: UIScreen.main.scale)
                     jsfx.updateMouse(instanceID: instanceID,
                                      point: CGPoint(x: value.location.x * scale,
                                                     y: value.location.y * scale),
@@ -700,34 +687,16 @@ private struct JSFXGFXLayout: ViewModifier {
 }
 
 private struct JSFXFullScreenEditor: View {
-    @ObservedObject private var jsfx = ETJSFXHost.shared
-    @ObservedObject private var prefs = Preferences.shared
     let instanceID: String
     @Binding var isPresented: Bool
-    @State private var showSource = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color(uiColor: .systemBackground).ignoresSafeArea()
-            if prefs.jsfxCanvasMode == .pixelPerfect {
-                let size = jsfx.preferredGFXSize(instanceID: instanceID)
-                ScrollView([.horizontal, .vertical]) {
-                    JSFXGFXView(instanceID: instanceID, fixedSize: size)
-                        .padding(12)
-                }
+            JSFXGFXView(instanceID: instanceID, fullScreen: true)
                 .safeAreaPadding(.top, 8)
-            } else {
-                JSFXGFXView(instanceID: instanceID, fullScreen: true)
-                    .padding(.top, 8)
-            }
-            HStack(spacing: 8) {
-                Button { showSource = true } label: {
-                    Image(systemName: "doc.text.magnifyingglass")
-                }
-                .accessibilityLabel("View Source")
-                Button { isPresented = false } label: { Image(systemName: "xmark") }
-                    .accessibilityLabel("Close")
-            }
+            Button { isPresented = false } label: { Image(systemName: "xmark") }
+                .accessibilityLabel("Close")
             .font(.system(size: 15, weight: .bold))
             .buttonStyle(.glass(.regular.interactive()))
             .buttonBorderShape(.circle)
@@ -735,7 +704,6 @@ private struct JSFXFullScreenEditor: View {
             .padding(.top, 8)
             .padding(.trailing, 12)
         }
-        .sheet(isPresented: $showSource) { JSFXSourceView(instanceID: instanceID) }
     }
 }
 

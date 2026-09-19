@@ -333,6 +333,18 @@ final class ETJSFXHost: ObservableObject {
         instances[instanceID]?.host.map(ETJSFX_GFXWantsRetina) ?? false
     }
 
+    /// Keep the framebuffer inside the native host limits without changing
+    /// its aspect ratio. Large landscape Retina screens can be wider than the
+    /// 2048-pixel safety cap; clamping width and height independently stretches
+    /// the plug-in and also makes mouse coordinates miss their targets.
+    func gfxPixelScale(instanceID: String, size: CGSize, screenScale: CGFloat) -> CGFloat {
+        let requested = gfxWantsRetina(instanceID: instanceID) ? screenScale : 1
+        let width = max(1, size.width), height = max(1, size.height)
+        let dimensionLimit = min(2048 / width, 2048 / height)
+        let byteLimit = sqrt(CGFloat(16 * 1024 * 1024) / (width * height * 4))
+        return max(0.01, min(requested, dimensionLimit, byteLimit))
+    }
+
     private nonisolated static func renderGFX(host: OpaquePointer, width: Int, height: Int,
                                               scale: Double) -> CGImage? {
         guard ETJSFX_RunGFX(host, UInt32(width), UInt32(height), scale) else { return nil }
@@ -364,12 +376,13 @@ final class ETJSFXHost: ObservableObject {
         // too small. Only scripts opting into gfx_ext_retina receive the
         // physical framebuffer and its scale factor.
         let retina = gfxWantsRetina(instanceID: instanceID)
-        let pixelScale = retina ? scale : 1
+        let pixelScale = gfxPixelScale(instanceID: instanceID, size: size,
+                                       screenScale: scale)
         let width = max(1, min(2048, Int(size.width * pixelScale)))
         let height = max(1, min(2048, Int(size.height * pixelScale)))
         instance.gfxQueue.async {
             let image = Self.renderGFX(host: host, width: width, height: height,
-                                       scale: retina ? scale : 1)
+                                       scale: retina ? pixelScale : 1)
             DispatchQueue.main.async { completion(image) }
         }
     }
