@@ -119,6 +119,7 @@ final class ETJSFXHost: ObservableObject {
     static let shared = ETJSFXHost()
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var revision = 0
+    private var entryAliases: [String: Entry] = [:]
     private var instances: [String: Instance] = [:]
     private var retired: [OpaquePointer] = []
     private var renderConfiguration: RenderConfiguration?
@@ -140,7 +141,7 @@ final class ETJSFXHost: ObservableObject {
            let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
                                                        options: [.skipsHiddenFiles]) {
             for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
-                _ = try? Self.ownedCopy(of: source, root: debugRoot)
+                _ = try? Self.debugCopy(of: source, root: debugRoot)
             }
         }
         #endif
@@ -151,6 +152,7 @@ final class ETJSFXHost: ObservableObject {
         #endif
         entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        entryAliases = Self.debugAliases(for: entries)
     }
 
     /// Copies a security-scoped Files/iCloud URL into the app-owned sandbox.
@@ -174,7 +176,7 @@ final class ETJSFXHost: ObservableObject {
         return entry
     }
 
-    func entry(id: String) -> Entry? { entries.first { $0.id == id } }
+    func entry(id: String) -> Entry? { entries.first { $0.id == id } ?? entryAliases[id] }
 
     func sourceText(instanceID: String) -> String? {
         guard let entry = instances[instanceID]?.entry else { return nil }
@@ -541,9 +543,52 @@ final class ETJSFXHost: ObservableObject {
         guard owned.pathExtension.lowercased() == "jsfx",
               let text = try? String(contentsOf: owned, encoding: .utf8) else { return nil }
         let metadata = metadata(text)
-        let hash = owned.deletingPathExtension().lastPathComponent
-        return Entry(id: "jsfx:" + hash, name: metadata.name ?? fallbackName,
+        let identifier: String
+        if debug {
+            let filename = owned.lastPathComponent.data(using: .utf8) ?? Data()
+            let stable = SHA256.hash(data: filename).map { String(format: "%02x", $0) }.joined()
+            identifier = "jsfx:debug:" + stable
+        } else {
+            identifier = "jsfx:" + owned.deletingPathExtension().lastPathComponent
+        }
+        return Entry(id: identifier, name: metadata.name ?? fallbackName,
                      author: metadata.author ?? "", url: owned, isDebugFixture: debug)
+    }
+
+    /// Bundled debug fixtures are developer-owned files, not user imports.
+    /// Keep their filename so their component identity survives source edits.
+    private static func debugCopy(of source: URL, root: URL?) throws -> URL {
+        let data = try Data(contentsOf: source, options: .mappedIfSafe)
+        guard data.count <= 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+        guard let root else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let destination = root.appendingPathComponent(source.lastPathComponent)
+        try data.write(to: destination, options: .atomic)
+        return destination
+    }
+
+    /// Resolve presets saved by builds which used the source-content SHA as a
+    /// debug component ID. Current content hashes are generated automatically;
+    /// the two older edited fixtures need one historical alias each.
+    private static func debugAliases(for entries: [Entry]) -> [String: Entry] {
+        var aliases: [String: Entry] = [:]
+        let debug = entries.filter(\.isDebugFixture)
+        for entry in debug {
+            if let data = try? Data(contentsOf: entry.url) {
+                let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                aliases["jsfx:" + hash] = entry
+            }
+        }
+        let historical: [String: String] = [
+            "jsfx:ee9586c3927073dd554ed2dd82142364717917994503263040a3a8312a92d87e":
+                "EffectDeck DSP Filter + Drive",
+            "jsfx:a21a7c4b4f1ebcf3cf2562a39590ab5e496a4c612091dd4c8326b1edaaa95f6a":
+                "EffectDeck JSFX Conformance"
+        ]
+        for (oldID, name) in historical {
+            if let entry = debug.first(where: { $0.name == name }) { aliases[oldID] = entry }
+        }
+        return aliases
     }
 
     private static func ownedCopy(of source: URL) throws -> URL {
