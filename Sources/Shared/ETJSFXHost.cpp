@@ -316,6 +316,7 @@ bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange
 bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
 
 bool ETJSFX_HasGFX(const ETJSFX *h){return h&&h->effect&&ysfx_has_section(h->effect,ysfx_section_gfx);}
+bool ETJSFX_GFXWantsRetina(ETJSFX *h){return h&&h->effect&&ysfx_gfx_wants_retina(h->effect);}
 static int32_t showMenu(void *opaque,const char *menu,int32_t x,int32_t y)
 {
     auto *h=static_cast<ETJSFX *>(opaque);

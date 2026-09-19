@@ -37,6 +37,7 @@ bool ETJSFX_SendTrigger(ETJSFX *host, uint32_t index);
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);
 bool ETJSFX_HasGFX(const ETJSFX *host);
+bool ETJSFX_GFXWantsRetina(ETJSFX *host);
 void ETJSFX_PreferredGFXSize(ETJSFX *host, uint32_t *width, uint32_t *height);
 uint32_t ETJSFX_GFXFrameRate(ETJSFX *host);
 bool ETJSFX_RunGFX(ETJSFX *host, uint32_t width, uint32_t height, double scale);

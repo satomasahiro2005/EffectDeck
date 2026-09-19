@@ -498,14 +498,22 @@ struct EffectPickerView: View {
         List {
             ForEach(systemCategories, id: \.self) { category in
                 Section {
-                    let presets = ETSystemPresets.filter { $0.category == category }
-                    ForEach(Array(presets.enumerated()), id: \.element.id) { offset, preset in
-                        presetRow(name: preset.name,
-                                  payload: "preset:system:" + preset.name) {
-                            ETShareLink.parse(preset.json, catalog: ETCatalog)
+                    if category == Self.debugJSFXCategory {
+                        presetRow(name: "JSFX Host Test",
+                                  payload: "preset:debug:jsfx-host") {
+                            jsfx.debugPresetItems()
                         }
-                        .id(offset == 0 ? Self.jumpTarget(category)
-                                        : "system-preset-" + preset.name)
+                        .id(Self.jumpTarget(category))
+                    } else {
+                        let presets = ETSystemPresets.filter { $0.category == category }
+                        ForEach(Array(presets.enumerated()), id: \.element.id) { offset, preset in
+                            presetRow(name: preset.name,
+                                      payload: "preset:system:" + preset.name) {
+                                ETShareLink.parse(preset.json, catalog: ETCatalog)
+                            }
+                            .id(offset == 0 ? Self.jumpTarget(category)
+                                            : "system-preset-" + preset.name)
+                        }
                     }
                 } header: {
                     Text(category.categoryLabel)
@@ -559,8 +567,17 @@ struct EffectPickerView: View {
 
     private var systemCategories: [String] {
         var seen = Set<String>()
-        return ETSystemPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
+        let regular = ETSystemPresets.compactMap {
+            seen.insert($0.category).inserted ? $0.category : nil
+        }
+        #if DEBUG
+        return jsfx.debugPresetItems().isEmpty ? regular : [Self.debugJSFXCategory] + regular
+        #else
+        return regular
+        #endif
     }
+
+    static let debugJSFXCategory = "Debug"
 
     /// 一覧に出すプリセットの見出し用の鍵。カテゴリ名と衝突しない字にする。
     static let userKey = "__user_presets"

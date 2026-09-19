@@ -374,6 +374,7 @@ private struct ExternalProcessorView: View {
     @State private var requestingView = false
     @State private var fullScreen = false
     @State private var movingToFullScreen = false
+    @State private var showSource = false
 
     var body: some View {
         let parameters = au.parameters(instanceID: instanceID)
@@ -382,12 +383,48 @@ private struct ExternalProcessorView: View {
             let jsfxParameters = jsfx.parameters(instanceID: instanceID)
             if jsfx.hasGFX(instanceID: instanceID) {
                 VStack(alignment: .leading, spacing: 12) {
-                    JSFXGFXView(instanceID: instanceID)
+                    ZStack(alignment: .topTrailing) {
+                        JSFXGFXView(instanceID: instanceID)
+                        HStack(spacing: 8) {
+                            Button { showSource = true } label: {
+                                Image(systemName: "doc.text.magnifyingglass")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .accessibilityLabel("View Source")
+                            Button {
+                                movingToFullScreen = true
+                                Task { @MainActor in
+                                    await Task.yield()
+                                    ETInterfaceOrientation.request(.landscapeRight)
+                                    for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
+                                        try? await Task.sleep(nanoseconds: 20_000_000)
+                                    }
+                                    fullScreen = true
+                                }
+                            } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .accessibilityLabel("Full Screen")
+                        }
+                        .buttonStyle(.glass(.regular.interactive()))
+                        .buttonBorderShape(.circle)
+                        .controlSize(.large)
+                        .padding(8)
+                    }
+                    .fullScreenCover(isPresented: $fullScreen, onDismiss: {
+                        ETInterfaceOrientation.request(.portrait)
+                        movingToFullScreen = false
+                    }) {
+                        JSFXFullScreenEditor(instanceID: instanceID,
+                                             isPresented: $fullScreen)
+                    }
                     jsfxParameterRows(jsfxParameters)
                     jsfxTriggers
                 }
             } else if jsfxParameters.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
+                    jsfxSourceButton
                     Text(jsfx.status(instanceID: instanceID))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -395,6 +432,7 @@ private struct ExternalProcessorView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
+                    jsfxSourceButton
                     jsfxParameterRows(jsfxParameters)
                     jsfxTriggers
                 }
@@ -466,6 +504,7 @@ private struct ExternalProcessorView: View {
             }
         }
         }
+        .sheet(isPresented: $showSource) { JSFXSourceView(instanceID: instanceID) }
         .task(id: au.revision) {
             // The card normally opens before asynchronous AU instantiation has
             // finished. Retry when the host revision changes; the old one-shot
@@ -477,6 +516,19 @@ private struct ExternalProcessorView: View {
                 controller = $0
                 requestingView = false
             }
+        }
+    }
+
+    private var jsfxSourceButton: some View {
+        HStack {
+            Spacer()
+            Button { showSource = true } label: {
+                Image(systemName: "doc.text.magnifyingglass")
+            }
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .accessibilityLabel("View Source")
         }
     }
 
@@ -537,18 +589,21 @@ private struct ExternalProcessorView: View {
 private struct JSFXGFXView: View {
     @ObservedObject private var jsfx = ETJSFXHost.shared
     let instanceID: String
+    var fixedSize: CGSize? = nil
+    var fullScreen = false
     @State private var image: CGImage?
     @State private var drawing = false
 
     var body: some View {
         let preferred = jsfx.preferredGFXSize(instanceID: instanceID)
+        let retina = jsfx.gfxWantsRetina(instanceID: instanceID)
         GeometryReader { geometry in
             ZStack {
                 Color.black
                 if let image {
                     Image(decorative: image, scale: UIScreen.main.scale)
                         .resizable()
-                        .interpolation(.high)
+                        .interpolation(retina ? .high : .none)
                 }
                 JSFXKeyboardCapture(instanceID: instanceID)
                     .allowsHitTesting(false)
@@ -556,14 +611,14 @@ private struct JSFXGFXView: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    let scale = UIScreen.main.scale
+                    let scale = retina ? UIScreen.main.scale : 1
                     jsfx.updateMouse(instanceID: instanceID,
                                      point: CGPoint(x: value.location.x * scale,
                                                     y: value.location.y * scale),
                                      buttons: 1)
                 }
                 .onEnded { value in
-                    let scale = UIScreen.main.scale
+                    let scale = retina ? UIScreen.main.scale : 1
                     jsfx.updateMouse(instanceID: instanceID,
                                      point: CGPoint(x: value.location.x * scale,
                                                     y: value.location.y * scale),
@@ -584,11 +639,99 @@ private struct JSFXGFXView: View {
                 }
             }
         }
-        .aspectRatio(max(0.25, preferred.width / max(1, preferred.height)), contentMode: .fit)
-        .frame(minHeight: 180, maxHeight: 520)
+        .modifier(JSFXGFXLayout(preferred: fixedSize ?? preferred,
+                                fixedSize: fixedSize, fullScreen: fullScreen))
         .clipped()
         .onAppear { jsfx.updateGFXWindow(instanceID: instanceID, focused: true, visible: true) }
         .onDisappear { jsfx.updateGFXWindow(instanceID: instanceID, focused: false, visible: false) }
+    }
+}
+
+private struct JSFXGFXLayout: ViewModifier {
+    let preferred: CGSize
+    let fixedSize: CGSize?
+    let fullScreen: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let fixedSize {
+            content.frame(width: fixedSize.width, height: fixedSize.height)
+        } else if fullScreen {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            content
+                .aspectRatio(max(0.25, preferred.width / max(1, preferred.height)),
+                             contentMode: .fit)
+                .frame(minHeight: 180, maxHeight: 360)
+        }
+    }
+}
+
+private struct JSFXFullScreenEditor: View {
+    @ObservedObject private var jsfx = ETJSFXHost.shared
+    let instanceID: String
+    @Binding var isPresented: Bool
+    @State private var oneToOne = false
+    @State private var showSource = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color(uiColor: .systemBackground).ignoresSafeArea()
+            if oneToOne {
+                let size = jsfx.preferredGFXSize(instanceID: instanceID)
+                ScrollView([.horizontal, .vertical]) {
+                    JSFXGFXView(instanceID: instanceID, fixedSize: size)
+                        .padding(12)
+                }
+                .safeAreaPadding(.top, 8)
+            } else {
+                JSFXGFXView(instanceID: instanceID, fullScreen: true)
+                    .padding(.top, 8)
+            }
+            HStack(spacing: 8) {
+                Button { oneToOne.toggle() } label: {
+                    Image(systemName: oneToOne ? "1.square.fill" : "arrow.up.left.and.arrow.down.right")
+                }
+                .accessibilityLabel(oneToOne ? "Fit to Screen" : "One to One")
+                Button { showSource = true } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                }
+                .accessibilityLabel("View Source")
+                Button { isPresented = false } label: { Image(systemName: "xmark") }
+                    .accessibilityLabel("Close")
+            }
+            .font(.system(size: 15, weight: .bold))
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .padding(.top, 8)
+            .padding(.trailing, 12)
+        }
+        .sheet(isPresented: $showSource) { JSFXSourceView(instanceID: instanceID) }
+    }
+}
+
+private struct JSFXSourceView: View {
+    @Environment(\.dismiss) private var dismiss
+    let instanceID: String
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.horizontal, .vertical]) {
+                Text(ETJSFXHost.shared.sourceText(instanceID: instanceID) ?? "Source unavailable")
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(16)
+            }
+            .navigationTitle("JSFX Source")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 

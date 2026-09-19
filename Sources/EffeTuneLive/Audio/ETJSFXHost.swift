@@ -74,6 +74,7 @@ final class ETJSFXHost: ObservableObject {
         let name: String
         let author: String
         let url: URL
+        let isDebugFixture: Bool
     }
 
     struct Parameter: Identifiable {
@@ -144,9 +145,9 @@ final class ETJSFXHost: ObservableObject {
         }
         #endif
         Self.removeLegacyDebugCopies()
-        var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"))
+        var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"), debug: false)
         #if DEBUG
-        discovered += Self.ownedEntries(at: debugRoot)
+        discovered += Self.ownedEntries(at: debugRoot, debug: true)
         #endif
         entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -163,7 +164,9 @@ final class ETJSFXHost: ObservableObject {
                           userInfo: [NSLocalizedDescriptionKey: "Choose a single-file JSFX source."])
         }
         let owned = try Self.ownedCopy(of: source)
-        guard let entry = Self.entry(for: owned, fallbackName: source.deletingPathExtension().lastPathComponent) else {
+        guard let entry = Self.entry(for: owned,
+                                     fallbackName: source.deletingPathExtension().lastPathComponent,
+                                     debug: false) else {
             throw NSError(domain: "ETJSFX", code: 11,
                           userInfo: [NSLocalizedDescriptionKey: "The JSFX source is not valid UTF-8."])
         }
@@ -172,6 +175,25 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func entry(id: String) -> Entry? { entries.first { $0.id == id } }
+
+    func sourceText(instanceID: String) -> String? {
+        guard let entry = instances[instanceID]?.entry else { return nil }
+        return try? String(contentsOf: entry.url, encoding: .utf8)
+    }
+
+    func debugPresetItems() -> [PipelineStore.Loaded] {
+        #if DEBUG
+        return entries.filter(\.isDebugFixture).map { entry in
+            PipelineStore.Loaded(
+                spec: ETEffect.external(type: "External:\(entry.id)", name: entry.name,
+                                        category: "JSFX"),
+                values: [], enabled: true, inputBus: 0, outputBus: 0, channelSpec: -1,
+                externalID: entry.id, externalInstanceID: UUID().uuidString)
+        }
+        #else
+        return []
+        #endif
+    }
 
     func create(_ entry: Entry, instanceID: String, state: Data? = nil, channels: Int = 2) {
         create(entry, instanceID: instanceID, state: state, channels: channels, ready: nil)
@@ -298,6 +320,10 @@ final class ETJSFXHost: ObservableObject {
         return CGSize(width: width == 0 ? 640 : Int(width), height: height == 0 ? 360 : Int(height))
     }
 
+    func gfxWantsRetina(instanceID: String) -> Bool {
+        instances[instanceID]?.host.map(ETJSFX_GFXWantsRetina) ?? false
+    }
+
     private nonisolated static func renderGFX(host: OpaquePointer, width: Int, height: Int,
                                               scale: Double) -> CGImage? {
         guard ETJSFX_RunGFX(host, UInt32(width), UInt32(height), scale) else { return nil }
@@ -324,10 +350,17 @@ final class ETJSFXHost: ObservableObject {
         guard let instance = instances[instanceID], let host = instance.host else {
             completion(nil); return
         }
-        let width = max(1, min(2048, Int(size.width * scale)))
-        let height = max(1, min(2048, Int(size.height * scale)))
+        // Classic JSFX coordinates are logical screen pixels. Giving those
+        // scripts the physical Retina dimensions makes every control 2–3x
+        // too small. Only scripts opting into gfx_ext_retina receive the
+        // physical framebuffer and its scale factor.
+        let retina = gfxWantsRetina(instanceID: instanceID)
+        let pixelScale = retina ? scale : 1
+        let width = max(1, min(2048, Int(size.width * pixelScale)))
+        let height = max(1, min(2048, Int(size.height * pixelScale)))
         instance.gfxQueue.async {
-            let image = Self.renderGFX(host: host, width: width, height: height, scale: scale)
+            let image = Self.renderGFX(host: host, width: width, height: height,
+                                       scale: retina ? scale : 1)
             DispatchQueue.main.async { completion(image) }
         }
     }
@@ -473,21 +506,22 @@ final class ETJSFXHost: ObservableObject {
         }
     }
 
-    private static func ownedEntries(at root: URL?) -> [Entry] {
+    private static func ownedEntries(at root: URL?, debug: Bool) -> [Entry] {
         guard let root,
               let files = try? FileManager.default.contentsOfDirectory(at: root,
                   includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
-        return files.compactMap { entry(for: $0, fallbackName: $0.deletingPathExtension().lastPathComponent) }
+        return files.compactMap { entry(for: $0,
+            fallbackName: $0.deletingPathExtension().lastPathComponent, debug: debug) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    private static func entry(for owned: URL, fallbackName: String) -> Entry? {
+    private static func entry(for owned: URL, fallbackName: String, debug: Bool) -> Entry? {
         guard owned.pathExtension.lowercased() == "jsfx",
               let text = try? String(contentsOf: owned, encoding: .utf8) else { return nil }
         let metadata = metadata(text)
         let hash = owned.deletingPathExtension().lastPathComponent
         return Entry(id: "jsfx:" + hash, name: metadata.name ?? fallbackName,
-                     author: metadata.author ?? "", url: owned)
+                     author: metadata.author ?? "", url: owned, isDebugFixture: debug)
     }
 
     private static func ownedCopy(of source: URL) throws -> URL {

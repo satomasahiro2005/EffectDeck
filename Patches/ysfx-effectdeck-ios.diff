@@ -1,11 +1,4 @@
-warning: in the working copy of 'sources/ysfx.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'sources/ysfx.hpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'sources/ysfx_api_eel.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'sources/ysfx_api_file.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'sources/ysfx_api_gfx.cpp', LF will be replaced by CRLF the next time Git touches it
 warning: in the working copy of 'sources/ysfx_api_gfx_lice.hpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'sources/ysfx_api_reaper.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'thirdparty/WDL/source/WDL/eel2/nseel-compiler.c', LF will be replaced by CRLF the next time Git touches it
 diff --git a/sources/ysfx.cpp b/sources/ysfx.cpp
 index 740d1dd..2da13b2 100644
 --- a/sources/ysfx.cpp
@@ -58,23 +51,6 @@ index a7f2a24..51c3c49 100644
          EEL_F *mouse_x = nullptr;
          EEL_F *mouse_y = nullptr;
          EEL_F *mouse_cap = nullptr;
-diff --git a/sources/ysfx_config.cpp b/sources/ysfx_config.cpp
-index 4171cc6..eeae801 100644
---- a/sources/ysfx_config.cpp
-+++ b/sources/ysfx_config.cpp
-@@ -104,8 +104,12 @@ void ysfx_register_audio_format(ysfx_config_t *config, ysfx_audio_format_t *afmt)
- 
- void ysfx_register_builtin_audio_formats(ysfx_config_t *config)
- {
-+#if defined(YSFX_EFFECTDECK_SANDBOX)
-+    (void)config;
-+#else
-     config->audio_formats.push_back(ysfx_audio_format_wav);
-     config->audio_formats.push_back(ysfx_audio_format_flac);
-+#endif
- }
- 
- void ysfx_set_log_reporter(ysfx_config_t *config, ysfx_log_reporter_t *reporter)
 diff --git a/sources/ysfx_api_eel.cpp b/sources/ysfx_api_eel.cpp
 index 592f1f4..5799177 100644
 --- a/sources/ysfx_api_eel.cpp
@@ -193,7 +169,7 @@ index 7a115e7..954e4de 100644
  
      NSEEL_addfunc_retptr("gfx_lineto", 3, NSEEL_PProc_THIS, &ysfx_api_gfx_lineto);
 diff --git a/sources/ysfx_api_gfx_lice.hpp b/sources/ysfx_api_gfx_lice.hpp
-index 94252e1..ca13ef8 100644
+index 94252e1..35f7e00 100644
 --- a/sources/ysfx_api_gfx_lice.hpp
 +++ b/sources/ysfx_api_gfx_lice.hpp
 @@ -36,6 +36,7 @@
@@ -239,8 +215,11 @@ index 94252e1..ca13ef8 100644
  class eel_lice_state
  {
  public:
-@@ -125,6 +134,9 @@ public:
+@@ -123,8 +132,12 @@ public:
+   ~eel_lice_state();
+ 
    LICE_IBitmap *m_framebuffer, *m_framebuffer_extra;
++  LICE_IFont *m_effectdeck_default_font;
    int m_framebuffer_dirty;
    WDL_TypedBuf<LICE_IBitmap *> m_gfx_images;
 +#if defined(YSFX_EFFECTDECK_SANDBOX)
@@ -249,7 +228,29 @@ index 94252e1..ca13ef8 100644
    struct gfxFontStruct {
      LICE_IFont *font;
      char last_fontname[128];
-@@ -250,6 +262,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+@@ -143,7 +156,7 @@ public:
+   };
+ 
+   int m_gfx_font_active; // -1 for default, otherwise index into gfx_fonts (NOTE: this differs from the exposed API, which defines 0 as default, 1-n)
+-  LICE_IFont *GetActiveFont() { return m_gfx_font_active>=0&&m_gfx_font_active<m_gfx_fonts.GetSize() && m_gfx_fonts.Get()[m_gfx_font_active].use_fonth ? m_gfx_fonts.Get()[m_gfx_font_active].font : NULL; }
++  LICE_IFont *GetActiveFont() { return m_gfx_font_active>=0&&m_gfx_font_active<m_gfx_fonts.GetSize() && m_gfx_fonts.Get()[m_gfx_font_active].use_fonth ? m_gfx_fonts.Get()[m_gfx_font_active].font : m_effectdeck_default_font; }
+ 
+   LICE_IBitmap *GetImageForIndex(EEL_F idx, const char *callername) 
+   { 
+@@ -222,6 +235,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+   m_gfx_images.Resize(image_slots);
+   memset(m_gfx_images.Get(),0,m_gfx_images.GetSize()*sizeof(m_gfx_images.Get()[0]));
+   m_framebuffer=m_framebuffer_extra=0;
++  m_effectdeck_default_font=LICE_CreateFont();
++  if (m_effectdeck_default_font) {
++    char actual_name[128] = {};
++    ETLICE_ConfigureFont(m_effectdeck_default_font,"Helvetica",12,false,false,false,
++                         actual_name,sizeof(actual_name));
++  }
+   m_framebuffer_dirty=0;
+ 
+   m_gfx_r = NSEEL_VM_regvar(vm,"gfx_r");
+@@ -250,6 +269,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
  }
  eel_lice_state::~eel_lice_state()
  {
@@ -259,7 +260,15 @@ index 94252e1..ca13ef8 100644
    if (LICE_FUNCTION_VALID(LICE__Destroy)) 
    {
      LICE__Destroy(m_framebuffer_extra);
-@@ -857,13 +872,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+@@ -262,6 +284,7 @@ eel_lice_state::~eel_lice_state()
+   }
+   if (LICE_FUNCTION_VALID(LICE__DestroyFont))
+   {
++    if (m_effectdeck_default_font) LICE__DestroyFont(m_effectdeck_default_font);
+     int x;
+     for (x=0;x<m_gfx_fonts.GetSize();x++)
+     {
+@@ -857,13 +880,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
    int use_w = (int)*w;
    int use_h = (int)*h;
    if (use_w<1 || use_h < 1) use_w=use_h=0;
@@ -288,7 +297,7 @@ index 94252e1..ca13ef8 100644
      if (!bm) 
      {
        m_gfx_images.Get()[img] = bm = __LICE_CreateBitmap(1,use_w,use_h);
-@@ -873,6 +901,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+@@ -873,6 +909,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
      {
        rv=LICE__resize(bm,use_w,use_h);
      }
@@ -304,7 +313,7 @@ index 94252e1..ca13ef8 100644
    }
  
    return rv?1.0:0.0;
-@@ -1006,58 +1043,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
+@@ -1006,58 +1051,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
          if (!s->font) s->font=LICE_CreateFont();
          if (s->font)
          {
@@ -414,6 +423,23 @@ index d29d81d..e2528d7 100644
      if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
          return 0;
  
+diff --git a/sources/ysfx_config.cpp b/sources/ysfx_config.cpp
+index 35552de..e98b54a 100644
+--- a/sources/ysfx_config.cpp
++++ b/sources/ysfx_config.cpp
+@@ -104,8 +104,12 @@ void ysfx_register_audio_format(ysfx_config_t *config, ysfx_audio_format_t *afmt
+ 
+ void ysfx_register_builtin_audio_formats(ysfx_config_t *config)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)config;
++#else
+     config->audio_formats.push_back(ysfx_audio_format_wav);
+     config->audio_formats.push_back(ysfx_audio_format_flac);
++#endif
+ }
+ 
+ void ysfx_set_log_reporter(ysfx_config_t *config, ysfx_log_reporter_t *reporter)
 diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
 index 5dee9a7..23de2ce 100644
 --- a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
@@ -436,3 +462,4 @@ index 5dee9a7..23de2ce 100644
        __clear_cache(handle->code,writeptr);
  #endif
      }
+

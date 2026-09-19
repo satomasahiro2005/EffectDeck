@@ -1,0 +1,103 @@
+desc:EffectDeck JSFX Conformance
+author:nemut.ai
+tags:analysis utility test
+options:gfx_hz=30
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+slider1:gain_db=0<-24,12,0.1>Gain (dB)
+slider2:mode=0<0,2,1{Normal,Swap,Mono}>Channel mode
+slider3:frequency=1000<20,20000,1:log=1000>Log frequency
+slider4:curve=0.5<0,1,0.001:sqr>Square curve
+slider5:hidden_value=0<0,1,1>-Hidden state
+slider6:pdc_samples=0<0,2048,1>PDC samples
+
+@init
+gfx_ext_retina = 1;
+frames_processed = 0;
+trigger_count = 0;
+invert = 0;
+menu_choice = 0;
+#saved_text = "EffectDeck state";
+memset(0, 0, 256);
+0[0] = 1;
+0[1] = 0.5;
+fft(0, 256);
+ifft(0, 256);
+mdct(0, 256);
+imdct(0, 256);
+
+@slider
+gain = 10^(gain_db / 20);
+pdc_delay = pdc_samples;
+pdc_bot_ch = 0;
+pdc_top_ch = 2;
+
+@block
+(trigger & 1) ? (
+  frames_processed = 0;
+  trigger_count += 1;
+);
+(trigger & 2) ? (
+  invert = !invert;
+  trigger_count += 1;
+);
+
+@sample
+l = spl0;
+r = spl1;
+mode == 1 ? (spl0 = r; spl1 = l;)
+: mode == 2 ? (spl0 = spl1 = (l + r) * 0.5;);
+spl0 *= gain * (invert ? -1 : 1);
+spl1 *= gain * (invert ? -1 : 1);
+frames_processed += 1;
+
+@serialize
+file_var(0, frames_processed);
+file_var(0, trigger_count);
+file_var(0, invert);
+file_mem(0, 512, 16);
+file_string(0, #saved_text);
+
+@gfx 640 360
+s = max(1, gfx_ext_retina);
+w = gfx_w;
+h = gfx_h;
+
+gfx_set(0.055, 0.065, 0.08, 1);
+gfx_rect(0, 0, w, h);
+
+gfx_set(0.13, 0.16, 0.20, 1);
+step = 16 * s;
+x = 0;
+loop(ceil(w / step), gfx_line(x, 0, x, h); x += step;);
+y = 0;
+loop(ceil(h / step), gfx_line(0, y, w, y); y += step;);
+
+gfx_setfont(1, "Helvetica", 19 * s, 'b');
+gfx_set(0.35, 0.85, 1, 1);
+gfx_x = 20 * s; gfx_y = 18 * s;
+gfx_drawstr("EffectDeck JSFX Conformance");
+
+gfx_setfont(1, "Helvetica", 13 * s);
+gfx_set(0.9, 0.93, 0.96, 1);
+gfx_x = 20 * s; gfx_y = 58 * s;
+gfx_drawstr(sprintf(#line, "gfx: %d x %d   Retina: %.1fx", w, h, gfx_ext_retina));
+gfx_x = 20 * s; gfx_y = 82 * s;
+gfx_drawstr(sprintf(#line, "frames: %.0f   triggers: %.0f   PDC: %.0f", frames_processed, trigger_count, pdc_delay));
+gfx_x = 20 * s; gfx_y = 106 * s;
+gfx_drawstr(sprintf(#line, "mouse: %.0f, %.0f   menu result: %.0f", mouse_x, mouse_y, menu_choice));
+
+bar_w = max(1, (w - 40 * s) * min(1, abs(spl0) * 4));
+gfx_set(0.2, 0.75, 0.42, 0.9);
+gfx_rect(20 * s, 146 * s, bar_w, 26 * s);
+
+gfx_set(0.96, 0.66, 0.18, 0.85);
+gfx_circle(mouse_x, mouse_y, 9 * s, 1, 1);
+
+down = mouse_cap & 1;
+down && !last_down ? menu_choice = gfx_showmenu("Normal|!Checked|#Disabled|>Submenu|First|Second|<");
+last_down = down;

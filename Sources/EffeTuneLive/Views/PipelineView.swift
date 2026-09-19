@@ -444,6 +444,12 @@ struct PipelineView: View {
     /// ピッカーから運ばれてきた文字列がプリセットなら、名前と中身に解く。
     /// 効果は型の文字列をそのまま運ぶので、頭に印を付けて見分ける。
     private func presetPayload(_ text: String) -> (String, [PipelineStore.Loaded])? {
+        #if DEBUG
+        if text == "preset:debug:jsfx-host" {
+            let items = ETJSFXHost.shared.debugPresetItems()
+            return items.isEmpty ? nil : ("JSFX Host Test", items)
+        }
+        #endif
         if let name = text.dropPrefixIfPresent("preset:user:") {
             let items = PresetStore.shared.load(name)
             return items.isEmpty ? nil : (name, items)
