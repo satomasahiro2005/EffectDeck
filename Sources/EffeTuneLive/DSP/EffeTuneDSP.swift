@@ -467,8 +467,6 @@ final class EffeTuneDSP: ObservableObject {
         guard ready, isDefaultChain else { return }
         guard let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty else { return }
         replaceChain(with: saved)
-        // 鎖に載っている IR を入れ直す（restore() の第一の枝と同じ）。
-        reloadAssets()
     }
 
     /// 鎖に残っている鍵から、資産（いまは IR だけ）を入れ直す。
@@ -639,6 +637,11 @@ final class EffeTuneDSP: ObservableObject {
 
         chain.insert(contentsOf: made, at: target)
         publish()
+        // IR は instance を作っただけでは鳴らない。保存済みの資産を新しい
+        // instance へ送り直す。既存の段まで再送せず、今回足した段だけにする。
+        for offset in made.indices where !made[offset].irId.isEmpty {
+            _ = reloadAsset(at: target + offset)
+        }
         // 足したものは開いて出す。上流も expandedPlugins に入れている。
         // publish() の後に入れるのは、persistExpanded に確定後の位置を書かせるため。
         for node in made { expanded.insert(node.id) }
@@ -662,6 +665,9 @@ final class EffeTuneDSP: ObservableObject {
         restoring = false
         for item in items { append(item) }
         publish()
+        // プリセット／共有リンクから復元した IR を、新しく作った instance へ送る。
+        // ビューの生成に依存させないので、畳んだ IR Reverb も直ちに有効になる。
+        reloadAssets()
         retire(doomed)
     }
 
