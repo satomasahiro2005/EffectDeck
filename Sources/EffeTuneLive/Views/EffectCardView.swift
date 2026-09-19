@@ -367,6 +367,7 @@ struct EffectCardView: View {
 private struct ExternalProcessorView: View {
     @ObservedObject private var au = ETAUHost.shared
     @ObservedObject private var jsfx = ETJSFXHost.shared
+    @ObservedObject private var prefs = Preferences.shared
     let externalID: String
     let instanceID: String
     let snapshot: UIImage?
@@ -375,6 +376,7 @@ private struct ExternalProcessorView: View {
     @State private var fullScreen = false
     @State private var movingToFullScreen = false
     @State private var showSource = false
+    @State private var isOnScreen = true
 
     var body: some View {
         let parameters = au.parameters(instanceID: instanceID)
@@ -384,7 +386,17 @@ private struct ExternalProcessorView: View {
             if jsfx.hasGFX(instanceID: instanceID) {
                 VStack(alignment: .leading, spacing: 12) {
                     ZStack(alignment: .topTrailing) {
-                        JSFXGFXView(instanceID: instanceID)
+                        if prefs.jsfxCanvasMode == .pixelPerfect {
+                            let size = jsfx.preferredGFXSize(instanceID: instanceID)
+                            ScrollView([.horizontal, .vertical]) {
+                                JSFXGFXView(instanceID: instanceID, fixedSize: size,
+                                            isVisible: isOnScreen && !fullScreen)
+                            }
+                            .frame(height: min(360, max(180, size.height)))
+                        } else {
+                            JSFXGFXView(instanceID: instanceID,
+                                        isVisible: isOnScreen && !fullScreen)
+                        }
                         HStack(spacing: 8) {
                             Button { showSource = true } label: {
                                 Image(systemName: "doc.text.magnifyingglass")
@@ -505,6 +517,7 @@ private struct ExternalProcessorView: View {
         }
         }
         .sheet(isPresented: $showSource) { JSFXSourceView(instanceID: instanceID) }
+        .onScrollVisibilityChange(threshold: 0.01) { isOnScreen = $0 }
         .task(id: au.revision) {
             // The card normally opens before asynchronous AU instantiation has
             // finished. Retry when the host revision changes; the old one-shot
@@ -587,10 +600,12 @@ private struct ExternalProcessorView: View {
 }
 
 private struct JSFXGFXView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var jsfx = ETJSFXHost.shared
     let instanceID: String
     var fixedSize: CGSize? = nil
     var fullScreen = false
+    var isVisible = true
     @State private var image: CGImage?
     @State private var drawing = false
 
@@ -598,6 +613,10 @@ private struct JSFXGFXView: View {
         let preferred = jsfx.preferredGFXSize(instanceID: instanceID)
         let retina = jsfx.gfxWantsRetina(instanceID: instanceID)
         GeometryReader { geometry in
+            let active = isVisible && scenePhase == .active
+            let renderKey = JSFXGFXRenderKey(width: Int(geometry.size.width.rounded()),
+                                             height: Int(geometry.size.height.rounded()),
+                                             active: active)
             ZStack {
                 Color.black
                 if let image {
@@ -624,7 +643,8 @@ private struct JSFXGFXView: View {
                                                     y: value.location.y * scale),
                                      buttons: 0)
                 })
-            .task(id: geometry.size) {
+            .task(id: renderKey) {
+                guard active else { return }
                 let fps = max(1, min(120, jsfx.gfxFrameRate(instanceID: instanceID)))
                 while !Task.isCancelled {
                     if !drawing {
@@ -635,16 +655,28 @@ private struct JSFXGFXView: View {
                             drawing = false
                         }
                     }
-                    try? await Task.sleep(for: .seconds(1.0 / Double(fps)))
+                    do {
+                        try await Task.sleep(for: .seconds(1.0 / Double(fps)))
+                    } catch {
+                        break
+                    }
                 }
+            }
+            .onChange(of: active, initial: true) { _, active in
+                jsfx.updateGFXWindow(instanceID: instanceID, focused: active, visible: active)
             }
         }
         .modifier(JSFXGFXLayout(preferred: fixedSize ?? preferred,
                                 fixedSize: fixedSize, fullScreen: fullScreen))
         .clipped()
-        .onAppear { jsfx.updateGFXWindow(instanceID: instanceID, focused: true, visible: true) }
         .onDisappear { jsfx.updateGFXWindow(instanceID: instanceID, focused: false, visible: false) }
     }
+}
+
+private struct JSFXGFXRenderKey: Hashable {
+    let width: Int
+    let height: Int
+    let active: Bool
 }
 
 private struct JSFXGFXLayout: ViewModifier {
@@ -669,15 +701,15 @@ private struct JSFXGFXLayout: ViewModifier {
 
 private struct JSFXFullScreenEditor: View {
     @ObservedObject private var jsfx = ETJSFXHost.shared
+    @ObservedObject private var prefs = Preferences.shared
     let instanceID: String
     @Binding var isPresented: Bool
-    @State private var oneToOne = false
     @State private var showSource = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color(uiColor: .systemBackground).ignoresSafeArea()
-            if oneToOne {
+            if prefs.jsfxCanvasMode == .pixelPerfect {
                 let size = jsfx.preferredGFXSize(instanceID: instanceID)
                 ScrollView([.horizontal, .vertical]) {
                     JSFXGFXView(instanceID: instanceID, fixedSize: size)
@@ -689,10 +721,6 @@ private struct JSFXFullScreenEditor: View {
                     .padding(.top, 8)
             }
             HStack(spacing: 8) {
-                Button { oneToOne.toggle() } label: {
-                    Image(systemName: oneToOne ? "1.square.fill" : "arrow.up.left.and.arrow.down.right")
-                }
-                .accessibilityLabel(oneToOne ? "Fit to Screen" : "One to One")
                 Button { showSource = true } label: {
                     Image(systemName: "doc.text.magnifyingglass")
                 }

@@ -15,15 +15,24 @@ slider4:output_db=-6<-24,6,0.1>Output (dB)
 @init
 z1_l = 0;
 z1_r = 0;
-
-@slider
 coefficient = exp(-2 * $pi * cutoff / srate);
 drive = 10^(drive_db / 20);
 wet = mix / 100;
-dry = 1 - wet;
 output = 10^(output_db / 20);
 
+@slider
+target_coefficient = exp(-2 * $pi * cutoff / srate);
+target_drive = 10^(drive_db / 20);
+target_wet = mix / 100;
+target_output = 10^(output_db / 20);
+
 @sample
+// Smooth control changes so dragging a slider does not create zipper clicks.
+coefficient += (target_coefficient - coefficient) * 0.002;
+drive += (target_drive - drive) * 0.002;
+wet += (target_wet - wet) * 0.002;
+output += (target_output - output) * 0.002;
+dry = 1 - wet;
 input_l = spl0;
 input_r = spl1;
 z1_l = input_l + coefficient * (z1_l - input_l);
