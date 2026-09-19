@@ -41,7 +41,7 @@ build_one() {
     -jobs "$BUILD_JOBS" \
     -sdk iphoneos -arch arm64 -allowProvisioningUpdates \
     CONFIGURATION_BUILD_DIR="$ROOT/out" build 2>&1 \
-    | grep -E "error:|errSec|CodeSign failed|BUILD SUCCEEDED|BUILD FAILED|not found and could not|doesn't (support|include)" \
+    | grep -E "error:|errSec|CodeSign failed|Undefined symbols|referenced from:|ld: |symbol\(s\) not found|BUILD SUCCEEDED|BUILD FAILED|not found and could not|doesn't (support|include)" \
     | tail -25
 }
 

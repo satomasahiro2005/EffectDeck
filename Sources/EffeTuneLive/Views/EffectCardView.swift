@@ -380,29 +380,23 @@ private struct ExternalProcessorView: View {
         Group {
         if externalID.hasPrefix("jsfx:") {
             let jsfxParameters = jsfx.parameters(instanceID: instanceID)
-            if jsfxParameters.isEmpty {
-                Text(jsfx.status(instanceID: instanceID))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            if jsfx.hasGFX(instanceID: instanceID) {
+                VStack(alignment: .leading, spacing: 12) {
+                    JSFXGFXView(instanceID: instanceID)
+                    jsfxParameterRows(jsfxParameters)
+                    jsfxTriggers
+                }
+            } else if jsfxParameters.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(jsfx.status(instanceID: instanceID))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    jsfxTriggers
+                }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(jsfxParameters) { parameter in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(parameter.name).font(.footnote)
-                                Spacer()
-                                Text(String(format: "%.3g", parameter.value))
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                            Slider(value: Binding(
-                                get: { parameter.value },
-                                set: { jsfx.setParameter(instanceID: instanceID,
-                                                         parameterID: parameter.id, value: $0) }),
-                                   in: parameter.minimum...parameter.maximum,
-                                   step: parameter.step > 0 ? parameter.step : 0.001)
-                        }
-                    }
+                    jsfxParameterRows(jsfxParameters)
+                    jsfxTriggers
                 }
             }
         } else if let snapshot {
@@ -484,6 +478,113 @@ private struct ExternalProcessorView: View {
                 requestingView = false
             }
         }
+    }
+
+    @ViewBuilder
+    private func jsfxParameterRows(_ parameters: [ETJSFXHost.Parameter]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(parameters) { parameter in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(parameter.name).font(.footnote)
+                        Spacer()
+                        Text(String(format: "%.3g", parameter.value))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if parameter.isEnumeration {
+                        Picker(parameter.name, selection: Binding(
+                            get: { Int(parameter.value.rounded()) },
+                            set: { jsfx.setParameter(instanceID: instanceID,
+                                                     parameterID: parameter.id, value: Double($0)) })) {
+                            ForEach(Array(parameter.enumNames.enumerated()), id: \.offset) {
+                                Text($0.element).tag($0.offset)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    } else if parameter.maximum > parameter.minimum {
+                        Slider(value: Binding(
+                            get: { jsfx.normalizedValue(instanceID: instanceID,
+                                                       parameterID: parameter.id,
+                                                       value: parameter.value) },
+                            set: { jsfx.setNormalizedParameter(instanceID: instanceID,
+                                                               parameterID: parameter.id, value: $0) }),
+                               in: 0...1)
+                    }
+                }
+            }
+        }
+    }
+
+
+    private var jsfxTriggers: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Triggers").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(0..<10, id: \.self) { index in
+                    Button("\(index + 1)") {
+                        jsfx.sendTrigger(instanceID: instanceID, index: UInt32(index))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+}
+
+private struct JSFXGFXView: View {
+    @ObservedObject private var jsfx = ETJSFXHost.shared
+    let instanceID: String
+    @State private var image: CGImage?
+    @State private var drawing = false
+
+    var body: some View {
+        let preferred = jsfx.preferredGFXSize(instanceID: instanceID)
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                if let image {
+                    Image(decorative: image, scale: UIScreen.main.scale)
+                        .resizable()
+                        .interpolation(.high)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let scale = UIScreen.main.scale
+                    jsfx.updateMouse(instanceID: instanceID,
+                                     point: CGPoint(x: value.location.x * scale,
+                                                    y: value.location.y * scale),
+                                     buttons: 1)
+                }
+                .onEnded { value in
+                    let scale = UIScreen.main.scale
+                    jsfx.updateMouse(instanceID: instanceID,
+                                     point: CGPoint(x: value.location.x * scale,
+                                                    y: value.location.y * scale),
+                                     buttons: 0)
+                })
+            .task(id: geometry.size) {
+                let fps = max(1, min(120, jsfx.gfxFrameRate(instanceID: instanceID)))
+                while !Task.isCancelled {
+                    if !drawing {
+                        drawing = true
+                        jsfx.renderGFX(instanceID: instanceID, size: geometry.size,
+                                       scale: UIScreen.main.scale) {
+                            if let rendered = $0 { image = rendered }
+                            drawing = false
+                        }
+                    }
+                    try? await Task.sleep(for: .seconds(1.0 / Double(fps)))
+                }
+            }
+        }
+        .aspectRatio(max(0.25, preferred.width / max(1, preferred.height)), contentMode: .fit)
+        .frame(minHeight: 180, maxHeight: 520)
+        .clipped()
     }
 }
 

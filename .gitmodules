@@ -3,4 +3,4 @@
 	url = https://github.com/Frieve-A/effetune
 [submodule "Vendor/ysfx"]
 	path = Vendor/ysfx
-	url = https://github.com/jpcima/ysfx.git
+	url = https://github.com/JoepVanlier/ysfx.git

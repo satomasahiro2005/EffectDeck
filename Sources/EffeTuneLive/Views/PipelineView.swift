@@ -58,6 +58,7 @@ struct PipelineView: View {
     /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
     @State private var confirmingReset = false
+    @State private var pluginError: String?
     /// 開いている段。中身は EffeTuneDSP が持っている（足す・入れ替えるを握っているのが
     /// あちらで、端末に残すのも persist() なので）。Section もここに入り、
     /// その場合は自分のパラメータではなく配下の行が消える（下の rows）。
@@ -165,14 +166,18 @@ struct PipelineView: View {
                         sheet = nil
                     }, onPickJSFX: { entry in
                         let instanceID = UUID().uuidString
-                        guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
-                            instanceID: instanceID) else { return }
-                        dsp.addExternal(id: entry.id, instanceID: instanceID,
-                                        name: entry.name, category: "JSFX",
-                                        externalIndex: externalIndex, at: insertAt)
-                        ETJSFXHost.shared.create(entry, instanceID: instanceID)
+                        let insertion = insertAt
                         insertAt = nil
                         sheet = nil
+                        ETJSFXHost.shared.prepare(entry, instanceID: instanceID) { result in
+                            switch result {
+                            case .success(let externalIndex):
+                                dsp.addExternal(id: entry.id, instanceID: instanceID,
+                                                name: entry.name, category: "JSFX",
+                                                externalIndex: externalIndex, at: insertion)
+                            case .failure(let error): pluginError = error.localizedDescription
+                            }
+                        }
                     }, onPickPreset: { name, items in
                         // 名前の付いた Section に包んで挿す。置き換えない。
                         // 鎖ごと置き換えたいときは Presets 画面のほう。
@@ -201,6 +206,10 @@ struct PipelineView: View {
             } message: {
                 Text("Removes every effect and leaves a single Level Meter.")
             }
+            .alert("Could Not Add JSFX", isPresented: Binding(
+                get: { pluginError != nil }, set: { if !$0 { pluginError = nil } })) {
+                    Button("OK", role: .cancel) { pluginError = nil }
+                } message: { Text(pluginError ?? "Unknown error") }
             .onAppear {
                 // **案内の画面は持たない。**
                 // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
@@ -468,12 +477,15 @@ struct PipelineView: View {
         if let componentID = payload.dropPrefixIfPresent("plugin-jsfx:"),
            let entry = ETJSFXHost.shared.entry(id: componentID) {
             let instanceID = UUID().uuidString
-            guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
-                instanceID: instanceID) else { return false }
-            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
-                            category: "JSFX", externalIndex: externalIndex, at: index)
-            ETJSFXHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
+            ETJSFXHost.shared.prepare(entry, instanceID: instanceID) { result in
+                switch result {
+                case .success(let externalIndex):
+                    dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
+                                    category: "JSFX", externalIndex: externalIndex, at: index)
+                case .failure(let error): pluginError = error.localizedDescription
+                }
+            }
             return true
         }
         guard let spec = EffeTuneDSP.spec(forType: payload) else { return false }

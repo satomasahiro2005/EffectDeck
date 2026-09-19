@@ -12,6 +12,7 @@
 //  （plugins/control/section.js）。
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
@@ -27,6 +28,8 @@ struct EffectPickerView: View {
     @StateObject private var au = ETAUHost.shared
     @StateObject private var jsfx = ETJSFXHost.shared
     @State private var query = ""
+    @State private var importingJSFX = false
+    @State private var importError: String?
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
     enum Pane: String, CaseIterable, Identifiable {
@@ -141,7 +144,26 @@ struct EffectPickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                if pane == .plugins {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                            importingJSFX = true
+                        }
+                    }
+                }
             }
+            .fileImporter(isPresented: $importingJSFX,
+                          allowedContentTypes: [.plainText, .data], allowsMultipleSelection: false) { result in
+                do {
+                    guard let url = try result.get().first else { return }
+                    _ = try jsfx.importFile(url)
+                    pane = .plugins
+                } catch { importError = error.localizedDescription }
+            }
+            .alert("Could Not Import JSFX", isPresented: Binding(
+                get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+                    Button("OK", role: .cancel) { importError = nil }
+                } message: { Text(importError ?? "Unknown error") }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
             .presentationDetents([Self.opened, .large], selection: $detent)
@@ -241,14 +263,24 @@ struct EffectPickerView: View {
     private var pluginList: some View {
         Group {
             if au.entries.isEmpty && jsfx.entries.isEmpty {
-                ContentUnavailableView("No Plugins", systemImage: "waveform",
-                                       description: Text("Install an AUv3 plug-in or add a JSFX to see it here."))
+                ContentUnavailableView {
+                    Label("No Plugins", systemImage: "waveform")
+                } description: {
+                    Text("Install an AUv3 plug-in or import a single-file JSFX.")
+                } actions: {
+                    Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                        importingJSFX = true
+                    }
+                }
             } else {
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
                         jumpStrip(pluginVendors)
                         Divider()
                         List {
+                            Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                                importingJSFX = true
+                            }
                             ForEach(pluginVendors, id: \.self) { vendor in
                                 Section {
                                     let entries = audioUnits(vendor: vendor)

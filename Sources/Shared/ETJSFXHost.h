@@ -1,43 +1,52 @@
-// ETJSFXHost.h
-// Small C ABI around ysfx for Swift and ETExternalProcessor.
-
+// ETJSFXHost.h — bounded, portable JSFX runtime bridge.
 #ifndef ETJSFXHost_h
 #define ETJSFXHost_h
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "ETExternalProcessor.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 typedef struct ETJSFX ETJSFX;
-
-ETJSFX *ETJSFX_Create(const char *path,
-                      const char *importRoot,
-                      double sampleRate,
-                      uint32_t maxFrames,
-                      char *error,
-                      size_t errorCapacity);
+typedef int32_t (*ETJSFXMenuCallback)(void *context, const char *menu,
+                                      int32_t x, int32_t y);
+ETJSFX *ETJSFX_Create(const char *path, double sampleRate, uint32_t maxFrames,
+                      char *error, size_t errorCapacity);
 void ETJSFX_Destroy(ETJSFX *host);
 ETExternalProcessor ETJSFX_Processor(ETJSFX *host);
-void ETJSFX_Configure(ETJSFX *host, double sampleRate, uint32_t maxFrames);
-
+bool ETJSFX_Reconfigure(ETJSFX *host, double sampleRate, uint32_t maxFrames);
+bool ETJSFX_SaveState(ETJSFX *host, uint8_t **bytes, size_t *size);
+bool ETJSFX_LoadState(ETJSFX *host, const uint8_t *bytes, size_t size);
+void ETJSFX_FreeBytes(void *bytes);
 const char *ETJSFX_Name(const ETJSFX *host);
 const char *ETJSFX_Author(const ETJSFX *host);
+const char *ETJSFX_Diagnostic(const ETJSFX *host);
 uint32_t ETJSFX_SliderCount(const ETJSFX *host);
 bool ETJSFX_SliderInfo(ETJSFX *host, uint32_t ordinal,
                        uint32_t *index, const char **name,
-                       double *value, double *minimum,
-                       double *maximum, double *step,
-                       bool *visible);
+                       double *value, double *minimum, double *maximum,
+                       double *step, uint8_t *shape, bool *visible);
+uint32_t ETJSFX_SliderEnumCount(ETJSFX *host, uint32_t index);
+const char *ETJSFX_SliderEnumName(ETJSFX *host, uint32_t index, uint32_t ordinal);
+double ETJSFX_SliderToNormalized(ETJSFX *host, uint32_t index, double value);
+double ETJSFX_SliderFromNormalized(ETJSFX *host, uint32_t index, double value);
 void ETJSFX_SetSlider(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_GetSlider(ETJSFX *host, uint32_t index);
-
+bool ETJSFX_SendTrigger(ETJSFX *host, uint32_t index);
+bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
+bool ETJSFX_HasGFX(const ETJSFX *host);
+void ETJSFX_PreferredGFXSize(ETJSFX *host, uint32_t *width, uint32_t *height);
+uint32_t ETJSFX_GFXFrameRate(ETJSFX *host);
+bool ETJSFX_RunGFX(ETJSFX *host, uint32_t width, uint32_t height, double scale);
+void ETJSFX_SetGFXMenuCallback(ETJSFX *host, ETJSFXMenuCallback callback, void *context);
+bool ETJSFX_CopyGFX(ETJSFX *host, uint8_t *bgra, size_t capacity,
+                    uint32_t *width, uint32_t *height, uint32_t *stride);
+void ETJSFX_GFXMouse(ETJSFX *host, uint32_t modifiers, int32_t x, int32_t y,
+                     uint32_t buttons, double wheel, double horizontalWheel);
+void ETJSFX_GFXKey(ETJSFX *host, uint32_t modifiers, uint32_t key, bool pressed);
+void ETJSFX_GFXWindowState(ETJSFX *host, bool focused, bool visible, bool mouseOver);
 #ifdef __cplusplus
 }
 #endif
-
 #endif

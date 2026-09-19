@@ -14,6 +14,8 @@ ITEMS = [
     ("EffectDeck", "MIT", "nemut.ai", "LICENSE"),
     ("EffeTune", "MIT", "Yoshiyuki Kobayashi", "Vendor/effetune/LICENSE"),
     ("PFFFT", "BSD-3-Clause", "Julien Pommier", "Vendor/effetune/dsp/vendor/pffft/LICENSE.txt"),
+    ("ysfx", "Apache-2.0", "Jean Pierre Cimalando, Joep Vanlier and contributors", "Vendor/ysfx/LICENSE"),
+    ("WDL / LICE", "zlib-style", "Cockos Incorporated and contributors", "Vendor/ysfx/thirdparty/WDL/LICENSE.txt"),
 ]
 
 
