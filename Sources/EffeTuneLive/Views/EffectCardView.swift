@@ -550,6 +550,8 @@ private struct JSFXGFXView: View {
                         .resizable()
                         .interpolation(.high)
                 }
+                JSFXKeyboardCapture(instanceID: instanceID)
+                    .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
@@ -585,6 +587,55 @@ private struct JSFXGFXView: View {
         .aspectRatio(max(0.25, preferred.width / max(1, preferred.height)), contentMode: .fit)
         .frame(minHeight: 180, maxHeight: 520)
         .clipped()
+        .onAppear { jsfx.updateGFXWindow(instanceID: instanceID, focused: true, visible: true) }
+        .onDisappear { jsfx.updateGFXWindow(instanceID: instanceID, focused: false, visible: false) }
+    }
+}
+
+private struct JSFXKeyboardCapture: UIViewRepresentable {
+    let instanceID: String
+    func makeUIView(context: Context) -> ETJSFXKeyboardView {
+        let view = ETJSFXKeyboardView()
+        view.instanceID = instanceID
+        DispatchQueue.main.async { _ = view.becomeFirstResponder() }
+        return view
+    }
+    func updateUIView(_ view: ETJSFXKeyboardView, context: Context) {
+        view.instanceID = instanceID
+    }
+}
+
+private final class ETJSFXKeyboardView: UIView {
+    var instanceID = ""
+    override var canBecomeFirstResponder: Bool { true }
+
+    private func event(_ press: UIPress, pressed: Bool) {
+        guard let key = press.key else { return }
+        var modifiers: UInt32 = 0
+        if key.modifierFlags.contains(.shift) { modifiers |= 1 }
+        if key.modifierFlags.contains(.control) { modifiers |= 2 }
+        if key.modifierFlags.contains(.alternate) { modifiers |= 4 }
+        if key.modifierFlags.contains(.command) { modifiers |= 8 }
+        let special: [UIKeyboardHIDUsage: UInt32] = [
+            .keyboardDeleteOrBackspace: 0x08, .keyboardEscape: 0x1b,
+            .keyboardDeleteForward: 0x7f, .keyboardLeftArrow: 0xe00c,
+            .keyboardUpArrow: 0xe00d, .keyboardRightArrow: 0xe00e,
+            .keyboardDownArrow: 0xe00f, .keyboardHome: 0xe012,
+            .keyboardEnd: 0xe013, .keyboardInsert: 0xe014
+        ]
+        let code = special[key.keyCode]
+            ?? key.charactersIgnoringModifiers.unicodeScalars.first.map(\.value)
+        guard let code else { return }
+        ETJSFXHost.shared.updateKey(instanceID: instanceID, modifiers: modifiers,
+                                    key: code, pressed: pressed)
+    }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        presses.forEach { self.event($0, pressed: true) }
+        super.pressesBegan(presses, with: event)
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        presses.forEach { self.event($0, pressed: false) }
+        super.pressesEnded(presses, with: event)
     }
 }
 

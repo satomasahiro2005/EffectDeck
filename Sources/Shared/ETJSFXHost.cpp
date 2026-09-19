@@ -58,6 +58,27 @@ bool forbiddenSource(const std::string &source, std::string &reason)
     return false;
 }
 
+bool sourceWithinBudgets(const std::string &source, std::string &reason)
+{
+    uint32_t depth=0,maxDepth=0,inlineBlocks=0;size_t literal=0;
+    bool quoted=false,escaped=false,lineComment=false;
+    for(size_t i=0;i<source.size();++i){char c=source[i];
+        if(lineComment){if(c=='\n')lineComment=false;continue;}
+        if(!quoted&&c=='/'&&i+1<source.size()&&source[i+1]=='/'){lineComment=true;++i;continue;}
+        if(quoted){
+            if(escaped)escaped=false;else if(c=='\\')escaped=true;else if(c=='"')quoted=false;
+            if(++literal>64*1024){reason="String literal exceeds the 64 KiB limit.";return false;}
+            continue;
+        }
+        if(c=='"'){quoted=true;literal=0;continue;}
+        if(c=='<'&&i+1<source.size()&&source[i+1]=='?'&&++inlineBlocks>1024){reason="Too many inline EEL blocks.";return false;}
+        if(c=='('||c=='['||c=='{'){if(++depth>maxDepth)maxDepth=depth;if(maxDepth>256){reason="Source nesting exceeds 256 levels.";return false;}}
+        else if((c==')'||c==']'||c=='}')&&depth) --depth;
+    }
+    if(quoted){reason="Unterminated string literal.";return false;}
+    return true;
+}
+
 void put32(std::vector<uint8_t> &o, uint32_t v)
 { o.push_back(v); o.push_back(v >> 8); o.push_back(v >> 16); o.push_back(v >> 24); }
 uint32_t get32(const uint8_t *p)
@@ -82,9 +103,11 @@ struct ETJSFX {
     std::atomic<uint32_t> latency{}, deadlineOverruns{};
     std::atomic<uint32_t> pendingTriggers{};
     std::atomic<bool> latencyChanged{};
+    std::atomic<bool> sliderChanged{};
     std::atomic<uint8_t> diagnostic{(uint8_t)Diagnostic::none};
     std::atomic<uint64_t> pendingValues[ysfx_max_sliders]{}, cachedValues[ysfx_max_sliders]{};
     std::atomic<bool> pendingSliders[ysfx_max_sliders]{};
+    std::atomic<bool> cachedVisibility[ysfx_max_sliders]{};
     std::vector<uint8_t> framebuffer;
     uint32_t gfxWidth{}, gfxHeight{}, gfxStride{};
     size_t gfxAccounted{};
@@ -113,8 +136,21 @@ static void endMaintenance(ETJSFX *h, bool healthy)
 
 static void cacheSliders(ETJSFX *h)
 {
-    for (uint32_t i : h->sliders)
+    for (uint32_t i : h->sliders) {
         h->cachedValues[i].store(toBits(ysfx_slider_get_value(h->effect, i)), std::memory_order_release);
+        uint8_t group=ysfx_fetch_slider_group_index(i);
+        bool visible=(ysfx_get_slider_visibility(h->effect,group)&ysfx_slider_mask(i,group))!=0;
+        if(h->cachedVisibility[i].exchange(visible)!=visible)
+            h->sliderChanged.store(true,std::memory_order_release);
+    }
+}
+static void cacheSliderNotifications(ETJSFX *h)
+{
+    bool changed=false;
+    for(uint8_t group=0;group<ysfx_max_slider_groups;++group)
+        changed|=(ysfx_fetch_slider_changes(h->effect,group)|
+                  ysfx_fetch_slider_automations(h->effect,group))!=0;
+    if(changed)h->sliderChanged.store(true,std::memory_order_release);
 }
 static void applySliders(ETJSFX *h)
 {
@@ -148,7 +184,7 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
     const float *ins[ysfx_max_channels]{}; float *outs[ysfx_max_channels]{};
     for (uint32_t ch = 0; ch < channels; ++ch) ins[ch] = outs[ch] = planar + ch * frames;
     ysfx_process_float(h->effect, ins, outs, channels, channels, frames);
-    h->processedFrames.fetch_add(frames, std::memory_order_relaxed); cacheSliders(h);
+    h->processedFrames.fetch_add(frames, std::memory_order_relaxed); cacheSliders(h);cacheSliderNotifications(h);
     uint32_t latency = (uint32_t)std::max(0.0, std::ceil(ysfx_get_pdc_delay(h->effect)));
     if (latency != h->latency.exchange(latency)) h->latencyChanged.store(true);
     double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
@@ -173,6 +209,7 @@ ETJSFX *ETJSFX_Create(const char *path, double rate, uint32_t maxFrames, char *e
     std::string source((std::istreambuf_iterator<char>(file)), {}), reason;
     if (source.size() > kMaxSource) { errorCopy(error, cap, "JSFX source exceeds the 1 MB limit."); return nullptr; }
     if (forbiddenSource(source, reason)) { errorCopy(error, cap, reason); return nullptr; }
+    if (!sourceWithinBudgets(source, reason)) { errorCopy(error, cap, reason); return nullptr; }
     auto *h = new ETJSFX; h->maxFrames = maxFrames; h->sampleRate = rate;
     NSEEL_RAM_limitmem = kGlobalEEL;
     h->config = ysfx_config_new();
@@ -276,6 +313,7 @@ bool ETJSFX_SendTrigger(ETJSFX *h,uint32_t i)
     h->pendingTriggers.fetch_or(1u<<i,std::memory_order_release);return true;
 }
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange(false);}
+bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
 
 bool ETJSFX_HasGFX(const ETJSFX *h){return h&&h->effect&&ysfx_has_section(h->effect,ysfx_section_gfx);}
 static int32_t showMenu(void *opaque,const char *menu,int32_t x,int32_t y)
@@ -301,7 +339,7 @@ bool ETJSFX_RunGFX(ETJSFX *h,uint32_t width,uint32_t height,double scale)
         if(old>bytes)gFramebufferBytes.fetch_sub(old-bytes);h->gfxAccounted=bytes;
         h->gfxWidth=width;h->gfxHeight=height;h->gfxStride=(uint32_t)stride;}
     ysfx_gfx_config_t c{};c.user_data=h;c.pixel_width=width;c.pixel_height=height;c.pixel_stride=h->gfxStride;c.pixels=h->framebuffer.data();c.scale_factor=std::max(1.0,scale);c.show_menu=showMenu;
-    ysfx_gfx_setup(h->effect,&c);applySliders(h);bool dirty=ysfx_gfx_run(h->effect);cacheSliders(h);h->gfxActive.store(false);return dirty;
+    ysfx_gfx_setup(h->effect,&c);applySliders(h);bool dirty=ysfx_gfx_run(h->effect);cacheSliders(h);cacheSliderNotifications(h);h->gfxActive.store(false);return dirty;
 }
 bool ETJSFX_CopyGFX(ETJSFX *h,uint8_t *bgra,size_t cap,uint32_t *w,uint32_t *height,uint32_t *stride)
 {if(!h||!bgra||h->gfxActive.load()||cap<h->framebuffer.size())return false;std::memcpy(bgra,h->framebuffer.data(),h->framebuffer.size());if(w)*w=h->gfxWidth;if(height)*height=h->gfxHeight;if(stride)*stride=h->gfxStride;return true;}

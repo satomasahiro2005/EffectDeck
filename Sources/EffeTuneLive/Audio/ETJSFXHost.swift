@@ -4,12 +4,15 @@ import UIKit
 
 private final class ETJSFXMenuResult: @unchecked Sendable {
     let semaphore = DispatchSemaphore(value: 0)
-    var value: Int32 = 0
-    var finished = false
+    private let lock = NSLock()
+    private var value: Int32 = 0
+    private var finished = false
     func finish(_ newValue: Int32) {
+        lock.lock(); defer { lock.unlock() }
         guard !finished else { return }
         finished = true; value = newValue; semaphore.signal()
     }
+    func read() -> Int32 { lock.withLock { value } }
 }
 
 /// `gfx_showmenu` is synchronous by definition. Only the calling instance's
@@ -57,7 +60,7 @@ private let etJSFXMenuCallback: @convention(c)
             presenter.present(alert, animated: true)
         }
         _ = result.semaphore.wait(timeout: .now() + 30)
-        return result.value
+        return result.read()
     }
 
 @MainActor
@@ -327,23 +330,37 @@ final class ETJSFXHost: ObservableObject {
         }
     }
 
+    func updateKey(instanceID: String, modifiers: UInt32, key: UInt32, pressed: Bool) {
+        guard let instance = instances[instanceID], let host = instance.host else { return }
+        instance.gfxQueue.async { ETJSFX_GFXKey(host, modifiers, key, pressed) }
+    }
+
+    func updateGFXWindow(instanceID: String, focused: Bool, visible: Bool) {
+        guard let instance = instances[instanceID], let host = instance.host else { return }
+        instance.gfxQueue.async { ETJSFX_GFXWindowState(host, focused, visible, false) }
+    }
+
     private func build(_ instance: Instance, configuration: RenderConfiguration) {
         guard instance.loadTask == nil else { return }
         let path = instance.entry.url.path, state = instance.state, id = instance.id
         instance.loadTask = Task.detached(priority: .userInitiated) {
             var message = [CChar](repeating: 0, count: 4096)
-            let host = path.withCString {
+            var host = path.withCString {
                 ETJSFX_Create($0, configuration.sampleRate, UInt32(configuration.maxFrames),
                               &message, message.count)
             }
-            if let host, let state {
-                state.withUnsafeBytes { raw in
+            var restoreFailed = false
+            if let created = host, let state {
+                restoreFailed = !state.withUnsafeBytes { raw in
                     if let base = raw.bindMemory(to: UInt8.self).baseAddress {
-                        _ = ETJSFX_LoadState(host, base, state.count)
+                        return ETJSFX_LoadState(created, base, state.count)
                     }
+                    return false
                 }
+                if restoreFailed { ETJSFX_Destroy(created); host = nil }
             }
-            let error = host == nil ? String(cString: message) : nil
+            let error = restoreFailed ? "Could not restore JSFX state."
+                : (host == nil ? String(cString: message) : nil)
             await MainActor.run {
                 guard let current = self.instances[id], current === instance else {
                     if let host { ETJSFX_Destroy(host) }; return
@@ -416,10 +433,17 @@ final class ETJSFXHost: ObservableObject {
 
     private func pollRuntimeChanges() {
         var pdcChanged = false
+        var parametersChanged = false
         for instance in instances.values where instance.host != nil {
             guard let host = instance.host else { continue }
             if ETJSFX_ConsumeLatencyChange(host) { pdcChanged = true }
+            if ETJSFX_ConsumeSliderChange(host) {
+                parametersChanged = true
+                instance.parameters = Self.readParameters(host)
+                snapshotState(instance)
+            }
         }
+        if parametersChanged { revision &+= 1 }
         if pdcChanged { EffeTuneDSP.shared.republish(reason: "JSFX latency changed") }
     }
 
