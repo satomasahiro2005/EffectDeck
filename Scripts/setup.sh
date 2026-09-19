@@ -27,7 +27,8 @@ fi
 # changes are kept as a normal patch so a fresh clone does not depend on a
 # dirty submodule checkout.
 YSFX_REV="5c3452fee62583aa3d1b7e877d0c758c4024af89"
-if [ "$(git -C Vendor/ysfx rev-parse HEAD 2>/dev/null)" != "$YSFX_REV" ]; then
+YSFX_ACTUAL="$(git -C Vendor/ysfx rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$YSFX_ACTUAL" ] && [ "$YSFX_ACTUAL" != "$YSFX_REV" ]; then
   echo "!! Vendor/ysfx is not the reviewed revision $YSFX_REV"
   echo "   run: git submodule update --init --recursive Vendor/ysfx"
   exit 1

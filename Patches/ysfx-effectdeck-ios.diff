@@ -58,6 +58,23 @@ index a7f2a24..51c3c49 100644
          EEL_F *mouse_x = nullptr;
          EEL_F *mouse_y = nullptr;
          EEL_F *mouse_cap = nullptr;
+diff --git a/sources/ysfx_config.cpp b/sources/ysfx_config.cpp
+index 4171cc6..eeae801 100644
+--- a/sources/ysfx_config.cpp
++++ b/sources/ysfx_config.cpp
+@@ -104,8 +104,12 @@ void ysfx_register_audio_format(ysfx_config_t *config, ysfx_audio_format_t *afmt)
+ 
+ void ysfx_register_builtin_audio_formats(ysfx_config_t *config)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)config;
++#else
+     config->audio_formats.push_back(ysfx_audio_format_wav);
+     config->audio_formats.push_back(ysfx_audio_format_flac);
++#endif
+ }
+ 
+ void ysfx_set_log_reporter(ysfx_config_t *config, ysfx_log_reporter_t *reporter)
 diff --git a/sources/ysfx_api_eel.cpp b/sources/ysfx_api_eel.cpp
 index 592f1f4..5799177 100644
 --- a/sources/ysfx_api_eel.cpp
@@ -419,4 +436,3 @@ index 5dee9a7..23de2ce 100644
        __clear_cache(handle->code,writeptr);
  #endif
      }
-
