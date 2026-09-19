@@ -424,7 +424,8 @@ struct PipelineView: View {
                         isCollapsedFully: dsp.collapsedFully.contains(row.node.id),
                         toggleExpanded: {}, moveUp: {}, moveDown: {},
                         canMoveUp: false, canMoveDown: false,
-                        externalSnapshot: dragExternalSnapshot, block: row.block)
+                        externalSnapshot: dragExternalSnapshot,
+                        isDragPreview: true, block: row.block)
                 }
                 // 行と同じ余白を付ける。rowRects は余白の外側で測っているので、
                 // 付けないと左右に広く見える。
@@ -588,8 +589,15 @@ struct PipelineView: View {
     private func beginDrag(_ row: Row) {
         guard dragging != row.node.id else { return }
         closeSwipe()
-        dragExternalSnapshot = row.node.isExternal
-            ? ETAUHost.shared.viewSnapshot(instanceID: row.node.externalInstanceID) : nil
+        if row.node.externalID?.hasPrefix("jsfx:") == true {
+            dragExternalSnapshot = ETJSFXHost.shared.viewSnapshot(
+                instanceID: row.node.externalInstanceID)
+        } else if row.node.isExternal {
+            dragExternalSnapshot = ETAUHost.shared.viewSnapshot(
+                instanceID: row.node.externalInstanceID)
+        } else {
+            dragExternalSnapshot = nil
+        }
         dragging = row.node.id
         anchorRect = rowRects[row.node.id] ?? .zero
         dragShift = .zero

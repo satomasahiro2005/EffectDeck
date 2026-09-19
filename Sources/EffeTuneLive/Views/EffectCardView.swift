@@ -34,6 +34,9 @@ struct EffectCardView: View {
     let canMoveDown: Bool
     /// Frozen AU UI used only by the floating reorder card.
     var externalSnapshot: UIImage? = nil
+    /// Prevent a floating reorder card from mounting any live external UI even
+    /// when the first frame has not arrived yet.
+    var isDragPreview = false
     /// 組の中での位置。内側を向く角を角にする。
     var block: ETBlockPosition = .alone
 
@@ -92,7 +95,8 @@ struct EffectCardView: View {
                         if node.isExternal {
                             ExternalProcessorView(externalID: node.externalID ?? "",
                                                   instanceID: node.externalInstanceID,
-                                                  snapshot: externalSnapshot)
+                                                  snapshot: externalSnapshot,
+                                                  isDragPreview: isDragPreview)
                         } else if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
                             ETEffectViews.view(index: index, node: node, dsp: dsp)
@@ -378,6 +382,7 @@ private struct ExternalProcessorView: View {
     let externalID: String
     let instanceID: String
     let snapshot: UIImage?
+    let isDragPreview: Bool
     @State private var controller: UIViewController?
     @State private var requestingView = false
     @State private var fullScreen = false
@@ -387,7 +392,19 @@ private struct ExternalProcessorView: View {
     var body: some View {
         let parameters = au.parameters(instanceID: instanceID)
         Group {
-        if externalID.hasPrefix("jsfx:") {
+        if isDragPreview {
+            // Reorder overlays must be inert for every external processor.
+            // Mounting a second JSFX canvas changes the same VM's gfx_w/gfx_h
+            // and its disappearance can hide the surviving inline window.
+            if let snapshot {
+                Image(uiImage: snapshot)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(minHeight: 180, idealHeight: 300, maxHeight: 520)
+            } else {
+                Color.black.frame(height: 180)
+            }
+        } else if externalID.hasPrefix("jsfx:") {
             let jsfxParameters = jsfx.parameters(instanceID: instanceID)
             if jsfx.hasGFX(instanceID: instanceID) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -446,11 +463,6 @@ private struct ExternalProcessorView: View {
                     jsfxTriggers
                 }
             }
-        } else if let snapshot {
-            Image(uiImage: snapshot)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(minHeight: 260, idealHeight: 360, maxHeight: 520)
         } else if let controller {
             ZStack(alignment: .topTrailing) {
                 if movingToFullScreen {
@@ -591,6 +603,7 @@ private struct JSFXGFXView: View {
     var isVisible = true
     @State private var image: CGImage?
     @State private var drawing = false
+    @State private var windowOwner = UUID()
 
     var body: some View {
         let preferred = jsfx.preferredGFXSize(instanceID: instanceID)
@@ -606,6 +619,7 @@ private struct JSFXGFXView: View {
                     Image(decorative: image, scale: UIScreen.main.scale)
                         .resizable()
                         .interpolation(retina ? .high : .none)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                 }
                 JSFXKeyboardCapture(instanceID: instanceID)
                     .allowsHitTesting(false)
@@ -650,13 +664,18 @@ private struct JSFXGFXView: View {
                 }
             }
             .onChange(of: active, initial: true) { _, active in
-                jsfx.updateGFXWindow(instanceID: instanceID, focused: active, visible: active)
+                jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
+                                     focused: active, visible: active)
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .modifier(JSFXGFXLayout(preferred: fixedSize ?? preferred,
                                 fixedSize: fixedSize, fullScreen: fullScreen))
         .clipped()
-        .onDisappear { jsfx.updateGFXWindow(instanceID: instanceID, focused: false, visible: false) }
+        .onDisappear {
+            jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
+                                 focused: false, visible: false)
+        }
     }
 }
 
@@ -694,7 +713,10 @@ private struct JSFXFullScreenEditor: View {
         ZStack(alignment: .topTrailing) {
             Color(uiColor: .systemBackground).ignoresSafeArea()
             JSFXGFXView(instanceID: instanceID, fullScreen: true)
-                .safeAreaPadding(.top, 8)
+                // Give the newly-created canvas the complete landscape safe
+                // area. A one-sided safeAreaPadding left its proposal at the
+                // inline width on some presentation transitions.
+                .padding(8)
             Button { isPresented = false } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Close")
             .font(.system(size: 15, weight: .bold))

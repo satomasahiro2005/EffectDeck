@@ -109,6 +109,9 @@ final class ETJSFXHost: ObservableObject {
         var stateTask: Task<Void, Never>?
         var ready: ((Result<UInt8, Error>) -> Void)?
         let gfxQueue: DispatchQueue
+        var lastGFXImage: CGImage?
+        var visibleGFXOwners: Set<UUID> = []
+        var focusedGFXOwners: Set<UUID> = []
 
         init(id: String, entry: Entry, state: Data?, channels: Int) {
             self.id = id; self.entry = entry; self.state = state; self.channels = channels
@@ -335,6 +338,14 @@ final class ETJSFXHost: ObservableObject {
         instances[instanceID]?.host.map(ETJSFX_GFXWantsRetina) ?? false
     }
 
+    /// Frozen copy used by PipelineView while a card is being reordered. A
+    /// second live @gfx view for the same VM would race the real card over the
+    /// framebuffer and window-visible state.
+    func viewSnapshot(instanceID: String) -> UIImage? {
+        guard let image = instances[instanceID]?.lastGFXImage else { return nil }
+        return UIImage(cgImage: image)
+    }
+
     /// Keep the framebuffer inside the native host limits without changing
     /// its aspect ratio. Large landscape Retina screens can be wider than the
     /// 2048-pixel safety cap; clamping width and height independently stretches
@@ -385,7 +396,14 @@ final class ETJSFXHost: ObservableObject {
         instance.gfxQueue.async {
             let image = Self.renderGFX(host: host, width: width, height: height,
                                        scale: retina ? pixelScale : 1)
-            DispatchQueue.main.async { completion(image) }
+            DispatchQueue.main.async {
+                // Do not let a completion from an instance that has since been
+                // removed populate a replacement which happens to reuse an ID.
+                if self.instances[instanceID] === instance, let image {
+                    instance.lastGFXImage = image
+                }
+                completion(image)
+            }
         }
     }
 
@@ -401,9 +419,19 @@ final class ETJSFXHost: ObservableObject {
         instance.gfxQueue.async { ETJSFX_GFXKey(host, modifiers, key, pressed) }
     }
 
-    func updateGFXWindow(instanceID: String, focused: Bool, visible: Bool) {
+    /// Aggregate window state across the inline and fullscreen presentations.
+    /// SwiftUI can remove the old presentation after the new one has appeared;
+    /// sending that late `visible=false` directly used to blank the live view.
+    func updateGFXWindow(instanceID: String, owner: UUID,
+                         focused: Bool, visible: Bool) {
         guard let instance = instances[instanceID], let host = instance.host else { return }
-        instance.gfxQueue.async { ETJSFX_GFXWindowState(host, focused, visible, false) }
+        if visible { instance.visibleGFXOwners.insert(owner) }
+        else { instance.visibleGFXOwners.remove(owner) }
+        if focused { instance.focusedGFXOwners.insert(owner) }
+        else { instance.focusedGFXOwners.remove(owner) }
+        let anyVisible = !instance.visibleGFXOwners.isEmpty
+        let anyFocused = !instance.focusedGFXOwners.isEmpty
+        instance.gfxQueue.async { ETJSFX_GFXWindowState(host, anyFocused, anyVisible, false) }
     }
 
     private func build(_ instance: Instance, configuration: RenderConfiguration) {
