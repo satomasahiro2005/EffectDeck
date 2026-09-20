@@ -179,16 +179,24 @@ struct FifteenBandGEQView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    @Environment(\.etGraphOnly) private var graphOnly
+
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             graph
-            bandStrip
-            Divider()
-            bandPanel
+            // **畳んだら札も消す。**畳んだ図は allowsHitTesting(false) で押せない
+            // （EffectCardView の畳んだ図）ので、押せない札を残しても場所を取るだけ。
+            if !graphOnly {
+                bandStrip
+                Divider()
+                bandPanel
+            }
         }
+        // 畳むとこの View ごと消えるので、選んでいるバンドは外に覚えておく。
+        .etRemembers($selected, key: "band", node: node.id)
     }
 
     // MARK: 図

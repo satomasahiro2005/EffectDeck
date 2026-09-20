@@ -291,6 +291,9 @@ final class EffeTuneDSP: ObservableObject {
         publish()
         for id in external { ETAUHost.shared.remove(instanceID: id) }
         retire(doomed)
+        // 消したあとに、何も閉じていない無名 Section が残ることがある
+        // （[S("A"), X, S(""), Y] の Y を消すと S("") が閉じる相手を失う）。
+        sweepDeadSections()
     }
 
     /// 鎖の並びを変える。位置は**鎖の添字**（画面の行番号ではない）。
@@ -315,6 +318,43 @@ final class EffeTuneDSP: ObservableObject {
         chain.move(fromOffsets: source, toOffset: destination)
         publish()
         revealHidden(grabbed)
+        sweepDeadSections()
+    }
+
+    /// 何も閉じていない無名 Section を掃く。鎖を動かした後段から通す。
+    ///
+    /// **門は 3 つある。どれも外せない。**
+    ///
+    ///  1. 候補は ETSection.redundantUnnamed。切ってある無名 Section は元から
+    ///     候補に入らない（名前が無くても配下を止める本物の区切り）。
+    ///  2. **開いている行は触らない。**ピッカーから自分で足した Section は名前が
+    ///     空のまま鎖に入り、そのとき add が expanded に入れる。名前を打っている
+    ///     途中の行を、別の場所のドラッグ 1 回で黙って消してはいけない。
+    ///  3. **掃いても gates が変わらない index だけ消す。**有効な無名 Section は
+    ///     open を true に戻す実効的な区切りなので（ETSection.gates）、名前が
+    ///     無いことだけを根拠に消すと、下の段が上の切ってある組に飲まれて黙る。
+    ///     保存済みの鎖・共有リンク・プリセット由来で既に在り得る形なので、
+    ///     ここは「音が変わらない」を直接測る。
+    func sweepDeadSections() {
+        let candidates = ETSection.redundantUnnamed(types: chain.map(\.spec.type),
+                                                    names: chain.map(\.sectionName),
+                                                    enabled: chain.map(\.enabled))
+        let dead = IndexSet(candidates.filter { !expanded.contains(chain[$0].id) })
+        guard !dead.isEmpty else { return }
+
+        // gates を掃除の前後で比べる。残る段の並びで一致しなければ何も消さない。
+        let before = ETSection.gates(types: chain.map(\.spec.type), enabled: chain.map(\.enabled))
+        let keep = chain.indices.filter { !dead.contains($0) }
+        let after = ETSection.gates(types: keep.map { chain[$0].spec.type },
+                                    enabled: keep.map { chain[$0].enabled })
+        for (slot, i) in keep.enumerated() {
+            if before[i] != after[slot] { return }
+        }
+
+        let doomed = dead.map { chain[$0].instance }.filter { $0 != 0 }
+        chain.remove(atOffsets: dead)
+        publish()
+        retire(doomed)
     }
 
     /// 畳んだ Section の配下に入ってしまった段を、その Section を開いて見えるようにする。
@@ -645,6 +685,9 @@ final class EffeTuneDSP: ObservableObject {
         // 足したものは開いて出す。上流も expandedPlugins に入れている。
         // publish() の後に入れるのは、persistExpanded に確定後の位置を書かせるため。
         for node in made { expanded.insert(node.id) }
+        // 今回足したぶんは expanded なので掃除に触られない。片付くのは、前から
+        // 鎖に残っていた死んだ印だけ。
+        sweepDeadSections()
     }
 
     /// 鎖をまるごと入れ替える。共有リンクの取り込みで使う。

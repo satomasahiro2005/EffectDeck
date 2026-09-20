@@ -358,8 +358,11 @@ struct GroupDelayEQView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(GroupDelayEQBands.delayText(delay(selected)))
-                    .font(.system(size: 13, design: .monospaced))
+                ETValueField(text: GroupDelayEQBands.delayText(delay(selected)),
+                             label: "Delay",
+                             editText: { ETNumberText.draft(delay(selected)) }) { typed in
+                    designer.setDelay(min(max(typed, -limit), limit), band: selected)
+                }
                 Text(GroupDelayEQBands.angleText(band: selected, milliseconds: delay(selected)))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)

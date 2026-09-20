@@ -408,20 +408,31 @@ private struct GroupDelayPEQBody: View {
                     .labelsHidden()
                 }
 
-                valueRow("Freq (Hz)", text: String(Int(current.frequency.rounded()))) {
+                valueRow("Freq (Hz)", text: String(Int(current.frequency.rounded())),
+                         value: current.frequency,
+                         range: GroupDelayPEQDesignCore.minimumFrequency
+                             ... GroupDelayPEQDesignCore.maximumFrequency,
+                         commit: { hz in edit(band) { $0.frequency = hz } }) {
                     ETLogSlider(value: Binding(get: { current.frequency },
                                                set: { hz in edit(band) { $0.frequency = hz } }),
                                 range: GroupDelayPEQDesignCore.minimumFrequency
                                     ... GroupDelayPEQDesignCore.maximumFrequency)
                 }
 
-                valueRow("Delay (ms)", text: String(format: "%.1f", current.delayMs)) {
+                valueRow("Delay (ms)", text: String(format: "%.1f", current.delayMs),
+                         value: current.delayMs,
+                         range: -limit...limit,
+                         commit: { ms in edit(band) { $0.delayMs = ms } }) {
                     Slider(value: Binding(get: { min(max(current.delayMs, -limit), limit) },
                                           set: { ms in edit(band) { $0.delayMs = ms } }),
                            in: -limit...limit)
                 }
 
-                valueRow("Q", text: String(format: "%.2f", current.q)) {
+                valueRow("Q", text: String(format: "%.2f", current.q),
+                         value: current.q,
+                         range: GroupDelayPEQDesignCore.minimumQ
+                             ... GroupDelayPEQDesignCore.maximumQ,
+                         commit: { q in edit(band) { $0.q = q } }) {
                     ETLogSlider(value: Binding(get: { current.q },
                                                set: { q in edit(band) { $0.q = q } }),
                                 range: GroupDelayPEQDesignCore.minimumQ
@@ -455,7 +466,14 @@ private struct GroupDelayPEQBody: View {
     // MARK: 部品
 
     /// 名前・数値・つまみの 2 段。ParameterRow と同じ並びにしてある。
+    /// - Parameters:
+    ///   - value: 打ち込みの下書きに渡す**数**。表示の字ではない（"1.5 k" は読めない）。
+    ///   - range: 打たれた数を挟む範囲。
+    ///   - commit: 打たれた数の行き先。3 つ揃って初めて打ち込める欄になる。
     private func valueRow<Control: View>(_ title: String, text: String,
+                                         value: Double? = nil,
+                                         range: ClosedRange<Double>? = nil,
+                                         commit: ((Double) -> Void)? = nil,
                                          @ViewBuilder control: () -> Control) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -464,7 +482,14 @@ private struct GroupDelayPEQBody: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                ValueBox(text: text)
+                if let value, let range, let commit {
+                    ETValueField(text: text, label: title,
+                                 editText: { ETNumberText.draft(value) }) { typed in
+                        commit(min(max(typed, range.lowerBound), range.upperBound))
+                    }
+                } else {
+                    ValueBox(text: text)
+                }
             }
             control()
                 .accessibilityLabel(title)

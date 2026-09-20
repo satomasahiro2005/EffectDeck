@@ -72,6 +72,9 @@ struct SpectrumAnalyzerView: View {
             if !graphOnly { scalePicker }
             if !graphOnly { Toggle("Bar display", isOn: $bars) }
         }
+        // 畳むとこの View ごと消えるので、表示の選択は外に覚えておく。
+        .etRemembers($scale, key: "scale", node: node.id)
+        .etRemembers($bars, key: "bars", node: node.id)
     }
 
     /// spectrum_analyzer.js:510-519 の createRadioGroup に当たる。Menu にはしない。

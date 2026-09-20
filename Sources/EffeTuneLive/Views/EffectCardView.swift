@@ -429,9 +429,15 @@ private struct ExternalProcessorView: View {
                             Text(parameter.displayName)
                                 .font(.footnote)
                             Spacer()
-                            Text(String(format: "%.3g", parameter.value))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                            // `%.3g` は 1000 を `1e+03` にするので使わない。
+                            // 打ち込みもできる欄にする（読み取り専用の Text だった）。
+                            ETValueField(text: ETNumberText.plain(Double(parameter.value)),
+                                         label: parameter.displayName,
+                                         editText: { ETNumberText.draft(Double(parameter.value)) }) { typed in
+                                let lo = Double(parameter.minValue)
+                                let hi = Double(parameter.maxValue)
+                                au.setParameter(parameter, value: min(max(typed, lo), hi))
+                            }
                         }
                         Slider(value: Binding(
                             get: { Double(parameter.value) },

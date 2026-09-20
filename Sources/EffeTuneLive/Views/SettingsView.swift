@@ -205,8 +205,16 @@ struct SettingsView: View {
         // **問い合わせ先をここに置く。**
         // 置かないと、困った人は EffeTune の作者に聞きに行く。
         // 向こうはこのアプリを作っていないので答えようがない。
+        //
+        // **診断を貼る札を同じ節の先頭に置く。**数字は Audio の Details にも在るが、
+        // 報告する人はここに居る。別のペインへ取りに行かせると、たいてい何も付かない
+        // 報告が来る。Details 節はそのまま残す（音の数字は Audio に置く、の判断は
+        // 壊さない）。押した瞬間に作るので、ここで io を観測する必要は無い。
         Section {
-            Link(destination: URL(string: "https://github.com/satomasahiro2005/effetune-live/issues")!) {
+            ETCopyDiagnosticsButton {
+                ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
+            }
+            Link(destination: URL(string: "https://github.com/satomasahiro2005/EffectDeck/issues")!) {
                 LabeledContent("Report a problem", value: "GitHub")
             }
             Link(destination: URL(string: "mailto:support@nemut.ai")!) {
@@ -217,6 +225,8 @@ struct SettingsView: View {
             }
         } header: {
             Text("Contact")
+        } footer: {
+            Text("Copy details first, then paste it into the report. It includes the app version, the device, and what the audio path is doing right now.")
         }
     }
 }
@@ -348,9 +358,24 @@ private struct DetailsRows: View {
             .font(.footnote)
         }
 
+        // 貼るほうには端末と iOS と設定も入れる。報告を 1 回で受け取るため。
+        ETCopyDiagnosticsButton { diagnostics }
+    }
+}
+
+/// 診断を貼る札。Audio の Details と About の Report の両方から呼ぶ。
+///
+/// **診断は値ではなく閉包で受ける。**値で受けると評価は body を組み直した時点に
+/// なる。About 側は io を観測していない（観測すると 3.3Hz で作り直される）ので、
+/// 走っている最中に動く行――溜まり・枯れ・詰め――が数十秒前のまま貼られる。
+/// 押した瞬間に読めば、観測せずに今の数字が入る。
+private struct ETCopyDiagnosticsButton: View {
+    let make: () -> ETDiagnostics
+    @State private var copied = false
+
+    var body: some View {
         Button {
-            // 貼るほうには端末と iOS と設定も入れる。報告を 1 回で受け取るため。
-            UIPasteboard.general.string = diagnostics.text
+            UIPasteboard.general.string = make().text
             copied = true
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_500_000_000)

@@ -349,6 +349,8 @@ struct FifteenBandPEQView: View {
                 bandPanel
             }
         }
+        // 畳むとこの View ごと消えるので、選んでいるバンドは外に覚えておく。
+        .etRemembers($selected, key: "band", node: node.id)
     }
 
     // MARK: 図

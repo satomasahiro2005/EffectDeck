@@ -326,28 +326,38 @@ struct CrosstalkCancellationView: View {
         VStack(alignment: .leading, spacing: 12) {
             tapsRow
 
-            controlRow("Regularization (%)", value: decimals(regularization, 0)) {
+            controlRow("Regularization (%)", value: decimals(regularization, 0),
+                       number: regularization, range: 0...100,
+                       commit: { bind(\.regularization).wrappedValue = $0 }) {
                 Slider(value: bind(\.regularization), in: 0...100, step: 1)
                     .accessibilityLabel("Regularization")
                     .accessibilityValue(decimals(regularization, 0))
             }
-            controlRow("Max Gain (dB)", value: decimals(maxGainDb, 1)) {
+            controlRow("Max Gain (dB)", value: decimals(maxGainDb, 1),
+                       number: maxGainDb, range: 0...24,
+                       commit: { bind(\.maxGainDb).wrappedValue = $0 }) {
                 Slider(value: bind(\.maxGainDb), in: 0...24, step: 0.1)
                     .accessibilityLabel("Max Gain")
                     .accessibilityValue(decimals(maxGainDb, 1))
             }
             // 上流は周波数の 2 本だけ対数のつまみで作っている（同 :744, 746）。
-            controlRow("Freq Low (Hz)", value: decimals(lowFrequency, 0)) {
+            controlRow("Freq Low (Hz)", value: decimals(lowFrequency, 0),
+                       number: lowFrequency, range: 20...2000,
+                       commit: { bind(\.lowFrequency).wrappedValue = $0 }) {
                 ETLogSlider(value: bind(\.lowFrequency), range: 20...2000)
                     .accessibilityLabel("Freq Low")
                     .accessibilityValue(decimals(lowFrequency, 0))
             }
-            controlRow("Freq High (Hz)", value: decimals(highFrequency, 0)) {
+            controlRow("Freq High (Hz)", value: decimals(highFrequency, 0),
+                       number: highFrequency, range: 1000...20000,
+                       commit: { bind(\.highFrequency).wrappedValue = $0 }) {
                 ETLogSlider(value: bind(\.highFrequency), range: 1000...20000)
                     .accessibilityLabel("Freq High")
                     .accessibilityValue(decimals(highFrequency, 0))
             }
-            controlRow("Direct Window (ms)", value: decimals(directWindowMs, 1)) {
+            controlRow("Direct Window (ms)", value: decimals(directWindowMs, 1),
+                       number: directWindowMs, range: 2...50,
+                       commit: { bind(\.directWindowMs).wrappedValue = $0 }) {
                 Slider(value: bind(\.directWindowMs), in: 2...50, step: 0.1)
                     .accessibilityLabel("Direct Window")
                     .accessibilityValue(decimals(directWindowMs, 1))
@@ -390,8 +400,15 @@ struct CrosstalkCancellationView: View {
 
     /// ParameterRow と同じ 2 段（名前と数が上、つまみが下）。
     /// あちらは ETParam と鎖の値に繋がっているので、ここは同じ形を素で書く。
+    /// - Parameters:
+    ///   - number: 打ち込みの下書きに渡す**数**。表示の字ではない。
+    ///   - range: 打たれた数を挟む範囲。
+    ///   - commit: 打たれた数の行き先。3 つ揃って初めて打ち込める欄になる。
     private func controlRow<Control: View>(_ title: String,
                                            value: String,
+                                           number: Double? = nil,
+                                           range: ClosedRange<Double>? = nil,
+                                           commit: ((Double) -> Void)? = nil,
                                            @ViewBuilder control: () -> Control) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -400,12 +417,19 @@ struct CrosstalkCancellationView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                Text(value)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary,
-                                in: .rect(cornerRadius: ETMetrics.innerRadius,
-                                          style: .continuous))
+                if let number, let range, let commit {
+                    ETValueField(text: value, label: title,
+                                 editText: { ETNumberText.draft(number) }) { typed in
+                        commit(min(max(typed, range.lowerBound), range.upperBound))
+                    }
+                } else {
+                    Text(value)
+                        .font(.system(size: 13, design: .monospaced))
+                        .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+                        .background(.quaternary,
+                                    in: .rect(cornerRadius: ETMetrics.innerRadius,
+                                              style: .continuous))
+                }
             }
             control()
         }

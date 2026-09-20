@@ -27,6 +27,12 @@ enum ETEffectViews {
         "GroupDelayEqPlugin",
         "GroupDelayPEQPlugin",
         "RoomEqPlugin",
+        // 図を持たないのに「図だけ」の段を持たされていた 2 種。
+        // その段は EffectCardView が allowsHitTesting(false) を丸ごと被せるので、
+        // 升目もボタンも押せない板が全面に出るだけになる（しかも起動直後は
+        // collapsedFully が空なので、一度も操作しなくてもその状態から始まる）。
+        "MatrixPlugin",
+        "OscillatorPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。

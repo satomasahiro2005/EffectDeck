@@ -889,55 +889,62 @@ struct PhaseSelectEqView: View {
         }
     }
 
-    /// js:801-826。タブは折り返す（effetune.css:3871 flex-wrap、mobile は 1 本 72px から）。
-    /// iPhone の幅だと 3 本で折り返る。
+    /// **番号だけの札を 1 行に並べる。**他の帯（ModalResonator の chip(_:)、
+    /// 5band / 15band / FIR PEQ）と同じ形にしてある。
+    ///
+    /// 前はチェックボックスと「Band N」を 1 つの器に入れた札を LazyVGrid で折り返して
+    /// いた（上流 js:801-826 の写し）。上流の 5band は右クリックで入切するので同じ形に
+    /// できず、ここだけ別物になっていた。入切は下の一枚が持つ形に寄せる。
     private var bandRow: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], spacing: 6) {
+        HStack(spacing: 6) {
             ForEach(0..<Self.bandCount, id: \.self) { slot in
                 bandTab(slot)
             }
         }
     }
 
-    /// チェックは選んでいないバンドにも効く（js:815-818）。
     private func bandTab(_ slot: Int) -> some View {
         let picked = band == slot
         let on = region(slot).enabled
-        return HStack(spacing: 0) {
-            Button {
-                enable(slot, !on)
-            } label: {
-                Image(systemName: on ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 15))
-                    .foregroundStyle(picked ? AnyShapeStyle(.white)
-                                            : (on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)))
-                    .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Enable Band \(slot + 1)")
-
-            Button {
-                band = slot
-            } label: {
-                Text("Band \(slot + 1)")
-                    .font(.system(size: 12, weight: picked ? .bold : .regular))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .foregroundStyle(picked ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-                    .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
+        return Button {
+            band = slot
+        } label: {
+            Text("\(slot + 1)")
+                .font(.system(size: 13, weight: picked ? .bold : .regular))
+                .foregroundStyle(picked ? AnyShapeStyle(.white)
+                                        : (on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
+                .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
+                            in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                .opacity(on ? 1 : 0.45)
+                .contentShape(.rect)
         }
-        .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
-                    in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+        .buttonStyle(.plain)
+        .accessibilityLabel("Band \(slot + 1)")
+        .accessibilityAddTraits(picked ? [.isSelected] : [])
     }
 
-    /// js:835-837 は Gain と Solo の 2 本だけ。入切はタブのチェックが持つ。
+    /// js:835-837 は Gain と Solo の 2 本。入切は帯のチェックが持っていたが、
+    /// 札を番号だけにしたのでここへ移した（ModalResonator の bandPanel と同じ形）。
     private var bandControls: some View {
         let r = region(band)
         return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("BAND \(band + 1)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                // **enable(_:_:) を必ず通す。**生の 0/1 を書くと、EffectCatalog が
+                // 配列の既定を 0 に潰している region を入にしたとき図に出ない四角になる。
+                Toggle("Enabled", isOn: Binding(get: { r.enabled },
+                                                set: { enable(band, $0) }))
+                    .toggleStyle(.power)
+                    .labelsHidden()
+            }
+
             ETPhaseSliderRow(label: "Gain", unit: "%", value: r.gain,
                              range: 0...200, step: 1, logarithmic: false) {
                 set("gn", band, $0)
@@ -1084,7 +1091,12 @@ private struct ETPhaseSliderRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                ValueBox(text: text)
+                // 打ち込みも受ける。**下書きに text を渡さない**——"1.50 k" のような
+                // 字は Double(_:) が nil を返して黙って捨てられる。挟むのは range で。
+                ETValueField(text: text, label: label,
+                             editText: { ETNumberText.draft(value) }) { typed in
+                    onChange(min(max(typed, range.lowerBound), range.upperBound))
+                }
             }
             Slider(value: Binding(get: { normalized }, set: { onChange(denormalized($0)) }),
                    in: 0...1)

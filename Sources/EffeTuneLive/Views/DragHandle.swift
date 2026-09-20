@@ -164,7 +164,12 @@ struct ETDragHandle: UIViewRepresentable {
         }
 
         @objc func handle(_ g: UILongPressGestureRecognizer) {
-            guard let anchor, let window = anchor.window else { return }
+            // **window は入口で要求しない。**
+            // 掴んでいる行の面が階層から外れると（Section の挿入や行の削除で面が
+            // 作り直される）window が nil になり、この guard で .ended ごと取りこぼす。
+            // すると lockScroll が掛けた isScrollEnabled = false が戻らず、
+            // **スクロールが死んだまま残る。**window が要るのは .changed の座標だけ。
+            guard let anchor else { return }
             switch g.state {
             case .began:
                 // **自分の行の上か。**付けた先が鎖ぜんぶで 1 つだった場合、
@@ -173,13 +178,14 @@ struct ETDragHandle: UIViewRepresentable {
                 guard anchor.bounds.contains(p) else { mine = false; return }
                 // つまみの上で止まっていただけでカードを掴まない。
                 guard !ownsDrag(under: g) else { mine = false; return }
+                guard let window = anchor.window else { mine = false; return }
                 mine = true
                 origin = g.location(in: window)
                 lockScroll(from: anchor)
                 handleLog.notice("began lock=\(self.lockedScrollView != nil, privacy: .public)")
                 parent.began()
             case .changed:
-                guard mine else { return }
+                guard mine, let window = anchor.window else { return }
                 let now = g.location(in: window)
                 parent.moved(CGSize(width: now.x - origin.x,
                                     height: now.y - origin.y))
@@ -224,6 +230,20 @@ struct ETDragHandle: UIViewRepresentable {
         /// 立てると縦のスクロールを全部奪う。指が出た向きで決める。
         /// 長押しのほうはここで落とさない（向きを持たないので）。
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            // **いま払っている最中なら掴みは立てない。**
+            //
+            // 長押しの閾値は 0.4 秒 / 10pt。指を置いたまま 0.4 秒のあいだに 10pt
+            // 動かさず、そこからゆっくりスクロールを始めた回はこれを満たす。
+            // 立ってしまうと、その touch のあいだ lockScroll が
+            // isScrollEnabled = false にするので**スクロールが死ぬ**。
+            //
+            // 見るのは isDragging だけ。isDecelerating まで見ると、惰性が止まり
+            // きるまで掴めない（勢いよく送った直後に掴もうとすると無反応になる）。
+            // まだ払い始めていない（指がほぼ止まっている）ときは isDragging が
+            // 偽なので、press-and-hold の掴み方は今のまま変わらない。
+            if g === recognizer, let host = g.view as? UIScrollView, host.isDragging {
+                return false
+            }
             guard let pan = g as? UIPanGestureRecognizer, pan === panRecognizer,
                   let anchor else { return true }
             guard anchor.bounds.contains(pan.location(in: anchor)) else { return false }

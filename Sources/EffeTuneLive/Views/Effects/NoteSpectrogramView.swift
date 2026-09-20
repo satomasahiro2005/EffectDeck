@@ -213,7 +213,11 @@ struct NoteSpectrogramView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                ValueBox(text: "\(Int(display.timeSpan.rounded())) s")
+                ETValueField(text: "\(Int(display.timeSpan.rounded())) s",
+                             label: "Time Span",
+                             editText: { ETNumberText.draft(display.timeSpan.rounded()) }) { typed in
+                    display.timeSpan = min(max(typed.rounded(), 1), 10)
+                }
             }
             Slider(value: $display.timeSpan, in: 1...10, step: 1)
                 .accessibilityLabel("Time Span")
