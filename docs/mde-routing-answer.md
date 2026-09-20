@@ -738,3 +738,82 @@ Unable to Connect
 
 MediaToolbox の中で `1` と `0` を作り分けている条件そのもの。
 **ただし実用上はここまでで足りる。**上の並びで #3 / #4 の観測は全部説明できる。
+
+## 訂正: 「1 つの原因に収束」は言い過ぎ
+
+**共通なのは下流の機構だけ。上流の異常は別物。**
+
+```
+共通の下流
+  FigPlayer 系の video サブセッション
+      ↓  IsPlayingVideoOutput = YES
+  同じ CoreSession に集約
+      ↓
+  MXCustomRoutingController が CoreSession の YES を読む
+      ↓
+  MusicVAD の枝に入れず拒否
+```
+
+```
+#3（YouTube）
+  mediaplaybackd 経由の FigPlayer が**現役**
+  → YES を書き続けている
+  → その時点では stale ではない
+  → video session が生きているので拒否される
+
+#4（Spotify）
+  Canvas の FigPlayer が過去に YES を立てた
+  → 音も映像も出していない状態になっても NO に戻さない
+  → stale な YES が CoreSession に残る
+  → 後続の Canvas 無しの曲まで拒否される
+```
+
+## 訂正: 「戻しているのは WebKit だけ」の範囲
+
+正しくは **「今回捕捉したログの範囲では、停止時の明示的な `0` 書き戻しを
+確認できたのは WebKit だけ」**。
+
+4 対 36 という観測は強いが、**「Spotify / YouTube は絶対に 0 を書かない」**
+とまでは言えない。
+
+## #3 で大きかったこと
+
+同じ `PID 1066 / CoreSession 0x7408e` のまま値が変わった。
+
+```
+04:54:21           NO  → MusicVAD で allow
+04:56:57-59        mediaplaybackd の兄弟セッション出現、0 → 1
+04:57:48           YES → reject
+```
+
+**アプリの違い・動画の違い・CoreSession の違いでは説明できない。**
+途中から **mediaplaybackd / FigPlayer の再生 topology が生えたこと**が
+状態を分けている。
+
+## 静的解析の標的が変わった
+
+もう「YouTube がどう YES/NO を決めているか」ではない。
+
+```
+mediaplaybackd
+    ↓  FigPlayer の生存期間 / video-output の状態
+MediaToolbox / MXSession
+    ↓
+_MXSessionSetProperty(IsPlayingVideoOutput, value)
+```
+
+**`value` が何の状態から作られているか**を読むこと。
+
+そして `mediaplaybackd(295)` が書き手だと動的に確定したので、
+**MediaToolbox に限った xref で何も出なかったときの意味が変わった。**
+今度は `mediaplaybackd` 実行ファイル側の callsite も探索対象になる。
+MediaToolbox の中で setter まで完結しているとは、もう仮定しなくてよい。
+
+## いまの #3 の状態
+
+「真因不明」ではない。
+
+- **EffectDeck が落ちる直接原因** … 確定
+- **YES を発生させる主体（mediaplaybackd）と状態遷移** … 確定
+- **残り** … 何が mediaplaybackd / FigPlayer 経路への切り替えを起こすか、
+  と内部実装の静的な裏取り
