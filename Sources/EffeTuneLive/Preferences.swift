@@ -97,9 +97,12 @@ enum ETLatency: String, CaseIterable, Identifiable {
     var bufferDuration: TimeInterval { Double(frames) / 48000 }
 }
 
-/// How a JSFX `@gfx` canvas is sized. Pixel Perfect preserves the dimensions
-/// declared by the script; Adaptive lets the host resize `gfx_w` / `gfx_h` to
-/// the available card or full-screen viewport.
+/// `@gfx` の canvas を**どう貼るか**。
+///
+/// **描く寸法はどちらも同じ**（スクリプトが宣言した `gfx_w` / `gfx_h`）。
+/// 変わるのは表示の大きさだけで、Adaptive はカードの枠いっぱいへ伸ばし、
+/// Pixel Perfect は framebuffer の 1 画素が画面の 1 画素になる所で止める。
+/// `gfx_w` / `gfx_h` を枠に合わせて書き換えるのは全画面だけ。
 enum ETJSFXCanvasMode: String, CaseIterable, Identifiable {
     // **並びは既定を左に。**allCases がそのまま札の順になる。
     case adaptive
@@ -177,9 +180,10 @@ final class Preferences: ObservableObject {
         silenceThresholdDb = d.object(forKey: "pref.silence") as? Double ?? -80
         keepScreenAwake = d.object(forKey: "pref.awake") as? Bool ?? false
         syncVisualsToAudio = d.bool(forKey: "pref.syncVisualsToAudio")
-        // **既定は Adaptive。**Pixel Perfect は原寸のまま ScrollView に入れる形で、
-        // 大きい canvas を宣言しているスクリプトでは枠に収まらず、
-        // 見えているのが一部だけになる。まず全体が見えるほうを既定にする。
+        // **既定は Adaptive。**Pixel Perfect は framebuffer の 1 画素を画面の
+        // 1 画素で貼るので、`gfx_ext_retina` を名乗らないスクリプトでは画面の
+        // 倍率だけ小さくなる（3x の端末で `@gfx 640 360` が 213x120 point）。
+        // 鮮明だが指では触りにくいので、大きく出るほうを既定にする。
         jsfxCanvasMode = ETJSFXCanvasMode(rawValue: d.string(forKey: "pref.jsfxCanvasMode") ?? "")
             ?? .adaptive
 
