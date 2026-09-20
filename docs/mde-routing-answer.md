@@ -639,3 +639,102 @@ MXSession(xxx) of type FigPlayer for CoreSession …, ytlite
 
 見張りの注意: `grep --line-buffered -A 10` にすると無関係な行を巻き込んで
 **流れが詰まる**（2026-09-21 04:39 で止まった）。`-A` は付けない。
+
+---
+
+# #3 も同じ原因だった（2026-09-21 実測で確定）
+
+見張りが **#3 の失敗（`Unable to Connect`）を丸ごと**捕まえた。
+
+## 書き手は `mediaplaybackd`
+
+```
+04:56:57.561  set_property  mediaplaybackd(295)  sibling_of: 0x7408e YouTube(1066)
+              key: IsPlayingVideoOutput  value: [0.0]
+04:56:58.774  同じ                                value: [0.0]
+04:56:59.605  同じ                                value: [1.0]     ← 立った
+
+              MXSession(48c) of type FigPlayer for CoreSession sid:0x7408e, YouTube(1066)
+                  setting IsPlayingVideoOutput = YES
+              MXSession(493) of type FigPlayer for CoreSession sid:0x7408e, YouTube(1066)
+                  setting IsPlayingVideoOutput = YES
+
+04:57:48.295  …以降も 1.0 を書き続ける
+04:57:48      判定 → Unable to Connect
+```
+
+**アプリではなく `mediaplaybackd`（AVPlayer を代理で回すデーモン）が、
+アプリのセッションの兄弟として書いている。**
+
+## 更新モデル
+
+**毎回書き直している。**立てたきりの一発設定ではない。
+
+```
+0.0 の書き込み   4 回
+1.0 の書き込み  36 回   （1 分間に 20 回以上）
+```
+
+## 同じプロセスの中で NO → YES
+
+```
+04:54:21  YouTube(1066)  IsPlayingVideoOutput = NO   → Allow（MusicVAD）
+                         mediaplaybackd の兄弟セッション無し
+04:56:59  mediaplaybackd が 1 に書き換え               兄弟セッション出現
+04:57:48  IsPlayingVideoOutput = 1                   → Unable to Connect
+```
+
+**同じアプリ・同じ CoreSession（`0x7408e`）**で値が変わっている。
+「同じ動画でも通ったり通らなかったり」はこれ。
+分けているのは **`mediaplaybackd` 経由の映像プレイヤーが立っているかどうか。**
+
+## 壊れている側の共通点は FigPlayer
+
+0.0 が書かれた 4 回のうち、**停止時に戻しているのは WebKit だけ。**
+
+| | セッションの形 | 立てる | 戻す |
+|---|---|---|---|
+| WebKit | 自前・type `None` | YES | **NO（2.3 秒後）** |
+| Spotify Canvas | **FigPlayer** サブセッション `45a` | YES | 記録なし |
+| YouTube | **FigPlayer** サブセッション `48c` / `493`<br>＋ `mediaplaybackd` 兄弟 | 1（36 回） | 記録なし |
+
+**FigPlayer で回している再生は、プレイヤーが消えても 0 に戻らない。**
+
+## #3 と #4 は 1 つの原因
+
+```
+FigPlayer の映像プレイヤーが立つ
+    ↓
+mediaplaybackd が IsPlayingVideoOutput = 1 を書く
+    ↓
+プレイヤーが消えても 0 に戻らない
+    ↓
+MXCustomRoutingController が 1 を見る
+    ↓
+videoish = true → MusicVAD の枝に到達しない
+    ↓
+AirPlay 探索 1.5 秒 → 見つからない → ローカルへ戻す
+    ↓
+Unable to Connect
+```
+
+- **#4（Spotify）** … Canvas が FigPlayer を立てる。曲が変わっても 1 のまま
+- **#3（YouTube）** … 映像が FigPlayer で回る。アプリを作り直すと
+  CoreSession ごと消えて 0 から始まる
+
+## EffectDeck 側からできること
+
+**無い。**判定関数は `MediaOutputDevice` を 1 つも読まない。
+`IsPlayingVideoOutput` は他のアプリのセッションの property で、
+書いているのは `mediaplaybackd`。
+
+**利用者に出せる回避**
+
+- 映像を止めて（音だけにして）から選び直す
+- それでも駄目なら、そのアプリを一度終了してから選び直す
+  （CoreSession ごと消えるので 1 が消える）
+
+## まだ読んでいないもの
+
+MediaToolbox の中で `1` と `0` を作り分けている条件そのもの。
+**ただし実用上はここまでで足りる。**上の並びで #3 / #4 の観測は全部説明できる。
