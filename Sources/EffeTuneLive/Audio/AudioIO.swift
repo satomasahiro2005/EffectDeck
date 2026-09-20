@@ -290,21 +290,29 @@ final class AudioIO: ObservableObject {
     /// なので、繋がっていなくても無音を出し続ける。
     /// PowerGate が休むので演算はほぼ使わないし、.mixWithOthers なので
     /// 他のアプリの音を止めない。
+    /// **ここに `hasPeer` を足さないこと。足すと繋がらなくなる**（issue #5 / 2026-09-21）。
+    ///
+    /// 「相手が居ないのに engine を立てているのは無駄だ」は読みとしては正しいが、
+    /// 立てるのをやめた瞬間に上の鶏と卵へ戻る。背景で鳴っていないアプリは
+    /// 中断され、中断されたアプリの 47101 は accept しない。拡張は
+    /// `ET connect 失敗 errno=61` を繰り返すだけで、**前面に戻すまで音が出ない。**
+    /// コントロールセンターから選ぶのがこの製品の導線なので、そこで死ぬ。
+    ///
+    /// 同じ理由で「長い無音のあと engine ごと止める」も入れていない。止めた側から
+    /// 自分を起こす手が無く、起こせるのは tick だけで、その tick は中断されたら
+    /// 回らない。詳しくは docs/battery-log.md の「直さなかったもの」。
     private func followPeer() {
         // running だけを見ると取りこぼす。中断で OS が engine を止めても
         // stop() を通らないので running は true のまま残る。食い違いを直接見る。
         let alive = running && engine.isRunning
+        guard !alive else { return }
 
-        if !alive {
-            guard !interrupted else { return }
-            // start() が失敗し続けるとき（中断中の setActive など）に
-            // 3.3Hz で叩かないよう、1 秒は空ける。
-            let now = ProcessInfo.processInfo.systemUptime
-            guard now - lastStartAttempt >= 1 else { return }
-            start()
-        } else if false {
-            stop(keepListening: true)
-        }
+        guard !interrupted else { return }
+        // start() が失敗し続けるとき（中断中の setActive など）に
+        // 3.3Hz で叩かないよう、1 秒は空ける。
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastStartAttempt >= 1 else { return }
+        start()
     }
 
     func start() {
