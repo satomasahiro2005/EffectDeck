@@ -32,6 +32,8 @@ struct MultiChannelPanelView: View {
 
     @ObservedObject private var telemetry = Telemetry.shared
 
+    @Environment(\.etGraphOnly) private var graphOnly
+
     /// いま触っているチャンネル。16 本ぶんのつまみを縦に並べない。
     @State private var strip = 0
     /// 棒の値。dB。枠が来るたびに落としながら追いかける。
@@ -46,13 +48,19 @@ struct MultiChannelPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             meter
-            channelPicker
-            switches
-            if let volume = param("volume") { control(volume, channel: channel) }
-            if let delay = param("delay") { control(delay, channel: channel) }
+            // **畳んだら札も消す。**畳んだ図は allowsHitTesting(false) で押せない
+            // （EffectCardView の畳んだ図）ので、押せない札を残しても場所を取るだけ。
+            if !graphOnly {
+                channelPicker
+                switches
+                if let volume = param("volume") { control(volume, channel: channel) }
+                if let delay = param("delay") { control(delay, channel: channel) }
+            }
         }
         .onChange(of: levelKey) { _, _ in advance() }
         .onAppear { lastFall = Date() }
+        // 畳むとこの View ごと消えるので、触っているチャンネルは外に覚えておく。
+        .etRemembers($strip, key: "strip", node: node.id)
     }
 
     // MARK: 図
@@ -196,7 +204,11 @@ struct MultiChannelPanelView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     Spacer(minLength: 4)
-                    ValueBox(text: param.format(value(offset)))
+                    ETValueField(text: param.format(value(offset)), label: param.label,
+                                 editText: { ETNumberText.draft(Double(value(offset))) }) { typed in
+                        let clamped = min(max(Float(typed), lo), hi)
+                        apply(param.offset, clamped, channel: channel)
+                    }
                 }
                 Slider(value: Binding(get: { Double(value(offset)) },
                                       set: { apply(param.offset, Float($0), channel: channel) }),

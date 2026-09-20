@@ -30,7 +30,10 @@
 //  列は 1 本ずつ来る。こちら側で横に流す帯として持つ必要があるので、
 //  固定長の輪（ETSpectrogramBand）に入れて、描くときは CGImage 1〜2 枚に畳んで貼る。
 //  升目は 256×256 = 65536 個あるので、毎回それだけの矩形を Path に積まない。
-//  色は決めないので、画像は alpha だけを持たせて型抜きに使い、塗りは .tint に任せる。
+//  **この図だけは色を持つ。**画像に配色表（ETSpectrogramBand.colorLUT）から引いた色を
+//  不透明で入れて、そのまま貼る。GraphCanvas の「色は決めない」規則からの例外で、
+//  上流も同じ理由で theme-allow を付けて例外にしている（spectrogram.js:1111）。
+//  地を黒で塗るので、その上に乗る格子・1 秒の印・指の線も固定色で引き直す。
 //
 //  取りこぼしについて。DSP は貯まった列を writeTelemetry で全部吐く
 //  （kernel.cpp:218-226）が、Telemetry は tap と種類ごとに最新の 1 枠しか残さない
@@ -76,6 +79,13 @@ struct SpectrogramView: View {
     @Environment(\.etGraphOnly) private var graphOnly
 
     @State private var scale: ETSpectrogramScale = .log
+    /// 全画面を出しているか。
+    @State private var fullScreen = false
+    /// 列の履歴。**@State で参照だけ持つ。**@StateObject や @ObservedObject にすると
+    /// 30Hz で body が作り直されて下のボタンが固まる。図の中だけで観測する。
+    /// ここに置くのは、全画面と元の図で同じ履歴を見せるため（図の側に持たせると、
+    /// 全画面を開いた瞬間に空から流れ直す）。
+    @State private var band = ETSpectrogramBand()
 
     private var effectiveScale: ETSpectrogramScale {
         let hq = node.spec.params.first(where: { $0.key == "hq" })
@@ -84,13 +94,33 @@ struct SpectrogramView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB, scale: effectiveScale)
+            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB,
+                             scale: effectiveScale, band: band)
+            // **全画面の口は図の外に置く。**プロット矩形の上に置くと、押すたびに
+            // 指がプレビュー音に繋がる（GraphCanvas は isFrequency の図で
+            // 矩形に触れた指を音にしている）。
+            if !graphOnly {
+                Button {
+                    fullScreen = true
+                } label: {
+                    Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+            }
             // 上流は DB Range・Points・Frequency Scale の順に並べている
             // （spectrogram.js:631-678）。同じ順にする。
             ForEach(node.spec.params.filter { $0.key != "hq" }) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
             if !graphOnly { scalePicker }
+        }
+        // **畳むとこの View ごと消える。**開き直すたびに Log へ戻っていたのがこれ。
+        .etRemembers($scale, key: "scale", node: node.id)
+        .fullScreenCover(isPresented: $fullScreen) {
+            SpectrogramFullScreen(tapId: node.tapId, floorDB: floorDB,
+                                  scale: effectiveScale, band: band)
         }
     }
 
@@ -150,8 +180,12 @@ private struct SpectrogramGraph: View {
     let floorDB: Double
     let scale: ETSpectrogramScale
 
+    /// 履歴は親が持つ。全画面と元の図で同じものを見せるため。
+    @ObservedObject var band: ETSpectrogramBand
+    /// 図の高さ。全画面では画面いっぱいまで渡す。
+    var height: CGFloat = ETGraphMetrics.height
+
     @ObservedObject private var telemetry = Telemetry.shared
-    @StateObject private var band = ETSpectrogramBand()
 
     @State private var probe: ETSpectrogramProbe?
 
@@ -163,38 +197,49 @@ private struct SpectrogramGraph: View {
         return GraphCanvas(
             x: .blank(),
             y: axis,
-            height: ETGraphMetrics.height,
+            height: height,
             insets: ETGraphInsets(leading: 28, trailing: 6, top: 6, bottom: 6),
             readout: readout,
             caption: caption(column),
             clipsContent: true,
             draw: { context, plot in
-                let pieces = band.pieces(in: plot.rect)
-                if !pieces.isEmpty {
-                    // 画像は alpha だけを持つ。それで型を抜いて .tint を流し込む。
-                    context.drawLayer { layer in
-                        layer.clipToLayer { mask in
-                            for piece in pieces {
-                                mask.draw(Image(decorative: piece.image, scale: 1),
-                                          in: piece.rect)
-                            }
-                        }
-                        layer.fill(Path(plot.rect), with: ETGraphShading.curve)
-                    }
+                // **地を配色表の 0 番で塗る。**上流 spectrogram.js:1111-1112 と同じ順。
+                // 透かすと表の下半分（黒〜青）が薄れて、色を入れた意味が消える。
+                context.fill(Path(plot.rect), with: .color(ETSpectrogramBand.floorColor))
+
+                // 画像は色を持っているので、そのまま貼る。
+                for piece in band.pieces(in: plot.rect) {
+                    context.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
+                }
+
+                // **格子は画像の上。**GraphCanvas は drawGrid をこのクロージャより
+                // 先に走らせる（GraphCanvas.swift:296）ので、地を塗った時点で横線 11 本は
+                // 下敷きになって消える。ここで引き直すが、**画像より後でなければ
+                // 同じことが起きる**（画像が覆う）。1 秒の印と指の線と同じ層に置く。
+                // 形は GraphCanvas.drawGrid の横線（:398-405）に揃える。
+                for tick in plot.yAxis.ticks {
+                    let y = plot.y(tick.value)
+                    guard y >= plot.rect.minY - 0.5, y <= plot.rect.maxY + 0.5 else { continue }
+                    var line = Path()
+                    line.move(to: CGPoint(x: plot.rect.minX, y: y))
+                    line.addLine(to: CGPoint(x: plot.rect.maxX, y: y))
+                    context.stroke(line, with: .color(ETSpectrogramBand.gridColor),
+                                   lineWidth: tick.emphasized ? 1 : 0.5)
                 }
                 // 1 秒の印。spectrogram.js:1031-1042 は下端から 16px 上げた所から引いている。
+                // 地が黒になったので、テーマの .tertiary ではなく固定の明るい色にする。
                 for markX in band.secondMarks(in: plot.rect) {
                     var mark = Path()
                     mark.move(to: CGPoint(x: markX, y: plot.rect.maxY - 8))
                     mark.addLine(to: CGPoint(x: markX, y: plot.rect.maxY))
-                    context.stroke(mark, with: ETGraphShading.axis, lineWidth: 1.5)
+                    context.stroke(mark, with: .color(ETSpectrogramBand.markColor), lineWidth: 1.5)
                 }
                 if let hover = probe {
                     var line = Path()
                     let y = plot.y(hover.hz)
                     line.move(to: CGPoint(x: plot.rect.minX, y: y))
                     line.addLine(to: CGPoint(x: plot.rect.maxX, y: y))
-                    context.stroke(line, with: ETGraphShading.axis,
+                    context.stroke(line, with: .color(ETSpectrogramBand.markColor),
                                    style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
                 }
             },
@@ -383,7 +428,51 @@ final class ETSpectrogramBand: ObservableObject {
     /// 来たままの升目。行は対数で等間隔。[row * columns + column]。
     private var canonical = [UInt8](repeating: 0,
                                     count: ETSpectrogramBand.columns * ETSpectrogramBand.rows)
-    /// 描く用。RGBA、前乗算。白の前乗算なので 4 バイトとも同じ値が入る。使うのは alpha だけ。
+    /// 濃さ 0〜255 に対する色。**上流の表をそのまま写した。**
+    /// spectrogram.js:23-32 の SPECTROGRAM_COLOR_STOPS と BRIGHTNESS、
+    /// 作り方は同 :867-895 の createSpectrogramColorLut（256 段へ線形補間）。
+    ///
+    /// 単色だったのは「色は決めない」という GraphCanvas の規則に従っていたため。
+    /// この図だけは例外にする。上流も同じ理由で theme-allow を付けて例外にしている。
+    static let colorLUT: [(r: Double, g: Double, b: Double)] = {
+        let stops: [(pos: Double, r: Double, g: Double, b: Double)] = [
+            (0.000, 0, 0, 0),
+            (0.166, 0, 0, 255),
+            (0.333, 0, 255, 255),
+            (0.500, 0, 255, 0),
+            (0.666, 255, 255, 0),
+            (0.833, 255, 0, 0),
+            (1.000, 255, 255, 255)]
+        let brightness = 0.75
+        return (0...255).map { v -> (r: Double, g: Double, b: Double) in
+            let t = Double(v) / 255
+            var lo = stops[0]
+            var hi = stops[stops.count - 1]
+            for i in 0..<(stops.count - 1) where t >= stops[i].pos && t <= stops[i + 1].pos {
+                lo = stops[i]
+                hi = stops[i + 1]
+                break
+            }
+            let span = hi.pos - lo.pos
+            let p = span == 0 ? 0 : (t - lo.pos) / span
+            return ((lo.r + (hi.r - lo.r) * p) * brightness,
+                    (lo.g + (hi.g - lo.g) * p) * brightness,
+                    (lo.b + (hi.b - lo.b) * p) * brightness)
+        }
+    }()
+
+    /// 図の地。配色表の 0 番（黒）。上流 spectrogram.js:1111-1112 と同じ。
+    static var floorColor: Color {
+        let c = colorLUT[0]
+        return Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255)
+    }
+
+    /// 黒地の上に引く線の色。上流 spectrogram.js:33-36 の `#888` / `#ccc` に倣った固定色。
+    /// **テーマに従わせない。**地が固定なので、地に対して読める色でなければならない。
+    static let gridColor = Color(red: 0.53, green: 0.53, blue: 0.53)
+    static let markColor = Color(red: 0.80, green: 0.80, blue: 0.80)
+
+    /// 描く用。RGBA、前乗算。色は colorLUT から入れ、alpha は常に 255（不透明）。
     private var pixels = [UInt8](repeating: 0,
                                  count: ETSpectrogramBand.columns * ETSpectrogramBand.rows * 4)
     private var times = [Double](repeating: .nan, count: ETSpectrogramBand.columns)
@@ -475,14 +564,18 @@ final class ETSpectrogramBand: ObservableObject {
     }
 
     /// 1 列ぶんを描く用の並びに写す。
+    ///
+    /// **色を入れる。**前は 4 バイトとも濃さそのままで、画像を型抜きに使って
+    /// `.tint` 一色を流し込んでいた。配色表から引いて不透明で置く。
+    /// 前乗算だが alpha=255 なので、乗算しても値は変わらない。
     private func paint(column: Int) {
         for row in 0..<Self.rows {
-            let value = displayValue(row: row, column: column)
+            let c = Self.colorLUT[Int(displayValue(row: row, column: column))]
             let offset = (row * Self.columns + column) * 4
-            pixels[offset] = value
-            pixels[offset + 1] = value
-            pixels[offset + 2] = value
-            pixels[offset + 3] = value
+            pixels[offset] = UInt8(c.r.rounded())
+            pixels[offset + 1] = UInt8(c.g.rounded())
+            pixels[offset + 2] = UInt8(c.b.rounded())
+            pixels[offset + 3] = 255
         }
     }
 
@@ -517,5 +610,42 @@ final class ETSpectrogramBand: ObservableObject {
                        decode: nil,
                        shouldInterpolate: false,
                        intent: .defaultIntent)
+    }
+}
+
+// MARK: - 全画面
+
+/// 図だけを画面いっぱいに出す。
+///
+/// **帯（履歴）は親から受ける。**図の側に持たせると、開いた瞬間に空から流れ直して
+/// 直前まで見ていたものが消える。同じ物を渡せば続きが見える。
+/// 同じ列を二度押し込むことになるが、帯は sequence で弾くので増えない。
+///
+/// 縦軸の切り替えは元のカードに置いたまま。ここは見るためだけの画面にする。
+private struct SpectrogramFullScreen: View {
+
+    let tapId: UInt32
+    let floorDB: Double
+    let scale: ETSpectrogramScale
+    @ObservedObject var band: ETSpectrogramBand
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { geo in
+                SpectrogramGraph(tapId: tapId, floorDB: floorDB, scale: scale,
+                                 band: band,
+                                 height: max(200, geo.size.height - 16))
+                    .padding(.horizontal, 12)
+            }
+            .navigationTitle("Spectrogram")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }

@@ -36,6 +36,8 @@ struct FiveBandDynamicEQView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    @Environment(\.etGraphOnly) private var graphOnly
+
     /// 選んでいるバンド。web 版の既定も Band 3（js:26 の currentBandIndex = 2）。
     @State private var band = 2
 
@@ -68,10 +70,16 @@ struct FiveBandDynamicEQView: View {
                                    lowHz: Self.lowHz, highHz: Self.highHz,
                                    bandCount: Self.bandCount)
 
-            bandPicker(bands: bands)
+            // **畳んだら札も消す。**畳んだ図は allowsHitTesting(false) で押せない
+            // （EffectCardView の畳んだ図）ので、押せない札を残しても場所を取るだけ。
+            if !graphOnly {
+                bandPicker(bands: bands)
 
-            bandParameters
+                bandParameters
+            }
         }
+        // 畳むとこの View ごと消えるので、選んでいるバンドは外に覚えておく。
+        .etRemembers($band, key: "band", node: node.id)
     }
 
     // MARK: 曲線

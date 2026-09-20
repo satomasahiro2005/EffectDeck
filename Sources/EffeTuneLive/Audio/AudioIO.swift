@@ -372,6 +372,7 @@ final class AudioIO: ObservableObject {
             // np は NowPlaying を止めているか（-ETNoNowPlaying 1）。
             let line = "session out=\(outs) rsp=\(session.routeSharingPolicy.rawValue) np=\(NowPlaying.mode.rawValue)"
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             refreshRoute()
         } catch {
@@ -434,33 +435,32 @@ final class AudioIO: ObservableObject {
                 _ = ETLinkReceiver.shared.readInterleaved(state.interleaved, frames: UInt32(n))
             }
 
-            // 2. プレーナへ並べ替える。
-            //    EffeTune のカーネルは offset = channel * frame_count で読む。
-            let p = state.planar
-            let s = state.interleaved
-            p.update(repeating: 0, count: n * channels)
-            for i in 0..<n {
-                p[i]     = s[i * 2]
-                p[n + i] = s[i * 2 + 1]
-            }
-
-            ETPreviewTone_Render(p, UInt32(n), UInt32(channels), state.sampleRate)
-
-            // 3. 無音が続いていたら鎖を通さない。
+            // 2. 無音が続いていたら鎖を通さない。
             //    無音に何を掛けても無音なので、聞こえ方は変わらない。
             //    セッションは手放さない。手放すと出力先が戻ってしまう。
+            //
+            //    **ピークはインターリーブから直に取る。**前はプレーナへ写して
+            //    トーンを足したあとに走査していたが、それだと休んでいる間も
+            //    0 埋めとデインターリーブを先に払うことになる。入力は常に L/R の
+            //    2ch なので、s の 2n サンプルから同じ値が出る。
+            let s = state.interleaved
             var inPeak: Float = 0
             for i in 0..<(n * 2) {
-                let a = abs(p[i])
+                let a = abs(s[i])
                 if a > inPeak { inPeak = a }
             }
-            let awake = state.gate.update(peak: inPeak, seconds: Double(n) / state.sampleRate)
+            // ゲートは毎回通す。silentFor を溜めているのがこれ。
+            //
+            // **トーンはゲートと論理和にする。**前はプレーナに足したあとで走査して
+            // いたのでトーンがゲートを起こしていた。同じ形を保たないと、図を触って
+            // いるあいだ awake が偽のまま鎖を飛ばすので、**トーンが素のまま出る**。
+            // あれは鎖を通った音で EQ の効きを聴く道具なので、それでは意味が消える。
+            let gated = state.gate.update(peak: inPeak, seconds: Double(n) / state.sampleRate)
+            let awake = gated || ETPreviewTone_Active(state.sampleRate) != 0
             state.resting = !awake
 
-            // 4. 本線のバスへ書いて、鎖を通して、読み戻す。
-            //    バスの置き場は engine が持っているので、そこへ直接書く。
+            // 3. 鎖の差し替えは休んでいても通す。
             //
-            //    **鎖の差し替えは休んでいても通す。**
             //    configure を呼ぶのは ETPipeline_Process の中だけで、その Process は
             //    下の `if awake` の内側にある。無音で PowerGate が休むと Process ごと
             //    飛ぶので、**無音の間に足したエフェクトが永久に反映されない。**
@@ -469,6 +469,42 @@ final class AudioIO: ObservableObject {
             //    溜まっていなければ atomic を 1 回読むだけで戻る。
             ETPipeline_ApplyPending()
 
+            // 4. 休んでいて、入力が**厳密に**無音なら、ここで抜ける。
+            //
+            //    休んでいる間も、下の 0 埋め・デインターリーブ・トーン・出力への
+            //    1 サンプルずつの書き込みは全部走っていた。出力は全部ゼロなのに、
+            //    ゼロを 1 サンプルずつ計算して書いていたことになる。
+            //
+            //    **閾値以下でも 0 でなければ抜けない。**無音の閾値は
+            //    Preferences.swift の silenceRange で -20dB まで上げられる。
+            //    そこまで上げた人にとって -20dB 以下の弱音は今は素通しで聴こえて
+            //    いるので、ピークで抜けるとその弱音が丸ごと消える。
+            //    相手が居ないときは readInterleaved が全域を 0 で埋めるので
+            //    （LocalLink.m:517 と :526）、待機中はここに必ず入る。
+            if !awake, inPeak == 0 {
+                for buffer in abl {
+                    if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+                }
+                state.meter = 0
+                state.applied = 0
+                state.pipeStatus = 0
+                state.elapsed += Double(n) / state.sampleRate
+                return noErr
+            }
+
+            // 5. プレーナへ並べ替える。
+            //    EffeTune のカーネルは offset = channel * frame_count で読む。
+            let p = state.planar
+            p.update(repeating: 0, count: n * channels)
+            for i in 0..<n {
+                p[i]     = s[i * 2]
+                p[n + i] = s[i * 2 + 1]
+            }
+
+            ETPreviewTone_Render(p, UInt32(n), UInt32(channels), state.sampleRate)
+
+            // 6. 本線のバスへ書いて、鎖を通して、読み戻す。
+            //    バスの置き場は engine が持っているので、そこへ直接書く。
             if awake, let main = ETPipeline_MainBus() {
                 if f > 1, let rs = state.resampler {
                     ETResampler_Up(rs, p, main, UInt32(n))
@@ -490,7 +526,7 @@ final class AudioIO: ObservableObject {
             }
             state.elapsed += Double(n) / state.sampleRate
 
-            // 5. 出力へ書く
+            // 7. 出力へ書く
             var peak: Float = 0
             var sourceChannel = 0
             for buffer in abl {
@@ -615,6 +651,7 @@ final class AudioIO: ObservableObject {
             // ログの口が無い。USB を挿さないと idevicesyslog が使えず、
             // ルートの取り回しを測れなかった。標準出力へ出しておけば
             // devicectl device process launch --console で無線でも読める。
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
         }
 
@@ -657,6 +694,7 @@ final class AudioIO: ObservableObject {
                               nowPeer ? "up" : "down", up,
                               ETLinkReceiver.shared.receivedFrames)
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             hasPeer = nowPeer
         }
@@ -764,7 +802,17 @@ final class AudioIO: ObservableObject {
     /// 抜ける唯一の手だから（escapeVirtualDevice の頭）。
     ///
     /// 失敗しても投げない。固定できなくても鳴りはする。
-    private func pinInputToBuiltInMic(_ session: AVAudioSession) {
+    ///
+    /// - Parameter route: 判定に使う**実経路**。渡すと、入力が既に内蔵マイクなら
+    ///   何もしない。nil（start() から呼ぶとき）は必ず撃つ。
+    ///
+    ///   **`preferredInput` で判定してはいけない。**あれは「こちらが出した希望」で、
+    ///   希望は内蔵マイクのまま実入力が Bluetooth へ移る形が起こり得る。
+    ///   まさにそれが起きたから下の撃ち直し（refreshRoute）が足されているので、
+    ///   希望を見て早期 return すると、撃ち直しが要る回だけ撃たなくなる。
+    private func pinInputToBuiltInMic(_ session: AVAudioSession,
+                                      route: AVAudioSessionRouteDescription? = nil) {
+        if let route, route.inputs.contains(where: { $0.portType == .builtInMic }) { return }
         guard let mic = session.availableInputs?.first(where: { $0.portType == .builtInMic })
         else { return }
         do {
@@ -801,8 +849,9 @@ final class AudioIO: ObservableObject {
         min(16, max(2, actualOutputChannels))
     }
 
-    private func escapeVirtualDevice(_ session: AVAudioSession) {
-        let outs = session.currentRoute.outputs
+    private func escapeVirtualDevice(_ session: AVAudioSession,
+                                     route: AVAudioSessionRouteDescription) {
+        let outs = route.outputs
         let onVirtual = outs.contains {
             $0.portName.localizedCaseInsensitiveContains(ET_NAME_STEM)
         }
@@ -825,6 +874,7 @@ final class AudioIO: ObservableObject {
                 reportedGaveUp = true
                 let line = "escape 打ち止め attempts=\(escape.attempts) route=\(outs.map(\.portName).joined(separator: ","))"
                 log.notice("\(line, privacy: .public)")
+                ETLogTap.record(line)
                 if ETConsoleLog.on { print(line) }
             }
         }
@@ -836,11 +886,13 @@ final class AudioIO: ObservableObject {
             try session.overrideOutputAudioPort(port)
             let line = "escape \(reason) -> \(port == .speaker ? "speaker" : "none") route=\(session.currentRoute.outputs.map(\.portName).joined(separator: ","))"
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
         } catch {
             let ns = error as NSError
             let line = "escape 失敗 \(reason) code=\(ns.code) \(ns.domain)"
             log.error("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
         }
     }
@@ -858,12 +910,17 @@ final class AudioIO: ObservableObject {
         // （他のアプリがルートピッカーで EffeTune を選んだときなど）
         // そのときも当て直す。
         let sess = AVAudioSession.sharedInstance()
-        if running { escapeVirtualDevice(sess) }
+        // **経路の問い合わせは 1 回にまとめる。**前は escapeVirtualDevice と
+        // この下とで別々に currentRoute を引いていた（tick は 3.3Hz なので
+        // 秒 6.7 回）。同じ 1 回から作れば、読む値も食い違わない。
+        let cur = sess.currentRoute
+        if running { escapeVirtualDevice(sess, route: cur) }
         // **経路が変わるたびに入力を固定し直す。**start() のときだけでは、
         // あとから Bluetooth を繋いだ回に入力がそちらへ移り、HFP に落ちる。
-        if running { pinInputToBuiltInMic(sess) }
+        // 実経路が既に内蔵マイクなら撃たない（平常時は setPreferredInput ゼロ）。
+        if running { pinInputToBuiltInMic(sess, route: cur) }
 
-        let outs = sess.currentRoute.outputs
+        let outs = cur.outputs
         let names = outs.map(\.portName).joined(separator: ", ")
 
         let nowRoute = outs.isEmpty ? "no output" : names
@@ -880,6 +937,7 @@ final class AudioIO: ObservableObject {
                               overriding ? "true" : "false",
                               ETLinkReceiver.shared.receivedFrames)
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             route = nowRoute
         }

@@ -409,7 +409,12 @@ struct RoomEQView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                ValueBox(text: text)
+                // 打ち込みも受ける。**下書きに text を渡さない**——"2.00 oct" のような
+                // 単位付きの字は Double(_:) が nil を返して黙って捨てられる。
+                ETValueField(text: text, label: title,
+                             editText: { ETNumberText.draft(value.wrappedValue) }) { typed in
+                    value.wrappedValue = min(max(typed, range.lowerBound), range.upperBound)
+                }
             }
             if logarithmic {
                 ETLogSlider(value: value, range: range)

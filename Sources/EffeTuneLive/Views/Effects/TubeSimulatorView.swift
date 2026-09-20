@@ -930,7 +930,11 @@ private struct TubeSimulatorSafetyTrimRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                ValueBox(text: String(format: "%.1f dB", shown))
+                ETValueField(text: String(format: "%.1f dB", shown),
+                             label: "Output Safety Trim (dB)",
+                             editText: { ETNumberText.draft(shown) }) { typed in
+                    set(min(max((typed * 10).rounded() / 10, -96), 0))
+                }
             }
             Slider(value: Binding(get: { shown }, set: { set(($0 * 10).rounded() / 10) }),
                    in: -96...0,

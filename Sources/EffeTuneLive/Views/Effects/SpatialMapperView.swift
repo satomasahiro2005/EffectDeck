@@ -38,8 +38,11 @@ struct SpatialMapperView: View {
                             set: { dsp.setValue(Float($0), at: index, offset: offset) }
                         ), in: -1...1, step: 0.01)
                         .accessibilityLabel("\(component) input \(input + 1) to output \(output + 1)")
-                        Text(String(format: "%+.2f", node.values[offset]))
-                            .monospacedDigit().font(.caption).frame(width: 44)
+                        ETValueField(text: String(format: "%+.2f", node.values[offset]),
+                                     label: "\(component) input \(input + 1)",
+                                     editText: { ETNumberText.draft(Double(node.values[offset])) }) { typed in
+                            dsp.setValue(Float(min(max(typed, -1), 1)), at: index, offset: offset)
+                        }
                     }
                 }
             }

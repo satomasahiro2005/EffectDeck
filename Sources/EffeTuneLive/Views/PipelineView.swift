@@ -59,6 +59,10 @@ struct PipelineView: View {
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
     @State private var confirmingReset = false
     @State private var pluginError: String?
+
+    /// 切ってある Section を消そうとしている行。消すと配下がその場で鳴り出すので、
+    /// 一度だけ確かめる。配下の ON/OFF は書き換えない（about がそう約束している）。
+    @State private var confirmingSectionRemoval: UUID?
     /// 開いている段。中身は EffeTuneDSP が持っている（足す・入れ替えるを握っているのが
     /// あちらで、端末に残すのも persist() なので）。Section もここに入り、
     /// その場合は自分のパラメータではなく配下の行が消える（下の rows）。
@@ -118,6 +122,9 @@ struct PipelineView: View {
     /// **図はこちらでは動かさない**（ETDisplayPump が面に合わせて汲む）。
     private let slow = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
 
+    /// 背景に回ったら図を汲むのをやめる。前例は GraphCanvas と PitchMeterView。
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         NavigationStack {
             chainList
@@ -158,7 +165,7 @@ struct PipelineView: View {
                         guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                             instanceID: instanceID) else { return }
                         dsp.addExternal(id: entry.id, instanceID: instanceID,
-                                        name: entry.title,
+                                        name: entry.name,
                                         category: "Audio Units",
                                         externalIndex: externalIndex, at: insertAt)
                         ETAUHost.shared.create(entry, instanceID: instanceID)
@@ -210,6 +217,22 @@ struct PipelineView: View {
                 get: { pluginError != nil }, set: { if !$0 { pluginError = nil } })) {
                     Button("OK", role: .cancel) { pluginError = nil }
                 } message: { Text(pluginError ?? "Unknown error") }
+            // 切ってある Section を外すと、止まっていた段がその場で鳴り出す。
+            // 配下の ON/OFF は書き換えないので（about が保つと言っている）、
+            // 起きることを先に出しておく。
+            .confirmationDialog("Remove this section?",
+                                isPresented: Binding(
+                                    get: { confirmingSectionRemoval != nil },
+                                    set: { if !$0 { confirmingSectionRemoval = nil } }),
+                                titleVisibility: .visible) {
+                Button("Remove", role: .destructive) {
+                    if let id = confirmingSectionRemoval { removeConfirmed(id) }
+                    confirmingSectionRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { confirmingSectionRemoval = nil }
+            } message: {
+                Text("The section is off, so the effects inside it are silent. Removing it lets them play again. Each effect keeps its own on/off.")
+            }
             .onAppear {
                 // **案内の画面は持たない。**
                 // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
@@ -244,6 +267,32 @@ struct PipelineView: View {
         // DSP が出した 60Hz の枠も半分捨てていた（DisplayPump.swift の頭）。
         .onAppear { ETDisplayPump.shared.start { io.pollTelemetry() } }
         .onDisappear { ETDisplayPump.shared.stop() }
+        // **背景に回ったら汲むのをやめる。**
+        // stop を呼ぶ口は onDisappear だけだったが、これは根のビューなので
+        // 背景では来ない。CADisplayLink が残り、DSP 側のテレメトリ速度も 60 の
+        // まま夜通し続く（誰も読まない枠を 1 ノードあたり 60 回/秒書く）。
+        //
+        // **止めるのは `.background` だけ。**`.inactive` で止めると、
+        // コントロールセンターを引き下ろすたびに link を作り直し、速度を
+        // 60↔0 で往復させる。この製品の導線がまさにコントロールセンター。
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { ETDisplayPump.shared.stop() }
+            else { ETDisplayPump.shared.start { io.pollTelemetry() } }
+        }
+        // **共有シートや「このアプリで開く」から来たファイルを受ける。**
+        // 宣言（Info.plist の CFBundleDocumentTypes）だけ足すと、候補には出るのに
+        // 押しても何も起きない。受け口はここ 1 か所だけにしてある。
+        .onOpenURL { url in
+            switch ETInbox.receive(url) {
+            case .ir: sheet = .ir
+            case .unsupported: break
+            }
+        }
+        // 鎖から外れた段ぶんの「畳んでも消えない選択」を捨てる。
+        // MatrixRouting が MatrixView の onAppear でやっているのと同じ掃除。
+        .onChange(of: dsp.chain.count) { _, _ in
+            ETCardSelection.shared.prune(keeping: dsp.chain.map(\.id))
+        }
         // io を丸ごと観測せず、要る値だけを写す。
         .onReceive(io.$running) { running = $0 }
         .onReceive(io.$hasPeer) { hasPeer = $0 }
@@ -474,7 +523,7 @@ struct PipelineView: View {
             let instanceID = UUID().uuidString
             guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                 instanceID: instanceID) else { return false }
-            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.title,
+            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
                             category: "Audio Units", externalIndex: externalIndex,
                             at: index)
             ETAUHost.shared.create(entry, instanceID: instanceID)
@@ -650,16 +699,19 @@ struct PipelineView: View {
         // 判定は縦だけ見る。鎖は 1 列なので横は絵の都合でしかない。
         let moving = anchorRect.offsetBy(dx: 0, dy: dragShift.height)
 
+        // **越える量は「低い方の半分」。**相手の高さの半分にしていたので、
+        // 小さいカードを大きいカード（図付きは 260〜360pt）の上へ動かすとき、
+        // 130〜180pt も運ばないと入れ替わらなかった。自分の半分で足りる。
         if at > 0, let above = rowRects[visible[at - 1].node.id] {
             let overlap = moving.intersection(above).height
-            if moving.minY < above.minY || overlap > above.height / 2 {
+            if moving.minY < above.minY || overlap > min(moving.height, above.height) / 2 {
                 swap(at, to: at - 1)
                 return
             }
         }
         if at < visible.count - 1, let below = rowRects[visible[at + 1].node.id] {
             let overlap = moving.intersection(below).height
-            if moving.maxY > below.maxY || overlap > below.height / 2 {
+            if moving.maxY > below.maxY || overlap > min(moving.height, below.height) / 2 {
                 // **組の最後から下へ出ようとしたら、組を閉じる。**
                 // そのまま入れ替えると、次の組の見出しを飛び越えて
                 // 今度はそちらの中に入るだけで、外に出ることができない。
@@ -689,10 +741,24 @@ struct PipelineView: View {
             let prev = dsp.chain[index - 1]
             if prev.isSection && ETSection.isUnnamed(prev.sectionName) { return }
         }
+        let was = dsp.chain.count
         withAnimation(.snappy(duration: 0.22)) {
             dsp.add(ETSection.spec, at: index)
+            // **閉じる印は開かない。**add は足したものを expanded に入れる（自分の
+            // パラメータを出すため）が、これは編集するものではない。しかも掃除は
+            // 開いている行に触らないので、開いたままだと自分が掃かれない。
+            if dsp.chain.indices.contains(index) {
+                dsp.expanded.remove(dsp.chain[index].id)
+            }
+            // 挿した瞬間から何も閉じていないことがある（組の唯一の配下を出した
+            // とき）。そのときはこの掃除が挿した本人を取り消すので、鎖は変わらない。
+            dsp.sweepDeadSections()
         }
-        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        // **打ち消されたら振動は出さない。**指に成功を返しておいて何も起きないと、
+        // 効かない操作を繰り返させることになる。
+        if dsp.chain.count > was {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        }
     }
 
     /// 入れ替える。**基準（anchorRect）には手を触れない。**
@@ -834,30 +900,47 @@ struct PipelineView: View {
     /// 行が 1 つ減るだけなので、数える場所が 1 つになり、ずれようが無い。
     /// 払える範囲と全部払い切ったときの動きは .onDelete と同じ。
     ///
-    /// **畳んでいる Section は配下ごと消す。** move(_:to:) が配下を連れて動かすのと
-    /// 同じ扱いにしてある。揃えないと壊れる:
+    /// **Section も行 1 つだけ消す。配下は連れない。**
+    ///
+    /// 畳んでいる Section は配下ごと消していた。理由として書いてあったのは
+    /// List の都合で、こういう形だった:
     ///
     ///   鎖  [A, B, Section(畳), C, D, E]   画面は 3 行（配下は rows が落とす）
     ///   Section だけを外すと隠す理由が消えるので、同じ更新で C D E が現れる。
     ///   ForEach に渡す配列が削除の最中に 3 から 5 へ**増える**。
-    ///   List は消える行を 1 つ前提に対応を組み直すので、そこで食い違い、
-    ///   関係ない位置に区切り線が残り、それより下の行がスワイプを受けなくなる。
+    ///   List は消える行を 1 つ前提に対応を組み直すので、そこで食い違う。
     ///
-    /// 上流は Section を畳んでも行が残る（畳むのはパラメータの表示だけ）ので、
-    /// この食い違いが起きず、Section だけを消してよい
+    /// **その理由はもう無い。**鎖は List ではなく ScrollView + VStack（chainList の頭）。
+    /// そして連れて行く条件（`!expanded.contains(id)`）は rows が隠す条件と
+    /// 食い違っていた。rows:706-708 は**有効な無名 Section を隠す対象から外して
+    /// いる**のに、こちらにその除外が無い。つまり leaveGroup が置いた無名 Section の
+    /// 行を払うと、**画面に出ている段が消えていた。**
+    ///
+    /// ⋯ の Remove（EffectCardView）は元から 1 行しか消しておらず、同じ「消す」が
+    /// 2 通りあった。上流も Section だけを消す
     /// （js/ui/pipeline/pipeline-selection-manager.js:93 の deleteSelectedPlugins）。
-    /// こちらは幅が無くて行ごと隠しているため、同じにはできない。
     ///
-    /// 開いている Section は行 1 つだけ消す。配下は見えているので、
-    /// 消えたことにその場で気づける。
+    /// **move(_:to:) は配下を連れたまま残す。**見えていないものを置き去りにする
+    /// 重みが、消すのと動かすのとで違う。動かすのは戻せるが、消すのは戻せない。
+    ///
+    /// 切ってある Section を消すと、止まっていた配下がその場で鳴り出す。
+    /// 配下の ON/OFF は書き換えない（Section の about が「各段は自分の ON/OFF を
+    /// 保つ」と約束している）。代わりに消す前に一言出す。
     private func remove(_ id: UUID) {
         guard let i = dsp.chain.firstIndex(where: { $0.id == id }) else { return }
-        var doomed = IndexSet(integer: i)
-        if dsp.chain[i].isSection && !expanded.contains(id) {
-            doomed.formUnion(IndexSet(integersIn:
-                ETSection.range(after: i, types: dsp.chain.map(\.spec.type))))
+        // 切ってある Section で、止めている段が在るときだけ確かめる。
+        if dsp.chain[i].isSection, !dsp.chain[i].enabled,
+           !ETSection.range(after: i, types: dsp.chain.map(\.spec.type)).isEmpty {
+            confirmingSectionRemoval = id
+            return
         }
-        dsp.remove(at: doomed)
+        dsp.remove(at: IndexSet(integer: i))
+    }
+
+    /// 確かめたあとに消す。配下は連れない。
+    private func removeConfirmed(_ id: UUID) {
+        guard let i = dsp.chain.firstIndex(where: { $0.id == id }) else { return }
+        dsp.remove(at: IndexSet(integer: i))
     }
 
     /// 長押しで動かしたときの置き換え。

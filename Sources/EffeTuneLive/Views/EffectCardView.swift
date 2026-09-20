@@ -157,7 +157,7 @@ struct EffectCardView: View {
                     // 折り返さない。幅が足りないときは縮める。
                     // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
                     // 2 行に折れていた。
-                    Text(node.spec.name)
+                    Text(displayName)
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -335,11 +335,31 @@ struct EffectCardView: View {
         node.isExternal || !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
+    /// 1 行目に出す名前。
+    ///
+    /// 古い鎖は AU の名前に "Vendor: " が付いている（足すときに entry.title を渡していた
+    /// 頃のもの）。作者は 2 行目へ移したので二重になる。**作者名と一致する頭だけ**落とす。
+    /// 端末から AU を消すと作者が空になり、そのときは落とせないまま出る。
+    private var displayName: String {
+        guard let externalID = node.externalID else { return node.spec.name }
+        let author = ETPluginLabel.author(externalID: externalID)
+        guard !author.isEmpty, node.spec.name.hasPrefix(author + ": ") else { return node.spec.name }
+        return String(node.spec.name.dropFirst(author.count + 2))
+    }
+
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
     ///
     /// 開いているときは同じ値がすぐ下に出ているので、分類の方を出す。
     /// そうしないと、どのエフェクトなのかを言う行が頭から消える。
     private var summary: String {
+        // 外から来たものは、分類の隣に作者を出す。
+        // AU の作者は取れていたのに、名前の接頭辞（"Vendor: Name"）として 1 行目へ
+        // 混ざっていた。名前欄は lineLimit(1) なので、長いと肝心のプラグイン名が
+        // 末尾から落ちる。作者はこちらへ移した。
+        if let externalID = node.externalID {
+            return ETPluginLabel.detail(format: node.spec.category.categoryLabel,
+                                        author: ETPluginLabel.author(externalID: externalID))
+        }
         if isExpanded && hasBody { return node.spec.category.categoryLabel }
         // 畳んだ状態で図を出すものは、その下に図が来る。
         // 字でも分類名しか出ないので、分類を出しておく（重複しない）。
@@ -512,9 +532,15 @@ private struct ExternalProcessorView: View {
                             Text(parameter.displayName)
                                 .font(.footnote)
                             Spacer()
-                            Text(String(format: "%.3g", parameter.value))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                            // `%.3g` は 1000 を `1e+03` にするので使わない。
+                            // 打ち込みもできる欄にする（読み取り専用の Text だった）。
+                            ETValueField(text: ETNumberText.plain(Double(parameter.value)),
+                                         label: parameter.displayName,
+                                         editText: { ETNumberText.draft(Double(parameter.value)) }) { typed in
+                                let lo = Double(parameter.minValue)
+                                let hi = Double(parameter.maxValue)
+                                au.setParameter(parameter, value: min(max(typed, lo), hi))
+                            }
                         }
                         Slider(value: Binding(
                             get: { Double(parameter.value) },

@@ -101,6 +101,8 @@ struct EarphoneCableSimView: View {
 
     /// 指で触っている周波数。掴んで動かす印は web 版にも無いので、読むだけ。
     @State private var probeHz: Double?
+    @Environment(\.etGraphOnly) private var graphOnly
+
     /// 共鳴の何番目を触っているか。ParameterRow のバンドタブと同じ考え方。
     @State private var slot = 0
 
@@ -127,9 +129,13 @@ struct EarphoneCableSimView: View {
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
             }
 
-            resonanceSection
+            // **畳んだら札も消す。**畳んだ図は allowsHitTesting(false) で押せない
+            // （EffectCardView の畳んだ図）ので、押せない札を残しても場所を取るだけ。
+            if !graphOnly { resonanceSection }
         }
         .onAppear { seedResonancesIfNeeded() }
+        // 畳むとこの View ごと消えるので、触っている共鳴は外に覚えておく。
+        .etRemembers($slot, key: "slot", node: node.id)
     }
 
     /// まだ何も入っていないときだけ埋める。
@@ -399,7 +405,12 @@ struct EarphoneCableSimView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     Spacer(minLength: 4)
-                    ValueBox(text: param.format(current))
+                    ETValueField(text: param.format(current), label: param.label,
+                                 editText: { ETNumberText.draft(Double(current)) }) { typed in
+                        let clamped = min(max(Float(typed), lower), upper)
+                        dsp.setValue(isInteger ? clamped.rounded() : clamped,
+                                     at: index, offset: offset)
+                    }
                 }
                 Slider(
                     value: Binding(

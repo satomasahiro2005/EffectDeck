@@ -61,6 +61,185 @@ struct ValueBox: View {
     }
 }
 
+/// 打ち込める数値欄。ValueBox の姉妹で、見た目は同じ。
+///
+/// **ValueBox は作り替えない。**あちらは打ち込めては困るものにも使われている
+/// （NoteSpectrogram の音名。上流も note_spectrogram.js で readOnly にしている）。
+///
+/// 形は ParameterRow.valueField に倣う。Text に onTapGesture を足す形にしないのは、
+/// ボタンでもテキスト欄でもない物には VoiceOver も Voice Control も届かないから。
+struct ETValueField: View {
+    /// 画面に出す字。編集していない間はこれを出す。単位を付けてよい。
+    let text: String
+    /// 読み上げ用の名前。
+    var label: String = ""
+    /// 打ち込みを始めるときの下書き。
+    ///
+    /// **画面の字をそのまま渡さないこと。**"1.50 k" や "2.00 oct" のような字は
+    /// Double(_:) が nil を返すので、何も打たずに外すと黙って捨てられる。
+    /// ここには数だけを渡す。
+    let editText: () -> String
+    /// 打たれた数。**挟むのは受け側の仕事**（範囲はここでは知らない）。
+    let commit: (Double) -> Void
+
+    @State private var draft = ""
+    @State private var editing = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(label, text: Binding(
+            get: { editing ? draft : text },
+            set: { draft = $0 }))
+            .keyboardType(.numbersAndPunctuation)
+            .multilineTextAlignment(.center)
+            .font(.system(size: 13, design: .monospaced))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .focused($focused)
+            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
+                .stroke(.tint, lineWidth: editing ? 1 : 0))
+            .submitLabel(.done)
+            .onSubmit { apply() }
+            .onChange(of: focused) { _, now in
+                if now {
+                    draft = editText()
+                    editing = true
+                } else if editing {
+                    // 他を触ってキーボードが引っ込んだときも確定させる。
+                    // これが無いと、打った値が渡らないまま消える。
+                    apply()
+                }
+            }
+            .accessibilityLabel(label)
+            .accessibilityValue(text)
+    }
+
+    private func apply() {
+        editing = false
+        focused = false
+        guard let typed = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
+        commit(typed)
+    }
+}
+
+/// カードを畳んでも消えない、画面だけの選択。
+///
+/// 図の表示の切り替え（Frequency Scale、バンドのタブ、表示の種類）は音に関係しないので
+/// Node.values に席が無い。@State に置くとカードを畳んだ時点で View ごと消えて
+/// 既定へ戻るため、開き直すと選び直しになる。鍵は Node.id。
+///
+/// **音には一切関係しない。**席ができるまでの仮置きで、端末にも残さない。
+/// 前例は MatrixRouting（MatrixView.swift）。あれは経路の表で型が違うので別に置く。
+@MainActor
+final class ETCardSelection {
+
+    static let shared = ETCardSelection()
+
+    /// 中身は文字列で持つ。Int も Bool も、文字を raw に持つ enum も同じ器に入る。
+    private var byNode: [UUID: [String: String]] = [:]
+
+    private init() {}
+
+    func raw(_ key: String, for id: UUID) -> String? { byNode[id]?[key] }
+
+    func set(_ raw: String, key: String, for id: UUID) {
+        byNode[id, default: [:]][key] = raw
+    }
+
+    /// 鎖から外れた段のぶんを捨てる。
+    func prune(keeping ids: [UUID]) {
+        let live = Set(ids)
+        byNode = byNode.filter { live.contains($0.key) }
+    }
+}
+
+extension View {
+    /// **畳んでも消えない選択。**@State を ETCardSelection と同期させる。
+    ///
+    /// カードは畳むと View ごと木から消える（EffectCardView の段 3）。人の操作では
+    /// 開き直すときに必ず段 3 を通るので、@State だけでは毎回既定へ戻る。
+    /// 音に関係しない表示の選択（バンドのタブ、縦軸、棒表示）はここで覚える。
+    ///
+    /// 既定値は今の @State の値をそのまま使う（置き場に無いときは動かさない）。
+    func etRemembers(_ value: Binding<Int>, key: String, node id: UUID) -> some View {
+        self
+            .onAppear {
+                if let s = ETCardSelection.shared.raw(key, for: id), let v = Int(s) {
+                    value.wrappedValue = v
+                }
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                ETCardSelection.shared.set(String(v), key: key, for: id)
+            }
+    }
+
+    func etRemembers(_ value: Binding<Bool>, key: String, node id: UUID) -> some View {
+        self
+            .onAppear {
+                if let s = ETCardSelection.shared.raw(key, for: id) {
+                    value.wrappedValue = s == "1"
+                }
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                ETCardSelection.shared.set(v ? "1" : "0", key: key, for: id)
+            }
+    }
+
+    func etRemembers<T>(_ value: Binding<T>, key: String, node id: UUID) -> some View
+    where T: RawRepresentable & Equatable, T.RawValue == String {
+        self
+            .onAppear {
+                if let s = ETCardSelection.shared.raw(key, for: id), let v = T(rawValue: s) {
+                    value.wrappedValue = v
+                }
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                ETCardSelection.shared.set(v.rawValue, key: key, for: id)
+            }
+    }
+}
+
+/// カードとピッカーで、外から来たものの format と作者を同じ形で出す。
+@MainActor
+enum ETPluginLabel {
+    /// "Audio Units · Vendor" の形。作者が空なら format だけ。
+    static func detail(format: String, author: String) -> String {
+        let a = author.trimmingCharacters(in: .whitespaces)
+        return a.isEmpty ? format : format + " · " + a
+    }
+
+    /// AU の作者。externalID は "type:subtype:manufacturer" で、ETAUHost の entry を引ける。
+    /// 取れないときは空（端末から AU を消した後など）。
+    static func author(externalID: String) -> String {
+        ETAUHost.shared.entry(id: externalID)?.manufacturer ?? ""
+    }
+}
+
+/// 数を人が読む形にする。**指数表記にしない。**
+///
+/// `%.3g` は有効桁 3 桁を超えると指数に落ちるので、1000 が `1e+03` になる。
+/// 可聴域の周波数（20〜20000）がまるごとそれに当たる。整数は厳密値で出す。
+enum ETNumberText {
+    static func plain(_ v: Double) -> String {
+        guard v.isFinite else { return "—" }
+        if v == v.rounded() && abs(v) < 1e9 { return String(Int(v)) }
+        let a = abs(v)
+        if a >= 100 { return String(format: "%.0f", v) }
+        if a >= 10 { return String(format: "%.1f", v) }
+        if a >= 0.1 { return String(format: "%.2f", v) }
+        // ここまで小さいと 2 桁では 0.00 になる。桁を足す。
+        return String(format: "%.4f", v)
+    }
+
+    /// 打ち込みの下書き用。単位も丸めも付けない。
+    static func draft(_ v: Double) -> String {
+        guard v.isFinite else { return "" }
+        return v == v.rounded() && abs(v) < 1e9 ? String(Int(v)) : String(format: "%g", v)
+    }
+}
+
 /// エフェクト 1 個ぶんの枠。
 ///
 /// これ自身が器になるので、丸みを数値で持つのはここだけ。
@@ -122,6 +301,9 @@ extension String {
         switch self {
         case "eq":   return "EQ"
         case "lofi": return "Lo-Fi"
+        // control に居るのは Section だけで、音を触らない。効果と同じ顔で
+        // 「Control」と出ると効果の一種に見えるので、何をするものかで呼ぶ。
+        case "control": return "Grouping"
         default:     return prefix(1).uppercased() + dropFirst()
         }
     }

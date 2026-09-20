@@ -113,6 +113,46 @@ enum ETSection {
         return out
     }
 
+    /// 何も閉じていない無名 Section。
+    ///
+    /// 無名 Section は「組を閉じる」ためだけに置く代用品（isUnnamed を読むこと）。
+    /// 閉じる相手が無ければ鎖に居る意味が無い。放っておくと leaveGroup を
+    /// 繰り返すだけで増え続ける。増える形は 2 つ:
+    ///
+    ///   1. 組の唯一の配下を出したとき。[S("A"), X] の X を出すと
+    ///      [S("A"), S(""), X] になり、S("A") は配下ゼロ、S("") は閉じる中身が無い。
+    ///   2. 同じ組から下の段から順に出したとき。後から挿した印が前の印を追い越し、
+    ///      末尾側の印は「既に組の外に居る段」の後ろに立って何も閉じなくなる。
+    ///
+    /// **切ってある無名 Section は候補に入れない。**名前が無くても配下は止まる
+    /// （gates は名前を見ない）。あれは飾りではなく本物の区切り。
+    ///
+    /// 返すのは**候補**。消してよいかは gates が変わらないことで最後に確かめる
+    /// （EffeTuneDSP.sweepDeadSections）。この関数だけで決めない。
+    static func redundantUnnamed(types: [String], names: [String], enabled: [Bool]) -> IndexSet {
+        precondition(types.count == names.count && types.count == enabled.count)
+        var dead = IndexSet()
+        var open = false      // 閉じるべき組が開いているか
+        var filled = false    // その組に配下が入ったか
+        for i in types.indices {
+            guard types[i] == type else {
+                if open { filled = true }
+                continue
+            }
+            if isUnnamed(names[i]) && enabled[i] {
+                // 後ろが Section だけなら、閉じる相手が居ても閉じる必要が無い。
+                let tail = (i + 1 ..< types.count).allSatisfy { types[$0] == type }
+                if !open || !filled || tail { dead.insert(i) }
+                open = false
+                filled = false
+            } else {
+                open = true
+                filled = false
+            }
+        }
+        return dead
+    }
+
     /// 畳んだときに隠す範囲。Section の次から、次の Section の手前まで。
     /// findSectionRange（pipeline-section-handler.js:250-268）は Section 自身を含む
     /// startIndex..<endIndex を返すが、こちらは配下だけを返す。

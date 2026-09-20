@@ -41,6 +41,12 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
 
     private var reportTimer: Timer?
 
+    /// 配送が止まったあと、少し待ってから送り手を落とすための札。
+    /// 系が停止と再開を短い間に往復させることが在るので、即座に落とさない。
+    private var senderStopWork: DispatchWorkItem?
+    /// 落とすまでの猶予。往復の隙間より長く、夜通し回り続けるより短い。
+    private static let senderStopGrace: TimeInterval = 2
+
     /// 終える。呼び出しの最中に落とさないよう次の回に回す。
     ///
     /// AudioServerPlugInRegisterMediaDeviceExtension に対になる解除が無いので、
@@ -339,6 +345,8 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         // 拡張は「作る・待つ」が全部禁じられている（ファイル/共有メモリ/bind すべて deny）ので、
         // App Group の共有リングもドライバ内のループ（出力→入力）も使えない。
         // 外へ繋ぐのは許されているので、そちら 1 本にした。
+        senderStopWork?.cancel()
+        senderStopWork = nil
         ETLinkSender.shared.start()
         EffeTuneDriver.shared.startCapture { planes, channels, frames, _ in
             ETLinkSender.shared.pushInterleaved(planes[0], frames: frames, channels: channels)
@@ -357,5 +365,20 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         reportTimer?.invalidate()
         reportTimer = nil
         EffeTuneDriver.shared.stopCapture()
+
+        // **送り手も止める。**ここは捕まえる側を外すだけで、送り手の 2ms タイマー
+        // （500 回/秒）は回り続けていた。落とすのは deactivateDevice と quit だけで、
+        // その 2 つが来ないまま配送が止まっている窓の長さには上限が無い。
+        //
+        // **即座には落とさない。**stop は _fd を閉じるので、受け手は切断として
+        // 扱い、再接続で溜め直し（SETTLE_FRAMES）と "no audio" の点滅を買う。
+        // 系が停止と再開を短い間に往復させる回では、それが毎回起きる。
+        senderStopWork?.cancel()
+        let work = DispatchWorkItem {
+            log.notice("配送が戻らないので送り手を止める")
+            ETLinkSender.shared.stop()
+        }
+        senderStopWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.senderStopGrace, execute: work)
     }
 }
