@@ -202,11 +202,18 @@ extension View {
 }
 
 /// カードとピッカーで、外から来たものの format と作者を同じ形で出す。
+@MainActor
 enum ETPluginLabel {
-    /// "AUv3 · Vendor" の形。作者が空なら format だけ。
+    /// "Audio Units · Vendor" の形。作者が空なら format だけ。
     static func detail(format: String, author: String) -> String {
         let a = author.trimmingCharacters(in: .whitespaces)
         return a.isEmpty ? format : format + " · " + a
+    }
+
+    /// AU の作者。externalID は "type:subtype:manufacturer" で、ETAUHost の entry を引ける。
+    /// 取れないときは空（端末から AU を消した後など）。
+    static func author(externalID: String) -> String {
+        ETAUHost.shared.entry(id: externalID)?.manufacturer ?? ""
     }
 }
 

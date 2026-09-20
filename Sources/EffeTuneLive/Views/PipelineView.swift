@@ -164,7 +164,7 @@ struct PipelineView: View {
                         guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                             instanceID: instanceID) else { return }
                         dsp.addExternal(id: entry.id, instanceID: instanceID,
-                                        name: entry.title,
+                                        name: entry.name,
                                         category: "Audio Units",
                                         externalIndex: externalIndex, at: insertAt)
                         ETAUHost.shared.create(entry, instanceID: instanceID)
@@ -488,7 +488,7 @@ struct PipelineView: View {
             let instanceID = UUID().uuidString
             guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                 instanceID: instanceID) else { return false }
-            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.title,
+            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
                             category: "Audio Units", externalIndex: externalIndex,
                             at: index)
             ETAUHost.shared.create(entry, instanceID: instanceID)
@@ -643,16 +643,19 @@ struct PipelineView: View {
         // 判定は縦だけ見る。鎖は 1 列なので横は絵の都合でしかない。
         let moving = anchorRect.offsetBy(dx: 0, dy: dragShift.height)
 
+        // **越える量は「低い方の半分」。**相手の高さの半分にしていたので、
+        // 小さいカードを大きいカード（図付きは 260〜360pt）の上へ動かすとき、
+        // 130〜180pt も運ばないと入れ替わらなかった。自分の半分で足りる。
         if at > 0, let above = rowRects[visible[at - 1].node.id] {
             let overlap = moving.intersection(above).height
-            if moving.minY < above.minY || overlap > above.height / 2 {
+            if moving.minY < above.minY || overlap > min(moving.height, above.height) / 2 {
                 swap(at, to: at - 1)
                 return
             }
         }
         if at < visible.count - 1, let below = rowRects[visible[at + 1].node.id] {
             let overlap = moving.intersection(below).height
-            if moving.maxY > below.maxY || overlap > below.height / 2 {
+            if moving.maxY > below.maxY || overlap > min(moving.height, below.height) / 2 {
                 // **組の最後から下へ出ようとしたら、組を閉じる。**
                 // そのまま入れ替えると、次の組の見出しを飛び越えて
                 // 今度はそちらの中に入るだけで、外に出ることができない。

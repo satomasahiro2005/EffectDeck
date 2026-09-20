@@ -129,6 +129,8 @@ struct FrequencyResponseGraph: View {
     /// 印を動かしたとき。(印の id, 周波数, dB)。両方が同時に動く。
     var onMarkerChanged: ((Int, Double, Double) -> Void)?
     var onMarkerSelected: ((Int) -> Void)?
+    /// 印から指を離したとき。**設計をやり直す型はここで 1 回だけ書く。**
+    var onMarkerReleased: ((Int) -> Void)?
 
     @State private var dragging: Int?
     @State private var dragged: ETFreqPoint?
@@ -142,7 +144,8 @@ struct FrequencyResponseGraph: View {
          caption: String? = nil,
          spectrumTap: UInt32? = nil,
          onMarkerChanged: ((Int, Double, Double) -> Void)? = nil,
-         onMarkerSelected: ((Int) -> Void)? = nil) {
+         onMarkerSelected: ((Int) -> Void)? = nil,
+         onMarkerReleased: ((Int) -> Void)? = nil) {
         self.curves = curves
         self.markers = markers
         self.frequencyRange = frequencyRange
@@ -153,6 +156,7 @@ struct FrequencyResponseGraph: View {
         self.spectrumTap = spectrumTap
         self.onMarkerChanged = onMarkerChanged
         self.onMarkerSelected = onMarkerSelected
+        self.onMarkerReleased = onMarkerReleased
     }
 
     var body: some View {
@@ -234,6 +238,9 @@ struct FrequencyResponseGraph: View {
                 onMarkerChanged?(id, v.x, v.y)
             }
             .onEnded { _ in
+                // **離した 1 回だけ知らせる。**掴んでいるあいだ毎フレーム書くと、
+                // 設計をやり直す型（FIR PEQ）では staging が連続して音が切れる。
+                if let id = dragging { onMarkerReleased?(id) }
                 dragging = nil
                 dragged = nil
             }

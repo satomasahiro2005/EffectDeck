@@ -24,8 +24,15 @@
 //
 //  --- 図 ---
 //  designer が応答の材料を持っている（BandFIRPEQDesign.Response、:225-246。
-//  10Hz〜40kHz を 512 点、BandFIRPEQDesigner.swift:571-586）。狙いと出来上がりの 2 本を
-//  そのまま引く。掴める印は置いていない。印を動かすと指の動きぶんだけ設計と送り込みが走る。
+//  10Hz〜40kHz を 512 点、BandFIRPEQDesigner.swift:571-586）。
+//
+//  **狙いはその場で引く。**latestDesign の応答しか見ていなかったので、つまみを触っても
+//  設計が終わるまで図が動かなかった。狙いは BandFIRPEQDesigner.magnitude(of:at:sampleRate:)
+//  で毎回引き、出来上がりは latestDesign の config が今の settings と一致するときだけ描く。
+//
+//  **掴める印を置いた。**ただし designer へ書くのは離した 1 回だけ。掴んでいるあいだは
+//  dragBands に控え、図はその控えで引く。毎フレーム書くと素通しが連続して音が切れる。
+//  ホイールが無いので Q は下のつまみのまま（5band も同じ割り切り）。
 
 import SwiftUI
 import Foundation
@@ -109,7 +116,7 @@ struct FiveBandFIRPEQView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let designer {
-                FiveBandFIRPEQPanel(designer: designer)
+                FiveBandFIRPEQPanel(designer: designer, tapId: node.tapId, nodeId: node.id)
             } else {
                 pendingNotice
             }
@@ -162,12 +169,19 @@ struct FiveBandFIRPEQView: View {
 private struct FiveBandFIRPEQPanel: View {
 
     @ObservedObject var designer: BandFIRPEQDesigner
+    /// 図に音を重ねるための番号。
+    let tapId: UInt32
+    /// 畳んでも消えない選択の鍵。
+    let nodeId: UUID
 
     /// 図だけ見る指定。カードを畳むと立つ（EffectCardView.swift:55）。
     @Environment(\.etGraphOnly) private var graphOnly
 
     /// 下の一枚に出している帯域。
     @State private var selected = 0
+
+    /// 印を掴んでいるあいだの控え。**離すまで designer には書かない。**
+    @State private var dragBands: [Int: BandFIRPEQBand] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -183,6 +197,8 @@ private struct FiveBandFIRPEQPanel: View {
                 bandPanel
             }
         }
+        // 畳むとこの View ごと消えるので、選んでいる帯域は外に覚えておく。
+        .etRemembers($selected, key: "band", node: nodeId)
     }
 
     // MARK: 図
@@ -190,28 +206,84 @@ private struct FiveBandFIRPEQPanel: View {
     private var graph: some View {
         FrequencyResponseGraph(
             curves: curves,
+            markers: markers,
             frequencyRange: 20...20000,
-            decibelRange: -24...24,
+            // **値域と軸を揃える。**打ち込みもドラッグも ±20 で挟むので、軸が ±24 だと
+            // 上下 4dB ぶん「掴んだのに動かない帯」ができる。5band も ±20（FiveBandPEQView）。
+            decibelRange: -20...20,
             decibelStep: 6,
             height: ETGraphMetrics.height,
-            caption: "Target (dashed) and realized, Level (dB) over Frequency (Hz)")
+            caption: "Drag a handle for frequency and gain. Target is dashed.",
+            // 他の PEQ と同じく、入っている音を図に重ねる。
+            spectrumTap: tapId,
+            onMarkerChanged: { slot, hz, db in
+                // **掴んでいるあいだは designer に書かない。**settings を 1 回書くと
+                // 150ms 後に staging が走り、そのあいだ鎖が素通しになる。
+                var b = shown(slot)
+                b.frequency = min(max(hz, 20), 20000)
+                b.gain = min(max(db, -20), 20)
+                dragBands[slot] = b
+            },
+            onMarkerSelected: { selected = $0 },
+            onMarkerReleased: { slot in
+                if let b = dragBands[slot] {
+                    // 周波数とゲインは**同じクロージャで**書く。別々に書くと didSet が
+                    // 2 回走って素通しが 2 回起きる。
+                    edit(slot) { $0.frequency = b.frequency; $0.gain = b.gain }
+                }
+                dragBands[slot] = nil
+            })
+    }
+
+    /// 掴んでいるあいだの控えを重ねた帯域。
+    private func shown(_ slot: Int) -> BandFIRPEQBand { dragBands[slot] ?? band(slot) }
+
+    private var markers: [ETFrequencyMarker] {
+        (0..<BandFIRPEQSettings.bandCount).map { slot in
+            let b = shown(slot)
+            return ETFrequencyMarker(id: slot, hz: b.frequency, db: b.gain,
+                                     label: "\(slot + 1)", isActive: b.enabled)
+        }
     }
 
     /// 狙いと出来上がり。上流の図も同じ 2 本（five_band_fir_peq.js:638-642 の legend）。
+    ///
+    /// **狙いはその場で引く。**前は latestDesign の応答しか見ていなかったので、
+    /// つまみを触っても設計が終わる（150ms の debounce の後）まで図が動かなかった。
+    /// BandFIRPEQDesigner.magnitude(of:at:sampleRate:) は「画面の曲線を引くのに使う」と
+    /// 書かれたまま、どこからも呼ばれていなかった。
+    ///
+    /// **出来上がりは設定が一致するときだけ描く。**古い設計の曲線を新しい狙いの隣に
+    /// 置くと、どちらが今の音か読めない。
     private var curves: [ETFrequencyCurve] {
-        guard let response = designer.latestDesign?.response else { return [] }
-        let count = min(response.frequencies.count,
-                        min(response.targetDb.count, response.realizedDb.count))
-        guard count > 1 else { return [] }
-        let target = (0..<count).map {
-            ETFreqPoint(response.frequencies[$0], response.targetDb[$0])
+        // 正規化を通した値で引く。範囲の詰めは Config の init の中でしか走らないので、
+        // 生の settings を回すと狙いと出来上がりがずれる。
+        var settings = designer.settings
+        for (slot, b) in dragBands where settings.bands.indices.contains(slot) {
+            settings.bands[slot] = b
         }
+        let config = BandFIRPEQConfig(settings: settings, sampleRate: designer.sampleRate)
+        // 効かない帯域は落とす（BandFIRPEQDesigner の activeBands と同条件）。
+        let active = config.bands.filter {
+            $0.enabled && ($0.type.changesResponseWithoutGain || $0.gain != 0)
+        }
+        let rate = Double(config.sampleRate)
+        let target = ETFrequencyCurve.sampled(id: "target", count: 220,
+                                              width: 1, dashed: true, subdued: true) { hz in
+            active.reduce(0.0) { sum, band in
+                sum + 20 * log10(max(BandFIRPEQDesigner.magnitude(of: band, at: hz,
+                                                                  sampleRate: rate), 1e-6))
+            }
+        }
+
+        guard let design = designer.latestDesign, design.config == config else { return [target] }
+        let response = design.response
+        let count = min(response.frequencies.count, response.realizedDb.count)
+        guard count > 1 else { return [target] }
         let realized = (0..<count).map {
             ETFreqPoint(response.frequencies[$0], response.realizedDb[$0])
         }
-        return [ETFrequencyCurve(id: "target", points: target, width: 1,
-                                 dashed: true, subdued: true),
-                ETFrequencyCurve(id: "realized", points: realized)]
+        return [target, ETFrequencyCurve(id: "realized", points: realized)]
     }
 
     // MARK: 状態

@@ -82,6 +82,8 @@ struct ETDragHandle: UIViewRepresentable {
         private var origin: CGPoint = .zero
         /// 掴んでいる間だけスクロールを止めた相手。必ず戻す。
         private weak var lockedScrollView: UIScrollView?
+        /// 掴んでいる間、送るのに指 2 本を要求している相手。**必ず 1 に戻す。**
+        private weak var heldScrollView: UIScrollView?
         /// 付ける試みを何回ログに出したか。黙って失敗されると分からない。
         private static var reports = 0
 
@@ -167,8 +169,8 @@ struct ETDragHandle: UIViewRepresentable {
             // **window は入口で要求しない。**
             // 掴んでいる行の面が階層から外れると（Section の挿入や行の削除で面が
             // 作り直される）window が nil になり、この guard で .ended ごと取りこぼす。
-            // すると lockScroll が掛けた isScrollEnabled = false が戻らず、
-            // **スクロールが死んだまま残る。**window が要るのは .changed の座標だけ。
+            // すると holdScroll が要求した指 2 本が 1 に戻らず、
+            // **1 本指では送れないまま残る。**window が要るのは .changed の座標だけ。
             guard let anchor else { return }
             switch g.state {
             case .began:
@@ -180,27 +182,60 @@ struct ETDragHandle: UIViewRepresentable {
                 guard !ownsDrag(under: g) else { mine = false; return }
                 guard let window = anchor.window else { mine = false; return }
                 mine = true
-                origin = g.location(in: window)
-                lockScroll(from: anchor)
-                handleLog.notice("began lock=\(self.lockedScrollView != nil, privacy: .public)")
+                origin = Self.finger(g, in: window)
+                holdScroll(from: anchor)
+                handleLog.notice("began hold=\(self.heldScrollView != nil, privacy: .public)")
                 parent.began()
             case .changed:
                 guard mine, let window = anchor.window else { return }
-                let now = g.location(in: window)
+                let now = Self.finger(g, in: window)
                 parent.moved(CGSize(width: now.x - origin.x,
                                     height: now.y - origin.y))
             case .ended, .cancelled, .failed:
                 guard mine else { return }
                 mine = false
                 handleLog.notice("ended state=\(g.state.rawValue, privacy: .public)")
-                unlockScroll()
+                releaseScroll()
                 parent.ended()
             default:
                 break
             }
         }
 
-        /// 掴んでいる間はスクロールを止める。**相手を覚えて必ず戻す。**
+        /// 掴んでいる間、**スクロールを止めずに「1 本指では効かない」ようにする。**
+        ///
+        /// 前は `isScrollEnabled = false` にしていた。掴んだ指で列まで動くのを防ぐため
+        /// だが、**掴んだままもう一方の指で送ることもできなくなっていた。**
+        /// 画面の外へ運べないのがこれ。手本（Shortcuts）は掴んだまま送れる。
+        ///
+        /// 送るのに指 2 本を要求すれば、掴んでいる 1 本では動かず、足した指で送れる。
+        /// 掴んでいる位置は `finger(_:in:)` が最初の指から取るので、指を足しても
+        /// 札が重心へ寄らない。
+        private func holdScroll(from view: UIView) {
+            var v: UIView? = view
+            while let current = v {
+                if let scroll = current as? UIScrollView {
+                    scroll.panGestureRecognizer.minimumNumberOfTouches = 2
+                    heldScrollView = scroll
+                    return
+                }
+                v = current.superview
+            }
+        }
+
+        private func releaseScroll() {
+            heldScrollView?.panGestureRecognizer.minimumNumberOfTouches = 1
+            heldScrollView = nil
+        }
+
+        /// 掴んでいる指の位置。`location(in:)` は触りの重心なので、送るために指を足すと
+        /// 札が指の間へ寄ってしまう。最初の指だけを見る。
+        private static func finger(_ g: UIGestureRecognizer, in view: UIView) -> CGPoint {
+            g.numberOfTouches > 0 ? g.location(ofTouch: 0, in: view) : g.location(in: view)
+        }
+
+        /// 払っている間はスクロールを止める。**相手を覚えて必ず戻す。**
+        /// こちらは横向きの一瞬なので、止める形のままでよい。
         private func lockScroll(from view: UIView) {
             var v: UIView? = view
             while let current = v {
@@ -234,8 +269,8 @@ struct ETDragHandle: UIViewRepresentable {
             //
             // 長押しの閾値は 0.4 秒 / 10pt。指を置いたまま 0.4 秒のあいだに 10pt
             // 動かさず、そこからゆっくりスクロールを始めた回はこれを満たす。
-            // 立ってしまうと、その touch のあいだ lockScroll が
-            // isScrollEnabled = false にするので**スクロールが死ぬ**。
+            // 立ってしまうと、その touch のあいだ holdScroll が指 2 本を要求するので
+            // **1 本指では送れなくなる**（掴むつもりが無かったのに止まる）。
             //
             // 見るのは isDragging だけ。isDecelerating まで見ると、惰性が止まり
             // きるまで掴めない（勢いよく送った直後に掴もうとすると無反応になる）。
