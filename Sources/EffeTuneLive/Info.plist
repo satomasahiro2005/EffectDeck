@@ -71,6 +71,19 @@
 				<string>com.apple.coreaudio-format</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>JSFX Source</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.plain-text</string>
+				<string>public.data</string>
+			</array>
+		</dict>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

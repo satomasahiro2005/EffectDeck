@@ -222,9 +222,22 @@ struct MeterView: View {
     }
 
     /// 段ごとの値。図の外（上）に出す。
+    ///
+    /// **字の数を揃える。**読み値の行は左から詰めて並ぶので、`-96.0 dB` が
+    /// `-9.6 dB` に変わると幅が 1 字ぶん縮み、**右隣の段が左へずれる**。
+    /// 鳴っている間は値が毎枠変わるので、L の桁が動くたびに R が跳ねていた。
+    /// 等幅の字なので、頭に空きを足して長さを合わせれば止まる
+    /// （枠を決め打ちの幅にすると、字の大きさを変えたときに合わなくなる）。
+    ///
+    /// **合わせる長さは値域の下端から決める。**その場に出ている値どうしで
+    /// 揃えるだけでは、段が揃って桁を落とした枠で全体の幅が縮んでやはり動く。
+    /// 下端（`-96.0 dB`）がいちばん長いので、そこに合わせれば時間で変わらない。
     private var readout: [ETReadoutItem] {
-        channels.map { channel in
-            ETReadoutItem(channel.label, ETFormat.db(peakValue(channel), decimals: 1))
+        let width = ETFormat.db(range.lowerBound, decimals: 1).count
+        return channels.map { channel in
+            let text = ETFormat.db(peakValue(channel), decimals: 1)
+            return ETReadoutItem(channel.label,
+                                 String(repeating: " ", count: max(0, width - text.count)) + text)
         }
     }
 }

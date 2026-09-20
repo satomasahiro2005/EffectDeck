@@ -213,6 +213,61 @@ extension View {
     }
 }
 
+/// **鎖に残る表示の設定。**`etRemembers` との違いはそこだけ。
+///
+/// あちらは端末の中だけの覚え（ETCardSelection）で、アプリを終うと消える。
+/// こちらは Node に入って保存形式へ出るので、開き直しても、プリセットにも、
+/// 共有リンクにも残る。**上流がプリセットに書いているものだけ**を通すこと
+/// （DSP/DisplayParams.swift に表がある）。
+extension View {
+    /// 文字を raw に持つ列挙。**rawValue をそのまま書く**ので、
+    /// 綴りは上流に合わせてあること（`Normal` / `log-hq` など）。
+    func etSaved<T>(_ value: Binding<T>, key: String, index: Int,
+                    dsp: EffeTuneDSP) -> some View
+    where T: RawRepresentable & Equatable, T.RawValue == String {
+        self
+            .onAppear {
+                guard dsp.chain.indices.contains(index),
+                      let raw = dsp.chain[index].display[key],
+                      let v = T(rawValue: raw) else { return }
+                value.wrappedValue = v
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                dsp.setDisplay(v.rawValue, key: key, at: index)
+            }
+    }
+
+    /// 入切。**綴りは呼ぶ側が決める。**上流は `vl` を true/false、
+    /// `dm` を "line"/"bar" で書いていて、同じ Bool でも字が違う。
+    func etSaved(_ value: Binding<Bool>, key: String, index: Int,
+                 dsp: EffeTuneDSP, on: String = "true", off: String = "false") -> some View {
+        self
+            .onAppear {
+                guard dsp.chain.indices.contains(index),
+                      let raw = dsp.chain[index].display[key] else { return }
+                value.wrappedValue = raw == on
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                dsp.setDisplay(v ? on : off, key: key, at: index)
+            }
+    }
+
+    /// 数。上流は数値で書くので、持つ字は `String(Double)` の形にしておく。
+    func etSaved(_ value: Binding<Double>, key: String, index: Int,
+                 dsp: EffeTuneDSP) -> some View {
+        self
+            .onAppear {
+                guard dsp.chain.indices.contains(index),
+                      let raw = dsp.chain[index].display[key],
+                      let v = Double(raw) else { return }
+                value.wrappedValue = v
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                dsp.setDisplay(String(v), key: key, at: index)
+            }
+    }
+}
+
 /// カードとピッカーで、外から来たものの format と作者を同じ形で出す。
 @MainActor
 enum ETPluginLabel {

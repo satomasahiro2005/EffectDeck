@@ -36,6 +36,10 @@ final class EffeTuneDSP: ObservableObject {
         /// values ではなくここに持つ。上流のプリセットは `ir` という名前で書く
         /// （plugins/reverb/ir_reverb.js:866）。
         var irId: String = ""
+        /// 音に関わらない表示の設定（上流の `cl` / `sc` など）。
+        /// sectionName / irId と同じで float に載らないのでここに持つ。
+        /// 綴りも値も上流のまま。DSP/DisplayParams.swift を読むこと。
+        var display: [String: String] = [:]
 
         /// Native EffeTune nodeではない外部processor。instanceは持たず、
         /// publish時にexternal callback nodeへ変換する。
@@ -652,6 +656,7 @@ final class EffeTuneDSP: ObservableObject {
             node.channelSpec = item.channelSpec
             node.sectionName = item.sectionName
             node.irId = item.irId
+            node.display = item.display
             node.externalID = item.externalID.isEmpty ? nil : item.externalID
             if node.isExternal {
                 // Adding a preset creates new processor instances. Reusing the
@@ -758,6 +763,7 @@ final class EffeTuneDSP: ObservableObject {
         node.channelSpec = item.channelSpec
         node.sectionName = item.sectionName
         node.irId = item.irId
+        node.display = item.display
         node.externalID = item.externalID.isEmpty ? nil : item.externalID
         if node.isExternal {
             let requestedID = item.externalInstanceID.isEmpty
@@ -811,6 +817,17 @@ final class EffeTuneDSP: ObservableObject {
         guard chain.indices.contains(index), chain[index].isSection else { return }
         chain[index].sectionName = name
         persist()
+    }
+
+    /// 図の見せ方を 1 つ変える。**音には触らない。**
+    ///
+    /// 上流がプリセットに書いているものだけを持つ（DSP/DisplayParams.swift）。
+    /// DSP へは渡さない（descriptor にも instance にも席が無い）が、端末には残す。
+    /// 残さないと、アプリを開き直したときに既定へ戻る。
+    func setDisplay(_ raw: String, key: String, at index: Int) {
+        guard chain.indices.contains(index), chain[index].display[key] != raw else { return }
+        chain[index].display[key] = raw
+        persistSoon()
     }
 
     /// パラメータを 1 つ変える。offset は ETParam.offset（配列なら +i）。

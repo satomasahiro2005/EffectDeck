@@ -68,6 +68,7 @@ enum PipelineStore {
             } else {
                 o = ETParamCoding.encode(params: item.spec.params, values: item.values)
                 if !item.irId.isEmpty { o[ETIRLoader.presetKey] = item.irId }
+                ETDisplayParam.write(item.display, type: item.spec.type, into: &o)
             }
             if !item.externalID.isEmpty {
                 o["external"] = item.externalID
@@ -119,6 +120,8 @@ enum PipelineStore {
         // IR Reverb の素材は float に載らないので、鍵をここで足す。
         // 綴りは上流に合わせて `ir`（ir_reverb.js:866）。
         if !node.irId.isEmpty { o[ETIRLoader.presetKey] = node.irId }
+        // 図の見せ方（float に載らない）。綴りは上流のまま。
+        ETDisplayParam.write(node.display, type: node.spec.type, into: &o)
         return o
     }
 
@@ -135,6 +138,8 @@ enum PipelineStore {
         var sectionName: String = ""
         /// IR Reverb の素材の鍵（`ir`）。それ以外では空。
         var irId: String = ""
+        /// 音に関わらない表示の設定（`cl` / `sc` など）。DisplayParams.swift を読むこと。
+        var display: [String: String] = [:]
         var externalID: String = ""
         var externalInstanceID: String = ""
         var externalState: Data? = nil
@@ -215,7 +220,8 @@ enum PipelineStore {
                 outputBus: UInt8(clamping: (entry["outputBus"] ?? entry["ob"]) as? Int ?? 0),
                 channelSpec: ETChannel.spec(from: ch),
                 sectionName: "",
-                irId: params[ETIRLoader.presetKey] as? String ?? ""))
+                irId: params[ETIRLoader.presetKey] as? String ?? "",
+                display: ETDisplayParam.read(params, type: spec.type)))
         }
         return out
     }

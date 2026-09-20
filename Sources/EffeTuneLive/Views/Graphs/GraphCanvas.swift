@@ -340,7 +340,13 @@ struct GraphCanvas<Overlay: View>: View {
                         .lineLimit(1)
                 }
             } else {
-                ForEach(readout) { item in
+                // **身元は並び順で取る。**ETReadoutItem の id は字そのもの
+                // （label + value）なので、値が変わるたびに ForEach が
+                // 「古いものを消して新しいものを挿す」形になる。挿し直された面は
+                // 進んでいる位置の動きを引き継がないので、**行が動いている最中に
+                // 値が変わると、字だけが先に着く**（並べ替えの 0.22 秒のあいだ、
+                // 読み値は 30Hz で変わるのでほぼ必ず起きる）。
+                ForEach(Array(readout.enumerated()), id: \.offset) { _, item in
                     HStack(spacing: 3) {
                         if !item.label.isEmpty {
                             Text(item.label)

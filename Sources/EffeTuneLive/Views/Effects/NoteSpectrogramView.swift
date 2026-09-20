@@ -52,8 +52,10 @@ import CoreGraphics
 
 /// 塗り分け。note_spectrogram.js:20-23 の MULTI_F0_COLORS。
 enum ETNoteColor: String, CaseIterable, Identifiable {
-    case normal
-    case rainbow
+    // **綴りは上流のまま。**保存形式にそのまま載せるので
+    // （note_spectrogram.js:20-23 の MULTI_F0_COLORS の value）。
+    case normal = "Normal"
+    case rainbow = "Rainbow"
 
     var id: String { rawValue }
 
@@ -67,8 +69,9 @@ enum ETNoteColor: String, CaseIterable, Identifiable {
 
 /// 縦の細かさ。note_spectrogram.js:24-27 の MULTI_F0_RESOLUTIONS。
 enum ETNoteResolution: String, CaseIterable, Identifiable {
-    case semitone
-    case high
+    // 同 :24-27 の MULTI_F0_RESOLUTIONS の value。
+    case semitone = "Semitone"
+    case high = "High"
 
     var id: String { rawValue }
 
@@ -84,8 +87,9 @@ enum ETNoteResolution: String, CaseIterable, Identifiable {
 /// Horizontal は上流と同じく面ごと 90 度回す（同 :1063-1065）。
 /// 音の高さが横、時間が縦に流れ、鍵盤は下に来る。
 enum ETNoteLayout: String, CaseIterable, Identifiable {
-    case vertical
-    case horizontal
+    // 同 :28 の MULTI_F0_LAYOUTS。
+    case vertical = "Vertical"
+    case horizontal = "Horizontal"
 
     var id: String { rawValue }
 
@@ -217,13 +221,15 @@ struct NoteSpectrogramView: View {
                 parameterRow(param)
             }
         }
-        // **畳んでも選択を戻さない。**カードを畳むと View ごと木から消えるので、
-        // @State のままでは開き直すたびに既定へ戻る。音に関わらない 5 つを覚えておく。
-        .etRemembers($display.color, key: "noteColor", node: node.id)
-        .etRemembers($display.resolution, key: "noteResolution", node: node.id)
-        .etRemembers($display.layout, key: "noteLayout", node: node.id)
-        .etRemembers($display.volume, key: "noteVolume", node: node.id)
-        .etRemembers($display.timeSpan, key: "noteTimeSpan", node: node.id)
+        // **鎖に残す。**カードを畳むと View ごと木から消えるので @State では
+        // 開き直すたびに既定へ戻り、端末の中だけの覚えではアプリを終うと消える。
+        // 上流はこの 5 つをプリセットに書いている（note_spectrogram.js:155-169）ので、
+        // 同じ綴りで鎖へ持たせる。プリセットにも共有リンクにも乗る。
+        .etSaved($display.color, key: "cl", index: index, dsp: dsp)
+        .etSaved($display.resolution, key: "pr", index: index, dsp: dsp)
+        .etSaved($display.layout, key: "ly", index: index, dsp: dsp)
+        .etSaved($display.volume, key: "vl", index: index, dsp: dsp)
+        .etSaved($display.timeSpan, key: "ts", index: index, dsp: dsp)
         .fullScreenCover(isPresented: $fullScreen, onDismiss: {
             ETInterfaceOrientation.request(.portrait)
             movingToFullScreen = false
@@ -601,21 +607,10 @@ private struct NoteSpectrogramGraph: View {
                 .interpolation(.none)
                 .antialiased(false)
         }
-        if display.color == .rainbow {
-            // 画像が色を持っているので、そのまま貼る。
-            for piece in pieces {
-                context.draw(tile(piece.image), in: piece.rect)
-            }
-        } else {
-            // 画像は alpha だけを持つ。それで型を抜いて .tint を流し込む。
-            context.drawLayer { layer in
-                layer.clipToLayer { mask in
-                    for piece in pieces {
-                        mask.draw(tile(piece.image), in: piece.rect)
-                    }
-                }
-                layer.fill(Path(rect), with: ETGraphShading.curve)
-            }
+        // **どちらの塗り分けでも画像が色を持つ**（noteColor が常に返す）ので、
+        // 型抜きして 1 色を流す枝は要らない。そのまま貼る。
+        for piece in pieces {
+            context.draw(tile(piece.image), in: piece.rect)
         }
     }
 
@@ -648,8 +643,8 @@ private struct NoteSpectrogramGraph: View {
         var black = Path()
         var separators = Path()
         // 光っている鍵は帯を塗り直す。白鍵は黒鍵の下に置く（上流も白→黒の順）。
-        var whiteGlow: [(rect: CGRect, value: Double)] = []
-        var blackGlow: [(rect: CGRect, value: Double)] = []
+        var whiteGlow: [(rect: CGRect, midi: Int, value: Double)] = []
+        var blackGlow: [(rect: CGRect, midi: Int, value: Double)] = []
 
         for midi in ETNoteBand.firstMidi...ETNoteBand.lastMidi {
             let pitchClass = ((midi % 12) + 12) % 12
@@ -665,7 +660,7 @@ private struct NoteSpectrogramGraph: View {
                                   width: gutter, height: bottom - top)
                 white.addRect(rect)
                 let value = band.latestConfidence(midi: midi)
-                if value > 0.01 { whiteGlow.append((rect, value)) }
+                if value > 0.01 { whiteGlow.append((rect, midi, value)) }
             }
             // 鍵の境。上流 :1152-1165。
             let boundary = cBoundary + CGFloat(whiteIndex) * whiteHeight
@@ -680,7 +675,7 @@ private struct NoteSpectrogramGraph: View {
                               width: blackDepth, height: rowHeight)
             black.addRect(rect)
             let value = band.latestConfidence(midi: midi)
-            if value > 0.01 { blackGlow.append((rect, value)) }
+            if value > 0.01 { blackGlow.append((rect, midi, value)) }
         }
 
         context.fill(white, with: ETGraphShading.grid)
@@ -695,12 +690,21 @@ private struct NoteSpectrogramGraph: View {
     }
 
     /// 鳴っている鍵を .tint で塗り直す。濃さが確からしさ。
+    /// 光っている鍵を塗る。**音名ごとの色を使う。**
+    ///
+    /// 上流は Normal のとき trace（1 色）で光らせる（note_spectrogram.js:1148）が、
+    /// それだと 88 鍵が同じ青で光るだけで、どの音かは鍵の位置を数えないと分からない。
+    /// 色を持たせれば、光った所を見ただけで音名が分かる。
+    /// 配色は Note Colors と同じ表（ETNoteKeyboard.noteColors）を使うので、
+    /// 図の塗り分けを Note Colors にしたときに鍵と升目の色が揃う。
     private func light(_ context: inout GraphicsContext,
-                       _ keys: [(rect: CGRect, value: Double)]) {
+                       _ keys: [(rect: CGRect, midi: Int, value: Double)]) {
         for key in keys {
+            let c = ETNoteKeyboard.noteColors[((key.midi % 12) + 12) % 12]
             var lamp = context
             lamp.opacity = key.value
-            lamp.fill(Path(key.rect), with: ETGraphShading.curve)
+            lamp.fill(Path(key.rect),
+                      with: .color(Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255)))
         }
     }
 
@@ -1116,14 +1120,23 @@ final class ETNoteBand: ObservableObject {
         }
     }
 
-    /// Normal のときは nil。色を持たせず alpha だけにして、塗りは描く側の .tint に任せる。
+    /// **どちらの塗り分けでも色を持つ。**
+    ///
+    /// 前は Normal で nil を返し、画像を型抜きにして .tint 一色を流していた。
+    /// 88 鍵ぶんが同じ青で光るだけなので、どの音が鳴っているかは位置を数えないと
+    /// 分からなかった。音名ごとの色にすれば見ただけで分かる。
+    /// Note Colors との違いは、あちらが細分ごとに色を混ぜる（fineColor）ことに残る。
     private func noteColor(note: Int) -> (r: Double, g: Double, b: Double)? {
-        guard display.color == .rainbow else { return nil }
-        return ETNoteKeyboard.noteColors[((Self.firstMidi + note) % 12 + 12) % 12]
+        ETNoteKeyboard.noteColors[((Self.firstMidi + note) % 12 + 12) % 12]
     }
 
+    /// 細分 1 つぶんの色。**Note Colors のときだけ混ぜる。**
+    /// Normal はその音の色をそのまま使うので、5 細分が同じ色になる。
     private func fineColor(pitch: Int) -> (r: Double, g: Double, b: Double)? {
-        guard display.color == .rainbow else { return nil }
+        guard display.color == .rainbow else {
+            let note = pitch / Self.divisions
+            return ETNoteKeyboard.noteColors[((Self.firstMidi + note) % 12 + 12) % 12]
+        }
         return ETNoteKeyboard.fineColor(pitch: pitch)
     }
 

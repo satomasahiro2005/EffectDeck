@@ -13,7 +13,9 @@
 //  その置き場を View の外へ出す設計の決めが要る。`public.json` を名乗ると
 //  無関係な JSON 全部で候補に出る副作用も付く。
 //
-//  JSFX は codex/jsfx-host の側で足す（main には受け皿の ETJSFXHost が無い）。
+//  JSFX も受ける。**拡張子では振らない。**JSFX には拡張子が無いことがあり、
+//  メールや Files が付けた `.txt` でも来る。中身で判定するのは
+//  ETJSFXHost.importFile（looksLikeJSFX）なので、ここは順に試すだけにする。
 
 import Foundation
 
@@ -22,6 +24,9 @@ enum ETInbox {
     /// 受け取った結果。呼び出し側がどの画面を出すかを決める。
     enum Received {
         case ir(String)
+        case jsfx(String)
+        /// JSFX らしいが受けられなかった。理由を出すために持つ。
+        case failed(String)
         case unsupported
     }
 
@@ -36,9 +41,23 @@ enum ETInbox {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-        // 拡張子で振る。IRLibrary.importFile が拡張子をそのまま複製先の名前に使うので、
-        // ここで中身まで見る意味が薄い。読めない中身は importFile の側で落ちる。
+        // **音が先。**IRLibrary.importFile は拡張子をそのまま複製先の名前に使い、
+        // 読めない中身は自分で落とす。JSFX は UTF-8 のテキストしか通らないので、
+        // 音のファイルがこちらへ紛れ込むことはない。
         if let id = IRLibrary.shared.importFile(at: url) { return .ir(id) }
-        return .unsupported
+
+        // **JSFX は中身で判定する**（ETJSFXHost.importFile の looksLikeJSFX）。
+        // 拡張子が無いもの、`.txt` が付いたものも同じ道を通る。
+        do {
+            let entry = try ETJSFXHost.shared.importFile(url)
+            return .jsfx(entry.id)
+        } catch let error as NSError where error.domain == "ETJSFX" && error.code == 10 {
+            // JSFX ではなかった。音でもないので、ここは素通り。
+            return .unsupported
+        } catch {
+            // JSFX らしいが受けられなかった（大きすぎる、UTF-8 でない、写せない）。
+            // 黙って落とすと「押しても何も起きない」になるので、理由を返す。
+            return .failed(error.localizedDescription)
+        }
     }
 }

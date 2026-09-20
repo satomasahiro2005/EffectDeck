@@ -78,7 +78,9 @@ struct MultibandCompressorView: View {
                 decibelStep: 12,
                 caption: "Band \(selected + 1)  \(Self.span(selected, edges)) Hz")
 
-            bandPicker(edges: edges)
+            // **図だけの段では出さない。**畳んだ図は allowsHitTesting(false) を
+            // 丸ごと被るので、押せない札が図と図の間に挟まるだけになる。
+            if !graphOnly { bandPicker(edges: edges) }
 
             TransferCurveGraph(
                 curve: ETTransferCurve.sampled(id: "band\(selected)", count: Self.curveSamples,

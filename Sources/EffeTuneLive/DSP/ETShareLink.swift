@@ -19,6 +19,14 @@ enum ETShareLink {
     /// web 版の置き場。ここに `?p=` を付けたものが共有リンクになる。
     static let base = "https://effetune.frieve.com/effetune.html"
 
+    /// こちらの置き場。**外から来たものを落とさずに渡すときはこちら。**
+    ///
+    /// 上流のリンク（`url(for:)`）は AU と JSFX を落とすか素通しの Volume に
+    /// 置き換える。上流に同じものが無いので当然だが、**こちらどうしで渡すときに
+    /// 落とす理由は無い。**中身の形も `?p=<base64>` も上流と同じにしてあるので、
+    /// 読む側（`parse`）は同じ道で受けられる。違うのは宛先だけ。
+    static let deckBase = "https://effectdeck.nemut.ai/"
+
     // MARK: - 書く
 
     /// Make a link which the official EffeTune web app can read.
@@ -47,6 +55,26 @@ enum ETShareLink {
         //
         // `/` はクエリでも `URLSearchParams` でもそのまま通るので触らない。
         // base64 に `&` `#` `?` は出ない。
+        let encoded = data.base64EncodedString().replacingOccurrences(of: "+", with: "%2B")
+        comps.percentEncodedQuery = "p=" + encoded
+        return comps.url
+    }
+
+    /// **落とさずに渡す。**外から来たもの（AU / JSFX）も、図の見せ方も、
+    /// 鎖の形もそのまま入る。受けられるのは EffectDeck だけ。
+    ///
+    /// JSFX が乗るのは鍵（`jsfx:<名前>`）だけで、**ソースは入らない**
+    /// （DSP/DisplayParams.swift と ETJSFXHost の置き場を読むこと）。
+    /// 受け取った側が同じ JSFX を持っていなければ、その段は解決できずに落ちる。
+    /// 再配布にはならない。
+    static func deckURL(for chain: [EffeTuneDSP.Node]) -> URL? {
+        let short = PipelineStore.shortForm(chain)
+        guard !short.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: short,
+                                                     options: [.withoutEscapingSlashes,
+                                                               .sortedKeys]),
+              var comps = URLComponents(string: deckBase) else { return nil }
+        // `+` を %2B にするのは url(for:) と同じ理由。
         let encoded = data.base64EncodedString().replacingOccurrences(of: "+", with: "%2B")
         comps.percentEncodedQuery = "p=" + encoded
         return comps.url

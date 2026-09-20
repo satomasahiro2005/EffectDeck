@@ -103,6 +103,21 @@ struct PipelineView: View {
     @State private var dragShift: CGSize = .zero
     /// 行ごとの矩形。落とし先の判定に使う。
     @State private var rowRects: [UUID: CGRect] = [:]
+    /// 器の高さ。最後の帯をどこまで伸ばすかに使う。背面で測る。
+    @State private var listHeight: CGFloat = 0
+
+    /// 最後の行より下に敷く帯の高さ。鎖が画面を埋めていないときは残りを埋める。
+    ///
+    /// **行の「位置」は使わない。**一度 maxY から残りを出したが、あれはスクロールで
+    /// 動く座標なので、**帯の高さが変わる→中身の寸法が変わる→また送れる**の堂々巡りに
+    /// なった（画面より短い鎖でも上下に送れ、途中で止まった）。
+    /// **高さの合計**なら送っても動かない。
+    private var tailHeight: CGFloat {
+        guard listHeight > 0, !rowRects.isEmpty else { return 96 }
+        let content = rowRects.values.reduce(0) { $0 + $1.height }
+            + CGFloat(rowRects.count) * 10   // 行の間
+        return max(96, listHeight - content)
+    }
 
     /// 左スワイプを開いている行。
     @State private var swiping: UUID?
@@ -285,6 +300,10 @@ struct PipelineView: View {
         .onOpenURL { url in
             switch ETInbox.receive(url) {
             case .ir: sheet = .ir
+            // 取り込んだ JSFX は一覧に入る。そこから鎖へ足してもらう。
+            case .jsfx: sheet = .picker
+            // **黙って落とさない。**押しても何も起きないのと見分けが付かない。
+            case .failed(let why): pluginError = why
             case .unsupported: break
             }
         }
@@ -358,7 +377,7 @@ struct PipelineView: View {
                         && visible[row.visible - 1].block == .bottom) {
                         ETGroupRule()
                     }
-                    ETSectionBracket(active: row.block != .alone,
+                    ETSectionBracket(active: row.showsBracket,
                                      extendsUp: !row.block.roundsTop,
                                      extendsDown: !row.block.roundsBottom) {
                     EffectCardView(
@@ -379,7 +398,7 @@ struct PipelineView: View {
                         // 線のぶんは外側の余白から取る。カードの左端は
                         // どちらの行でも 14 に揃う（ETSectionBracket の頭）。
                         .padding(.leading,
-                                 row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14)
+                                 row.showsBracket ? ETSectionBracket<EmptyView>.inset : 14)
                         .padding(.trailing, 14)
                         // **角丸が無い辺は余白を半分にする。**組の中では
                         // カードどうしが地続きに見えるほうが、ひと組だと分かる。
@@ -430,10 +449,12 @@ struct PipelineView: View {
                 // どこにも入らず、掴んだものが戻っていく。「一番下へ足す」の
                 // つもりで落としているので、末尾へ足す。
                 //
-                // 高さは指が届くぶん。画面の残り全部にはできない（List の行なので）が、
-                // 最後のカードのすぐ下に帯があれば、そこを狙って落とせる。
+                // **contentShape を必ず付ける。**Color.clear は描くものが無いので、
+                // 枠を持っていても当たりを取らない。帯が在っても落ちなかったのはこれで、
+                // 高さの問題ではなかった。
                 Color.clear
-                    .frame(height: 96)
+                    .frame(height: tailHeight)
+                    .contentShape(Rectangle())
                     .dropDestination(for: String.self) { items, _ in
                         guard let type = items.first else { return false }
                         return addDropped(type, at: nil)
@@ -446,12 +467,16 @@ struct PipelineView: View {
         // GeometryReader で包むと外側の寸法の決まり方が変わって余白が崩れた。
         // 背面なら、行に落ちたものは行が先に受け、余った所だけここへ来る。
         .background {
-            Color.clear
-                .contentShape(Rectangle())
-                .dropDestination(for: String.self) { items, _ in
-                    guard let type = items.first else { return false }
-                    return addDropped(type, at: nil)
-                }
+            GeometryReader { geo in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let type = items.first else { return false }
+                        return addDropped(type, at: nil)
+                    }
+                    .onAppear { listHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { _, h in listHeight = h }
+            }
         }
         .coordinateSpace(name: Self.chainSpace)
         // **掴んだものは別の層に描く。**行の中に重ねると、はみ出したぶんが
@@ -460,7 +485,7 @@ struct PipelineView: View {
         .overlay(alignment: .topLeading) {
             if let id = dragging,
                let row = visible.first(where: { $0.node.id == id }) {
-                ETSectionBracket(active: row.block != .alone,
+                ETSectionBracket(active: row.showsBracket,
                                  extendsUp: !row.block.roundsTop,
                                  extendsDown: !row.block.roundsBottom) {
                     EffectCardView(
@@ -479,7 +504,7 @@ struct PipelineView: View {
                 // 行と同じ余白を付ける。rowRects は余白の外側で測っているので、
                 // 付けないと左右に広く見える。
                 .padding(.leading,
-                         row.block != .alone ? ETSectionBracket<EmptyView>.inset : 14)
+                         row.showsBracket ? ETSectionBracket<EmptyView>.inset : 14)
                 .padding(.trailing, 14)
                 .padding(.top, row.block.roundsTop ? 5 : 2.5)
                 .padding(.bottom, row.block.roundsBottom ? 5 : 2.5)
@@ -693,29 +718,45 @@ struct PipelineView: View {
     private static let returnDuration: Double = 0.26
 
     /// 掴んだものの矩形が隣の矩形とどれだけ重なったかで入れ替える。
+    /// 落とし先を決める。**掴んだ矩形の中心と、隣の行の中心を比べるだけ。**
+    ///
+    /// 重なりが閾値を越えたら入れ替える形は、小さいカードが大きいカードの中へ
+    /// 完全に入ったときに破れる。重なりは掴んだ高さ a より大きくならないので、
+    /// 戻りの閾値をそこへ置くと `a > a` が永久に偽になって**帰り道が塞がり**、
+    /// 下げれば入れ替えた直後にそのまま逆条件が立って**往復する**。
+    /// 履歴を見て閾値を変える細工も、決め打ちの距離が要るだけで筋が悪い。
+    ///
+    /// **比べるのは、掴んだ矩形の「端」と相手の「中心」。**掴んだ高さ a、相手 b、
+    /// 行間 g として:
+    ///
+    ///     入れ替わる          ずれ s > b/2 + g
+    ///     入れ替えた後に戻る   s < −g
+    ///
+    /// 差は **b/2 + 2g**。離れ幅が幾何から出るので、履歴も決め打ちの距離も要らない。
+    ///
+    /// **中心どうしで比べてはいけない。**それだと s > (a+b)/2 + g となって a が効き、
+    /// 918pt のカードを掴んだだけで 500pt 運ばされる。手本（Shortcuts）は大きいものを
+    /// 掴んでもわずかな移動で入れ替わる。端で比べれば a が式から消える。
+    ///
+    /// **入れ替えの動き（0.22 秒）の最中も安全。**`rowRects` はその間ずっと中間の値を
+    /// 返すが、相手は上（下）へ動いていく途中なので、相手の中心は逆条件から
+    /// **遠ざかる向きにしか動かない**（動き始めの瞬間が等号で、判定は `<` / `>`）。
+    /// 閾値でやっていたときに往復していたのは、ここを勘定に入れていなかったため。
+    ///
+    /// 連続して越えるときも正しい。`[A,B,C]` の A が B を越えても C の位置は
+    /// `a+g+b+g` → `b+g+a+g` で変わらないので、次の判定は動きの最中でも狂わない。
     private func settle(_ id: UUID) {
         let visible = rows
         guard let at = visible.firstIndex(where: { $0.node.id == id }) else { return }
         // 判定は縦だけ見る。鎖は 1 列なので横は絵の都合でしかない。
         let moving = anchorRect.offsetBy(dx: 0, dy: dragShift.height)
 
-        // **越える量は「相手の高さの半分」。**
-        //
-        // 一度「低い方の半分」に下げたことがある（小さいカードを図付きの大きいカードへ
-        // 重ねるのに 130〜180pt 運ぶ必要があったため）。**これが手の中で暴れる原因だった。**
-        // 自分の半分で入れ替わると、入れ替わった直後の位置が逆向きの条件も満たすので、
-        // 指を止めていても行ったり来たりを繰り返す。相手の半分なら、入れ替わったあとは
-        // 相手だった側に深く入っているので戻る条件を満たさない。
-        if at > 0, let above = rowRects[visible[at - 1].node.id] {
-            let overlap = moving.intersection(above).height
-            if moving.minY < above.minY || overlap > above.height / 2 {
-                swap(at, to: at - 1)
-                return
-            }
+        if at > 0, let above = rowRects[visible[at - 1].node.id], moving.minY < above.midY {
+            swap(at, to: at - 1)
+            return
         }
         if at < visible.count - 1, let below = rowRects[visible[at + 1].node.id] {
-            let overlap = moving.intersection(below).height
-            if moving.maxY > below.maxY || overlap > below.height / 2 {
+            if moving.maxY > below.midY {
                 // **組の最後から下へ出ようとしたら、組を閉じる。**
                 // そのまま入れ替えると、次の組の見出しを飛び越えて
                 // 今度はそちらの中に入るだけで、外に出ることができない。
@@ -724,8 +765,10 @@ struct PipelineView: View {
                 swap(at, to: at + 2)
             }
         } else if visible[at].block == .bottom, let mine = rowRects[id],
-                  moving.maxY > mine.maxY + mine.height / 2 {
+                  moving.midY > mine.maxY {
             // 鎖の末尾。下に行が無いので入れ替えでは外に出られない。
+            // 自分の枠の下端を中心が越えたら、で s > a/2。前の書き方
+            // （maxY > mine.maxY + height/2）と同じ量。
             leaveGroup(at)
         }
     }
@@ -746,6 +789,9 @@ struct PipelineView: View {
             if prev.isSection && ETSection.isUnnamed(prev.sectionName) { return }
         }
         let was = dsp.chain.count
+        // **実機で増える形を捕まえる。**紙の上では最大 1 本に落ち着くのに、
+        // 実機では増やせるという食い違いが残っている。鎖の姿をそのまま残す。
+        dragLog.notice("組出し at=\(at, privacy: .public) 鎖=\(index, privacy: .public) 前=\(Self.shape(dsp.chain), privacy: .public) 開=\(dsp.expanded.count, privacy: .public)")
         withAnimation(.snappy(duration: 0.22)) {
             dsp.add(ETSection.spec, at: index)
             // **閉じる印は開かない。**add は足したものを expanded に入れる（自分の
@@ -760,9 +806,20 @@ struct PipelineView: View {
         }
         // **打ち消されたら振動は出さない。**指に成功を返しておいて何も起きないと、
         // 効かない操作を繰り返させることになる。
+        dragLog.notice("組出し 後=\(Self.shape(dsp.chain), privacy: .public) 無名=\(dsp.chain.filter { $0.isSection && ETSection.isUnnamed($0.sectionName) }.count, privacy: .public)")
         if dsp.chain.count > was {
             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         }
+    }
+
+    /// 鎖の姿を 1 行で。`S(A)` が名前つき Section、`S()` が無名、`.` が普通の段。
+    /// 切ってあるものは小文字にする（切ってある無名は掃除の候補から外れる）。
+    private static func shape(_ chain: [EffeTuneDSP.Node]) -> String {
+        chain.map { n -> String in
+            guard n.isSection else { return n.enabled ? "." : "_" }
+            let name = n.sectionName.trimmingCharacters(in: .whitespaces)
+            return (n.enabled ? "S(" : "s(") + name + ")"
+        }.joined()
     }
 
     /// 入れ替える。**基準（anchorRect）には手を触れない。**
@@ -809,6 +866,14 @@ struct PipelineView: View {
         /// **2 つに分けない。**以前は「配下か」を別に持っていて、
         /// 畳んだ Section（配下が画面に無い）に線だけ残った。
         var block: ETBlockPosition = .alone
+
+        /// 左の線を出すか。
+        ///
+        /// 組の中の行に加えて、**畳んだ Section 自身にも出す。**畳むと配下の行が
+        /// 消えるので position() は `.alone` を返すが、そこで線まで消すと
+        /// 「中に何か入っている組」なのか「ただの段」なのか見分けが付かない。
+        /// 線は出すが下へは伸ばさない（`.alone` は roundsBottom なので伸びない）。
+        var showsBracket: Bool { block != .alone || node.isSection }
 
     }
 

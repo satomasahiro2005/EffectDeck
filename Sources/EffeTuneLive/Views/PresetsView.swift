@@ -585,12 +585,21 @@ struct PresetsView: View {
                 }
                 .foregroundStyle(externalCount == 0 ? Color.green : Color.orange)
             }
+            // **外から来たものが在るときは、落とさない口を先に出す。**
+            // 上流のリンクは AU と JSFX を落とすので、そちらしか無いと
+            // 「共有したのに向こうで鎖が違う」になる。
+            if externalCount > 0, let deck = ETShareLink.deckURL(for: dsp.chain) {
+                ShareLink(item: deck) {
+                    Label("Share this chain", systemImage: "square.and.arrow.up")
+                }
+            }
             if let url = ETShareLink.url(for: dsp.chain) {
                 ShareLink(item: url) {
                     Label(externalCount == 0
                           ? "Share this chain"
                           : "Export to EffeTune without \(externalCount) external effect\(externalCount == 1 ? "" : "s")",
-                          systemImage: "square.and.arrow.up")
+                          systemImage: externalCount == 0
+                                       ? "square.and.arrow.up" : "arrow.up.forward.square")
                 }
             }
             Button {

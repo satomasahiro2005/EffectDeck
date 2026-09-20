@@ -89,15 +89,110 @@ struct EffectPickerView: View {
         catalog.filter { $0.category == ETSection.spec.category }
     }
 
-    private var searchResults: [ETEffect] {
-        let q = query.lowercased()
-        return catalog
-            .filter {
-                $0.name.lowercased().contains(q)
-                    || $0.about.lowercased().contains(q)
-                    || $0.category.lowercased().contains(q)
+    // MARK: - 探す
+    //
+    // **段の区別を越えて探す。**上の 4 つの段（効果・プラグイン・自分のプリセット・
+    // 出荷時のプリセット）は「並べて眺めるとき」の分け方で、名前で探すときには
+    // 邪魔でしかない。探しているものがどの段に居るかを先に当てさせる作りだった。
+    //
+    // **当たり方で並べる。**ただ contains で拾うと、打った字を含むだけのものが
+    // 名前そのものより上に来る。当たり方に順位を付けて、同じ順位の中では名前順。
+
+    /// 当たり方。**強い順**。生の値の小ささがそのまま強さになる。
+    private enum Hit: Int, Comparable {
+        /// 名前がそのもの。
+        case exact = 0
+        /// 名前の頭から。
+        case prefix = 1
+        /// 名前の中の、語の頭から（"Band" が "Five Band PEQ" に当たる）。
+        case word = 2
+        /// 名前のどこか。
+        case inside = 3
+        /// 名前ではない所（作者・分類・説明）。
+        case elsewhere = 4
+
+        static func < (a: Hit, b: Hit) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// 名前に対する当たり方。当たらなければ nil。
+    private static func hit(_ name: String, _ q: String) -> Hit? {
+        let n = name.lowercased()
+        guard !q.isEmpty else { return .inside }
+        if n == q { return .exact }
+        if n.hasPrefix(q) { return .prefix }
+        guard n.contains(q) else { return nil }
+        // 語の頭か。区切りは空白と、括弧・ハイフンなど名前に出るもの。
+        let separators = CharacterSet(charactersIn: " -_/()[]")
+        for word in n.components(separatedBy: separators) where word.hasPrefix(q) {
+            return .word
+        }
+        return .inside
+    }
+
+    /// 探した結果の 1 件。どの段のものかを持ったまま並べる。
+    private enum Found: Identifiable {
+        case effect(ETEffect)
+        case au(ETAUHost.Entry)
+        case jsfx(ETJSFXHost.Entry)
+        /// 自分のプリセット。`フォルダ/名前` のまま持つ。
+        case user(String)
+        case system(ETSystemPreset)
+
+        var id: String {
+            switch self {
+            case .effect(let e): return "e:" + e.id
+            case .au(let a):     return "a:" + a.id
+            case .jsfx(let j):   return "j:" + j.id
+            case .user(let n):   return "u:" + n
+            case .system(let p): return "s:" + p.name
             }
-            .sorted { $0.name < $1.name }
+        }
+
+        var sortName: String {
+            switch self {
+            case .effect(let e): return e.name
+            case .au(let a):     return a.name
+            case .jsfx(let j):   return j.name
+            case .user(let n):   return ETUserPresetName.leaf(n)
+            case .system(let p): return p.name
+            }
+        }
+    }
+
+    private var searchResults: [Found] {
+        let q = query.lowercased()
+        var out: [(Hit, Found)] = []
+
+        for e in catalog {
+            if let h = Self.hit(e.name, q) { out.append((h, .effect(e))); continue }
+            if e.about.lowercased().contains(q) || e.category.lowercased().contains(q) {
+                out.append((.elsewhere, .effect(e)))
+            }
+        }
+        for a in au.entries {
+            if let h = Self.hit(a.name, q) { out.append((h, .au(a))); continue }
+            if a.manufacturer.lowercased().contains(q) { out.append((.elsewhere, .au(a))) }
+        }
+        for j in jsfx.entries {
+            if let h = Self.hit(j.name, q) { out.append((h, .jsfx(j))); continue }
+            if j.author.lowercased().contains(q) { out.append((.elsewhere, .jsfx(j))) }
+        }
+        for n in presets.names {
+            // フォルダ名でも当たる。`Rock/Heavy` は "rock" でも "heavy" でも出す。
+            if let h = Self.hit(ETUserPresetName.leaf(n), q) { out.append((h, .user(n))); continue }
+            if ETUserPresetName.folder(n).lowercased().contains(q) {
+                out.append((.elsewhere, .user(n)))
+            }
+        }
+        for p in ETSystemPresets {
+            if let h = Self.hit(p.name, q) { out.append((h, .system(p))); continue }
+            if p.category.lowercased().contains(q) { out.append((.elsewhere, .system(p))) }
+        }
+
+        return out.sorted {
+            $0.0 == $1.0 ? $0.1.sortName.localizedCaseInsensitiveCompare($1.1.sortName) == .orderedAscending
+                         : $0.0 < $1.0
+        }.map(\.1)
     }
 
     var body: some View {
@@ -139,9 +234,8 @@ struct EffectPickerView: View {
                             systemPresetList
                         }
                     }
-                } else if pane == .plugins {
-                    pluginSearchList
                 } else {
+                    // **探すときは段を分けない。**どの段に居るかを当てさせない。
                     searchList
                 }
             }
@@ -643,7 +737,15 @@ struct EffectPickerView: View {
     }
 
     /// この版で増えた効果。増えるたびにここを書き替える。
-    static let newTypes = ["PitchMeterPlugin", "TVAudioSimulatorPlugin", "SpatialMapperPlugin"]
+    /// 「New」の節に出すもの。**上流で足されたばかりのものだけ。**
+    ///
+    /// 空にすると節ごと出ない（jumpKeys と allSections がどちらも
+    /// `newEffects.isEmpty` を見る）。上流が新しいものを足したときに、
+    /// その型をここへ並べる。**一度足したら、次の版で必ず外すこと。**
+    /// いつまでも「New」と出ていると意味を失う。
+    /// 直前に居たのは dsp 0.10.0 で足された 3 つ（Pitch Meter /
+    /// TV Audio Simulator / Spatial Mapper）。もう新しくないので外した。
+    static let newTypes: [String] = []
     static let newKey = "__new"
 
     private var newEffects: [ETEffect] {
@@ -697,8 +799,22 @@ struct EffectPickerView: View {
             if searchResults.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
-                List(searchResults) { effect in
-                    row(effect, showCategory: true)
+                List(searchResults) { found in
+                    switch found {
+                    case .effect(let e): row(e, showCategory: true)
+                    case .au(let a):     auRow(a)
+                    case .jsfx(let j):   jsfxRow(j)
+                    case .user(let n):
+                        presetRow(name: ETUserPresetName.leaf(n),
+                                  payload: "preset:user:" + n) {
+                            PresetStore.shared.load(n)
+                        }
+                    case .system(let p):
+                        presetRow(name: p.name,
+                                  payload: "preset:system:" + p.name) {
+                            ETShareLink.parse(p.json, catalog: ETCatalog)
+                        }
+                    }
                 }
                 .listStyle(.plain)
             }

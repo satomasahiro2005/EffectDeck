@@ -52,8 +52,9 @@ import CoreGraphics
 /// 縦軸の取り方。上流の `sc`（spectrogram.js:41、:274-280）に当たる。
 /// DSP へは送らない。升目は常に対数で来るので、描く側だけの切り替えになる。
 enum ETSpectrogramScale: String, CaseIterable, Identifiable {
+    // **綴りは上流のまま**（spectrogram.js の `sc`）。保存形式にそのまま載せる。
     case log
-    case logHQ
+    case logHQ = "log-hq"
     case linear
 
     var id: String { rawValue }
@@ -131,7 +132,8 @@ struct SpectrogramView: View {
             if !graphOnly { scalePicker }
         }
         // **畳むとこの View ごと消える。**開き直すたびに Log へ戻っていたのがこれ。
-        .etRemembers($scale, key: "scale", node: node.id)
+        // 上流も `sc` をプリセットに書く（spectrogram.js:345-356）ので鎖へ持たせる。
+        .etSaved($scale, key: "sc", index: index, dsp: dsp)
         .fullScreenCover(isPresented: $fullScreen, onDismiss: {
             ETInterfaceOrientation.request(.portrait)
             movingToFullScreen = false

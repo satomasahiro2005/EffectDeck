@@ -22,8 +22,9 @@ import Foundation
 /// 横軸の取り方。上流の `sc`（spectrum_analyzer.js:24）に当たる。
 /// DSP へは送らないので EffectCatalog には無い。
 enum ETSpectrumScale: String, CaseIterable, Identifiable {
+    // **綴りは上流のまま**（spectrum_analyzer.js の `sc`）。
     case log
-    case logHQ
+    case logHQ = "log-hq"
     case linear
 
     var id: String { rawValue }
@@ -72,9 +73,11 @@ struct SpectrumAnalyzerView: View {
             if !graphOnly { scalePicker }
             if !graphOnly { Toggle("Bar display", isOn: $bars) }
         }
-        // 畳むとこの View ごと消えるので、表示の選択は外に覚えておく。
-        .etRemembers($scale, key: "scale", node: node.id)
-        .etRemembers($bars, key: "bars", node: node.id)
+        // 畳むとこの View ごと消えるので、表示の選択は鎖に持たせる。
+        // 上流も `sc` と `dm` をプリセットに書く（spectrum_analyzer.js:276-288）。
+        // `dm` は入切ではなく "line"/"bar" の字なので、綴りを渡す。
+        .etSaved($scale, key: "sc", index: index, dsp: dsp)
+        .etSaved($bars, key: "dm", index: index, dsp: dsp, on: "bar", off: "line")
     }
 
     /// spectrum_analyzer.js:510-519 の createRadioGroup に当たる。Menu にはしない。

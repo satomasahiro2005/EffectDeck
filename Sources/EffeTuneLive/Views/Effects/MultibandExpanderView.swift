@@ -79,7 +79,8 @@ struct MultibandExpanderView: View {
                 height: ETGraphMetrics.compactHeight,
                 caption: "Band \(selected + 1)  \(Self.span(edges, band: selected)) Hz")
 
-            bandPicker(edges)
+            // 図だけの段では出さない（MultibandCompressorView と同じ理由）。
+            if !graphOnly { bandPicker(edges) }
 
             TransferCurveGraph(
                 curve: ETTransferCurve.sampled(id: "multiband-expander", count: 192,
