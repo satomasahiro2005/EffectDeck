@@ -141,9 +141,9 @@ word in a string, break it up (`"inclu" + "de("`).
 
 EffectDeck draws at the size you declare with `@gfx <w> <h>` and then scales the
 result to fit the card, so **a script that hard-codes coordinates to its
-declared size still looks right**. But the canvas can also be handed a different
-size (full screen, or the Pixel Perfect setting), so reading `gfx_w` / `gfx_h`
-and laying out from them is better:
+declared size still looks right**. But full screen hands the canvas the whole
+viewport instead, so reading `gfx_w` / `gfx_h` and laying out from them is
+better:
 
 ```jsfx
 @gfx 640 360

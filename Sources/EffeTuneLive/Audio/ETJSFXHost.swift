@@ -452,6 +452,19 @@ final class ETJSFXHost: ObservableObject {
         return max(0.01, min(requested, dimensionLimit, byteLimit))
     }
 
+    /// 原寸で貼るときの高さ（point）。
+    ///
+    /// framebuffer は `canvas × gfxPixelScale` 画素なので、それを画面の倍率で
+    /// 割った点数が「framebuffer の 1 画素 = 画面の 1 画素」になる。
+    /// `gfx_ext_retina` を名乗るものは pixelScale が画面の倍率なので宣言どおりの
+    /// 点数、名乗らないものは画面の倍率だけ小さくなる。
+    /// **canvas の点数をそのまま point として使ってはいけない**（3x の端末で
+    /// 1 画素が 3x3 に膨らみ、原寸でも鮮明でもなくなる）。
+    func gfxNativeHeight(instanceID: String, canvas: CGSize, screenScale: CGFloat) -> CGFloat {
+        let pixels = gfxPixelScale(instanceID: instanceID, size: canvas, screenScale: screenScale)
+        return max(1, canvas.height * pixels / max(1, screenScale))
+    }
+
     private nonisolated static func renderGFX(host: OpaquePointer, width: Int, height: Int,
                                               scale: Double) -> CGImage? {
         guard ETJSFX_RunGFX(host, UInt32(width), UInt32(height), scale) else { return nil }
