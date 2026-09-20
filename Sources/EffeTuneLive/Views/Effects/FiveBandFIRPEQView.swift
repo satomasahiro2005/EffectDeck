@@ -27,7 +27,7 @@
 //  10Hz〜40kHz を 512 点、BandFIRPEQDesigner.swift:571-586）。
 //
 //  **狙いはその場で引く。**latestDesign の応答しか見ていなかったので、つまみを触っても
-//  設計が終わるまで図が動かなかった。狙いは BandFIRPEQDesigner.magnitude(of:at:sampleRate:)
+//  設計が終わるまで図が動かなかった。狙いは BandFIRPEQCore.magnitude(of:at:sampleRate:)
 //  で毎回引き、出来上がりは latestDesign の config が今の settings と一致するときだけ描く。
 //
 //  **掴める印を置いた。**ただし designer へ書くのは離した 1 回だけ。掴んでいるあいだは
@@ -250,7 +250,7 @@ private struct FiveBandFIRPEQPanel: View {
     ///
     /// **狙いはその場で引く。**前は latestDesign の応答しか見ていなかったので、
     /// つまみを触っても設計が終わる（150ms の debounce の後）まで図が動かなかった。
-    /// BandFIRPEQDesigner.magnitude(of:at:sampleRate:) は「画面の曲線を引くのに使う」と
+    /// BandFIRPEQCore.magnitude(of:at:sampleRate:) は「画面の曲線を引くのに使う」と
     /// 書かれたまま、どこからも呼ばれていなかった。
     ///
     /// **出来上がりは設定が一致するときだけ描く。**古い設計の曲線を新しい狙いの隣に
@@ -271,7 +271,7 @@ private struct FiveBandFIRPEQPanel: View {
         let target = ETFrequencyCurve.sampled(id: "target", count: 220,
                                               width: 1, dashed: true, subdued: true) { hz in
             active.reduce(0.0) { sum, band in
-                sum + 20 * log10(max(BandFIRPEQDesigner.magnitude(of: band, at: hz,
+                sum + 20 * log10(max(BandFIRPEQCore.magnitude(of: band, at: hz,
                                                                   sampleRate: rate), 1e-6))
             }
         }
