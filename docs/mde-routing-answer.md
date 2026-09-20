@@ -992,3 +992,60 @@ return false;
    （`/mnt/fs27/root/usr/libexec/mediaplaybackd`）を別に読む
 4. 当たったら value 引数を後ろ向きに辿り、**「存在」か「稼働」か**を決める。
    稼働なら #4 の stale は配列への残存ではなく**要素の内部状態**
+
+## 道具の当て方が分かった（2026-09-21）
+
+**`xref` は要らなかった。`disass --image` で足りる。**
+
+```
+ipsw dyld disass <DSC> --image MediaPlaybackCore --quiet
+  → 39 秒で 129 万行。メモリはほとんど食わない
+ipsw dyld xref <DSC> 0x… --image MediaToolbox
+  → RSS 6.9GB でなお伸び、WSL の VM ごと落ちる
+```
+
+### 前提が 1 つ間違っていた
+
+**arm64e の DSC では、像をまたぐ呼び出しは全部間接。**
+
+`MediaPlaybackCore` の 129 万命令に、MediaExperience（`0x1ae…`）への
+**直接 `BL` が 1 つも無い**。間接呼び出し（`BLR` / `BLRAA`）は 10,394 件。
+
+```
+A  BL <sink>                直接      … 構造的に 0 件
+B  BL <stub> → sink         スタブ越し … 同上
+C  ADRP/LDR → BLR / BLRAA   間接・PAC  … これだけ
+```
+
+**「`BL` を 4 バイトずつ流し読みするスキャナ」は書いても 0 件になる。**
+
+### 探索の形
+
+sink は 2 つとも見る。generic な property API だけとは限らない。
+
+```
+0x1ae8922c8  _MXSessionSetProperty
+0x1ae987a44  -[MXSession(InternalUse) setIsPlayingVideoOutput:]
+```
+
+間接呼び出しの行き先は、`--quiet` の出力から 3 つ組を拾えば
+**枠の番地**まで出せる（`Scripts` ではなく `H:\ios-audio\scripts\mde_indirect.py`）。
+
+```
+adrp xN, 0xPPPP000
+ldr  xN, [xN, #0xOFF]     → 枠 = 0xPPPP000 + 0xOFF
+blraa xN, …
+```
+
+あとはその枠をキャッシュから `dyld dump` で読んで sink を指すか見るだけ。
+**メモリ一定。名前解決も xref も要らない。**
+
+（`--quiet` を外すと `ipsw` が名前を付けてくれるが、マークアップが重い。
+`MediaPlaybackCore` で 5GB まで伸びた）
+
+### 探索範囲が絞れた
+
+- `mediaplaybackd` は **DSC にも rootfs の dmg にも見つからない**
+  （5537 dylib に `libexec` は 0 件、7-Zip の全文検索でも出ない）
+- 代わりに **`MediaPlaybackCore.framework`**（cache 494 番）が在る。
+  `mediaplaybackd` の実体はここと見るのが自然
