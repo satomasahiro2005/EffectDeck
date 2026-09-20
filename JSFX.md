@@ -29,6 +29,22 @@ Hard requirements, in order of how often they are violated:
 If a requirement conflicts with what you know about REAPER JSFX, this document
 wins.
 
+### Where to learn the language itself
+
+**This document only describes the differences.** It is not a JSFX tutorial and
+deliberately does not restate the language. For syntax, the EEL2 built-ins, the
+meaning of each `@` section, slider declaration forms, the `gfx_*` API, and
+everything else, read the primary sources:
+
+| | |
+|---|---|
+| Language and API reference | REAPER's *JS: Programming Reference* (`Help → JS Programming Reference` in REAPER, also mirrored as the JSFX docs on cockos.com) |
+| The interpreter actually used here | [JoepVanlier/ysfx](https://github.com/JoepVanlier/ysfx) — this repo embeds it, so its behaviour is the ground truth for anything ambiguous |
+| Real effects to learn idioms from | [geraintluff/jsfx](https://github.com/geraintluff/jsfx), [JoepVanlier/JSFX](https://github.com/JoepVanlier/JSFX), [Sonic-Anomaly/Sonic-Anomaly-JSFX](https://github.com/Sonic-Anomaly/Sonic-Anomaly-JSFX), [mawi-design/JSFX](https://github.com/mawi-design/JSFX) |
+
+When reading those, keep the limits below in mind: much of what you will find in
+the wild uses `import`, file sliders, or MIDI, none of which exist here.
+
 ### Start from this skeleton
 
 ```jsfx

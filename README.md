@@ -107,6 +107,10 @@ checklist to run a generated script against before you try to import it.
 The short version: one file, no `import` or `include()`, no filesystem, no MIDI,
 `desc:` first, and no JIT — so keep `@sample` cheap.
 
+It describes only the differences, not the language. For JSFX itself, read
+REAPER's *JS: Programming Reference* and [JoepVanlier/ysfx](https://github.com/JoepVanlier/ysfx),
+which is the interpreter embedded here.
+
 ## Building
 
 ```bash
