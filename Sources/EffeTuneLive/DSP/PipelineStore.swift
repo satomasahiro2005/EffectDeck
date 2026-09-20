@@ -40,6 +40,7 @@ enum PipelineStore {
             var o: [String: Any] = parameters(of: node)
             o["nm"] = node.spec.name
             o["en"] = node.enabled
+            ETDeckEffect.mark(&o, type: node.spec.type)
             if let externalID = node.externalID {
                 o["external"] = externalID
                 o["externalInstance"] = node.externalInstanceID
@@ -80,6 +81,7 @@ enum PipelineStore {
             }
             o["nm"] = item.spec.name
             o["en"] = item.enabled
+            ETDeckEffect.mark(&o, type: item.spec.type)
             if item.inputBus  != 0 { o["ib"] = Int(item.inputBus) }
             if item.outputBus != 0 { o["ob"] = Int(item.outputBus) }
             if let ch = ETChannel.channel(from: item.channelSpec) { o["ch"] = ch }
@@ -164,6 +166,9 @@ enum PipelineStore {
         }
 
         let byName = Dictionary(catalog.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        // §39。EffectDeck 独自エフェクトは型の印で先に引く。上流に同名のものが
+        // 足されても、こちらのリンクは取り違えない。
+        let byType = Dictionary(catalog.map { ($0.type, $0) }, uniquingKeysWith: { a, _ in a })
         var out: [Loaded] = []
 
         for entry in list {
@@ -208,7 +213,8 @@ enum PipelineStore {
                 continue
             }
 
-            guard let spec = byName[name] else {
+            let marked = (entry[ETDeckEffect.markerKey] as? String).flatMap { byType[$0] }
+            guard let spec = marked ?? byName[name] else {
                 log.notice("知らないエフェクト \(name, privacy: .public)")
                 continue
             }

@@ -44,6 +44,8 @@ enum ETEffectViews {
 
     private static let types: Set<String> = [
         "PitchMeterPlugin",
+        // EffectDeck 独自。図（真上から見た部屋）を持つので withoutGraph には入れない。
+        ETVirtualRoom.type,
         "SpatialMapperPlugin",
         "AutoLevelerPlugin",
         "ChannelDividerPlugin",
@@ -96,6 +98,8 @@ enum ETEffectViews {
             PitchMeterView(index: index, node: node, dsp: dsp)
         case "SpatialMapperPlugin":
             SpatialMapperView(index: index, node: node, dsp: dsp)
+        case ETVirtualRoom.type:
+            VirtualRoomView(index: index, node: node, dsp: dsp)
         case "AutoLevelerPlugin":
             AutoLevelerView(index: index, node: node, dsp: dsp)
         case "ChannelDividerPlugin":

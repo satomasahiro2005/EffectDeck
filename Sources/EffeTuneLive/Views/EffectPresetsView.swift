@@ -47,7 +47,7 @@ struct EffectPresetsView: View {
     /// 出荷時プリセットを上流の並びのまま束ねる。
     /// ETEffectPresetList が上流の順を保っているので、出た順に拾うだけでよい。
     private var groups: [PresetGroup] {
-        let all = ETEffectPresets[spec.name] ?? []
+        let all = ETPresetCatalog.presets(for: spec.name)
         var order: [String] = []
         for preset in all where !order.contains(preset.group) { order.append(preset.group) }
         return order.map { label in

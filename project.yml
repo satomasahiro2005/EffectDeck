@@ -235,6 +235,12 @@ targets:
       - path: Sources/EffeTuneLive/DSP/EffectSpec.swift
       - path: Sources/EffeTuneLive/Generated/EffectCatalog.swift
       - path: Sources/EffeTuneLive/Generated/EffectPresets.swift
+      # Virtual Room の純粋な部分。CoreGraphics と Foundation だけ。
+      # **VirtualRoomPresets.swift は必須**（EffectPresetApply が
+      # ETPresetCatalog を呼ぶので、入れないとリンクが通らない）。
+      - path: Sources/EffeTuneLive/DSP/VirtualRoom/VirtualRoomPresets.swift
+      - path: Sources/EffeTuneLive/DSP/VirtualRoom/VirtualRoomUIModel.swift
+      - path: Sources/EffeTuneLive/DSP/RoutingConstraint.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests

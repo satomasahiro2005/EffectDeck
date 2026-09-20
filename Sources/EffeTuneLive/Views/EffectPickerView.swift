@@ -801,7 +801,9 @@ struct EffectPickerView: View {
     /// いつまでも「New」と出ていると意味を失う。
     /// 直前に居たのは dsp 0.10.0 で足された 3 つ（Pitch Meter /
     /// TV Audio Simulator / Spatial Mapper）。もう新しくないので外した。
-    static let newTypes: [String] = []
+    /// 初回リリースだけ New にも出す（docs/virtual-room-design.md §3）。
+    /// **次の版で外す。**category が spatial なので Spatial の節には自動で入る。
+    static let newTypes: [String] = [ETVirtualRoom.type]
     static let newKey = "__new"
 
     private var newEffects: [ETEffect] {
