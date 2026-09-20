@@ -178,22 +178,24 @@ private struct SpectrogramGraph: View {
                 // 透かすと表の下半分（黒〜青）が薄れて、色を入れた意味が消える。
                 context.fill(Path(plot.rect), with: .color(ETSpectrogramBand.floorColor))
 
-                // **格子を引き直す。**GraphCanvas は drawGrid をこのクロージャより
-                // 先に走らせる（GraphCanvas.swift:296）ので、地を塗ると横線 11 本が
-                // 下敷きになって消える。色を変えるだけでは効かない。
+                // 画像は色を持っているので、そのまま貼る。
+                for piece in band.pieces(in: plot.rect) {
+                    context.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
+                }
+
+                // **格子は画像の上。**GraphCanvas は drawGrid をこのクロージャより
+                // 先に走らせる（GraphCanvas.swift:296）ので、地を塗った時点で横線 11 本は
+                // 下敷きになって消える。ここで引き直すが、**画像より後でなければ
+                // 同じことが起きる**（画像が覆う）。1 秒の印と指の線と同じ層に置く。
+                // 形は GraphCanvas.drawGrid の横線（:398-405）に揃える。
                 for tick in plot.yAxis.ticks {
                     let y = plot.y(tick.value)
-                    guard y >= plot.rect.minY, y <= plot.rect.maxY else { continue }
+                    guard y >= plot.rect.minY - 0.5, y <= plot.rect.maxY + 0.5 else { continue }
                     var line = Path()
                     line.move(to: CGPoint(x: plot.rect.minX, y: y))
                     line.addLine(to: CGPoint(x: plot.rect.maxX, y: y))
                     context.stroke(line, with: .color(ETSpectrogramBand.gridColor),
                                    lineWidth: tick.emphasized ? 1 : 0.5)
-                }
-
-                // 画像は色を持っているので、そのまま貼る。
-                for piece in band.pieces(in: plot.rect) {
-                    context.draw(Image(decorative: piece.image, scale: 1), in: piece.rect)
                 }
                 // 1 秒の印。spectrogram.js:1031-1042 は下端から 16px 上げた所から引いている。
                 // 地が黒になったので、テーマの .tertiary ではなく固定の明るい色にする。
