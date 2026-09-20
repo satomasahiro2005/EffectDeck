@@ -211,6 +211,23 @@ targets:
     platform: iOS
     sources:
       - path: Tests/Unit
+      # JSFX Host。**C++ の native テストは作らない。**
+      # Tests/Native/CMakeLists.txt は ysfx を知らず、Vendor/ysfx は
+      # submodule なので、もう 1 つビルド系を増やすと持ち主が 2 つになる。
+      # 代わりに対象の実装をこのバンドルへ直接コンパイルし、Swift から
+      # ETJSFXHost.h の public C API を叩く（Tests/Unit/JSFX*Tests.swift）。
+      - path: Sources/Shared/ETJSFXHost.cpp
+      - path: Sources/Shared/ETJSFXHost.h
+      - path: Sources/Shared/ETExternalProcessor.h
+      # libYSFX の LICE は字の描画だけ外へ出してある
+      # （ETLICE_CreateFont / ETLICE_ConfigureFont / GetSysColor）。
+      # @gfx を呼ばなくても ysfx_api_gfx.o は引き込まれるので、
+      # この 1 本が無いと未定義参照でリンクが落ちる。
+      - path: Sources/Shared/ETLICEFont.mm
+      # fixture は実行時にバンドルから読む。ETJSFX_Create はパスを取るので、
+      # バンドル内のパスをそのまま渡せる。
+      - path: Tests/Fixtures/JSFX
+        buildPhase: resources
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
       # 図に重ねるスペクトラムの平滑。SwiftUI にも et_* にも触らないので、
       # この 1 本だけをここへ入れれば数で照合できる。
@@ -227,6 +244,20 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests
         GENERATE_INFOPLIST_FILE: YES
+        # ETJSFXHost.cpp は本体と同じ形で建てる（本体は dspSettings 経由）。
+        CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+        CLANG_CXX_LIBRARY: "libc++"
+        # **本体の橋を使い回さない。**JSFX に要るものだけを入れてある。
+        SWIFT_OBJC_BRIDGING_HEADER: Tests/Unit/EffeTuneLiveUnitTests-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Sources/Shared
+          - $(SRCROOT)/Vendor/ysfx/include
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
+    dependencies:
+      - target: YSFX
+      # ETLICEFont.mm の CoreText 境界。
+      - sdk: CoreText.framework
+      - sdk: CoreGraphics.framework
 
   EffeTuneLiveUITests:
     type: bundle.ui-testing
