@@ -1,3 +1,20 @@
+// Virtual Room binaural room model.
+//
+// Portions derived from:
+//   M0Rf30/easyeffects-presets
+//   scripts/generate-synthetic-binaural-room.js
+//
+// Licensed under the MIT License.
+// See NOTICE.md and the bundled third-party license notices.
+//
+// 由来の内訳（docs/virtual-room-design.md §60.4、§60.5）。**元から持ってきたもの:**
+//   - 耳介の tap 表（遅れ [3,6,9,13] / ゲイン [-0.35,0.22,-0.16,0.11] / 仰角の伸び 0.004）
+//   - 頭部陰影シェルフの alpha の式と ALPHA_MIN / THETA_MIN
+//   - 直接音に対する残響の比（DRR）で late の高さを決める考え方と、その 8 dB
+//   - 最後に 1 本のスカラーで全体を揃える（ILD / ITD を壊さない）
+// **新規:** 2 次の鏡像 / 帯域ごとの材質 / Eyring の RT60 / 16 本の FDN /
+//   RenderState と三重化 / 実時間の寸法変更 / BRIR 書き出し。
+//
 // Virtual Room の幾何・材質・経路生成。docs/virtual-room-design.md の §15-§24、§53。
 //
 // ここは制御スレッドだけが呼ぶ（§26）。音のスレッドは出来上がった RenderState しか
@@ -36,7 +53,7 @@ inline constexpr std::uint32_t kMaxImageOrder = 2u;  // §18。3 次以降は la
 inline constexpr std::uint32_t kMaxImages = 25u;     // |mx|+|my|+|mz| <= 2 の数
 inline constexpr std::uint32_t kFirstOrderImages = 7u;
 inline constexpr std::uint32_t kMaxPaths = kMaxImages * kSourceCount * kEarCount;
-inline constexpr std::uint32_t kPinnaTaps = 2u;  // §17
+inline constexpr std::uint32_t kPinnaTaps = 4u;  // §17
 inline constexpr std::uint32_t kFdnLines = 16u;  // §20
 inline constexpr std::uint32_t kModelVersion = 1u;  // §13
 
@@ -74,20 +91,27 @@ inline constexpr Material kMaterials[] = {
 };
 static_assert(sizeof(kMaterials) / sizeof(kMaterials[0]) == Range::kSideMaterialCount);
 
-// 耳介。Brown & Duda の構造モデルの短い tap 列を 2 本へ絞ったもの。
-// 遅れは 44.1 kHz のサンプル数で書かれているので秒へ直して持つ。
-// 高域だけへ掛ける（耳介の効きは 4 kHz 以上）。
+// 耳介の反射。Brown & Duda 構造モデル流の短い FIR。**元の JS の表そのまま。**
+//
+// 遅れは 48 kHz のサンプル数。3 サンプルで最初のくぼみが 8 kHz 付近に来て、
+// 符号を交互にすることで 8〜16 kHz へくぼみが並ぶ。
+// **ゲインは控えめにする。色を付けるためで、削るためではない。**
+//
+// 元は「全帯域へ畳む 1 本の FIR」で、音源にも像にも同じものを掛けている。
+// 経路ごとに持たせる意味が無いので、こちらも入力段で 1 度だけ掛ける。
 struct PinnaTap {
-  double gain;       // rho
-  double amplitude;  // A
-  double offset;     // B
-  double elevation;  // D
+  double delay;  // 48 kHz でのサンプル数
+  double gain;
 };
 inline constexpr PinnaTap kPinnaModel[kPinnaTaps] = {
-    {0.50, 1.0, 2.0, 1.0},
-    {-1.00, 5.0, 4.0, 0.5},
+    {3.0, -0.35},
+    {6.0, 0.22},
+    {9.0, -0.16},
+    {13.0, 0.11},
 };
-inline constexpr double kPinnaReferenceRate = 44100.0;
+inline constexpr double kPinnaReferenceRate = 48000.0;
+// 仰角 1 度あたり何割引き伸ばすか。
+inline constexpr double kPinnaElevationSensitivity = 0.004;
 
 // ---------------------------------------------------------------- 像の並び
 
@@ -146,8 +170,6 @@ constexpr void wallHits(int m, int &negative, int &positive) noexcept {
 struct PathState {
   float delay;  // サンプル。小数のまま
   float band[kBandCount];
-  float pinnaDelay[kPinnaTaps];
-  float pinnaGain[kPinnaTaps];
 };
 
 // 音のスレッドが見る唯一のもの（§27）。POD で、指す先を持たない。
@@ -161,9 +183,16 @@ struct RenderState {
   float fdnOutput[kEarCount][kFdnLines];
   float preDelay;       // mixing time。出力レートのサンプル
   std::uint32_t seed;   // 変わったら late だけ作り直す（§32）
-  float outputGain;     // 線形
+  /// 線形。Output Gain に**全体の正規化**を掛けたもの（§16）。
+  /// 直接音だけを 1 に揃えて early と late を足すと、部屋を広げるほど大きくなる。
+  float outputGain;
   float rt60[kBandCount];
   float mixingTime;     // 秒
+
+  /// 耳介の FIR。全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
+  /// delay は出力レートのサンプル（整数）。gain は 0 番が必ず 1。
+  std::uint32_t pinnaDelay[kPinnaTaps + 1u];
+  float pinnaGain[kPinnaTaps + 1u];
 };
 
 constexpr std::uint32_t pathIndex(std::uint32_t ear, std::uint32_t source,
@@ -344,10 +373,17 @@ inline Acoustics buildAcoustics(const Geometry &geometry, const Params &params) 
 // Brown & Duda の頭部陰影。低域 1、高域 alpha の 1 次シェルフなので、
 // 3 帯域のゲインへそのまま畳める（§17、§19）。
 // cosine は耳の外向き法線と音源方向の内積。
+//
+// **返す幅は 0.1 〜 2.0。**音源が耳のすぐ横に来たとき高域は 2 倍になる。
+// ここを 1.0 で頭打ちにすると近い方の耳が明るくならず、両耳の差が
+// レベルだけになって頭の中で鳴る。元の JS の shadowAlpha と同じ式。
 inline double headShadowAlpha(double cosine) noexcept {
   constexpr double kAlphaMin = 0.1;
-  const double theta = std::acos(clampDouble(cosine, -1.0, 1.0));
-  return (1.0 + kAlphaMin) * 0.5 + (1.0 - kAlphaMin) * 0.5 * std::cos(theta * (180.0 / 150.0));
+  constexpr double kThetaMinDegrees = 150.0;
+  const double theta = std::acos(clampDouble(cosine, -1.0, 1.0)) * 180.0 / kPi;
+  const double t = clampDouble(theta, 0.0, 180.0);
+  return (1.0 + kAlphaMin * 0.5) +
+         (1.0 - kAlphaMin * 0.5) * std::cos(t / kThetaMinDegrees * kPi);
 }
 
 // ---------------------------------------------------------------- late の構造
@@ -455,7 +491,26 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     reflect[4][band] = std::sqrt(clampDouble(1.0 - ceiling.alpha[band], 0.0, 1.0));
   }
 
-  const double pinnaScale = sampleRate / kPinnaReferenceRate;
+  // 耳介の FIR。全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
+  // 仰角で少し伸びる。Pinna 0% で素通し（0 番だけが残る）。
+  {
+    const double elevation =
+        sanitize(params.speakerElevation, Range::kSpeakerElevationMin,
+                 Range::kSpeakerElevationMax);
+    const double stretch =
+        (1.0 + kPinnaElevationSensitivity * elevation) * sampleRate / kPinnaReferenceRate;
+    state.pinnaDelay[0] = 0u;
+    state.pinnaGain[0] = 1.0F;
+    for (std::uint32_t tap = 0u; tap < kPinnaTaps; ++tap) {
+      const double delay = kPinnaModel[tap].delay * stretch;
+      state.pinnaDelay[tap + 1u] =
+          static_cast<std::uint32_t>(clampDouble(delay + 0.5, 1.0, 255.0));
+      state.pinnaGain[tap + 1u] = static_cast<float>(kPinnaModel[tap].gain * pinnaAmount);
+    }
+  }
+
+  // 早期反射のエネルギー。最後の正規化に使う。
+  double earlyEnergy = 0.0;
   double sourceNormalization[kSourceCount];
 
   for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
@@ -532,23 +587,41 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
         path.band[2] =
             static_cast<float>(level * surfaceResponse[2] * std::pow(alpha, shadowAmount));
 
-        // §17。耳介は高域だけへ、主 tap からの短い遅れとして足す。
-        const double azimuth = std::acos(clampDouble(cosine, -1.0, 1.0));
-        const double elevationDeg =
-            std::asin(clampDouble(delta[2] / radius, -1.0, 1.0)) * 180.0 / kPi;
-        for (std::uint32_t tap = 0u; tap < kPinnaTaps; ++tap) {
-          const PinnaTap &model = kPinnaModel[tap];
-          const double offset =
-              model.amplitude * std::cos(azimuth * 0.5) *
-                  std::sin(model.elevation * (90.0 - elevationDeg) * kPi / 180.0) +
-              model.offset;
-          path.pinnaDelay[tap] =
-              static_cast<float>(static_cast<double>(path.delay) + offset * pinnaScale);
-          path.pinnaGain[tap] =
-              static_cast<float>(model.gain * pinnaAmount * static_cast<double>(path.band[2]));
+        if (image != 0u && image < state.imagesPerSource) {
+          // 3 帯域の平均で数える。帯域の割り方は足すと素通しへ戻るので、
+          // これが**その経路が運ぶエネルギー**の目安になる。
+          const double mean = (static_cast<double>(path.band[0]) +
+                               static_cast<double>(path.band[1]) +
+                               static_cast<double>(path.band[2])) /
+                              3.0;
+          earlyEnergy += mean * mean;
         }
       }
     }
+  }
+
+  // ------------------------------------------------------------ 共通の遅れを落とす
+  //
+  // **いちばん早い直接音を原点に寄せる。**部屋の中の絶対位置には意味が無く、
+  // そのまま出すと 1.8 m ぶん（48 kHz で 246 サンプル ＝ 5.1 ms）まるごと
+  // 遅れが増える。実時間で通す道具なので、その 5 ms は払う理由が無い。
+  // 引くのは**全経路に同じ数**なので、ITD も早期反射の間隔も変わらない。
+  // 元の JS も同じことをしている（dref）。
+  double earliest = 1e9;
+  for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+      const double d = static_cast<double>(state.path[pathIndex(ear, source, 0u)].delay);
+      if (d < earliest) {
+        earliest = d;
+      }
+    }
+  }
+  // 4 点 Lagrange が 1 サンプル前を読むので、少し残す。
+  const double shift = clampDouble(earliest - 4.0, 0.0, 1e9);
+  for (std::uint32_t index = 0u; index < kMaxPaths; ++index) {
+    state.path[index].delay =
+        static_cast<float>(clampDouble(static_cast<double>(state.path[index].delay) - shift,
+                                       2.0, 1e9));
   }
 
   // 使わない像は 0 にしておく。同じ seed / params なら同じ形になることを
@@ -588,19 +661,20 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     state.fdnOutput[1][line] = outputRight[line];
   }
 
-  // late の高さ。拡散音場の残響 / 直接音エネルギー比から決める。
-  // R = S*alpha/(1-alpha)、比 = 16*pi*r^2/R。直接音は §16 でエネルギー 1 に
-  // 揃えてあるので、この比がそのまま late の目標エネルギーになる。
+  // late の高さ。**直接音に対する比（DRR）で決める。**
+  //
+  // 前は部屋定数から 16*pi*r^2/R を出していたが、あれは実測の部屋で成り立つ式で、
+  // 材質を極端にすると簡単に 2 桁ずれる。元の JS と同じく比を直に置く。
+  // 100% で 8 dB。**Room Amount はエネルギー比に掛ける**ので、200% で +3 dB。
+  //
   // 直交帰還の FDN は入力エネルギーを ||b||^2/(1-g^2) だけ吐くので、そこから
-  // 1 本あたりの入力ゲインを逆算する。
-  const double roomConstant = acoustics.surface * acoustics.absorption[1] /
-                              clampDouble(1.0 - acoustics.absorption[1], 0.01, 1.0);
-  const double ratio = clampDouble(
-      16.0 * kPi * geometry.sourceDistance * geometry.sourceDistance / roomConstant, 0.0, 400.0);
+  // 1 本あたりの入力ゲインを逆算する。直接音は §16 でエネルギー 1 に揃えてある。
+  constexpr double kDirectToReverbDecibels = 8.0;
+  const double targetLate =
+      std::pow(10.0, -kDirectToReverbDecibels / 10.0) * roomAmount * roomAmount;
   const double perSample = std::pow(10.0, -3.0 / (acoustics.rt60[1] * internalRate));
   const double leak = clampDouble(1.0 - perSample * perSample, 1e-9, 1.0);
-  const double lateGain =
-      std::sqrt(ratio * leak / static_cast<double>(kFdnLines)) * roomAmount;
+  const double lateGain = std::sqrt(targetLate * leak / static_cast<double>(kFdnLines));
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
       state.fdnInput[line][source] = static_cast<float>(
@@ -608,14 +682,35 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     }
   }
 
-  state.preDelay = static_cast<float>(acoustics.mixingTime * sampleRate);
+  // late の入口も同じだけ寄せる。寄せないと早期反射との間が開く。
+  state.preDelay = static_cast<float>(
+      clampDouble(acoustics.mixingTime * sampleRate - shift, 1.0, 1e9));
   state.mixingTime = static_cast<float>(acoustics.mixingTime);
   for (std::uint32_t band = 0u; band < kBandCount; ++band) {
     state.rt60[band] = static_cast<float>(acoustics.rt60[band]);
   }
+
+  // ------------------------------------------------------------ 全体の高さ
+  //
+  // §16 で揃えているのは**直接音だけ**。そこへ early と late を足すので、
+  // 部屋を広げるほど・材質を硬くするほど出力が大きくなっていた。
+  // 元の JS は最後に 1 本のスカラーで全体を揃えている（ILD も ITD も壊れない）。
+  // こちらは実時間なので peak では測れない。エネルギーの和で割る。
+  //
+  // 耳介の FIR も全帯域に掛かるぶんだけ足し引きするので、その利得も入れる。
+  double pinnaEnergy = 0.0;
+  for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
+    pinnaEnergy += static_cast<double>(state.pinnaGain[tap]) *
+                   static_cast<double>(state.pinnaGain[tap]);
+  }
+  const double total =
+      (1.0 + earlyEnergy * 0.5 + targetLate) * clampDouble(pinnaEnergy, 0.25, 4.0);
+  const double normalize = 1.0 / std::sqrt(clampDouble(total, 1e-6, 1e6));
+
   const double outputDecibels =
       sanitize(params.outputGain, Range::kOutputGainMin, Range::kOutputGainMax);
-  state.outputGain = static_cast<float>(std::pow(10.0, outputDecibels / 20.0));
+  state.outputGain =
+      static_cast<float>(std::pow(10.0, outputDecibels / 20.0) * normalize);
 }
 
 }  // namespace effetune::plugins::spatial

@@ -24,9 +24,6 @@ struct PreparedPath {
   std::uint32_t offset;  // 原点からの整数サンプル
   float coefficient[4];  // 4 点 Lagrange
   float band[kBandCount];
-  std::uint32_t pinnaOffset[kPinnaTaps];
-  float pinnaCoefficient[kPinnaTaps][4];
-  float pinnaGain[kPinnaTaps];
 };
 
 class VirtualRoomEngine {
@@ -112,6 +109,9 @@ private:
   double fadeStepSin_ = 0.0;
 
   std::uint32_t origin_ = 0u;
+  /// 耳介の FIR を入れる前の生の入力。全経路へ同じものが掛かるので入口で 1 度だけ。
+  float pinnaHistory_[kSourceCount][256]{};
+  std::uint32_t pinnaWrite_ = 0u;
   float splitLow_[kSourceCount]{};
   float splitHigh_[kSourceCount]{};
   float bandCoefficientLow_ = 0.0F;

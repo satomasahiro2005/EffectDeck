@@ -140,9 +140,13 @@ void VirtualRoomEngine::clearBuffers() noexcept {
   origin_ = 0u;
   fdnWrite_ = 0u;
   fdnPhase_ = 0u;
+  pinnaWrite_ = 0u;
   for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
     splitLow_[source] = 0.0F;
     splitHigh_[source] = 0.0F;
+    for (std::uint32_t index = 0u; index < 256u; ++index) {
+      pinnaHistory_[source][index] = 0.0F;
+    }
   }
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     fdnLow_[line] = 0.0F;
@@ -243,11 +247,6 @@ void VirtualRoomEngine::prepareState(const RenderState &state, PreparedPath *out
         for (std::uint32_t band = 0u; band < kBandCount; ++band) {
           prepared.band[band] = path.band[band];
         }
-        for (std::uint32_t tap = 0u; tap < kPinnaTaps; ++tap) {
-          lagrange(static_cast<double>(path.pinnaDelay[tap]), limit, prepared.pinnaOffset[tap],
-                   prepared.pinnaCoefficient[tap]);
-          prepared.pinnaGain[tap] = path.pinnaGain[tap];
-        }
       }
     }
   }
@@ -347,7 +346,23 @@ void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t fra
   float *const lines = lines_.data();
 
   for (std::uint32_t frame = 0u; frame < frames; ++frame) {
-    const float input[kSourceCount] = {left[frame], right[frame]};
+    const float raw[kSourceCount] = {left[frame], right[frame]};
+
+    // ---- 耳介（§17）。**全部の経路へ同じものが掛かる**ので入口で 1 度だけ。
+    // 元の JS も 1 本の FIR を全部の到来へ畳んでいる。経路ごとに持たせると
+    // 100 本ぶん走らせることになるうえ、像ごとに違う耳介になってしまう。
+    const RenderState &pinna = *active_;
+    pinnaWrite_ = (pinnaWrite_ + 1u) & 255u;
+    float input[kSourceCount];
+    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+      pinnaHistory_[source][pinnaWrite_] = raw[source];
+      float value = 0.0F;
+      for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
+        const std::uint32_t position = (pinnaWrite_ - pinna.pinnaDelay[tap]) & 255u;
+        value += pinnaHistory_[source][position] * pinna.pinnaGain[tap];
+      }
+      input[source] = value;
+    }
 
     // ---- 3 帯域へ割って輪へ書く。足すと入力へ完全に戻る形（§19）。
     origin_ = (origin_ + 1u) & ringMask_;
@@ -428,19 +443,6 @@ void VirtualRoomEngine::accumulatePaths(const RenderState &state, const Prepared
           band[2] += history[base + 2u * ringSize_ + position] * weight;
         }
         sum += band[0] * path.band[0] + band[1] * path.band[1] + band[2] * path.band[2];
-
-        // 耳介は高域だけへ、主 tap から少し遅れて足す（§17）。
-        for (std::uint32_t pinna = 0u; pinna < kPinnaTaps; ++pinna) {
-          if (path.pinnaGain[pinna] == 0.0F) {
-            continue;
-          }
-          float value = 0.0F;
-          for (std::uint32_t tap = 0u; tap < 4u; ++tap) {
-            const std::uint32_t position = (origin_ - (path.pinnaOffset[pinna] + tap)) & ringMask_;
-            value += history[base + 2u * ringSize_ + position] * path.pinnaCoefficient[pinna][tap];
-          }
-          sum += value * path.pinnaGain[pinna];
-        }
       }
     }
     ear[earIndex] += sum;
@@ -487,7 +489,11 @@ float VirtualRoomEngine::advanceLate(std::uint32_t ear, const float *history,
       fdnPhase_ = 0u;
     }
   }
-  // 段差をそのまま出すと divider の周期で折り返しが乗る。1 次で均す。
+  // **間引いたときだけ均す。**divider が 1 なら FDN は全速で回っているので、
+  // ここで 1 次を掛けると残響の高域を削るだけになる（前はいつも掛けていた）。
+  if (divider_ == 1u) {
+    return lateHold_[ear] * lateScalar_;
+  }
   coherence_[ear] += lateSmoothing_ * (lateHold_[ear] - coherence_[ear]);
   return coherence_[ear] * lateScalar_;
 }
