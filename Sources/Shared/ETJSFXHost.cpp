@@ -310,8 +310,16 @@ double ETJSFX_GetSlider(ETJSFX *h,uint32_t i){return h&&i<ysfx_max_sliders?fromB
 bool ETJSFX_SendTrigger(ETJSFX *h,uint32_t i)
 {
     if(!h||i>=ysfx_max_triggers)return false;
+    // **running でなければ捨てる。**process は running 以外だと掃き出しの前に
+    // return するので、溜めたぶんは再開した最初の 1 ブロックで一斉に発火する。
+    // 画面には何も出ないので、押しても効かないのか溜まっているのか区別できない。
+    // running から外れるのは自動バイパスだけでなく maintenance（状態保存・再設定）も在り、
+    // そちらは日常的に踏む。
+    if(h->mode.load(std::memory_order_acquire)!=(uint8_t)Mode::running)return false;
     h->pendingTriggers.fetch_or(1u<<i,std::memory_order_release);return true;
 }
+uint32_t ETJSFX_MaxTriggers(void){return ysfx_max_triggers;}
+bool ETJSFX_IsRunning(const ETJSFX *h){return h&&h->mode.load(std::memory_order_acquire)==(uint8_t)Mode::running;}
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange(false);}
 bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
 

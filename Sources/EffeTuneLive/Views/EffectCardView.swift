@@ -574,9 +574,17 @@ private struct ExternalProcessorView: View {
                     HStack {
                         Text(parameter.name).font(.footnote)
                         Spacer()
-                        Text(String(format: "%.3g", parameter.value))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                        // `%.3g` は 1000 を `1e+03`、12001 を `1.2e+04` にしていた。
+                        // 可聴域を扱う slider（カットオフ・ディレイ・FFT 長）は
+                        // まるごとそれに当たる。刻みから桁数を決めて %f で出す。
+                        ETValueField(text: ETNumberText.stepped(parameter.value,
+                                                                step: parameter.step),
+                                     label: parameter.name,
+                                     editText: { ETNumberText.draft(parameter.value) }) { typed in
+                            let clamped = min(max(typed, parameter.minimum), parameter.maximum)
+                            jsfx.setParameter(instanceID: instanceID,
+                                              parameterID: parameter.id, value: clamped)
+                        }
                     }
                     if parameter.isEnumeration {
                         Picker(parameter.name, selection: Binding(
@@ -604,16 +612,30 @@ private struct ExternalProcessorView: View {
     }
 
 
+    /// JSFX の `trigger` へビットを立てる札。
+    ///
+    /// 見出しが「Triggers」だけだと何なのか読めない。これは EEL2 の組み込み変数
+    /// `trigger` のビットで、押すと次の 1 ブロックだけ bit(N-1) が立ち、
+    /// スクリプトは @block で `trigger & 1`、`trigger & 2` … として読む。
+    /// 数は ysfx_max_triggers。**10 を直書きしない**（ysfx を上げて変わったときに
+    /// UI が置き去りになる）。
+    ///
+    /// **押しても受け取られないときは無効にして見せる。**running でない
+    /// （自動バイパス中・状態保存中・再設定中）ときに送ると捨てられるので、
+    /// 押せるままだと「効かないのか溜まっているのか」が区別できない。
     private var jsfxTriggers: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Triggers").font(.caption).foregroundStyle(.secondary)
+        let live = jsfx.isRunning(instanceID: instanceID)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Trigger (trigger bits 1–\(ETJSFX_MaxTriggers()))")
+                .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 6) {
-                ForEach(0..<10, id: \.self) { index in
+                ForEach(0..<Int(ETJSFX_MaxTriggers()), id: \.self) { index in
                     Button("\(index + 1)") {
                         jsfx.sendTrigger(instanceID: instanceID, index: UInt32(index))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(!live)
                 }
             }
         }

@@ -33,7 +33,13 @@ double ETJSFX_SliderToNormalized(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_SliderFromNormalized(ETJSFX *host, uint32_t index, double value);
 void ETJSFX_SetSlider(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_GetSlider(ETJSFX *host, uint32_t index);
+/// trigger を送る。**running でなければ false を返して捨てる。**
+/// 溜めると、再開した最初の 1 ブロックで一斉に発火して、押した覚えの無い音が出る。
 bool ETJSFX_SendTrigger(ETJSFX *host, uint32_t index);
+/// trigger の本数（ysfx_max_triggers）。UI が 10 を直書きしないため。
+uint32_t ETJSFX_MaxTriggers(void);
+/// いま音を通しているか。false のあいだ SendTrigger は捨てる。
+bool ETJSFX_IsRunning(const ETJSFX *host);
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);
 bool ETJSFX_HasGFX(const ETJSFX *host);
