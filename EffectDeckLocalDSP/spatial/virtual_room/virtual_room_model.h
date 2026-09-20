@@ -34,6 +34,7 @@
 
 #include "effetune/dsp/xorshift_rng.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -509,8 +510,13 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     }
   }
 
-  // 早期反射のエネルギー。最後の正規化に使う。
+  // 最後の正規化に使う。
+  //   earlyEnergy  無相関で足したときのエネルギー（中高域はこちらに近い）
+  //   lowSum       低域で**同相に足したとき**の利得（[耳][音源]）
+  // 低い周波数では経路の差が波長よりずっと短いので、像は全部同じ向きに
+  // 足される。エネルギー和だけで割ると低域だけ持ち上がって歪む。
   double earlyEnergy = 0.0;
+  double lowSum[kEarCount][kSourceCount] = {};
   double sourceNormalization[kSourceCount];
 
   for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
@@ -587,6 +593,9 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
         path.band[2] =
             static_cast<float>(level * surfaceResponse[2] * std::pow(alpha, shadowAmount));
 
+        if (image < state.imagesPerSource) {
+          lowSum[ear][source] += static_cast<double>(path.band[0]);
+        }
         if (image != 0u && image < state.imagesPerSource) {
           // 3 帯域の平均で数える。帯域の割り方は足すと素通しへ戻るので、
           // これが**その経路が運ぶエネルギー**の目安になる。
@@ -698,14 +707,44 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // こちらは実時間なので peak では測れない。エネルギーの和で割る。
   //
   // 耳介の FIR も全帯域に掛かるぶんだけ足し引きするので、その利得も入れる。
+  // 耳介の FIR は低域では素通し（tap の和がそのまま利得）、中高域では
+  // くぼみを作るので二乗和で効く。割り方をそれぞれに合わせる。
   double pinnaEnergy = 0.0;
+  double pinnaLow = 0.0;
   for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
-    pinnaEnergy += static_cast<double>(state.pinnaGain[tap]) *
-                   static_cast<double>(state.pinnaGain[tap]);
+    const double g = static_cast<double>(state.pinnaGain[tap]);
+    pinnaEnergy += g * g;
+    pinnaLow += g;
   }
-  const double total =
-      (1.0 + earlyEnergy * 0.5 + targetLate) * clampDouble(pinnaEnergy, 0.25, 4.0);
-  const double normalize = 1.0 / std::sqrt(clampDouble(total, 1e-6, 1e6));
+
+  // 無相関で足したときの高さ。中高域はこちらが効く。
+  const double incoherent =
+      std::sqrt(clampDouble((1.0 + earlyEnergy * 0.5 + targetLate) *
+                                clampDouble(pinnaEnergy, 0.25, 4.0),
+                            1e-6, 1e6));
+
+  // 低域で同相に足したときの高さ。**左右そろった低音がいちばん大きくなる**ので、
+  // 両方の音源を足したものを耳ごとに見て、大きい方を取る。
+  // late も同じ向きに積もるので、1 本あたり b*c/(1-g) を足す。
+  double lateLow = 0.0;
+  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+    const double leakLine =
+        clampDouble(1.0 - static_cast<double>(state.fdnBand[line][0]), 1e-3, 1.0);
+    lateLow += std::fabs(static_cast<double>(state.fdnInput[line][0])) *
+               std::fabs(static_cast<double>(state.fdnOutput[0][line])) / leakLine;
+  }
+  double coherent = 0.0;
+  for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+    const double sum = lowSum[ear][0] + lowSum[ear][1];
+    if (sum > coherent) {
+      coherent = sum;
+    }
+  }
+  coherent = (coherent + lateLow * 2.0) * std::fabs(pinnaLow);
+
+  // **大きい方で割る。**こうすると「バイパスより大きくならない」が成り立つ。
+  // 低音が同相で来たときがいちばん厳しく、そこで 0 dBFS を超えていた。
+  const double normalize = 1.0 / clampDouble(std::max(incoherent, coherent), 1e-6, 1e6);
 
   const double outputDecibels =
       sanitize(params.outputGain, Range::kOutputGainMin, Range::kOutputGainMax);
