@@ -56,6 +56,18 @@ final class ETAUExternalBridge {
         return index
     }
 
+    /// Install a host-neutral processor (currently JSFX) into the same slot
+    /// namespace used by Audio Units. The caller owns the descriptor context.
+    @discardableResult
+    func install(_ descriptor: ETExternalProcessor, instanceID: String) throws -> UInt8 {
+        let index = try reserve(instanceID: instanceID)
+        var descriptor = descriptor
+        withUnsafePointer(to: &descriptor) {
+            ETPipeline_SetExternalProcessorAt(UInt32(index), $0)
+        }
+        return index
+    }
+
     func index(for instanceID: String) -> UInt8? { indices[instanceID] }
 
     func remove(instanceID: String) {

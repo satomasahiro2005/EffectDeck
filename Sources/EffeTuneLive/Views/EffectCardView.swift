@@ -34,6 +34,9 @@ struct EffectCardView: View {
     let canMoveDown: Bool
     /// Frozen AU UI used only by the floating reorder card.
     var externalSnapshot: UIImage? = nil
+    /// Prevent a floating reorder card from mounting any live external UI even
+    /// when the first frame has not arrived yet.
+    var isDragPreview = false
     /// 組の中での位置。内側を向く角を角にする。
     var block: ETBlockPosition = .alone
 
@@ -50,6 +53,7 @@ struct EffectCardView: View {
         case routing
         /// エフェクト 1 個ぶんのプリセット。
         case presets
+        case jsfxSource
 
         var id: String { rawValue }
     }
@@ -89,8 +93,10 @@ struct EffectCardView: View {
                 if isExpanded && hasBody {
                     Group {
                         if node.isExternal {
-                            ExternalProcessorView(instanceID: node.externalInstanceID,
-                                                  snapshot: externalSnapshot)
+                            ExternalProcessorView(externalID: node.externalID ?? "",
+                                                  instanceID: node.externalInstanceID,
+                                                  snapshot: externalSnapshot,
+                                                  isDragPreview: isDragPreview)
                         } else if ETEffectViews.has(node.spec.type) {
                             // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
                             ETEffectViews.view(index: index, node: node, dsp: dsp)
@@ -113,6 +119,7 @@ struct EffectCardView: View {
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
             case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
+            case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
             }
         }
     }
@@ -211,6 +218,11 @@ struct EffectCardView: View {
             }
 
             Menu {
+                if node.externalID?.hasPrefix("jsfx:") == true {
+                    Button { sheet = .jsfxSource } label: {
+                        Label("View Source", systemImage: "doc.text.magnifyingglass")
+                    }
+                }
                 // 並びは上流に合わせて routing → preset → reset
                 // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
                 //
@@ -385,21 +397,126 @@ struct EffectCardView: View {
 /// editing affordance as native EffeTune parameters.
 private struct ExternalProcessorView: View {
     @ObservedObject private var au = ETAUHost.shared
+    @ObservedObject private var jsfx = ETJSFXHost.shared
+    @ObservedObject private var prefs = Preferences.shared
+    let externalID: String
     let instanceID: String
     let snapshot: UIImage?
+    let isDragPreview: Bool
     @State private var controller: UIViewController?
     @State private var requestingView = false
     @State private var fullScreen = false
     @State private var movingToFullScreen = false
+    @State private var isOnScreen = true
 
     var body: some View {
         let parameters = au.parameters(instanceID: instanceID)
         Group {
-        if let snapshot {
-            Image(uiImage: snapshot)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(minHeight: 260, idealHeight: 360, maxHeight: 520)
+        if isDragPreview {
+            // Reorder overlays must be inert for every external processor.
+            // Mounting a second JSFX canvas changes the same VM's gfx_w/gfx_h
+            // and its disappearance can hide the surviving inline window.
+            if let snapshot {
+                Image(uiImage: snapshot)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(minHeight: 180, idealHeight: 300, maxHeight: 520)
+            } else {
+                // **黒い板を出さない。**JSFX の canvas を二重に mount しないための
+                // 措置だが、自前 UI を持たない AU（パラメータだけのもの）や、
+                // まだビューが立ち上がっていない AU では snapshot が必ず nil になるので、
+                // 掴んだ瞬間にカードの中身が真っ黒な板になっていた。
+                // 掴んでいる間だけの絵なので、名前が出ていれば足りる。
+                // この View は node を持たない（externalID と instanceID だけ）。
+                // 掴んでいる間の絵なので、場所が空いていることが分かれば足りる。
+                Color.clear.frame(height: 72)
+            }
+        } else if externalID.hasPrefix("jsfx:") {
+            let jsfxParameters = jsfx.parameters(instanceID: instanceID)
+            // **3 つの枝の共通の頭に出す。**
+            // 診断（締切超過での自動バイパス）を出していたのは「@gfx が無く、かつ
+            // 可視パラメータも空」の枝だけだった。つまみを持つものや @gfx を持つものでは、
+            // 音だけ素通りに変わって画面は何も変わらない。
+            // status(instanceID:) は host が在れば常に "Ready" を返すので条件に使えない。
+            if let diagnostic = jsfx.diagnostic(instanceID: instanceID) {
+                HStack(spacing: 8) {
+                    // 数字も一緒に出す。閾値（3 回連続・持ち時間まるごと）に根拠が無く、
+                    // 実機の数字が無いうちは動かさないと決めたので、まず採れる形にする。
+                    Text(jsfx.deadlineReading(instanceID: instanceID).map {
+                        diagnostic + String(format: " (worst %.0f%% of the block, %u over)",
+                                            $0.worst * 100, $0.trips)
+                    } ?? diagnostic)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Re-enable") { jsfx.clearDiagnostic(instanceID: instanceID) }
+                        .font(.system(size: 12))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            // **画面に入っているかを見るのは JSFX の canvas だけ。**
+            // body ぜんぶ（Group の外）に付けていたので、AU のカードでも端を
+            // よぎるたびに body が評価し直されていた。要るのはこの枝だけ。
+            if jsfx.hasGFX(instanceID: instanceID) {
+                VStack(alignment: .leading, spacing: 12) {
+                    ZStack(alignment: .topTrailing) {
+                        if prefs.jsfxCanvasMode == .pixelPerfect {
+                            let size = jsfx.preferredGFXSize(instanceID: instanceID)
+                            ScrollView([.horizontal, .vertical]) {
+                                JSFXGFXView(instanceID: instanceID, fixedSize: size,
+                                            isVisible: isOnScreen && !fullScreen)
+                            }
+                            .frame(height: min(360, max(180, size.height)))
+                        } else {
+                            JSFXGFXView(instanceID: instanceID,
+                                        isVisible: isOnScreen && !fullScreen)
+                        }
+                        Button {
+                                movingToFullScreen = true
+                                Task { @MainActor in
+                                    await Task.yield()
+                                    ETInterfaceOrientation.request(.landscapeRight)
+                                    for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
+                                        try? await Task.sleep(nanoseconds: 20_000_000)
+                                    }
+                                    fullScreen = true
+                                }
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .accessibilityLabel("Full Screen")
+                        .buttonStyle(.glass(.regular.interactive()))
+                        .buttonBorderShape(.circle)
+                        .controlSize(.large)
+                        .padding(8)
+                    }
+                    .fullScreenCover(isPresented: $fullScreen, onDismiss: {
+                        ETInterfaceOrientation.request(.portrait)
+                        movingToFullScreen = false
+                    }) {
+                        JSFXFullScreenEditor(instanceID: instanceID,
+                                             isPresented: $fullScreen)
+                    }
+                    jsfxParameterRows(jsfxParameters)
+                    jsfxTriggers
+                }
+                .onScrollVisibilityChange(threshold: 0.01) { isOnScreen = $0 }
+            } else if jsfxParameters.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(jsfx.status(instanceID: instanceID))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    jsfxTriggers
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    jsfxParameterRows(jsfxParameters)
+                    jsfxTriggers
+                }
+            }
         } else if let controller {
             ZStack(alignment: .topTrailing) {
                 if movingToFullScreen {
@@ -480,6 +597,317 @@ private struct ExternalProcessorView: View {
                 requestingView = false
             }
         }
+    }
+
+    @ViewBuilder
+    private func jsfxParameterRows(_ parameters: [ETJSFXHost.Parameter]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(parameters) { parameter in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(parameter.name).font(.footnote)
+                        Spacer()
+                        // `%.3g` は 1000 を `1e+03`、12001 を `1.2e+04` にしていた。
+                        // 可聴域を扱う slider（カットオフ・ディレイ・FFT 長）は
+                        // まるごとそれに当たる。刻みから桁数を決めて %f で出す。
+                        ETValueField(text: ETNumberText.stepped(parameter.value,
+                                                                step: parameter.step),
+                                     label: parameter.name,
+                                     editText: { ETNumberText.draft(parameter.value) }) { typed in
+                            let clamped = min(max(typed, parameter.minimum), parameter.maximum)
+                            jsfx.setParameter(instanceID: instanceID,
+                                              parameterID: parameter.id, value: clamped)
+                        }
+                    }
+                    if parameter.isEnumeration {
+                        Picker(parameter.name, selection: Binding(
+                            get: { Int(parameter.value.rounded()) },
+                            set: { jsfx.setParameter(instanceID: instanceID,
+                                                     parameterID: parameter.id, value: Double($0)) })) {
+                            ForEach(Array(parameter.enumNames.enumerated()), id: \.offset) {
+                                Text($0.element).tag($0.offset)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    } else if parameter.maximum > parameter.minimum {
+                        Slider(value: Binding(
+                            get: { jsfx.normalizedValue(instanceID: instanceID,
+                                                       parameterID: parameter.id,
+                                                       value: parameter.value) },
+                            set: { jsfx.setNormalizedParameter(instanceID: instanceID,
+                                                               parameterID: parameter.id, value: $0) }),
+                               in: 0...1)
+                    }
+                }
+            }
+        }
+    }
+
+
+    /// JSFX の `trigger` へビットを立てる札。
+    ///
+    /// 見出しが「Triggers」だけだと何なのか読めない。これは EEL2 の組み込み変数
+    /// `trigger` のビットで、押すと次の 1 ブロックだけ bit(N-1) が立ち、
+    /// スクリプトは @block で `trigger & 1`、`trigger & 2` … として読む。
+    /// 数は ysfx_max_triggers。**10 を直書きしない**（ysfx を上げて変わったときに
+    /// UI が置き去りになる）。
+    ///
+    /// **押しても受け取られないときは無効にして見せる。**running でない
+    /// （自動バイパス中・状態保存中・再設定中）ときに送ると捨てられるので、
+    /// 押せるままだと「効かないのか溜まっているのか」が区別できない。
+    private var jsfxTriggers: some View {
+        let live = jsfx.isRunning(instanceID: instanceID)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Trigger (trigger bits 1–\(ETJSFX_MaxTriggers()))")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(0..<Int(ETJSFX_MaxTriggers()), id: \.self) { index in
+                    Button("\(index + 1)") {
+                        jsfx.sendTrigger(instanceID: instanceID, index: UInt32(index))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!live)
+                }
+            }
+        }
+    }
+}
+
+private struct JSFXGFXView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var jsfx = ETJSFXHost.shared
+    let instanceID: String
+    var fixedSize: CGSize? = nil
+    var fullScreen = false
+    var isVisible = true
+    @State private var image: CGImage?
+    @State private var drawing = false
+    @State private var windowOwner = UUID()
+
+    var body: some View {
+        let preferred = jsfx.preferredGFXSize(instanceID: instanceID)
+        let retina = jsfx.gfxWantsRetina(instanceID: instanceID)
+        GeometryReader { geometry in
+            let active = isVisible && scenePhase == .active
+            let renderKey = JSFXGFXRenderKey(width: Int(geometry.size.width.rounded()),
+                                             height: Int(geometry.size.height.rounded()),
+                                             active: active)
+            ZStack {
+                Color.black
+                if let image {
+                    Image(decorative: image, scale: UIScreen.main.scale)
+                        .resizable()
+                        .interpolation(retina ? .high : .none)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+                JSFXKeyboardCapture(instanceID: instanceID)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let scale = jsfx.gfxPixelScale(instanceID: instanceID,
+                                                   size: geometry.size,
+                                                   screenScale: UIScreen.main.scale)
+                    jsfx.updateMouse(instanceID: instanceID,
+                                     point: CGPoint(x: value.location.x * scale,
+                                                    y: value.location.y * scale),
+                                     buttons: 1)
+                }
+                .onEnded { value in
+                    let scale = jsfx.gfxPixelScale(instanceID: instanceID,
+                                                   size: geometry.size,
+                                                   screenScale: UIScreen.main.scale)
+                    jsfx.updateMouse(instanceID: instanceID,
+                                     point: CGPoint(x: value.location.x * scale,
+                                                    y: value.location.y * scale),
+                                     buttons: 0)
+                })
+            .task(id: renderKey) {
+                guard active else { return }
+                let fps = max(1, min(120, jsfx.gfxFrameRate(instanceID: instanceID)))
+                while !Task.isCancelled {
+                    if !drawing {
+                        drawing = true
+                        jsfx.renderGFX(instanceID: instanceID, size: geometry.size,
+                                       scale: UIScreen.main.scale) {
+                            if let rendered = $0 { image = rendered }
+                            drawing = false
+                        }
+                    }
+                    do {
+                        try await Task.sleep(for: .seconds(1.0 / Double(fps)))
+                    } catch {
+                        break
+                    }
+                }
+            }
+            .onChange(of: active, initial: true) { _, active in
+                jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
+                                     focused: active, visible: active)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .modifier(JSFXGFXLayout(preferred: fixedSize ?? preferred,
+                                fixedSize: fixedSize, fullScreen: fullScreen))
+        .clipped()
+        .onDisappear {
+            jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
+                                 focused: false, visible: false)
+        }
+    }
+}
+
+private struct JSFXGFXRenderKey: Hashable {
+    let width: Int
+    let height: Int
+    let active: Bool
+}
+
+private struct JSFXGFXLayout: ViewModifier {
+    let preferred: CGSize
+    let fixedSize: CGSize?
+    let fullScreen: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let fixedSize {
+            content.frame(width: fixedSize.width, height: fixedSize.height)
+        } else if fullScreen {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            content
+                .aspectRatio(max(0.25, preferred.width / max(1, preferred.height)),
+                             contentMode: .fit)
+                .frame(minHeight: 180, maxHeight: 360)
+        }
+    }
+}
+
+private struct JSFXFullScreenEditor: View {
+    let instanceID: String
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color(uiColor: .systemBackground).ignoresSafeArea()
+            JSFXGFXView(instanceID: instanceID, fullScreen: true)
+                // Give the newly-created canvas the complete landscape safe
+                // area. A one-sided safeAreaPadding left its proposal at the
+                // inline width on some presentation transitions.
+                .padding(8)
+            Button { isPresented = false } label: { Image(systemName: "xmark") }
+                .accessibilityLabel("Close")
+            .font(.system(size: 15, weight: .bold))
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .padding(.top, 8)
+            .padding(.trailing, 12)
+        }
+    }
+}
+
+private struct JSFXSourceView: View {
+    @Environment(\.dismiss) private var dismiss
+    let instanceID: String
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.horizontal, .vertical]) {
+                Text(ETJSFXHost.shared.sourceText(instanceID: instanceID) ?? "Source unavailable")
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(16)
+            }
+            .navigationTitle("JSFX Source")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// いま誰かが字を打っているか。
+///
+/// UIKit に「現在の first responder」を直に返す API は無いので、nil 宛ての
+/// sendAction が first responder にだけ届く性質を使う。
+private final class ETFirstResponderProbe {
+    static weak var found: UIResponder?
+}
+
+private extension UIResponder {
+    @objc func et_findFirstResponder(_ sender: Any?) {
+        ETFirstResponderProbe.found = self
+    }
+}
+
+private struct JSFXKeyboardCapture: UIViewRepresentable {
+    let instanceID: String
+
+    /// 打ち込み中の欄が first responder を持っているか。
+    static var someoneIsTyping: Bool {
+        ETFirstResponderProbe.found = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.et_findFirstResponder(_:)),
+                                        to: nil, from: nil, for: nil)
+        return ETFirstResponderProbe.found is UITextInput
+    }
+    func makeUIView(context: Context) -> ETJSFXKeyboardView {
+        let view = ETJSFXKeyboardView()
+        view.instanceID = instanceID
+        // **打ち込み中の欄から first responder を奪わない。**
+        // この面は @gfx の枝が mount されるたびに立つ（開いた瞬間だけでなく、
+        // script の読み込みが終わって hasGFX が変わったとき、canvas の描き方を
+        // 切り替えたとき、全画面へ出入りしたとき）。数値を打っている最中に
+        // 重なると、キーボードが降りて入力が切れる。
+        DispatchQueue.main.async {
+            guard !Self.someoneIsTyping else { return }
+            _ = view.becomeFirstResponder()
+        }
+        return view
+    }
+    func updateUIView(_ view: ETJSFXKeyboardView, context: Context) {
+        view.instanceID = instanceID
+    }
+}
+
+private final class ETJSFXKeyboardView: UIView {
+    var instanceID = ""
+    override var canBecomeFirstResponder: Bool { true }
+
+    private func event(_ press: UIPress, pressed: Bool) {
+        guard let key = press.key else { return }
+        var modifiers: UInt32 = 0
+        if key.modifierFlags.contains(.shift) { modifiers |= 1 }
+        if key.modifierFlags.contains(.control) { modifiers |= 2 }
+        if key.modifierFlags.contains(.alternate) { modifiers |= 4 }
+        if key.modifierFlags.contains(.command) { modifiers |= 8 }
+        let special: [UIKeyboardHIDUsage: UInt32] = [
+            .keyboardDeleteOrBackspace: 0x08, .keyboardEscape: 0x1b,
+            .keyboardDeleteForward: 0x7f, .keyboardLeftArrow: 0xe00c,
+            .keyboardUpArrow: 0xe00d, .keyboardRightArrow: 0xe00e,
+            .keyboardDownArrow: 0xe00f, .keyboardHome: 0xe012,
+            .keyboardEnd: 0xe013, .keyboardInsert: 0xe014
+        ]
+        let code = special[key.keyCode]
+            ?? key.charactersIgnoringModifiers.unicodeScalars.first.map(\.value)
+        guard let code else { return }
+        ETJSFXHost.shared.updateKey(instanceID: instanceID, modifiers: modifiers,
+                                    key: code, pressed: pressed)
+    }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        presses.forEach { self.event($0, pressed: true) }
+        super.pressesBegan(presses, with: event)
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        presses.forEach { self.event($0, pressed: false) }
+        super.pressesEnded(presses, with: event)
     }
 }
 

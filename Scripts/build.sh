@@ -9,6 +9,10 @@ export PATH="/opt/homebrew/bin:$PATH"   # xcodegen と、3.10 以降の python3
 cd "$(dirname "$0")/.." || exit 1
 ROOT="$PWD"
 LOG="$ROOT/build.log"
+# EffeTune + ysfx/WDL are C/C++ heavy. Xcode's automatic parallelism can
+# exceed the build Mac's memory on a cold build. Override when the machine has
+# headroom (BUILD_JOBS=4, etc.); keep the safe default for remote builds.
+BUILD_JOBS="${BUILD_JOBS:-2}"
 
 # 実機だけを探す。シミュレータが起きていると devicectl はそれも connected として
 # 並べるので、最後の列（Reality）が physical のものに絞る。
@@ -34,9 +38,10 @@ build_one() {
   echo "================ build $1 ================"
   /usr/bin/xcodebuild -project EffeTuneLive.xcodeproj \
     -scheme "$1" -configuration Debug \
+    -jobs "$BUILD_JOBS" \
     -sdk iphoneos -arch arm64 -allowProvisioningUpdates \
     CONFIGURATION_BUILD_DIR="$ROOT/out" build 2>&1 \
-    | grep -E "error:|errSec|CodeSign failed|BUILD SUCCEEDED|BUILD FAILED|not found and could not|doesn't (support|include)" \
+    | grep -E "error:|errSec|CodeSign failed|Undefined symbols|referenced from:|ld: |symbol\(s\) not found|BUILD SUCCEEDED|BUILD FAILED|not found and could not|doesn't (support|include)" \
     | tail -25
 }
 

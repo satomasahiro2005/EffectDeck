@@ -12,10 +12,12 @@
 //  （plugins/control/section.js）。
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct EffectPickerView: View {
     let onPick: (ETEffect) -> Void
     let onPickAU: (ETAUHost.Entry) -> Void
+    let onPickJSFX: (ETJSFXHost.Entry) -> Void
     /// プリセットを選んだ。名前と中身を渡す。受けた側が Section に包んで挿す。
     let onPickPreset: (String, [PipelineStore.Loaded]) -> Void
 
@@ -24,7 +26,12 @@ struct EffectPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dsp = EffeTuneDSP.shared
     @StateObject private var au = ETAUHost.shared
+    @StateObject private var jsfx = ETJSFXHost.shared
     @State private var query = ""
+    @State private var importingJSFX = false
+    /// 消そうとしている JSFX。取り消せないので一度確かめる（IR と同じ形）。
+    @State private var pendingDeleteJSFX: ETJSFXHost.Entry?
+    @State private var importError: String?
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
     enum Pane: String, CaseIterable, Identifiable {
@@ -148,6 +155,40 @@ struct EffectPickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                if pane == .plugins {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                            importingJSFX = true
+                        }
+                    }
+                }
+            }
+            .fileImporter(isPresented: $importingJSFX,
+                          allowedContentTypes: [.plainText, .data], allowsMultipleSelection: false) { result in
+                do {
+                    guard let url = try result.get().first else { return }
+                    _ = try jsfx.importFile(url)
+                    pane = .plugins
+                } catch { importError = error.localizedDescription }
+            }
+            .alert("Could Not Import JSFX", isPresented: Binding(
+                get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+                    Button("OK", role: .cancel) { importError = nil }
+                } message: { Text(importError ?? "Unknown error") }
+            // 一覧と検索結果の両方を覆う階層に 1 つ置く。行ごとに持たせると
+            // 検索から払ったときに出ない。
+            .confirmationDialog(pendingDeleteJSFX.map { "Remove “\($0.name)”?" } ?? "",
+                                isPresented: Binding(
+                                    get: { pendingDeleteJSFX != nil },
+                                    set: { if !$0 { pendingDeleteJSFX = nil } }),
+                                titleVisibility: .visible) {
+                Button("Remove", role: .destructive) {
+                    if let entry = pendingDeleteJSFX { jsfx.removeEntry(entry) }
+                    pendingDeleteJSFX = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDeleteJSFX = nil }
+            } message: {
+                Text("A chain built around it will not find it here again. This cannot be undone.")
             }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
@@ -263,16 +304,26 @@ struct EffectPickerView: View {
 
     private var pluginList: some View {
         Group {
-            if au.entries.isEmpty {
-                ContentUnavailableView("No Plugins", systemImage: "waveform",
-                                       description: Text("Install an AUv3 plug-in to see it here."))
+            if au.entries.isEmpty && jsfx.entries.isEmpty {
+                ContentUnavailableView {
+                    Label("No Plugins", systemImage: "waveform")
+                } description: {
+                    Text("Install an AUv3 plug-in or import a single-file JSFX.")
+                } actions: {
+                    Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                        importingJSFX = true
+                    }
+                }
             } else {
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
-                        jumpStrip(audioUnitVendors)
+                        jumpStrip(pluginVendors)
                         Divider()
                         List {
-                            ForEach(audioUnitVendors, id: \.self) { vendor in
+                            Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                                importingJSFX = true
+                            }
+                            ForEach(pluginVendors, id: \.self) { vendor in
                                 Section {
                                     let entries = audioUnits(vendor: vendor)
                                     ForEach(Array(entries.enumerated()), id: \.element.id) {
@@ -280,6 +331,24 @@ struct EffectPickerView: View {
                                         auRow(entry)
                                             .id(offset == 0 ? Self.jumpTarget(vendor)
                                                             : "au-entry-" + entry.id)
+                                    }
+                                    let scripts = jsfxEntries(vendor: vendor)
+                                    ForEach(Array(scripts.enumerated()), id: \.element.id) {
+                                        offset, entry in
+                                        jsfxRow(entry)
+                                            .id(entries.isEmpty && offset == 0
+                                                ? Self.jumpTarget(vendor)
+                                                : "jsfx-entry-" + entry.id)
+                                    }
+                                    // **消す口。**行は Button で onDrag も付いているので、
+                                    // 自前のスワイプを重ねるとタップ・ドラッグ・払いの 3 つが
+                                    // 同じ行で競合する。List の onDelete なら List 側の
+                                    // 仕組みなので競合しない。
+                                    // 同梱の見本は消させない（removeEntry が弾く）。
+                                    .onDelete { offsets in
+                                        pendingDeleteJSFX = offsets
+                                            .compactMap { scripts.indices.contains($0) ? scripts[$0] : nil }
+                                            .first { !$0.isDebugFixture }
                                     }
                                 } header: {
                                     Text(vendor)
@@ -308,6 +377,12 @@ struct EffectPickerView: View {
         }
     }
 
+    private var pluginVendors: [String] {
+        Array(Set(audioUnitVendors + jsfx.entries.map { jsfxVendor($0) })).sorted {
+            $0.localizedStandardCompare($1) == .orderedAscending
+        }
+    }
+
     private func vendorName(_ entry: ETAUHost.Entry) -> String {
         let name = entry.manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Other" : name
@@ -315,6 +390,15 @@ struct EffectPickerView: View {
 
     private func audioUnits(vendor: String) -> [ETAUHost.Entry] {
         au.entries.filter { vendorName($0) == vendor }
+    }
+
+    private func jsfxVendor(_ entry: ETJSFXHost.Entry) -> String {
+        let author = entry.author.trimmingCharacters(in: .whitespacesAndNewlines)
+        return author.isEmpty ? "JSFX" : author
+    }
+
+    private func jsfxEntries(vendor: String) -> [ETJSFXHost.Entry] {
+        jsfx.entries.filter { jsfxVendor($0) == vendor }
     }
 
     /// AUv3 and JSFX use the same secondary-line grammar on the Plugins page.
@@ -326,14 +410,20 @@ struct EffectPickerView: View {
 
     private var pluginSearchList: some View {
         let q = query.lowercased()
-        let matches = au.entries.filter {
+        let auMatches = au.entries.filter {
             $0.name.lowercased().contains(q) || $0.manufacturer.lowercased().contains(q)
         }
+        let jsfxMatches = jsfx.entries.filter {
+            $0.name.lowercased().contains(q) || $0.author.lowercased().contains(q)
+        }
         return Group {
-            if matches.isEmpty {
+            if auMatches.isEmpty && jsfxMatches.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
-                List(matches) { auRow($0) }.listStyle(.plain)
+                List {
+                    ForEach(auMatches) { auRow($0) }
+                    ForEach(jsfxMatches) { jsfxRow($0) }
+                }.listStyle(.plain)
             }
         }
     }
@@ -360,6 +450,37 @@ struct EffectPickerView: View {
         .onDrag {
             dismissAfterDragBegins()
             return NSItemProvider(object: ("au:" + entry.id) as NSString)
+        } preview: {
+            Text(entry.name)
+                .font(.system(size: 14, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.thickMaterial, in: .capsule)
+        }
+    }
+
+    private func jsfxRow(_ entry: ETJSFXHost.Entry) -> some View {
+        Button {
+            searching = false
+            Task { @MainActor in onPickJSFX(entry) }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "curlybraces")
+                    .foregroundStyle(.tint)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name).font(.system(size: 15)).foregroundStyle(.primary)
+                    Text(pluginDetail(format: "JSFX", author: entry.author))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .onDrag {
+            dismissAfterDragBegins()
+            return NSItemProvider(object: ("plugin-jsfx:" + entry.id) as NSString)
         } preview: {
             Text(entry.name)
                 .font(.system(size: 14, weight: .medium))
@@ -429,14 +550,22 @@ struct EffectPickerView: View {
         List {
             ForEach(systemCategories, id: \.self) { category in
                 Section {
-                    let presets = ETSystemPresets.filter { $0.category == category }
-                    ForEach(Array(presets.enumerated()), id: \.element.id) { offset, preset in
-                        presetRow(name: preset.name,
-                                  payload: "preset:system:" + preset.name) {
-                            ETShareLink.parse(preset.json, catalog: ETCatalog)
+                    if category == Self.debugJSFXCategory {
+                        presetRow(name: "JSFX Host Test",
+                                  payload: "preset:debug:jsfx-host") {
+                            jsfx.debugPresetItems()
                         }
-                        .id(offset == 0 ? Self.jumpTarget(category)
-                                        : "system-preset-" + preset.name)
+                        .id(Self.jumpTarget(category))
+                    } else {
+                        let presets = ETSystemPresets.filter { $0.category == category }
+                        ForEach(Array(presets.enumerated()), id: \.element.id) { offset, preset in
+                            presetRow(name: preset.name,
+                                      payload: "preset:system:" + preset.name) {
+                                ETShareLink.parse(preset.json, catalog: ETCatalog)
+                            }
+                            .id(offset == 0 ? Self.jumpTarget(category)
+                                            : "system-preset-" + preset.name)
+                        }
                     }
                 } header: {
                     Text(category.categoryLabel)
@@ -490,8 +619,17 @@ struct EffectPickerView: View {
 
     private var systemCategories: [String] {
         var seen = Set<String>()
-        return ETSystemPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
+        let regular = ETSystemPresets.compactMap {
+            seen.insert($0.category).inserted ? $0.category : nil
+        }
+        #if DEBUG
+        return jsfx.debugPresetItems().isEmpty ? regular : [Self.debugJSFXCategory] + regular
+        #else
+        return regular
+        #endif
     }
+
+    static let debugJSFXCategory = "Debug"
 
     /// 一覧に出すプリセットの見出し用の鍵。カテゴリ名と衝突しない字にする。
     static let userKey = "__user_presets"
@@ -633,7 +771,7 @@ struct EffectPickerView: View {
     private func firstCategory(for pane: Pane) -> String {
         switch pane {
         case .effects:    return stripNames.first ?? ""
-        case .plugins:    return audioUnitVendors.first ?? ""
+        case .plugins:    return pluginVendors.first ?? ""
         case .user:
             guard let first = userFolders.first?.name else { return "" }
             return first.isEmpty ? Self.looseKey : first

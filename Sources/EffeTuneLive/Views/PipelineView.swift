@@ -58,6 +58,7 @@ struct PipelineView: View {
     /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
     @State private var confirmingReset = false
+    @State private var pluginError: String?
 
     /// 切ってある Section を消そうとしている行。消すと配下がその場で鳴り出すので、
     /// 一度だけ確かめる。配下の ON/OFF は書き換えない（about がそう約束している）。
@@ -170,6 +171,20 @@ struct PipelineView: View {
                         ETAUHost.shared.create(entry, instanceID: instanceID)
                         insertAt = nil
                         sheet = nil
+                    }, onPickJSFX: { entry in
+                        let instanceID = UUID().uuidString
+                        let insertion = insertAt
+                        insertAt = nil
+                        sheet = nil
+                        ETJSFXHost.shared.prepare(entry, instanceID: instanceID) { result in
+                            switch result {
+                            case .success(let externalIndex):
+                                dsp.addExternal(id: entry.id, instanceID: instanceID,
+                                                name: entry.name, category: "JSFX",
+                                                externalIndex: externalIndex, at: insertion)
+                            case .failure(let error): pluginError = error.localizedDescription
+                            }
+                        }
                     }, onPickPreset: { name, items in
                         // 名前の付いた Section に包んで挿す。置き換えない。
                         // 鎖ごと置き換えたいときは Presets 画面のほう。
@@ -198,6 +213,10 @@ struct PipelineView: View {
             } message: {
                 Text("Removes every effect and leaves a single Level Meter.")
             }
+            .alert("Could Not Add JSFX", isPresented: Binding(
+                get: { pluginError != nil }, set: { if !$0 { pluginError = nil } })) {
+                    Button("OK", role: .cancel) { pluginError = nil }
+                } message: { Text(pluginError ?? "Unknown error") }
             // 切ってある Section を外すと、止まっていた段がその場で鳴り出す。
             // 配下の ON/OFF は書き換えないので（about が保つと言っている）、
             // 起きることを先に出しておく。
@@ -454,7 +473,8 @@ struct PipelineView: View {
                         isCollapsedFully: dsp.collapsedFully.contains(row.node.id),
                         toggleExpanded: {}, moveUp: {}, moveDown: {},
                         canMoveUp: false, canMoveDown: false,
-                        externalSnapshot: dragExternalSnapshot, block: row.block)
+                        externalSnapshot: dragExternalSnapshot,
+                        isDragPreview: true, block: row.block)
                 }
                 // 行と同じ余白を付ける。rowRects は余白の外側で測っているので、
                 // 付けないと左右に広く見える。
@@ -474,6 +494,12 @@ struct PipelineView: View {
     /// ピッカーから運ばれてきた文字列がプリセットなら、名前と中身に解く。
     /// 効果は型の文字列をそのまま運ぶので、頭に印を付けて見分ける。
     private func presetPayload(_ text: String) -> (String, [PipelineStore.Loaded])? {
+        #if DEBUG
+        if text == "preset:debug:jsfx-host" {
+            let items = ETJSFXHost.shared.debugPresetItems()
+            return items.isEmpty ? nil : ("JSFX Host Test", items)
+        }
+        #endif
         if let name = text.dropPrefixIfPresent("preset:user:") {
             let items = PresetStore.shared.load(name)
             return items.isEmpty ? nil : (name, items)
@@ -502,6 +528,20 @@ struct PipelineView: View {
                             at: index)
             ETAUHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
+            return true
+        }
+        if let componentID = payload.dropPrefixIfPresent("plugin-jsfx:"),
+           let entry = ETJSFXHost.shared.entry(id: componentID) {
+            let instanceID = UUID().uuidString
+            sheet = nil
+            ETJSFXHost.shared.prepare(entry, instanceID: instanceID) { result in
+                switch result {
+                case .success(let externalIndex):
+                    dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
+                                    category: "JSFX", externalIndex: externalIndex, at: index)
+                case .failure(let error): pluginError = error.localizedDescription
+                }
+            }
             return true
         }
         guard let spec = EffeTuneDSP.spec(forType: payload) else { return false }
@@ -598,8 +638,15 @@ struct PipelineView: View {
     private func beginDrag(_ row: Row) {
         guard dragging != row.node.id else { return }
         closeSwipe()
-        dragExternalSnapshot = row.node.isExternal
-            ? ETAUHost.shared.viewSnapshot(instanceID: row.node.externalInstanceID) : nil
+        if row.node.externalID?.hasPrefix("jsfx:") == true {
+            dragExternalSnapshot = ETJSFXHost.shared.viewSnapshot(
+                instanceID: row.node.externalInstanceID)
+        } else if row.node.isExternal {
+            dragExternalSnapshot = ETAUHost.shared.viewSnapshot(
+                instanceID: row.node.externalInstanceID)
+        } else {
+            dragExternalSnapshot = nil
+        }
         dragging = row.node.id
         anchorRect = rowRects[row.node.id] ?? .zero
         dragShift = .zero

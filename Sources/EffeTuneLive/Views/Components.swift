@@ -222,10 +222,16 @@ enum ETPluginLabel {
         return a.isEmpty ? format : format + " · " + a
     }
 
-    /// AU の作者。externalID は "type:subtype:manufacturer" で、ETAUHost の entry を引ける。
-    /// 取れないときは空（端末から AU を消した後など）。
+    /// 外から来たものの作者。**AU と JSFX をここ 1 か所で引く。**
+    ///
+    /// externalID は AU が "type:subtype:manufacturer"、JSFX が "jsfx:<sha256>"。
+    /// JSFX の作者はソースの `author:` 行から読んである（ETJSFXHost.metadata）。
+    /// 取れないときは空（端末から AU を消した後、ソースに author: が無いとき）。
     static func author(externalID: String) -> String {
-        ETAUHost.shared.entry(id: externalID)?.manufacturer ?? ""
+        if externalID.hasPrefix("jsfx:") {
+            return ETJSFXHost.shared.entry(id: externalID)?.author ?? ""
+        }
+        return ETAUHost.shared.entry(id: externalID)?.manufacturer ?? ""
     }
 }
 
@@ -243,6 +249,30 @@ enum ETNumberText {
         if a >= 0.1 { return String(format: "%.2f", v) }
         // ここまで小さいと 2 桁では 0.00 になる。桁を足す。
         return String(format: "%.4f", v)
+    }
+
+    /// 刻みから桁数を決める。JSFX の slider は `<min,max,inc>` の inc を持っている。
+    ///
+    /// **`%g` を使わない。**あれは有効桁を超えると指数に落ちるので、精度 3 では
+    /// 1000 が `1e+03`、12001 が `1.2e+04` になる（可聴域がまるごとそれに当たる）。
+    /// `%f` 系は指数表記を持たない。
+    ///
+    /// inc を書いていない slider は 0 で来るので、そのときは整数判定と有効 4 桁相当に落とす。
+    /// **丸めて見せるだけで、実値が刻みの格子に乗るわけではない**
+    /// （ysfx の正規化→実値は inc を使わない素の線形写像）。
+    static func stepped(_ v: Double, step: Double) -> String {
+        guard v.isFinite else { return "—" }
+        let value = abs(v) < 1e-9 ? 0 : v   // -0 と 1e-17 を 0 に寄せる
+        let decimals: Int
+        if step > 0 {
+            // -1e-9 は境界対策。step=1 で -log10(1) が -0.0 側に転ぶと 1 桁になる。
+            decimals = min(6, max(0, Int(ceil(-log10(step) - 1e-9))))
+        } else if value == value.rounded() {
+            decimals = 0
+        } else {
+            decimals = min(6, max(0, 3 - Int(floor(log10(abs(value))))))
+        }
+        return String(format: "%.\(decimals)f", value)
     }
 
     /// 打ち込みの下書き用。単位も丸めも付けない。

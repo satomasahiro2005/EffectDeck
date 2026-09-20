@@ -289,7 +289,7 @@ final class EffeTuneDSP: ObservableObject {
             ? chain[$0].externalInstanceID : nil }
         chain.remove(atOffsets: offsets)
         publish()
-        for id in external { ETAUHost.shared.remove(instanceID: id) }
+        for id in external { removeExternal(instanceID: id) }
         retire(doomed)
         // 消したあとに、何も閉じていない無名 Section が残ることがある
         // （[S("A"), X, S(""), Y] の Y を消すと S("") が閉じる相手を失う）。
@@ -404,8 +404,7 @@ final class EffeTuneDSP: ObservableObject {
         guard !(isDefaultChain && !PipelineStore.hasSaved) else { return }
 
         for index in chain.indices where chain[index].isExternal {
-            chain[index].externalState = ETAUHost.shared.stateData(
-                instanceID: chain[index].externalInstanceID)
+            chain[index].externalState = externalState(for: chain[index])
         }
         PipelineStore.saveLast(chain)
         persistExpanded()
@@ -663,10 +662,7 @@ final class EffeTuneDSP: ObservableObject {
                 guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                     instanceID: node.externalInstanceID) else { continue }
                 node.externalIndex = externalIndex
-                ETAUHost.shared.restore(componentID: item.externalID,
-                                        instanceID: node.externalInstanceID,
-                                        state: item.externalState,
-                                        channels: Self.routedChannels(of: node))
+                restoreExternal(node)
                 made.append(node)
                 continue
             }
@@ -701,7 +697,7 @@ final class EffeTuneDSP: ObservableObject {
         // Tear down old host identities before constructing replacements. A
         // saved/imported chain may legitimately contain the same IDs; removing
         // afterward would clear the freshly-created adapters as well.
-        for id in external { ETAUHost.shared.remove(instanceID: id) }
+        for id in external { removeExternal(instanceID: id) }
         // 丸ごと入れ替えたら全部畳む。前の鎖の id は残っていても指す先が無い。
         restoring = true
         expanded.removeAll()
@@ -748,7 +744,7 @@ final class EffeTuneDSP: ObservableObject {
         // publish() のあとに入れるのは add(_:) と同じで、didSet の persistExpanded に
         // 確定した鎖の位置を書かせるため。
         if let id = chain.last?.id { expanded.insert(id) }
-        for id in external { ETAUHost.shared.remove(instanceID: id) }
+        for id in external { removeExternal(instanceID: id) }
         retire(doomed)
     }
 
@@ -773,10 +769,7 @@ final class EffeTuneDSP: ObservableObject {
             guard let index = try? ETAUExternalBridge.shared.reserve(
                 instanceID: node.externalInstanceID) else { return false }
             node.externalIndex = index
-            ETAUHost.shared.restore(componentID: item.externalID,
-                                    instanceID: node.externalInstanceID,
-                                    state: item.externalState,
-                                    channels: Self.routedChannels(of: node))
+            restoreExternal(node)
         }
         if node.isExternal {
             chain.append(node)
@@ -873,7 +866,7 @@ final class EffeTuneDSP: ObservableObject {
         let external = chain.filter(\.isExternal).map(\.externalInstanceID)
         chain.removeAll()
         publish()
-        for id in external { ETAUHost.shared.remove(instanceID: id) }
+        for id in external { removeExternal(instanceID: id) }
         retire(doomed)
     }
 
@@ -1136,11 +1129,44 @@ final class EffeTuneDSP: ObservableObject {
         if chain[index].isExternal {
             let channels = Self.routedChannels(of: chain[index])
             if channels != previousChannels {
-                ETAUHost.shared.setChannels(channels,
-                                            instanceID: chain[index].externalInstanceID)
+                if chain[index].externalID?.hasPrefix("jsfx:") == true {
+                    ETJSFXHost.shared.setChannels(channels,
+                                                  instanceID: chain[index].externalInstanceID)
+                } else {
+                    ETAUHost.shared.setChannels(channels,
+                                                instanceID: chain[index].externalInstanceID)
+                }
                 AudioIO.shared.rebuildForExternalProcessor()
             }
         }
+    }
+
+    private func externalState(for node: Node) -> Data? {
+        if node.externalID?.hasPrefix("jsfx:") == true {
+            return ETJSFXHost.shared.stateData(instanceID: node.externalInstanceID)
+        }
+        return ETAUHost.shared.stateData(instanceID: node.externalInstanceID)
+    }
+
+    private func restoreExternal(_ node: Node) {
+        guard let componentID = node.externalID else { return }
+        let channels = Self.routedChannels(of: node)
+        if componentID.hasPrefix("jsfx:") {
+            ETJSFXHost.shared.restore(componentID: componentID,
+                                      instanceID: node.externalInstanceID,
+                                      state: node.externalState, channels: channels)
+        } else {
+            ETAUHost.shared.restore(componentID: componentID,
+                                    instanceID: node.externalInstanceID,
+                                    state: node.externalState, channels: channels)
+        }
+    }
+
+    private func removeExternal(instanceID: String) {
+        // Only one host owns the ID. Calling both also handles an unavailable
+        // plug-in whose component metadata could not be restored.
+        ETAUHost.shared.remove(instanceID: instanceID)
+        ETJSFXHost.shared.remove(instanceID: instanceID)
     }
 
     /// 外した instance を、音のスレッドが読み終えてから壊す。

@@ -15,6 +15,36 @@ if [ ! -d Vendor/effetune/dsp ]; then
   exit 1
 fi
 
+if [ ! -f Vendor/ysfx/include/ysfx.h ]; then
+  echo "--- JSFX runtime ---"
+  git submodule update --init --recursive Vendor/ysfx || {
+    echo "!! Vendor/ysfx を取得できない。git submodule update --init --recursive Vendor/ysfx を確認すること。"
+    exit 1
+  }
+fi
+
+# JSFX compatibility is tied to a reviewed ysfx/WDL revision.  The local
+# changes are kept as a normal patch so a fresh clone does not depend on a
+# dirty submodule checkout.
+YSFX_REV="5c3452fee62583aa3d1b7e877d0c758c4024af89"
+YSFX_ACTUAL="$(git -C Vendor/ysfx rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$YSFX_ACTUAL" ] && [ "$YSFX_ACTUAL" != "$YSFX_REV" ]; then
+  echo "!! Vendor/ysfx is not the reviewed revision $YSFX_REV"
+  echo "   run: git submodule update --init --recursive Vendor/ysfx"
+  exit 1
+fi
+if grep -q "g_effectdeck_lice_image_bytes" Vendor/ysfx/sources/ysfx_api_gfx_lice.hpp 2>/dev/null; then
+  echo "当たっている: ysfx-effectdeck-ios.diff"
+elif git -C Vendor/ysfx apply --check ../../Patches/ysfx-effectdeck-ios.diff 2>/dev/null; then
+  git -C Vendor/ysfx apply ../../Patches/ysfx-effectdeck-ios.diff \
+    && echo "当てた: ysfx-effectdeck-ios.diff"
+elif git -C Vendor/ysfx apply --reverse --check ../../Patches/ysfx-effectdeck-ios.diff 2>/dev/null; then
+  echo "当たっている: ysfx-effectdeck-ios.diff"
+else
+  echo "!! ysfx-effectdeck-ios.diff が当たらない。Vendor/ysfx の版を確かめること"
+  exit 1
+fi
+
 # **上流のパッチを当てる。**
 #
 # et_instance_asset_begin は staging の番地を uint32 へ切り落とす。WASM では

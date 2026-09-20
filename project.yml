@@ -29,6 +29,8 @@ dspSettings: &dspSettings
     - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
     - $(SRCROOT)/Vendor/effetune/dsp/vendor/pffft/include/pffft
     - $(SRCROOT)/Generated/note-models
+    - $(SRCROOT)/Vendor/ysfx/include
+    - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
 
 targets:
 
@@ -39,6 +41,10 @@ targets:
   EffeTuneLive:
     type: application
     platform: iOS
+    preBuildScripts:
+      - name: Embed local Debug JSFX factory
+        script: bash "$SRCROOT/Scripts/embed_debug_jsfx.sh"
+        basedOnDependencyAnalysis: false
     sources:
       - path: Sources/EffeTuneLive
         excludes: ["**/*.icon/**"]
@@ -74,9 +80,11 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLive/EffeTuneLive.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Sources/EffeTuneLive/EffeTuneLive-Bridging-Header.h
     dependencies:
+      - target: YSFX
       - sdk: AVFoundation.framework
       - sdk: AudioToolbox.framework
       - sdk: CoreAudioKit.framework
+      - sdk: CoreText.framework
       # **拡張をここに同梱する。**
       # 以前は別のアプリ（Bridge）に入れていた。
       # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否される、
@@ -92,6 +100,65 @@ targets:
       - target: EffeTuneLiveExtension
         embed: true
         codeSign: true
+
+  # JSFX parser/runtime. EEL_TARGET_PORTABLE is mandatory on iOS: executable
+  # memory/JIT is neither required nor permitted for this host.
+  YSFX:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: Vendor/ysfx/sources
+        includes: ["**/*.cpp", "**/*.hpp"]
+        # File/audio formats and FTS are deliberately absent from the v1
+        # sandbox. Do not compile dead decoders or filesystem traversal code.
+        excludes:
+          - "lice_stb/**"
+          - "eel2-gas/**"
+          - "ysfx_audio_flac.cpp"
+          - "ysfx_audio_wav.cpp"
+          - "ysfx_utils_fts.cpp"
+      - path: Vendor/ysfx/thirdparty/WDL/source/WDL/eel2
+        includes:
+          - nseel-caltab.c
+          - nseel-cfunc.c
+          - nseel-compiler.c
+          - nseel-eval.c
+          - nseel-lextab.c
+          - nseel-ram.c
+          - nseel-yylex.c
+      - path: Vendor/ysfx/thirdparty/WDL/source/WDL/fft.c
+      - path: Vendor/ysfx/thirdparty/WDL/source/WDL/lice
+        includes:
+          - lice.cpp
+          - lice_arc.cpp
+          - lice_colorspace.cpp
+          - lice_image.cpp
+          - lice_line.cpp
+          - lice_palette.cpp
+          - lice_texgen.cpp
+          - lice_text.cpp
+    settings:
+      base:
+        CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+        CLANG_CXX_LIBRARY: "libc++"
+        OTHER_CFLAGS: ["-fsigned-char"]
+        OTHER_CPLUSPLUSFLAGS: ["-fsigned-char"]
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - EEL_TARGET_PORTABLE
+          - YSFX_NO_FTS
+          - YSFX_EFFECTDECK_SANDBOX
+          - EEL_MISC_NO_SLEEP
+          - _LICE_NO_SYSBITMAPS_
+          - _FILE_OFFSET_BITS=64
+          - WDL_FFT_REALSIZE=8
+          - WDL_LINEPARSE_ATOF=ysfx_wdl_atof
+          - NSEEL_ATOF=ysfx_wdl_atof
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Vendor/ysfx/include
+          - $(SRCROOT)/Vendor/ysfx/sources
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/dr_libs
 
   # ------------------------------------------------------------------
   # 入れ物。Media Device Extension を運ぶためだけに在る。
@@ -111,6 +178,8 @@ targets:
           - "ETPipeline.*"
           - "ETResample.*"
           - "ETPreviewTone.*"
+          - "ETJSFXHost.*"
+          - "ETLICEFont.*"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.extension

@@ -56,6 +56,7 @@ struct SettingsView: View {
                     } footer: {
                         Text("Delay graphs to match the audio output latency.")
                     }
+                    plugins
                     power
                     // **音の数字は Audio に置く。**レート・バッファ・遅延の内訳・
                     // 出力先なので、探しに来るのはこの面。報告に貼る値でもあるが、
@@ -79,6 +80,19 @@ struct SettingsView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+        }
+    }
+
+    private var plugins: some View {
+        Section {
+            ETSegmentedChoice(title: "JSFX canvas",
+                              values: ETJSFXCanvasMode.allCases,
+                              label: \.label,
+                              selection: $prefs.jsfxCanvasMode)
+        } header: {
+            Text("Plug-ins")
+        } footer: {
+            Text("Pixel Perfect preserves the canvas size requested by the JSFX. Adaptive lets the canvas follow the available screen size.")
         }
     }
 

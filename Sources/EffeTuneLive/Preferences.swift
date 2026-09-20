@@ -97,6 +97,22 @@ enum ETLatency: String, CaseIterable, Identifiable {
     var bufferDuration: TimeInterval { Double(frames) / 48000 }
 }
 
+/// How a JSFX `@gfx` canvas is sized. Pixel Perfect preserves the dimensions
+/// declared by the script; Adaptive lets the host resize `gfx_w` / `gfx_h` to
+/// the available card or full-screen viewport.
+enum ETJSFXCanvasMode: String, CaseIterable, Identifiable {
+    case pixelPerfect
+    case adaptive
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .pixelPerfect: return "Pixel Perfect"
+        case .adaptive:     return "Adaptive"
+        }
+    }
+}
+
 @MainActor
 final class Preferences: ObservableObject {
 
@@ -142,6 +158,10 @@ final class Preferences: ObservableObject {
         didSet { save(syncVisualsToAudio, "pref.syncVisualsToAudio") }
     }
 
+    @Published var jsfxCanvasMode: ETJSFXCanvasMode {
+        didSet { save(jsfxCanvasMode.rawValue, "pref.jsfxCanvasMode") }
+    }
+
     /// しきい値だけが変わったときに呼ばれる。組み直さずに値を差し替える。
     var onSilenceThresholdChange: (() -> Void)?
 
@@ -156,6 +176,8 @@ final class Preferences: ObservableObject {
         silenceThresholdDb = d.object(forKey: "pref.silence") as? Double ?? -80
         keepScreenAwake = d.object(forKey: "pref.awake") as? Bool ?? false
         syncVisualsToAudio = d.bool(forKey: "pref.syncVisualsToAudio")
+        jsfxCanvasMode = ETJSFXCanvasMode(rawValue: d.string(forKey: "pref.jsfxCanvasMode") ?? "")
+            ?? .pixelPerfect
 
         // **init の代入では didSet が走らない。**
         // そのため、保存値が true でも起動直後だけ画面が落ちていた。

@@ -34,5 +34,9 @@ docs/altstore/timing.md
 # 調査用。プロジェクトに繋いでいない。
 TestsMotion/
 
+# Local-only JSFX used to exercise the host while it is being developed.
+# Never commit or ship these; Release builds do not embed this directory.
+Local/DebugJSFXFactory/
+
 # 手元の手順書。ssh 先・実機の UDID・鍵の置き場が入っている
 docs/mac.md

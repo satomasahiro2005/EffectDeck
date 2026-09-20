@@ -1,0 +1,465 @@
+warning: in the working copy of 'sources/ysfx_api_gfx_lice.hpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/sources/ysfx.cpp b/sources/ysfx.cpp
+index 740d1dd..2da13b2 100644
+--- a/sources/ysfx.cpp
++++ b/sources/ysfx.cpp
+@@ -186,6 +186,7 @@ ysfx_t *ysfx_new(ysfx_config_t *config)
+     AUTOVAR(gfx_texth, 0);
+     AUTOVAR(gfx_dest, 0);
+     AUTOVAR(gfx_ext_retina, 0);
++    AUTOVAR(gfx_ext_flags, 0);
+     AUTOVAR(mouse_x, 0);
+     AUTOVAR(mouse_y, 0);
+     AUTOVAR(mouse_cap, 0);
+@@ -452,13 +453,15 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
+     {
+         uint32_t maxmem = fx->source.main->header.options.maxmem;
+         if (maxmem == 0)
+-            maxmem = 8 * 1024 * 1024;
+-        if (maxmem > 128 * 1024 * 1024)
+-            maxmem = 128 * 1024 * 1024;
++            maxmem = 2 * 1024 * 1024;
++        if (maxmem > 2 * 1024 * 1024)
++            maxmem = 2 * 1024 * 1024;
+ 
+         NSEEL_VM_setramsize(vm, (int)maxmem);
+         if (fx->source.main->header.options.prealloc != 0) {
+-            NSEEL_VM_preallocram(vm, (int) fx->source.main->header.options.prealloc);
++            int32_t prealloc = fx->source.main->header.options.prealloc;
++            if (prealloc < 0 || prealloc > (int32_t)maxmem) prealloc = (int32_t)maxmem;
++            NSEEL_VM_preallocram(vm, prealloc);
+         };
+ 
+         ysfx_gmem_attach(fx, fx->source.main->header.options.gmem);
+@@ -574,6 +577,7 @@ void ysfx_reinitialize_vars(ysfx_t *fx)
+                 && strcmp(name, "mouse_wheel")
+                 && strcmp(name, "mouse_hwheel")
+                 && strcmp(name, "gfx_ext_retina")
++                && strcmp(name, "gfx_ext_flags")
+             )
+         ) {
+             found = true;
+diff --git a/sources/ysfx.hpp b/sources/ysfx.hpp
+index a7f2a24..51c3c49 100644
+--- a/sources/ysfx.hpp
++++ b/sources/ysfx.hpp
+@@ -135,6 +135,7 @@ struct ysfx_s {
+         EEL_F *gfx_texth = nullptr;
+         EEL_F *gfx_dest = nullptr;
+         EEL_F *gfx_ext_retina = nullptr;
++        EEL_F *gfx_ext_flags = nullptr;
+         EEL_F *mouse_x = nullptr;
+         EEL_F *mouse_y = nullptr;
+         EEL_F *mouse_cap = nullptr;
+diff --git a/sources/ysfx_api_eel.cpp b/sources/ysfx_api_eel.cpp
+index 592f1f4..5799177 100644
+--- a/sources/ysfx_api_eel.cpp
++++ b/sources/ysfx_api_eel.cpp
+@@ -145,13 +145,16 @@ const char *ysfx_string_access_unlocked(ysfx_t *fx, ysfx_real id, WDL_FastString
+ }
+ 
+ //------------------------------------------------------------------------------
+-// NOTE(jpc) implement this? I guess probably not.
+-//     DSP and UI should not mutex each other.
++// EffectDeck: WDL uses these hooks only around internal allocation and shared
++// GRAM bookkeeping. This is intentionally not a whole-VM/render mutex.
++static std::recursive_mutex g_wdl_internal_mutex;
+ 
+ void NSEEL_HOSTSTUB_EnterMutex()
+ {
++    g_wdl_internal_mutex.lock();
+ }
+ 
+ void NSEEL_HOSTSTUB_LeaveMutex()
+ {
++    g_wdl_internal_mutex.unlock();
+ }
+diff --git a/sources/ysfx_api_file.cpp b/sources/ysfx_api_file.cpp
+index d4305e5..fcac364 100644
+--- a/sources/ysfx_api_file.cpp
++++ b/sources/ysfx_api_file.cpp
+@@ -361,14 +361,37 @@ uint32_t ysfx_serializer_t::mem(uint32_t offset, uint32_t length)
+ 
+ uint32_t ysfx_serializer_t::string(std::string &str)
+ {
+-    // TODO implement me; docs claim support in Reaper 4.59+ but it seems
+-    //   non-working (as of Reaper 6.40)
++    if (m_write == 1) {
++        const uint32_t length = (uint32_t)std::min<size_t>(str.size(), 1024 * 1024);
++        uint8_t size[4];
++        ysfx::pack_u32le(length, size);
++        m_buffer->append((char *)size, sizeof(size));
++        m_buffer->append(str.data(), length);
++        return length;
++    }
++    if (m_write == 0) {
++        if (m_pos + 4 > m_buffer->size()) return 0;
++        const uint32_t length = ysfx::unpack_u32le((uint8_t *)&(*m_buffer)[m_pos]);
++        m_pos += 4;
++        if (length > 1024 * 1024 || m_pos + length > m_buffer->size()) {
++            m_pos = m_buffer->size();
++            return 0;
++        }
++        str.assign(m_buffer->data() + m_pos, length);
++        m_pos += length;
++        return length;
++    }
+     return 0;
+ }
+ 
+ //------------------------------------------------------------------------------
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_open(void *opaque, EEL_F *file_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque;
++    (void)file_;
++    return -1;
++#else
+     ysfx_t *fx = (ysfx_t *)opaque;
+ 
+     std::string filepath;
+@@ -405,6 +428,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_open(void *opaque, EEL_F *file_)
+     }
+ 
+     return -1;
++#endif
+ }
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_close(void *opaque, EEL_F *handle_)
+diff --git a/sources/ysfx_api_gfx.cpp b/sources/ysfx_api_gfx.cpp
+index 7a115e7..954e4de 100644
+--- a/sources/ysfx_api_gfx.cpp
++++ b/sources/ysfx_api_gfx.cpp
+@@ -38,7 +38,7 @@
+ #define GFX_GET_CONTEXT(opaque) (((opaque)) ? ysfx_gfx_get_context((ysfx_t *)(opaque)) : nullptr)
+ 
+ enum {
+-    ysfx_gfx_max_images = 1024,
++    ysfx_gfx_max_images = 128,
+     ysfx_gfx_max_fonts = 128,
+     ysfx_gfx_max_input = 1024,
+ };
+@@ -65,6 +65,10 @@ struct ysfx_gfx_state_t {
+ #if !defined(YSFX_NO_GFX)
+ static bool eel_lice_get_filename_for_string(void *opaque, EEL_F idx, WDL_FastString *fs, int iswrite)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)idx; (void)fs; (void)iswrite;
++    return false;
++#else
+     if (iswrite)
+         return false; // this is neither supported nor used
+ 
+@@ -76,6 +80,7 @@ static bool eel_lice_get_filename_for_string(void *opaque, EEL_F idx, WDL_FastSt
+ 
+     if (fs) fs->Set(filepath.data(), (uint32_t)filepath.size());
+     return true;
++#endif
+ }
+ 
+ #define EEL_LICE_GET_FILENAME_FOR_STRING(idx, fs, p)    \
+@@ -409,7 +414,9 @@ void ysfx_gfx_prepare(ysfx_t *fx)
+ void ysfx_api_init_gfx()
+ {
+ #if !defined(YSFX_NO_GFX)
++#if !defined(YSFX_EFFECTDECK_SANDBOX)
+     lice_stb_install_loaders();
++#endif
+ #endif
+ 
+     NSEEL_addfunc_retptr("gfx_lineto", 3, NSEEL_PProc_THIS, &ysfx_api_gfx_lineto);
+diff --git a/sources/ysfx_api_gfx_lice.hpp b/sources/ysfx_api_gfx_lice.hpp
+index 94252e1..35f7e00 100644
+--- a/sources/ysfx_api_gfx_lice.hpp
++++ b/sources/ysfx_api_gfx_lice.hpp
+@@ -36,6 +36,7 @@
+ #include "WDL/wdlcstring.h"
+ #include "WDL/wdlutf8.h"
+ #include <algorithm>
++#include <atomic>
+ #include <cmath>
+ #include <cstdio>
+ #include <cstring>
+@@ -96,10 +97,10 @@ static int LICE__DrawText(LICE_IFont* ifont, LICE_IBitmap *bm, const char *str,
+ }
+ 
+ 
+-static LICE_IFont *LICE_CreateFont()
+-{
+-  return new LICE_CachedFont();
+-}
++extern LICE_IFont *ETLICE_CreateFont();
++extern int ETLICE_ConfigureFont(LICE_IFont *, const char *, int, bool, bool, bool,
++                               char *, size_t);
++static LICE_IFont *LICE_CreateFont() { return ETLICE_CreateFont(); }
+ static void LICE__DestroyFont(LICE_IFont *bm)
+ {
+   delete bm;
+@@ -111,10 +112,18 @@ static bool LICE__resize(LICE_IBitmap *bm, int w, int h)
+ 
+ static LICE_IBitmap *__LICE_CreateBitmap(int mode, int w, int h)
+ {
+-  if (mode==1) return new LICE_SysBitmap(w,h);
++  (void)mode;
+   return new LICE_MemBitmap(w,h);
+ }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++// EffectDeck keeps offscreen images bounded independently of the app-owned
++// presentation framebuffer: 16 MiB per instance and 64 MiB process-wide.
++static std::atomic<size_t> g_effectdeck_lice_image_bytes{0};
++static constexpr size_t k_effectdeck_lice_instance_limit = 16u * 1024u * 1024u;
++static constexpr size_t k_effectdeck_lice_global_limit = 64u * 1024u * 1024u;
++#endif
++
+ class eel_lice_state
+ {
+ public:
+@@ -123,8 +132,12 @@ public:
+   ~eel_lice_state();
+ 
+   LICE_IBitmap *m_framebuffer, *m_framebuffer_extra;
++  LICE_IFont *m_effectdeck_default_font;
+   int m_framebuffer_dirty;
+   WDL_TypedBuf<LICE_IBitmap *> m_gfx_images;
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++  size_t m_effectdeck_image_bytes = 0;
++#endif
+   struct gfxFontStruct {
+     LICE_IFont *font;
+     char last_fontname[128];
+@@ -143,7 +156,7 @@ public:
+   };
+ 
+   int m_gfx_font_active; // -1 for default, otherwise index into gfx_fonts (NOTE: this differs from the exposed API, which defines 0 as default, 1-n)
+-  LICE_IFont *GetActiveFont() { return m_gfx_font_active>=0&&m_gfx_font_active<m_gfx_fonts.GetSize() && m_gfx_fonts.Get()[m_gfx_font_active].use_fonth ? m_gfx_fonts.Get()[m_gfx_font_active].font : NULL; }
++  LICE_IFont *GetActiveFont() { return m_gfx_font_active>=0&&m_gfx_font_active<m_gfx_fonts.GetSize() && m_gfx_fonts.Get()[m_gfx_font_active].use_fonth ? m_gfx_fonts.Get()[m_gfx_font_active].font : m_effectdeck_default_font; }
+ 
+   LICE_IBitmap *GetImageForIndex(EEL_F idx, const char *callername) 
+   { 
+@@ -222,6 +235,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+   m_gfx_images.Resize(image_slots);
+   memset(m_gfx_images.Get(),0,m_gfx_images.GetSize()*sizeof(m_gfx_images.Get()[0]));
+   m_framebuffer=m_framebuffer_extra=0;
++  m_effectdeck_default_font=LICE_CreateFont();
++  if (m_effectdeck_default_font) {
++    char actual_name[128] = {};
++    ETLICE_ConfigureFont(m_effectdeck_default_font,"Helvetica",12,false,false,false,
++                         actual_name,sizeof(actual_name));
++  }
+   m_framebuffer_dirty=0;
+ 
+   m_gfx_r = NSEEL_VM_regvar(vm,"gfx_r");
+@@ -250,6 +269,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+ }
+ eel_lice_state::~eel_lice_state()
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++  g_effectdeck_lice_image_bytes.fetch_sub(m_effectdeck_image_bytes, std::memory_order_relaxed);
++#endif
+   if (LICE_FUNCTION_VALID(LICE__Destroy)) 
+   {
+     LICE__Destroy(m_framebuffer_extra);
+@@ -262,6 +284,7 @@ eel_lice_state::~eel_lice_state()
+   }
+   if (LICE_FUNCTION_VALID(LICE__DestroyFont))
+   {
++    if (m_effectdeck_default_font) LICE__DestroyFont(m_effectdeck_default_font);
+     int x;
+     for (x=0;x<m_gfx_fonts.GetSize();x++)
+     {
+@@ -857,13 +880,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+   int use_w = (int)*w;
+   int use_h = (int)*h;
+   if (use_w<1 || use_h < 1) use_w=use_h=0;
+-  if (use_w > 8192) use_w=8192;
+-  if (use_h > 8192) use_h=8192;
++  if (use_w > 2048) use_w=2048;
++  if (use_h > 2048) use_h=2048;
+   
+   LICE_IBitmap *bm=NULL;
+   if (img >= 0 && img < m_gfx_images.GetSize()) 
+   {
+     bm=m_gfx_images.Get()[img];  
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    const size_t old_bytes = bm ? (size_t)LICE__GetWidth(bm) * LICE__GetHeight(bm) * 4u : 0u;
++    const size_t new_bytes = (size_t)use_w * use_h * 4u;
++    if (m_effectdeck_image_bytes - old_bytes + new_bytes > k_effectdeck_lice_instance_limit)
++      return 0.0;
++    size_t global = g_effectdeck_lice_image_bytes.load(std::memory_order_relaxed);
++    const size_t add = new_bytes > old_bytes ? new_bytes - old_bytes : 0u;
++    while (add && (global > k_effectdeck_lice_global_limit - add ||
++           !g_effectdeck_lice_image_bytes.compare_exchange_weak(global, global + add,
++             std::memory_order_acq_rel, std::memory_order_relaxed))) {
++      if (global > k_effectdeck_lice_global_limit - add) return 0.0;
++    }
++#endif
+     if (!bm) 
+     {
+       m_gfx_images.Get()[img] = bm = __LICE_CreateBitmap(1,use_w,use_h);
+@@ -873,6 +909,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+     {
+       rv=LICE__resize(bm,use_w,use_h);
+     }
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    if (!rv && new_bytes > old_bytes)
++      g_effectdeck_lice_image_bytes.fetch_sub(new_bytes-old_bytes, std::memory_order_relaxed);
++    else if (rv) {
++      if (old_bytes > new_bytes)
++        g_effectdeck_lice_image_bytes.fetch_sub(old_bytes-new_bytes, std::memory_order_relaxed);
++      m_effectdeck_image_bytes = m_effectdeck_image_bytes - old_bytes + new_bytes;
++    }
++#endif
+   }
+ 
+   return rv?1.0:0.0;
+@@ -1006,58 +1051,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
+         if (!s->font) s->font=LICE_CreateFont();
+         if (s->font)
+         {
+-          const int fw = (fontflag&EELFONT_FLAG_BOLD) ? FW_BOLD : FW_NORMAL;
+           const bool italic = !!(fontflag&EELFONT_FLAG_ITALIC);
+           const bool underline = !!(fontflag&EELFONT_FLAG_UNDERLINE);
+-          HFONT hf=NULL;
+-#if defined(_WIN32) && !defined(WDL_NO_SUPPORT_UTF8)
+-          WCHAR wf[256];
+-          if (WDL_DetectUTF8(s->last_fontname)>0 &&
+-              GetVersion()<0x80000000 &&
+-              MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s->last_fontname,-1,wf,256))
+-          {
+-            hf = CreateFontW(sz,0,0,0,fw,italic,underline,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,DEFAULT_PITCH,wf);
+-          }
+-#endif
+-          if (!hf) hf = CreateFont(sz,0,0,0,fw,italic,underline,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,DEFAULT_PITCH,s->last_fontname);
+-
+-          if (!hf)
+-          {
+-            s->use_fonth=0; // disable this font
+-          }
+-          else
+-          {
+-            TEXTMETRIC tm;
+-            tm.tmHeight = sz;
+-
+-            if (!m_framebuffer && LICE_FUNCTION_VALID(__LICE_CreateBitmap)) m_framebuffer=__LICE_CreateBitmap(1,64,64);
+-
+-            if (m_framebuffer && LICE_FUNCTION_VALID(LICE__GetDC))
+-            {
+-              HGDIOBJ oldFont = 0;
+-              HDC hdc=LICE__GetDC(m_framebuffer);
+-              if (hdc)
+-              {
+-                oldFont = SelectObject(hdc,hf);
+-                GetTextMetrics(hdc,&tm);
+-
+-#if defined(_WIN32) && !defined(WDL_NO_SUPPORT_UTF8)
+-                if (GetVersion()<0x80000000 &&
+-                    GetTextFaceW(hdc,sizeof(wf)/sizeof(wf[0]),wf) &&
+-                    WideCharToMultiByte(CP_UTF8,0,wf,-1,s->actual_fontname,sizeof(s->actual_fontname),NULL,NULL))
+-                {
+-                  s->actual_fontname[sizeof(s->actual_fontname)-1]=0;
+-                }
+-                else
+-#endif
+-                  GetTextFace(hdc, sizeof(s->actual_fontname), s->actual_fontname);
+-                SelectObject(hdc,oldFont);
+-              }
+-            }
+-
+-            s->use_fonth=wdl_max(tm.tmHeight,1);
+-            LICE__SetFromHFont(s->font,hf, (fontflag & ~EELFONT_FLAG_MASK) | 512 /*LICE_FONT_FLAG_OWNS_HFONT*/);
+-          }
++          s->use_fonth=ETLICE_ConfigureFont(s->font,s->last_fontname,sz,
++                            !!(fontflag&EELFONT_FLAG_BOLD),italic,underline,
++                            s->actual_fontname,sizeof(s->actual_fontname));
+         }
+       }
+     }
+diff --git a/sources/ysfx_api_reaper.cpp b/sources/ysfx_api_reaper.cpp
+index d29d81d..e2528d7 100644
+--- a/sources/ysfx_api_reaper.cpp
++++ b/sources/ysfx_api_reaper.cpp
+@@ -170,6 +170,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_slider_show(void *opaque, EEL_F *mask_or_s
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend(void *opaque, INT_PTR np, EEL_F **parms)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)np; (void)parms;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+@@ -223,6 +227,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend(void *opaque, INT_PTR np, EEL_F *
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_buf(void *opaque, EEL_F *offset_, EEL_F *buf_, EEL_F *len_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)offset_; (void)buf_; (void)len_;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+@@ -256,6 +264,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_buf(void *opaque, EEL_F *offset_,
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_str(void *opaque, EEL_F *offset_, EEL_F *str_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)offset_; (void)str_;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+@@ -297,6 +309,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_str(void *opaque, EEL_F *offset_,
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisyx(void *opaque, EEL_F *offset_, EEL_F *buf_, EEL_F *len_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)offset_; (void)buf_; (void)len_;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+diff --git a/sources/ysfx_config.cpp b/sources/ysfx_config.cpp
+index 35552de..e98b54a 100644
+--- a/sources/ysfx_config.cpp
++++ b/sources/ysfx_config.cpp
+@@ -104,8 +104,12 @@ void ysfx_register_audio_format(ysfx_config_t *config, ysfx_audio_format_t *afmt
+ 
+ void ysfx_register_builtin_audio_formats(ysfx_config_t *config)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)config;
++#else
+     config->audio_formats.push_back(ysfx_audio_format_wav);
+     config->audio_formats.push_back(ysfx_audio_format_flac);
++#endif
+ }
+ 
+ void ysfx_set_log_reporter(ysfx_config_t *config, ysfx_log_reporter_t *reporter)
+diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
+index 5dee9a7..23de2ce 100644
+--- a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
++++ b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
+@@ -2783,7 +2783,7 @@ unsigned char *compileCodeBlockWithRet(compileContext *ctx, opcodeRec *rec, int
+     p+=GLUE_FUNC_LEAVE_SIZE;
+   #endif
+   memcpy(p,&GLUE_RET,sizeof(GLUE_RET)); p+=sizeof(GLUE_RET);
+-#if defined(__arm__) || defined(__aarch64__)
++#if (defined(__arm__) || defined(__aarch64__)) && !defined(EEL_DOESNT_NEED_EXEC_PERMS)
+   __clear_cache(newblock2,p);
+ #endif
+   
+@@ -5130,7 +5130,7 @@ had_error:
+       memcpy(writeptr,&GLUE_RET,sizeof(GLUE_RET)); writeptr += sizeof(GLUE_RET);
+       ctx->l_stats[1]=size;
+       handle->code_size = (int) (writeptr - (unsigned char *)handle->code);
+-#if defined(__arm__) || defined(__aarch64__)
++#if (defined(__arm__) || defined(__aarch64__)) && !defined(EEL_DOESNT_NEED_EXEC_PERMS)
+       __clear_cache(handle->code,writeptr);
+ #endif
+     }
+
