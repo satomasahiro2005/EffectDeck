@@ -395,9 +395,21 @@ private struct FiveBandFIRPEQPanel: View {
         let slot = min(max(selected, 0), BandFIRPEQSettings.bandCount - 1)
         let current = band(slot)
         return VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: Binding(get: { current.enabled },
-                                 set: { on in edit(slot) { $0.enabled = on } })) {
-                Text("Band \(slot + 1)").font(.system(size: 14))
+            // **下の一枚の頭を他の帯と同じ形にする。**ここだけラベル付きの素の
+            // Toggle で、`BAND n` の見出しも電源の形も無かった
+            // （5band / 15band / Modal Resonator はどれも見出し行＋power トグル）。
+            HStack(spacing: 8) {
+                Text("BAND \(slot + 1)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                Toggle("Enabled", isOn: Binding(get: { current.enabled },
+                                                set: { on in edit(slot) { $0.enabled = on } }))
+                    .toggleStyle(.power)
+                    .labelsHidden()
             }
 
             menuRow("Type",
