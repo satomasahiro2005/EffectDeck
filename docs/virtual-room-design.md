@@ -2419,3 +2419,11 @@ Vendor の中へ EffectDeck のコードを置かない。`Patches/effetune-loca
 
 **いちばん重いのは C++ ではなく、同じ結果を出す JavaScript reference を書くこと。**
 Swift の `VirtualRoomView` / `VirtualRoomSceneView` は移植できない。書き直しになる。
+
+---
+
+## 62. ここで止めた（2026-09-21）
+
+`docs/virtual-room-stop.md` を見ること。実機まで通ったが音が駄目で止めた。
+原因は 4 つとも数字まで取れている。**実時間の経路は壊れていない**（BRIR を
+畳んだ音と実時間出力が -133 dB で一致）。ずれているのは音響モデルの方。
