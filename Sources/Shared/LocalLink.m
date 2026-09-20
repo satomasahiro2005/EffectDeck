@@ -45,6 +45,21 @@ static os_log_t ETLinkLog(void) {
 
 #define SEND_RING_SAMPLES (48000 * 2 * 2)   // 2 秒
 
+// ポンプの周期は繋がっているかどうかで変える。
+//
+// **繋がっていないあいだに 2ms は要らない。**やることは connect の 1 回だけで、
+// 相手が待ち受けを開いていなければ何度撃っても同じ結果しか返らない。
+// 200ms は今までの間引き（2ms の 100 回に 1 回）と同じ 5 回/秒なので、
+// 繋がるまでの時間は変わらない。変わるのは空振りの起床が 500 回/秒から
+// 5 回/秒に減ることだけ。
+//
+// **繋がってからは触らない。**ここは音そのものの粒で、周期がそのまま
+// 受け手の谷の深さになる（下の LIVE の行）。leeway も 0 のまま。
+#define TX_WAIT_NS          (200ull * NSEC_PER_MSEC)
+#define TX_WAIT_LEEWAY_NS   (100ull * NSEC_PER_MSEC)
+#define TX_LIVE_NS          (2ull * NSEC_PER_MSEC)
+#define TX_LIVE_LEEWAY_NS   0ull
+
 @implementation ETLinkSender {
     int _fd;
     dispatch_queue_t _q;
@@ -58,8 +73,9 @@ static os_log_t ETLinkLog(void) {
     size_t _txLen;
     size_t _txOff;
     uint32_t _txSamples;
-    // 繋がっていないあいだの空回りの回数。connect 試行を間引くのに使う。
-    uint32_t _idlePumps;
+    // いまタイマーに入れてある周期が「繋がっている側」か。
+    // 同じ値の set_timer を毎回撃たないための札。
+    BOOL _timedLive;
 }
 
 + (ETLinkSender *)shared {
@@ -88,21 +104,39 @@ static os_log_t ETLinkLog(void) {
     _r = atomic_load(&_w);
     _txLen = _txOff = 0;
     _txSamples = 0;
-    _idlePumps = 0;   // 新しい回は 1 回目で撃つ
     // 毎回 0 から数える。累計のままだと、今回何も送っていなくても
     // 「送信=188万」のように見えて、ログで判断を誤る。
     _sentFrames = 0;
     _timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _q);
-    // **ここが受け手の詰められる下限を決める。**音は滑らかに流れず、
-    // この周期ぶんの塊で届く。10ms なら 480 フレームの塊で、受け手は
+    // **まだ繋がっていないので遅い側から始める。**
+    // DISPATCH_TIME_NOW から始めるので、**最初の 1 回は必ずすぐ撃つ**。
+    // 繋がった時点で pump が下の retimePump を呼び、2ms へ上げる。
+    //
+    // 繋がってからの 2ms が**受け手の詰められる下限を決める。**音は滑らかに
+    // 流れず、この周期ぶんの塊で届く。10ms なら 480 フレームの塊で、受け手は
     // 塊と塊の谷を埋めるだけ溜めていないと読み切ってしまう（実測で
     // 384 フレームが下限だった）。2ms なら 96 フレーム。
     // leeway を 0 にするのは、合流で遅れると谷がその分深くなるから。
-    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 2 * NSEC_PER_MSEC, 0);
+    _timedLive = NO;
+    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, TX_WAIT_NS, TX_WAIT_LEEWAY_NS);
     __weak typeof(self) weak = self;
     dispatch_source_set_event_handler(_timer, ^{ [weak pump]; });
     dispatch_resume(_timer);
     os_log_error(ETLinkLog(), "ET sender 開始");
+}
+
+/// いまの接続の状態に合う周期をタイマーへ入れ直す。**同じなら何もしない。**
+/// 呼ぶのは _q の上（pump の中）だけ。
+- (void)retimePump {
+    BOOL live = (_fd >= 0);
+    if (live == _timedLive) return;
+    dispatch_source_t t = _timer;
+    if (!t) return;
+    _timedLive = live;
+    uint64_t every  = live ? TX_LIVE_NS : TX_WAIT_NS;
+    uint64_t leeway = live ? TX_LIVE_LEEWAY_NS : TX_WAIT_LEEWAY_NS;
+    dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)every),
+                              every, leeway);
 }
 
 - (void)stop {
@@ -185,16 +219,18 @@ static os_log_t ETLinkLog(void) {
 
 - (void)pump {
     if (!_running) return;
-    // **繋がっていないあいだの connect 試行を間引く。**
-    // 周期は 2ms なので、本体が 47101 を開くまで socket → connect → close の
-    // 三連が 500 回/秒走っていた。100 回に 1 回（5 回/秒）まで落とす。
+    // 前の回で切れていたらここで遅い側へ戻る。繋がったままなら何もしない。
     //
-    // 剰余が 0 の回に撃つので、**最初の 1 回は必ず撃つ**。
-    // ここを `++_idlePumps % 100` と書くと初回が飛んで、繋がるまで 200ms 待つ。
-    // 繋がったあとはこの行を通らないので、送出の周期は変えていない。
-    if (_fd < 0 && (_idlePumps++ % 100) != 0) return;
-    [self ensureConnected];
-    if (_fd < 0) return;
+    // **間引きではなく周期そのものを変える。**前は 2ms のまま回して
+    // 100 回に 1 回だけ connect していたので、本体が 47101 を開くまで
+    // 何もしない起床が 495 回/秒残っていた。撃つ回数（5 回/秒）は同じまま、
+    // 起床ごと 5 回/秒に落とす。
+    [self retimePump];
+    if (_fd < 0) {
+        [self ensureConnected];
+        if (_fd < 0) return;
+        [self retimePump];   // 繋がった。次の回から 2ms
+    }
 
     if (![self flushPending]) return;   // 前回の残りが先
 
@@ -238,6 +274,25 @@ static os_log_t ETLinkLog(void) {
 #define RECV_RING_SAMPLES (48000 * 2 * 2)
 #define RX_BUF_BYTES      65536     // 1 チャンク（最大 16396 バイト）より十分大きく取る
 
+// 送り手と同じく、ポンプの周期を相手の有無で変える。
+//
+// **相手が居ないあいだの 1ms は完全に無駄。**やっているのは accept 1 回で、
+// しかも待ち受けの backlog はカーネルが受けるので、こちらが遅れても
+// 相手の connect は即座に成功する（遅れるのは読み始めだけで、その間の
+// サンプルはソケットの受信バッファに溜まる）。1000 回/秒の起床が 50 回/秒になる。
+//
+// **相手が居るあいだは 1ms のまま。**周期は溜まりに足し算されるので詰める。
+// leeway だけ 1ms 与える。合流でずれても 1〜2ms で、送り手自身の 2ms の
+// 塊より細かい。狙いの溜まり（TARGET_FRAMES = 1024 ＝ 21.3ms）から見れば
+// 1 割で、**遅れそのものは増えない**（読み位置は書き位置から狙いのぶん
+// 下げて置き直すので、ポンプのゆらぎで動くのは谷の深さだけ）。
+// **戻すときはここ。**深くなったかどうかは Diagnostics の Ran dry と
+// Extension link（1024 のままか 2048 へ逃げたか）に出る。
+#define RX_WAIT_NS          (20ull * NSEC_PER_MSEC)
+#define RX_WAIT_LEEWAY_NS   (20ull * NSEC_PER_MSEC)
+#define RX_LIVE_NS          (1ull * NSEC_PER_MSEC)
+#define RX_LIVE_LEEWAY_NS   (1ull * NSEC_PER_MSEC)
+
 @implementation ETLinkReceiver {
     int _listenFd;
     int _peerFd;
@@ -250,6 +305,8 @@ static os_log_t ETLinkLog(void) {
     uint8_t *_rxBuf;
     size_t _rxLen;
     uint64_t _badSamples;
+    // いまタイマーに入れてある周期が「相手が居る側」か。
+    BOOL _timedLive;
 }
 
 + (ETLinkReceiver *)shared {
@@ -373,12 +430,27 @@ static _Atomic uint32_t gRefillWaits = 0;
     os_log_error(ETLinkLog(), "ET receiver 待ち受け開始 port=%d", ET_LINK_PORT);
 
     _timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _q);
-    // 受け取る側の周期も溜まりに足し算される。送り手と同じく詰める。
-    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 1 * NSEC_PER_MSEC, 0);
+    // まだ相手が居ないので遅い側から始める。受けた時点で pump が 1ms へ上げる。
+    _timedLive = NO;
+    dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, RX_WAIT_NS, RX_WAIT_LEEWAY_NS);
     __weak typeof(self) weak = self;
     dispatch_source_set_event_handler(_timer, ^{ [weak pump]; });
     dispatch_resume(_timer);
     return YES;
+}
+
+/// いまの相手の有無に合う周期をタイマーへ入れ直す。**同じなら何もしない。**
+/// 呼ぶのは _q の上（pump の中）だけ。
+- (void)retimePump {
+    BOOL live = (_peerFd >= 0);
+    if (live == _timedLive) return;
+    dispatch_source_t t = _timer;
+    if (!t) return;
+    _timedLive = live;
+    uint64_t every  = live ? RX_LIVE_NS : RX_WAIT_NS;
+    uint64_t leeway = live ? RX_LIVE_LEEWAY_NS : RX_WAIT_LEEWAY_NS;
+    dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)every),
+                              every, leeway);
 }
 
 - (void)stop {
@@ -454,6 +526,8 @@ static _Atomic uint32_t gRefillWaits = 0;
 
 - (void)pump {
     if (_listenFd < 0) return;
+    // 前の回で切れていたらここで遅い側へ戻る。続いていれば何もしない。
+    [self retimePump];
     if (_peerFd < 0) {
         int c = accept(_listenFd, NULL, NULL);
         if (c >= 0) {
@@ -464,6 +538,7 @@ static _Atomic uint32_t gRefillWaits = 0;
             // **浅い側から始め直す。**前の相手で枯れて深くしたぶんを
             // 引き継ぐと、一度の混み合いで遅れが増えたまま固定される。
             [ETLinkReceiver resetLinkState];
+            [self retimePump];  // 受けた。次の回から 1ms
             os_log_error(ETLinkLog(), "ET 接続を受けた");
         }
         return;
