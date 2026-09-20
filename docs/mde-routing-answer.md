@@ -891,3 +891,52 @@ bool playingVideo = anyOutputIsActive(videoOutputs);      // 稼働
 **「存在」基準なら #4 の stale とも噛み合う。**Canvas の FigPlayer が
 終了相当になっても output / session の object が残っていれば、
 集約した値が YES のままになる説明が付く。
+
+## 静的側でここまで分かったこと（2026-09-21）
+
+キャッシュから番地で直に逆アセンブルできるようになった
+（`ipsw dyld disass <DSC> --vaddr <addr> --quiet`。`--symbol` は探索が遅い）。
+
+**1. `_fpfsi_handleVideoOutputsChanged`（`0x1971b36c0`、822 命令）は書き手ではない。**
+
+`0x1ae8922c8`（`_MXSessionSetProperty`）への呼び出しが 0 件。
+それどころか **MediaExperience（`0x1ae…`）への呼び出しが 1 つも無い。**
+名前は近いが、この関数から property は書いていない。
+
+**2. `_fpfs_isExternalVideoOutput`（`0x196c85d94`、55 命令）は
+「存在」ではなく「各要素を見る」形。**
+
+```asm
+ldr  x0, [x20, #0x2d8]     ; videoOutputs の配列
+bl   0x1981037e0           ; count
+cmp  x0, #1 ; b.lt → 抜ける ; 0 本なら false
+loop:
+  bl 0x1981037f0           ; 要素を取る（index x22）
+  bl 0x196ddf9ac           ; その要素に述語を当てる → bool
+  cbnz w0 → 早期 return    ; 1 つでも真なら true
+```
+
+`CFArrayGetCount(videoOutputs) != 0` のような単純な存在判定**ではない**。
+**ただしこれが `IsPlayingVideoOutput` の源だとは確認できていない。**
+この関数から setter への経路は未確認。
+
+**3. 書き手の callsite はまだ見つかっていない。**
+
+`mediaplaybackd` プロセスが書いていることは動的に確定しているが、
+その命令を持つ image も関数も未特定。
+
+### 道具のまとめ（次に触る人へ）
+
+| やりたいこと | 効くもの |
+|---|---|
+| 番地から関数を読む | `ipsw dyld disass <DSC> --vaddr 0x… --quiet` |
+| シンボルから読む | `--symbol <name> --symbol-image <image>`（探索が遅い） |
+| 番地を引く | `ipsw dyld symaddr <DSC> <symbol>` |
+| image 一覧 | `ipsw dyld info <DSC> --dylibs` |
+| 参照を探す | `ipsw dyld xref`（**WIP。6.9GB 食って WSL 10GB を使い切る**） |
+
+**抜き出した dylib（`ipsw dyld extract`）を grep しても GOT は見えない。**
+GOT の中身はキャッシュ側に在る。**DSC のまま読むこと。**
+
+`pkill -f 'ipsw dyld'` は広すぎて `disass` まで巻き込む。名前を絞ること。
+WSL が `E_UNEXPECTED` を返したら `wsl --shutdown` で戻る。
