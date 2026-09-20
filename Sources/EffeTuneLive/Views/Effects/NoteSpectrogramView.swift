@@ -409,6 +409,32 @@ private struct NoteSpectrogramGraph: View {
 
     @State private var probe: ETNoteProbe?
     @GestureState private var previewActive = false
+    /// 細分 1 行に画素を渡せているかの判定に使う。
+    @Environment(\.displayScale) private var displayScale
+
+    /// 図の高さ。**細分 1 行に画素を 1 つ以上渡す。**
+    ///
+    /// 上流は細分の行を並べた画像を、まず**補間なし**で表示の高さへ縦に拡大し、
+    /// そのあと横だけ平滑化する（note_spectrogram.js:1077 と :1094）。
+    /// つまり細分 1 行が画素 1 つ以上になっている前提の描き方。
+    ///
+    /// こちらは高さを ETGraphMetrics.height で決め打ちにしていたので、
+    /// 5x（1/60）では 61 音 × 5 = 305 行が 190pt に入り、1 行 0.62pt。
+    /// @2x でも 1.2 画素しかなく、線が髪の毛になっていた。
+    /// 行数から高さを決めれば上流と同じ形になる。
+    ///
+    /// **Horizontal では高くしない。**あちらは音の高さが幅に乗るので
+    /// （ETNoteRollFrame.height が rect.width を返す）、高さを増やしても効かない。
+    private var graphHeight: CGFloat {
+        guard display.layout != .horizontal, band.rowsPerNote > 1 else {
+            return ETGraphMetrics.height
+        }
+        let rows = CGFloat(range.count * band.rowsPerNote)
+        let needed = rows / max(1, displayScale)
+        // 上限を置く。305 行なら @3x で 102pt、@2x で 153pt。
+        // 上限に当たるのは範囲を widest にしたときだけ。
+        return min(max(ETGraphMetrics.height, needed), 340)
+    }
 
     var body: some View {
         // 枠を読むのは 1 回だけ。指で触っている間も body は回るので、
@@ -418,7 +444,7 @@ private struct NoteSpectrogramGraph: View {
         return GraphCanvas(
             x: .blank(),
             y: .blank(),
-            height: ETGraphMetrics.height,
+            height: graphHeight,
             insets: ETGraphInsets(leading: 6, trailing: 6, top: 6, bottom: 6),
             readout: readout,
             caption: caption(snapshot, slots: slots),

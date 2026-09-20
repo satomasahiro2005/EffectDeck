@@ -260,6 +260,15 @@ struct PipelineView: View {
             if phase == .background { ETDisplayPump.shared.stop() }
             else { ETDisplayPump.shared.start { io.pollTelemetry() } }
         }
+        // **共有シートや「このアプリで開く」から来たファイルを受ける。**
+        // 宣言（Info.plist の CFBundleDocumentTypes）だけ足すと、候補には出るのに
+        // 押しても何も起きない。受け口はここ 1 か所だけにしてある。
+        .onOpenURL { url in
+            switch ETInbox.receive(url) {
+            case .ir: sheet = .ir
+            case .unsupported: break
+            }
+        }
         // 鎖から外れた段ぶんの「畳んでも消えない選択」を捨てる。
         // MatrixRouting が MatrixView の onAppear でやっているのと同じ掃除。
         .onChange(of: dsp.chain.count) { _, _ in

@@ -79,6 +79,13 @@ struct SpectrogramView: View {
     @Environment(\.etGraphOnly) private var graphOnly
 
     @State private var scale: ETSpectrogramScale = .log
+    /// 全画面を出しているか。
+    @State private var fullScreen = false
+    /// 列の履歴。**@State で参照だけ持つ。**@StateObject や @ObservedObject にすると
+    /// 30Hz で body が作り直されて下のボタンが固まる。図の中だけで観測する。
+    /// ここに置くのは、全画面と元の図で同じ履歴を見せるため（図の側に持たせると、
+    /// 全画面を開いた瞬間に空から流れ直す）。
+    @State private var band = ETSpectrogramBand()
 
     private var effectiveScale: ETSpectrogramScale {
         let hq = node.spec.params.first(where: { $0.key == "hq" })
@@ -87,7 +94,21 @@ struct SpectrogramView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB, scale: effectiveScale)
+            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB,
+                             scale: effectiveScale, band: band)
+            // **全画面の口は図の外に置く。**プロット矩形の上に置くと、押すたびに
+            // 指がプレビュー音に繋がる（GraphCanvas は isFrequency の図で
+            // 矩形に触れた指を音にしている）。
+            if !graphOnly {
+                Button {
+                    fullScreen = true
+                } label: {
+                    Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+            }
             // 上流は DB Range・Points・Frequency Scale の順に並べている
             // （spectrogram.js:631-678）。同じ順にする。
             ForEach(node.spec.params.filter { $0.key != "hq" }) { param in
@@ -97,6 +118,10 @@ struct SpectrogramView: View {
         }
         // **畳むとこの View ごと消える。**開き直すたびに Log へ戻っていたのがこれ。
         .etRemembers($scale, key: "scale", node: node.id)
+        .fullScreenCover(isPresented: $fullScreen) {
+            SpectrogramFullScreen(tapId: node.tapId, floorDB: floorDB,
+                                  scale: effectiveScale, band: band)
+        }
     }
 
     /// spectrogram.js:670-678 の createRadioGroup に当たる。Menu にはしない。
@@ -155,8 +180,12 @@ private struct SpectrogramGraph: View {
     let floorDB: Double
     let scale: ETSpectrogramScale
 
+    /// 履歴は親が持つ。全画面と元の図で同じものを見せるため。
+    @ObservedObject var band: ETSpectrogramBand
+    /// 図の高さ。全画面では画面いっぱいまで渡す。
+    var height: CGFloat = ETGraphMetrics.height
+
     @ObservedObject private var telemetry = Telemetry.shared
-    @StateObject private var band = ETSpectrogramBand()
 
     @State private var probe: ETSpectrogramProbe?
 
@@ -168,7 +197,7 @@ private struct SpectrogramGraph: View {
         return GraphCanvas(
             x: .blank(),
             y: axis,
-            height: ETGraphMetrics.height,
+            height: height,
             insets: ETGraphInsets(leading: 28, trailing: 6, top: 6, bottom: 6),
             readout: readout,
             caption: caption(column),
@@ -581,5 +610,42 @@ final class ETSpectrogramBand: ObservableObject {
                        decode: nil,
                        shouldInterpolate: false,
                        intent: .defaultIntent)
+    }
+}
+
+// MARK: - 全画面
+
+/// 図だけを画面いっぱいに出す。
+///
+/// **帯（履歴）は親から受ける。**図の側に持たせると、開いた瞬間に空から流れ直して
+/// 直前まで見ていたものが消える。同じ物を渡せば続きが見える。
+/// 同じ列を二度押し込むことになるが、帯は sequence で弾くので増えない。
+///
+/// 縦軸の切り替えは元のカードに置いたまま。ここは見るためだけの画面にする。
+private struct SpectrogramFullScreen: View {
+
+    let tapId: UInt32
+    let floorDB: Double
+    let scale: ETSpectrogramScale
+    @ObservedObject var band: ETSpectrogramBand
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { geo in
+                SpectrogramGraph(tapId: tapId, floorDB: floorDB, scale: scale,
+                                 band: band,
+                                 height: max(200, geo.size.height - 16))
+                    .padding(.horizontal, 12)
+            }
+            .navigationTitle("Spectrogram")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }

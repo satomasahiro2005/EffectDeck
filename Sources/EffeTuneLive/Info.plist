@@ -42,6 +42,36 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- 共有シートとほかのアプリの「このアプリで開く」から音のファイルを受ける。
+	     受けたものは IR として取り込む（PipelineView の .onOpenURL → ETInbox）。
+
+	     **public.audio は名乗らない。**あれにすると mp3 や m4a でも候補に出るが、
+	     IR の読み手が受けるのは WAV / FLAC / AIFF / CAF だけ（IRLoader）なので、
+	     受けたあとに失敗するだけになる。読める型だけを並べる。
+
+	     **Rank は Alternate。**Owner にすると音のファイルの既定の開き手を奪う。
+
+	     新しい UTI は作らない。どれも系が既に持っている型なので、
+	     UTImportedTypeDeclarations は要らない。拡張バンドルの
+	     UTExportedTypeDeclarations（出力先の名前）には触っていない。 -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Impulse Response</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.waveform-audio</string>
+				<string>org.xiph.flac</string>
+				<string>public.aiff-audio</string>
+				<string>com.apple.coreaudio-format</string>
+			</array>
+		</dict>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIApplicationSceneManifest</key>
