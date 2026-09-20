@@ -12,6 +12,7 @@
 //  取り込んだファイルはアプリの Documents に鍵の名前で置く。
 //  Documents に置くのは、ファイルアプリから見えて中身を差し替えられるようにするため。
 
+import AVFoundation
 import CryptoKit
 import Foundation
 import os
@@ -86,10 +87,14 @@ final class IRLibrary: ObservableObject {
             log.error("読めない \(source.lastPathComponent, privacy: .public)")
             return nil
         }
-        // **中身を見る。**ここは読めさえすれば何でも受けていた。拡張子も名前に
-        // 使うだけで判定していない。共有シートから来たものは ETInbox が
-        // 先にここへ渡すので、**JSFX でも何でも IR として取り込まれていた。**
-        guard Self.looksLikeAudio(data) else {
+        // **音かどうかは、読む当人に訊く。**ここは読めさえすれば何でも受けていた
+        // （拡張子は名前に使うだけで判定していない）ので、共有シートから来た
+        // JSFX まで IR として取り込まれていた。
+        //
+        // **頭の印で振ってはいけない。**一度 RIFF/FORM/fLaC/caff の 4 つで見たが、
+        // 実際に読むのは AVAudioFile 一本（ETIRLoader.load）で、m4a・mp3・ALAC も
+        // 扱える。印で振ると、**選べるのに取り込めない**形ができる。
+        guard Self.looksLikeAudio(at: source) else {
             log.notice("音ではない \(source.lastPathComponent, privacy: .public)")
             return nil
         }
@@ -115,26 +120,17 @@ final class IRLibrary: ObservableObject {
         return id
     }
 
-    /// 音のファイルか。**頭の印だけ見る。**
+    /// 音のファイルか。**開けるかどうかで決める。**
     ///
-    /// 受けるのは Info.plist に出してある 4 種（WAV / AIFF / FLAC / CAF）。
-    /// 中身まで解くのは取り込みの場では重すぎるし、解けるかどうかは
-    /// 読み込む側（ETIRLoader）が落とす。ここで止めたいのは
-    /// **そもそも音ではないもの**だけ。
-    static func looksLikeAudio(_ data: Data) -> Bool {
-        guard data.count >= 12 else { return false }
-        let head = data.prefix(12)
-        func tag(_ at: Int) -> String {
-            String(decoding: head[head.startIndex + at ..< head.startIndex + at + 4],
-                   as: UTF8.self)
-        }
-        switch tag(0) {
-        case "RIFF": return tag(8) == "WAVE"      // WAV
-        case "FORM": return tag(8).hasPrefix("AIF")  // AIFF / AIFC
-        case "fLaC": return true                   // FLAC
-        case "caff": return true                   // CAF
-        default:     return false
-        }
+    /// 読むのは ETIRLoader.load の AVAudioFile 一本なので、そこが開ければ音、
+    /// 開けなければ音ではない。形を並べて数える必要が無く、扱える形が増えても
+    /// ここを直さなくてよい。
+    ///
+    /// 頭だけ読んで済ませたくなるが、**m4a や mp3 は先頭が印にならない**
+    /// （ftyp は 4 バイト目から、mp3 は ID3 のことも生フレームのこともある）。
+    /// 取り込みのときしか通らないので、開く手間は払ってよい。
+    static func looksLikeAudio(at url: URL) -> Bool {
+        (try? AVAudioFile(forReading: url)) != nil
     }
 
     func remove(_ entry: Entry) {

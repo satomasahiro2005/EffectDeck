@@ -29,13 +29,24 @@ struct EffectPickerView: View {
     @StateObject private var au = ETAUHost.shared
     @StateObject private var jsfx = ETJSFXHost.shared
     @State private var query = ""
-    /// リンクからの取り込み。
-    @State private var askingLink = false
+    /// 出している提示。**1 枚しか持たない**（上の .alert を読むこと）。
+    private enum Alert: Equatable {
+        case link
+        case failed(String)
+    }
+    @State private var alert: Alert?
     @State private var linkText = ""
+
+    private var alertTitle: String {
+        switch alert {
+        case .link:   return "Import from Link"
+        case .failed: return "Could Not Import"
+        case nil:     return ""
+        }
+    }
     @State private var importingJSFX = false
     /// 消そうとしている JSFX。取り消せないので一度確かめる（IR と同じ形）。
     @State private var pendingDeleteJSFX: ETJSFXHost.Entry?
-    @State private var importError: String?
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
     enum Pane: String, CaseIterable, Identifiable {
@@ -263,7 +274,7 @@ struct EffectPickerView: View {
                             // そのまま貼れる（ETRemoteFile が raw へ読み替える）。
                             Button("From Link", systemImage: "link") {
                                 linkText = UIPasteboard.general.string ?? ""
-                                askingLink = true
+                                alert = .link
                             }
                         } label: {
                             Label("Import JSFX", systemImage: "square.and.arrow.down")
@@ -277,23 +288,34 @@ struct EffectPickerView: View {
                     guard let url = try result.get().first else { return }
                     _ = try jsfx.importFile(url)
                     pane = .plugins
-                } catch { importError = error.localizedDescription }
+                } catch { alert = .failed(error.localizedDescription) }
             }
-            .alert("Could Not Import JSFX", isPresented: Binding(
-                get: { importError != nil }, set: { if !$0 { importError = nil } })) {
-                    Button("OK", role: .cancel) { importError = nil }
-                } message: { Text(importError ?? "Unknown error") }
-            // **リンクを貼る。**貼り付けを先に入れてあるので、たいていはそのまま押すだけ。
-            .alert("Import from Link", isPresented: $askingLink) {
-                TextField("https://github.com/…", text: $linkText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                Button("Cancel", role: .cancel) { }
-                Button("Import") { fetchLink() }
-            } message: {
-                Text("A link to a JSFX source. A GitHub page works as well as a raw link.")
-            }
+            // **提示は 1 枚だけにする。**同じ View に .alert を 2 枚積むと、
+            // 先に付いたほうが出なくなる。このリポジトリで 4 度目の踏み方
+            // （PresetsView.swift:148-151 に 3 度目までの記録がある）。
+            // 積んだせいで取り込みの失敗が全部無言になっていた。
+            .alert(alertTitle, isPresented: Binding(
+                get: { alert != nil }, set: { if !$0 { alert = nil } })) {
+                    if alert == .link {
+                        TextField("https://github.com/…", text: $linkText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                        Button("Cancel", role: .cancel) { alert = nil }
+                        Button("Import") { let text = linkText; alert = nil; fetchLink(text) }
+                    } else {
+                        Button("OK", role: .cancel) { alert = nil }
+                    }
+                } message: {
+                    switch alert {
+                    case .link:
+                        Text("A link to a JSFX source. A GitHub page works as well as a raw link.")
+                    case .failed(let why):
+                        Text(why)
+                    case nil:
+                        EmptyView()
+                    }
+                }
             // 一覧と検索結果の両方を覆う階層に 1 つ置く。行ごとに持たせると
             // 検索から払ったときに出ない。
             .confirmationDialog(pendingDeleteJSFX.map { "Remove “\($0.name)”?" } ?? "",
@@ -832,10 +854,9 @@ struct EffectPickerView: View {
     ///
     /// 取るのは ETRemoteFile、入れるのは ETInbox。**判定はどちらもしない**
     /// （音か JSFX かは取り込み先が中身の頭で決める）。ここは繋ぐだけ。
-    private func fetchLink() {
-        let text = linkText
+    private func fetchLink(_ text: String) {
         guard let address = ETRemoteFile.address(from: text) else {
-            importError = ETRemoteFile.Failure.notAnAddress.localizedDescription
+            alert = .failed(ETRemoteFile.Failure.notAnAddress.localizedDescription)
             return
         }
         Task { @MainActor in
@@ -848,12 +869,12 @@ struct EffectPickerView: View {
                     // 音として入った。IR の一覧へ入るので、ここでは閉じるだけ。
                     dismiss()
                 case .failed(let why):
-                    importError = why
+                    alert = .failed(why)
                 case .unsupported:
-                    importError = "That link is neither a JSFX source nor an impulse response."
+                    alert = .failed("That link is neither a JSFX source nor an impulse response.")
                 }
             } catch {
-                importError = error.localizedDescription
+                alert = .failed(error.localizedDescription)
             }
         }
     }

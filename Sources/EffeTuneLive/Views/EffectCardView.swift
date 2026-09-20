@@ -470,6 +470,8 @@ private struct ExternalProcessorView: View {
                             }
                             .frame(height: min(360, max(180, size.height)))
                         } else {
+                            // 枠は JSFXGFXLayout が持つ（比と高さの上下）。
+                            // ここで重ねて付けない。
                             JSFXGFXView(instanceID: instanceID,
                                         isVisible: isOnScreen && !fullScreen)
                         }
@@ -689,10 +691,20 @@ private struct JSFXGFXView: View {
     var body: some View {
         let preferred = jsfx.preferredGFXSize(instanceID: instanceID)
         let retina = jsfx.gfxWantsRetina(instanceID: instanceID)
+        // **描く寸法はスクリプトが言うもの**（`@gfx <w> <h>`）。表示の寸法ではない。
+        //
+        // 前は見えている枠の大きさ × 画素の倍率を渡していた。`gfx_w` / `gfx_h` を
+        // 読んで描くスクリプトはそれで合うが、**`@gfx` の値を決め打ちしている
+        // ものは左上にしか絵を置かない**（渡した面のほうが大きいので、残りが空で残る）。
+        // 宣言どおりの面へ描かせて、貼るときに縮めれば、どちらの書き方でも全部出る。
+        //
+        // 全画面だけは見えている枠に合わせる（あちらは広さを使い切りたい）。
+        let canvas = fixedSize ?? preferred
         GeometryReader { geometry in
             let active = isVisible && scenePhase == .active
-            let renderKey = JSFXGFXRenderKey(width: Int(geometry.size.width.rounded()),
-                                             height: Int(geometry.size.height.rounded()),
+            let drawSize = fullScreen ? geometry.size : canvas
+            let renderKey = JSFXGFXRenderKey(width: Int(drawSize.width.rounded()),
+                                             height: Int(drawSize.height.rounded()),
                                              active: active)
             ZStack {
                 Color.black
@@ -708,21 +720,15 @@ private struct JSFXGFXView: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    let scale = jsfx.gfxPixelScale(instanceID: instanceID,
-                                                   size: geometry.size,
-                                                   screenScale: UIScreen.main.scale)
                     jsfx.updateMouse(instanceID: instanceID,
-                                     point: CGPoint(x: value.location.x * scale,
-                                                    y: value.location.y * scale),
+                                     point: Self.canvasPoint(value.location, shown: geometry.size,
+                                                             drawn: drawSize, instanceID: instanceID),
                                      buttons: 1)
                 }
                 .onEnded { value in
-                    let scale = jsfx.gfxPixelScale(instanceID: instanceID,
-                                                   size: geometry.size,
-                                                   screenScale: UIScreen.main.scale)
                     jsfx.updateMouse(instanceID: instanceID,
-                                     point: CGPoint(x: value.location.x * scale,
-                                                    y: value.location.y * scale),
+                                     point: Self.canvasPoint(value.location, shown: geometry.size,
+                                                             drawn: drawSize, instanceID: instanceID),
                                      buttons: 0)
                 })
             .task(id: renderKey) {
@@ -731,7 +737,7 @@ private struct JSFXGFXView: View {
                 while !Task.isCancelled {
                     if !drawing {
                         drawing = true
-                        jsfx.renderGFX(instanceID: instanceID, size: geometry.size,
+                        jsfx.renderGFX(instanceID: instanceID, size: drawSize,
                                        scale: UIScreen.main.scale) {
                             if let rendered = $0 { image = rendered }
                             drawing = false
@@ -757,6 +763,19 @@ private struct JSFXGFXView: View {
             jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
                                  focused: false, visible: false)
         }
+    }
+}
+
+extension JSFXGFXView {
+    /// 触った点を canvas の座標へ。**表示は縮めてあるので戻す。**
+    /// 縮めた絵の上の点をそのまま渡すと、押した所と効く所がずれる。
+    static func canvasPoint(_ point: CGPoint, shown: CGSize, drawn: CGSize,
+                            instanceID: String) -> CGPoint {
+        let pixels = ETJSFXHost.shared.gfxPixelScale(instanceID: instanceID, size: drawn,
+                                                     screenScale: UIScreen.main.scale)
+        let kx = shown.width > 0 ? drawn.width * pixels / shown.width : pixels
+        let ky = shown.height > 0 ? drawn.height * pixels / shown.height : pixels
+        return CGPoint(x: point.x * kx, y: point.y * ky)
     }
 }
 
@@ -1132,7 +1151,9 @@ private struct SectionCardView: View {
 
     /// 頭に出す行。Section の名前は欄そのものなので、ここには種別と中身の数を出す。
     private var subtitle: String {
-        let n = ETSection.range(after: index, types: dsp.chain.map(\.spec.type)).count
+        // 配下は Analysis が持つ。ここで鎖を走って数え直さない。
+        let n = dsp.chain.indices.contains(index)
+            ? dsp.analysis.members(of: dsp.chain[index].id).count : 0
         guard n > 0 else { return "Section" }
         let effects = "\(n) effect\(n == 1 ? "" : "s")"
         return isExpanded ? "Section · \(effects)" : "Section · \(effects) hidden"

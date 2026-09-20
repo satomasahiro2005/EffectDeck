@@ -47,7 +47,7 @@ enum ETInbox {
         // 受けていたので（拡張子は複製先の名前に使うだけ）、**JSFX を渡しても
         // IR として取り込まれて終わっていた。**いまは両方が頭の印と中身を見る。
 
-        // 音（IRLibrary.looksLikeAudio が RIFF/FORM/fLaC/caff を見る）。
+        // 音（IRLibrary.looksLikeAudio が AVAudioFile で開けるかを見る）。
         if let id = IRLibrary.shared.importFile(at: url) { return .ir(id) }
 
         // JSFX（ETJSFXHost.importFile の looksLikeJSFX が `desc:` と `@…` を見る）。

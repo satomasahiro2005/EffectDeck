@@ -64,6 +64,7 @@ enum PipelineStore {
             var o: [String: Any]
             if ETSection.isSection(item.spec) {
                 // Section は ETParam を持たない（parameters(of:) と同じ扱い）。
+                // Loaded は外から読んだものなので rootReset は持たない。
                 o = [ETSection.commentKey: item.sectionName]
             } else {
                 o = ETParamCoding.encode(params: item.spec.params, values: item.values)
@@ -114,6 +115,11 @@ enum PipelineStore {
     /// **EffeTuneDSP に触らない形で切り出してある。** オブジェクト配列の扱いを
     /// 何度も読み違えたので、Tests/Unit/ParamCodingTests.swift が実機なしで見張る。
     private static func parameters(of node: EffeTuneDSP.Node) -> [String: Any] {
+        // **rootReset はここで Section("") に化ける。**渡す形に終端が無いので、
+        // 上流と同じ代用品に落とす（preset-manager.js:149-161 も同じことをする）。
+        // 読むときは推測しない。外から来た空 Section は普通の Section として読む
+        // （PipelineAnalysis.swift の頭）。
+        if node.isRootReset { return [ETSection.commentKey: ""] }
         // Section は ETParam を持たない。名前は Node 側の文字列なのでここで出す。
         if node.isSection { return [ETSection.commentKey: node.sectionName] }
         var o = ETParamCoding.encode(params: node.spec.params, values: node.values)

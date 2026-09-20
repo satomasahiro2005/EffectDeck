@@ -520,6 +520,16 @@ struct PipelineView: View {
     /// 効果は型の文字列をそのまま運ぶので、頭に印を付けて見分ける。
     private func presetPayload(_ text: String) -> (String, [PipelineStore.Loaded])? {
         #if DEBUG
+        // 手で組み直さずに見るための鎖（DSP/DebugPresets.swift）。
+        // **接頭辞で受ける。**前は "preset:debug:jsfx-host" と字で比べていたので、
+        // 名前つきのものは払い出しても誰も受けず、ドラッグだけ黙って効かなかった。
+        if text.hasPrefix("preset:debug:"), text != "preset:debug:jsfx-host" {
+            let name = String(text.dropFirst("preset:debug:".count))
+            if let item = ETDebugPresets.all.first(where: { $0.name == name }) {
+                return (name, ETShareLink.parse(item.json, catalog: ETCatalog))
+            }
+            return nil
+        }
         if text == "preset:debug:jsfx-host" {
             let items = ETJSFXHost.shared.debugPresetItems()
             return items.isEmpty ? nil : ("JSFX Host Test", items)
@@ -782,44 +792,15 @@ struct PipelineView: View {
     private func leaveGroup(_ at: Int) {
         let visible = rows
         guard visible.indices.contains(at) else { return }
-        let index = visible[at].index
-        // 直前が既に無名 Section なら、もう外に出ている。二重に挿さない。
-        if index > 0 {
-            let prev = dsp.chain[index - 1]
-            if prev.isSection && ETSection.isUnnamed(prev.sectionName) { return }
-        }
-        let was = dsp.chain.count
-        // **実機で増える形を捕まえる。**紙の上では最大 1 本に落ち着くのに、
-        // 実機では増やせるという食い違いが残っている。鎖の姿をそのまま残す。
-        dragLog.notice("組出し at=\(at, privacy: .public) 鎖=\(index, privacy: .public) 前=\(Self.shape(dsp.chain), privacy: .public) 開=\(dsp.expanded.count, privacy: .public)")
-        withAnimation(.snappy(duration: 0.22)) {
-            dsp.add(ETSection.spec, at: index)
-            // **閉じる印は開かない。**add は足したものを expanded に入れる（自分の
-            // パラメータを出すため）が、これは編集するものではない。しかも掃除は
-            // 開いている行に触らないので、開いたままだと自分が掃かれない。
-            if dsp.chain.indices.contains(index) {
-                dsp.expanded.remove(dsp.chain[index].id)
-            }
-            // 挿した瞬間から何も閉じていないことがある（組の唯一の配下を出した
-            // とき）。そのときはこの掃除が挿した本人を取り消すので、鎖は変わらない。
-            dsp.sweepDeadSections()
+        // **判断は模型が持つ。**画面は「この行を外へ」と言うだけ。
+        // 直前が既に印か、もう root に居るか、正規化で取り消されるか、は
+        // 全部あちらが決めて、起きたかどうかだけを返す。
+        let changed = withAnimation(.snappy(duration: 0.22)) {
+            dsp.leaveSection(at: visible[at].index)
         }
         // **打ち消されたら振動は出さない。**指に成功を返しておいて何も起きないと、
         // 効かない操作を繰り返させることになる。
-        dragLog.notice("組出し 後=\(Self.shape(dsp.chain), privacy: .public) 無名=\(dsp.chain.filter { $0.isSection && ETSection.isUnnamed($0.sectionName) }.count, privacy: .public)")
-        if dsp.chain.count > was {
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-        }
-    }
-
-    /// 鎖の姿を 1 行で。`S(A)` が名前つき Section、`S()` が無名、`.` が普通の段。
-    /// 切ってあるものは小文字にする（切ってある無名は掃除の候補から外れる）。
-    private static func shape(_ chain: [EffeTuneDSP.Node]) -> String {
-        chain.map { n -> String in
-            guard n.isSection else { return n.enabled ? "." : "_" }
-            let name = n.sectionName.trimmingCharacters(in: .whitespaces)
-            return (n.enabled ? "S(" : "s(") + name + ")"
-        }.joined()
+        if changed { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
     }
 
     /// 入れ替える。**基準（anchorRect）には手を触れない。**
@@ -894,54 +875,46 @@ struct PipelineView: View {
     /// 範囲と同じ区切り方にしてある（js/audio/dsp-pipeline-descriptor.js:190-201、
     /// 区切りは入れ子にならず、次の Section に当たったらそこで切り替わる）。
     private var rows: [Row] {
-        let types = dsp.chain.map(\.spec.type)
+        // **所属を数えるのはここではない。**ETPipelineAnalysis が 1 か所で決める。
+        // 画面が `range(after:)` を自分で呼んでいたころは、「名前が空なら組を作らない、
+        // ただし切ってあるなら作る」という但し書きを呼ぶ場所ごとに書いていた。
+        let a = dsp.analysis
+        let chain = dsp.chain
+
+        // 鎖の位置 → Node.id。所属は id で返ってくるので引き直す。
+        var indexOf: [UUID: Int] = [:]
+        for i in chain.indices { indexOf[chain[i].id] = i }
+
+        // 畳んだ Section の配下は行に出さない。**rootReset も出さない**
+        // （あれは Section ではなく、並びが持つ印でしかない）。
         var hidden: Set<Int> = []
-        // **無名の Section も畳める。**
-        //
-        // 一度、無名で有効なものをここから外したことがある（組を閉じる印は組を
-        // 持たない、という理屈）。**畳む札は出ているのに押しても何も起きない**
-        // という形になっていた。組を作らない（member に入れない）ことと、
-        // 畳めないことは別で、外に出た段をまとめて隠したい場面は普通に在る。
-        for i in dsp.chain.indices
-        where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
-            hidden.formUnion(ETSection.range(after: i, types: types))
+        for i in chain.indices {
+            if chain[i].isRootReset { hidden.insert(i); continue }
+            guard chain[i].isSection, !expanded.contains(chain[i].id) else { continue }
+            for member in a.members(of: chain[i].id) {
+                if let at = indexOf[member] { hidden.insert(at) }
+            }
         }
-        // どの段がどの Section のものか。区切りは入れ子にならない。
-        //
-        // **見出しの行にも引く。**終わりの印が無いので、配下にだけ引くと
-        // 次の Section が来たときに線が繋がって見え、入れ子だと読めてしまう。
-        // 見出しから引けば 1 組がそこで閉じ、組と組のあいだに隙間ができる。
-        // 配下を持たない Section には引かない（線だけ浮く）。
-        // **無名の Section は組を作らない。**組を閉じるためだけに置くもので、
-        // 画面の上では「外に戻った」ことを表す。鎖の形は上流のままなので、
-        // web と行き来しても壊れない（向こうはただの新しい組として読む）。
-        //
-        // **ただし切ってあるときは引く。**名前が無くても DSP は配下を止める
-        // （ETSection.gates は名前を見ない）。線が無いと、どこまでが
-        // 止まっているのか画面から読めない。
+
+        // 組に属する行（見出しを含む）。**配下を持たない Section には引かない**
+        // （線だけ浮く）。
         var member: Set<Int> = []
-        for i in dsp.chain.indices
-        where dsp.chain[i].isSection
-            && (!ETSection.isUnnamed(dsp.chain[i].sectionName) || !dsp.chain[i].enabled) {
-            let body = ETSection.range(after: i, types: types)
+        for i in chain.indices where chain[i].isSection {
+            let body = a.members(of: chain[i].id)
             guard !body.isEmpty else { continue }
             member.insert(i)
-            member.formUnion(body)
+            for id in body { if let at = indexOf[id] { member.insert(at) } }
         }
-        let shown = dsp.chain.indices.filter { !hidden.contains($0) }
+
+        let shown = chain.indices.filter { !hidden.contains($0) }
         // 位置は**見えている並び**で決める。畳んだ Section の配下は出ないので、
         // 鎖の位置で決めると画面に無い行を末尾だと思って角が丸まらない。
         // **見出しは必ず組の先頭。**Section が続くと、前の組の最後の配下と
         // 次の見出しが隣り合うので、member だけで見ると途切れず 1 組に見えてしまう。
-        // 見出しで必ず切る。
-        func isHead(_ at: Int) -> Bool {
-            let n = dsp.chain[shown[at]]
-            return n.isSection && (!ETSection.isUnnamed(n.sectionName) || !n.enabled)
-        }
+        func isHead(_ at: Int) -> Bool { chain[shown[at]].isSection }
         func inGroup(_ at: Int) -> Bool { member.contains(shown[at]) }
         func position(_ at: Int) -> ETBlockPosition {
             guard inGroup(at) else { return .alone }
-            // 次が見出しなら、そこから別の組。
             let next = at + 1 < shown.count && inGroup(at + 1) && !isHead(at + 1)
             if isHead(at) { return next ? .top : .alone }
             let prev = at > 0 && inGroup(at - 1)
@@ -953,7 +926,7 @@ struct PipelineView: View {
             }
         }
         return shown.indices.map {
-            let node = dsp.chain[shown[$0]]
+            let node = chain[shown[$0]]
             return Row(visible: $0, index: shown[$0], node: node,
                        block: position($0),
                        isCollapsed: node.isSection && !expanded.contains(node.id))
@@ -1016,7 +989,7 @@ struct PipelineView: View {
         guard let i = dsp.chain.firstIndex(where: { $0.id == id }) else { return }
         // 切ってある Section で、止めている段が在るときだけ確かめる。
         if dsp.chain[i].isSection, !dsp.chain[i].enabled,
-           !ETSection.range(after: i, types: dsp.chain.map(\.spec.type)).isEmpty {
+           !dsp.analysis.members(of: dsp.chain[i].id).isEmpty {
             confirmingSectionRemoval = id
             return
         }
@@ -1084,7 +1057,12 @@ struct PipelineView: View {
             let i = visible[offset].index
             moving.insert(i)
             if visible[offset].node.isSection && !expanded.contains(visible[offset].node.id) {
-                moving.formUnion(IndexSet(integersIn: ETSection.range(after: i, types: types)))
+                // 畳んだ組を動かすと配下も付いてくる。配下は Analysis が持つ。
+                for member in dsp.analysis.members(of: visible[offset].node.id) {
+                    if let at = dsp.chain.firstIndex(where: { $0.id == member }) {
+                        moving.insert(at)
+                    }
+                }
             }
         }
         guard !moving.isEmpty else { return }

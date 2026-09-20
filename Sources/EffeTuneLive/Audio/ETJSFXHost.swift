@@ -784,7 +784,12 @@ final class ETJSFXHost: ObservableObject {
     private static func metadata(_ source: String) -> (name: String?, author: String?) {
         var name: String?, author: String?
         for raw in source.split(whereSeparator: { $0.isNewline }).prefix(80) {
+            // **見えない字も落とす。**looksLikeJSFX と同じ扱いにしないと、
+            // BOM 付きの `.txt` は取り込めるのに 1 行目の `desc:` が読めず、
+            // 一覧に題ではなくファイル名が並ぶ。U+FEFF は空白ではないので
+            // .whitespaces だけでは落ちない。
             let line = raw.trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\u{FEFF}\u{200B}"))
             if line.hasPrefix("desc:") { name = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces) }
             if line.hasPrefix("author:") { author = String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces) }
         }

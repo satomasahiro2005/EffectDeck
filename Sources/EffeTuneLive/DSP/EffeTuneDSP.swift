@@ -74,7 +74,20 @@ final class EffeTuneDSP: ObservableObject {
         }
 
         /// 音を触らない飾り。DSP の instance を持たない。
-        var isSection: Bool { ETSection.isSection(spec) }
+        var isSection: Bool { ETSection.isSection(spec) && !isRootReset }
+
+        /// **組を抜けて root へ戻る印。**Section ではない。
+        ///
+        /// 名前も入切も持たず、行にも出ず、畳めもせず、DSP にも出ない。
+        /// EffeTune へ出す瞬間だけ `Section(cm: "")` に化ける（ETWireCodec）。
+        /// 外から来た空 Section をこれと推測してはいけない（PipelineAnalysis の頭）。
+        var isRootReset: Bool = false
+
+        /// 並びが持つ意味。派生値を出すのはこれだけを見る。
+        var role: ETItemRole {
+            if isRootReset { return .rootReset }
+            return ETSection.isSection(spec) ? .section : .effect
+        }
 
         /// 音が通る形になっているか。false のものは publish の filter で descriptor から
         /// 落ちるので、画面に並んでいても音は通らない。UI はこれを出して区別する。
@@ -297,7 +310,7 @@ final class EffeTuneDSP: ObservableObject {
         retire(doomed)
         // 消したあとに、何も閉じていない無名 Section が残ることがある
         // （[S("A"), X, S(""), Y] の Y を消すと S("") が閉じる相手を失う）。
-        sweepDeadSections()
+        normalizeRootResets()
     }
 
     /// 鎖の並びを変える。位置は**鎖の添字**（画面の行番号ではない）。
@@ -307,13 +320,14 @@ final class EffeTuneDSP: ObservableObject {
     /// 畳んだ Section と一緒に運ばれた配下は開く理由に数えない。Section ごと
     /// 動かしただけで、畳んでおいた中身が勝手に開いてしまうため。
     func move(from source: IndexSet, to destination: Int) {
-        let types = chain.map(\.spec.type)
         // 連れて行かれるだけの配下。掴んだ行ではないので開く対象から外す。
+        let a = analysis
+        let moved = Set(source.compactMap { chain.indices.contains($0) ? chain[$0].id : nil })
         var carried: Set<UUID> = []
         for i in source where chain.indices.contains(i) {
             guard chain[i].isSection, !expanded.contains(chain[i].id) else { continue }
-            for j in ETSection.range(after: i, types: types) where source.contains(j) {
-                carried.insert(chain[j].id)
+            for member in a.members(of: chain[i].id) where moved.contains(member) {
+                carried.insert(member)
             }
         }
         let grabbed = Set(source.compactMap { chain.indices.contains($0) ? chain[$0].id : nil })
@@ -322,43 +336,47 @@ final class EffeTuneDSP: ObservableObject {
         chain.move(fromOffsets: source, toOffset: destination)
         publish()
         revealHidden(grabbed)
-        sweepDeadSections()
+        normalizeRootResets()
     }
 
-    /// 何も閉じていない無名 Section を掃く。鎖を動かした後段から通す。
+    /// **rootReset を正規形にする。**鎖を動かした後段から通す。
     ///
-    /// **門は 3 つある。どれも外せない。**
+    /// 前は「何も閉じていない無名 Section を掃く」形で、名前・位置・前後の Section・
+    /// 入切・掃除前後の gates・開いているか、の 6 つから**出自を推理していた**。
+    /// 推理なので、人が名前を付けていないだけの Section まで候補に入り、
+    /// 消さないための門を足し続けることになっていた。
     ///
-    ///  1. 候補は ETSection.redundantUnnamed。切ってある無名 Section は元から
-    ///     候補に入らない（名前が無くても配下を止める本物の区切り）。
-    ///  2. **開いている行は触らない。**ピッカーから自分で足した Section は名前が
-    ///     空のまま鎖に入り、そのとき add が expanded に入れる。名前を打っている
-    ///     途中の行を、別の場所のドラッグ 1 回で黙って消してはいけない。
-    ///  3. **掃いても gates が変わらない index だけ消す。**有効な無名 Section は
-    ///     open を true に戻す実効的な区切りなので（ETSection.gates）、名前が
-    ///     無いことだけを根拠に消すと、下の段が上の切ってある組に飲まれて黙る。
-    ///     保存済みの鎖・共有リンク・プリセット由来で既に在り得る形なので、
-    ///     ここは「音が変わらない」を直接測る。
-    func sweepDeadSections() {
-        let candidates = ETSection.redundantUnnamed(types: chain.map(\.spec.type),
-                                                    names: chain.map(\.sectionName),
-                                                    enabled: chain.map(\.enabled))
-        let dead = IndexSet(candidates.filter { !expanded.contains(chain[$0].id) })
+    /// いまは推理しない。**自分が置いた rootReset だけを見る。**
+    /// 要る・要らないは並びの形だけで決まる（ETRootResetRule.keep）。
+    /// 普通の Section は名前が空でも一切触らない。
+    func normalizeRootResets() {
+        let keep = ETRootResetRule.keep(roles: chain.map(\.role))
+        let dead = IndexSet(chain.indices.filter { !keep[$0] })
         guard !dead.isEmpty else { return }
-
-        // gates を掃除の前後で比べる。残る段の並びで一致しなければ何も消さない。
-        let before = ETSection.gates(types: chain.map(\.spec.type), enabled: chain.map(\.enabled))
-        let keep = chain.indices.filter { !dead.contains($0) }
-        let after = ETSection.gates(types: keep.map { chain[$0].spec.type },
-                                    enabled: keep.map { chain[$0].enabled })
-        for (slot, i) in keep.enumerated() {
-            if before[i] != after[slot] { return }
-        }
-
-        let doomed = dead.map { chain[$0].instance }.filter { $0 != 0 }
         chain.remove(atOffsets: dead)
         publish()
-        retire(doomed)
+    }
+
+    /// **その段を組から出す。**直前に rootReset を挿す。
+    ///
+    /// 何も起きなかったときは false。呼ぶ側は戻り値だけで触覚を決められる
+    /// （前は「鎖の本数が増えたか」で見ていた。挿してから掃除で取り消される
+    /// という二段構えだったので、そう数えるしかなかった）。
+    ///
+    /// - 既に root に居るなら何もしない
+    /// - 直前が既に rootReset なら何もしない
+    @discardableResult
+    func leaveSection(at index: Int) -> Bool {
+        // **判断は純粋関数が持つ。**ここは並びを渡して答えを受けるだけ。
+        // 模型の外から素の並びだけで試せるようにしてある（PipelineRulesTests）。
+        guard let at = ETRootResetRule.insertion(roles: chain.map(\.role),
+                                                 enabled: chain.map(\.enabled),
+                                                 at: index) else { return false }
+        var marker = Node(spec: ETSection.spec, values: [])
+        marker.isRootReset = true
+        chain.insert(marker, at: at)
+        publish()
+        return true
     }
 
     /// 畳んだ Section の配下に入ってしまった段を、その Section を開いて見えるようにする。
@@ -372,13 +390,12 @@ final class EffeTuneDSP: ObservableObject {
     /// ドラッグからも ⋯ からも同じ扱いになるようにするため。
     func revealHidden(_ ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
-        let types = chain.map(\.spec.type)
-        for i in chain.indices
-        where chain[i].isSection && !expanded.contains(chain[i].id) {
-            let inside = ETSection.range(after: i, types: types)
-            if inside.contains(where: { ids.contains(chain[$0].id) }) {
-                expanded.insert(chain[i].id)
-            }
+        // **持ち主を引くだけ。**鎖を走って範囲を数え直さない。
+        // rootReset は Section ではないので、ここへ入り込む経路そのものが無い。
+        let a = analysis
+        for id in ids {
+            guard let owner = a.owner(of: id) else { continue }
+            expanded.insert(owner)
         }
     }
 
@@ -688,7 +705,7 @@ final class EffeTuneDSP: ObservableObject {
         for node in made { expanded.insert(node.id) }
         // 今回足したぶんは expanded なので掃除に触られない。片付くのは、前から
         // 鎖に残っていた死んだ印だけ。
-        sweepDeadSections()
+        normalizeRootResets()
     }
 
     /// 鎖をまるごと入れ替える。共有リンクの取り込みで使う。
@@ -1075,10 +1092,21 @@ final class EffeTuneDSP: ObservableObject {
     /// BandFIRPEQDesigner.republishForLatencyChange が chain から ETPipeNode を
     /// 作り直していて、そこは node.sectionGate をそのまま読む。
     private func applySectionGates() {
-        let gates = ETSection.gates(types: chain.map(\.spec.type), enabled: chain.map(\.enabled))
-        for i in chain.indices where chain[i].sectionGate != gates[i] {
-            chain[i].sectionGate = gates[i]
+        // **答えを出すのは ETPipelineAnalysis だけ。**ここは書き戻すだけで、
+        // 数え方をここにも持たない（持つと二重管理になる。前は ETSection.gates が
+        // 名前と型から数えていて、rootReset を Section と区別できなかった）。
+        let a = analysis
+        for i in chain.indices {
+            let gate = chain[i].role == .effect ? a.gate(of: chain[i].id) : 1
+            if chain[i].sectionGate != gate { chain[i].sectionGate = gate }
         }
+    }
+
+    /// いまの鎖の所属と gate。**派生値なので持ち回らない。**
+    var analysis: ETPipelineAnalysis {
+        ETPipelineAnalysis.analyze(roles: chain.map(\.role),
+                                   ids: chain.map(\.id),
+                                   enabled: chain.map(\.enabled))
     }
 
     /// 有効なものだけを並べて音のスレッドへ渡す。

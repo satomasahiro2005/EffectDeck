@@ -468,6 +468,8 @@ private struct NoteSpectrogramGraph: View {
     var height: CGFloat?
 
     @ObservedObject private var telemetry = Telemetry.shared
+    /// 図の高さを画素で測るのに要る。行の複製はこれで決める。
+    @Environment(\.displayScale) private var displayScale
 
     @State private var probe: ETNoteProbe?
     @GestureState private var previewActive = false
@@ -558,8 +560,12 @@ private struct NoteSpectrogramGraph: View {
             }
             .onAppear {
                 band.display = display
+                // **縦の引き伸ばしを画像へ持たせる**（ETNoteBand.rowScale）。
+                // 全画面では図がずっと高くなるので、開くたびに測り直す。
+                band.fit(height: graphHeight * displayScale)
                 if let latest = snapshot { band.push(latest) }
             }
+            .onChange(of: graphHeight) { _, h in band.fit(height: h * displayScale) }
             .onChange(of: snapshot?.frameIndex) { _, _ in
                 if let latest = snapshot { band.push(latest) }
             }
@@ -602,9 +608,13 @@ private struct NoteSpectrogramGraph: View {
         //
         // **`interpolation` は `GraphicsContext` ではなく `Image` の修飾子。**
         // `context.interpolation = .none` は通らない（has no member）。
+        // **滑らかに貼る。**縦は fit(height:) が行を図の高さまで複製してあるので、
+        // 拡大率がほぼ 1 になって動かない。動くのは横（時間の向き）だけで、
+        // そこは上流も平滑化している（note_spectrogram.js:1094）。
+        // 一発で最近傍に貼っていたころは、1/60 の 305 行が潰れて髪の毛になっていた。
         func tile(_ image: CGImage) -> Image {
             Image(decorative: image, scale: 1)
-                .interpolation(.none)
+                .interpolation(.high)
                 .antialiased(false)
         }
         // **どちらの塗り分けでも画像が色を持つ**（noteColor が常に返す）ので、
@@ -869,8 +879,36 @@ final class ETNoteBand: ObservableObject {
 
     private(set) var image: CGImage?
     private(set) var count = 0
-    /// 画像が 1 音に使う行数。1（半音）か 5（細分）。
+    /// 画像が 1 音に使う行数。解像度（1 か 5）× 引き伸ばし（rowScale）。
     private(set) var rowsPerNote = 1
+
+    /// 1 行を何行に写すか。**縦の引き伸ばしを画像のほうへ持たせる。**
+    ///
+    /// 上流は伸ばすのを 2 段に分けている（note_spectrogram.js:1064-1103）。
+    /// まず縦だけを平滑化なしで図の高さまで広げ、そのあと横だけを平滑化して貼る。
+    /// 縦を平滑化すると隣の音を拾うから、という理由がそのままコメントに書いてある。
+    ///
+    /// こちらは一発で最近傍に貼っていたので、**1/60 では 305 行が図の高さへ潰れて
+    /// 1 行 1〜2 画素にしかならず、髪の毛になっていた。**
+    /// 貼る前に伸ばすと 30Hz で 2MB の面を組み直すことになるので、
+    /// **画像を作る時点で行を複製しておく。**行数が図の高さに追いつけば、
+    /// 貼るときの縦の拡大率がほぼ 1 になり、平滑化しても縦は動かない。
+    /// だから横だけを滑らかにできる（上流と同じ絵になる）。
+    private(set) var rowScale = 1
+
+    /// 図の高さ（画素）に合わせて行の複製を決める。**描く前に呼ぶ。**
+    func fit(height: CGFloat) {
+        let base = (display.resolution == .high || display.volume) ? Self.divisions : 1
+        // 上限を置く。88 音 × 5 細分 × 8 = 3520 行までで、それ以上は要らない
+        // （iPhone の縦は @3x でも 2800 画素ほど）。
+        let want = min(8, max(1, Int(height) / max(1, Self.notes * base)))
+        guard want != rowScale else { return }
+        rowScale = want
+        allocate()
+        for column in 0..<Self.columns { paint(column: column) }
+        image = makeImage()
+        revision &+= 1
+    }
 
     /// 表示の切り替え。変えると溜めてある列を全部描き直す。
     var display = ETNoteDisplay() {
@@ -916,7 +954,8 @@ final class ETNoteBand: ObservableObject {
 
     private func allocate() {
         // Volume は太さを細分の行で出すので、半音表示でも 5 行いる。
-        let needed = (display.resolution == .high || display.volume) ? Self.divisions : 1
+        let base = (display.resolution == .high || display.volume) ? Self.divisions : 1
+        let needed = base * rowScale
         let bytes = Self.notes * needed * Self.columns * 4
         guard rowsPerNote != needed || pixels.count != bytes else { return }
         rowsPerNote = needed
@@ -1064,24 +1103,32 @@ final class ETNoteBand: ObservableObject {
 
     /// 確からしさをそのまま升目に置く。上流 _writePixels（:422-452）に当たる。
     private func paintConfidence(column: Int) {
+        // **1 行を rowScale 行へ写す。**縦の引き伸ばしを画像に持たせるため
+        // （rowScale の説明を読むこと）。rowScale が 1 なら今までと同じ。
+        let base = rowsPerNote / rowScale
         for note in 0..<Self.notes {
             let first = note * Self.divisions
-            if rowsPerNote == 1 {
+            if base == 1 {
                 // 1/12 は細分 5 つの最大をその音のものにする（上流 :828-835）。
                 var value: UInt8 = 0
                 for division in 0..<Self.divisions {
                     let v = fine[(first + division) * Self.columns + column]
                     if v > value { value = v }
                 }
-                write(row: Self.notes - 1 - note, column: column, value: value,
-                      color: noteColor(note: note))
+                let top = (Self.notes - 1 - note) * rowScale
+                for k in 0..<rowScale {
+                    write(row: top + k, column: column, value: value,
+                          color: noteColor(note: note))
+                }
             } else {
                 for division in 0..<Self.divisions {
                     let value = fine[(first + division) * Self.columns + column]
-                    let row = (Self.notes - 1 - note) * rowsPerNote
-                        + (Self.divisions - 1 - division)
-                    write(row: row, column: column, value: value,
-                          color: fineColor(pitch: first + division))
+                    let top = ((Self.notes - 1 - note) * Self.divisions
+                               + (Self.divisions - 1 - division)) * rowScale
+                    for k in 0..<rowScale {
+                        write(row: top + k, column: column, value: value,
+                              color: fineColor(pitch: first + division))
+                    }
                 }
             }
         }
@@ -1111,11 +1158,16 @@ final class ETNoteBand: ObservableObject {
                 + (display.resolution == .high ? (Self.divisions - 1 - best)
                                                : Self.divisions / 2)
             let start = center - (thickness - 1) / 2
-            for row in start..<(start + thickness) where row >= 0 && row < rows {
-                write(row: row, column: column, value: value,
-                      color: display.resolution == .high
-                          ? fineColor(pitch: first + best)
-                          : noteColor(note: note))
+            // 細分の行も rowScale 倍に写す（paintConfidence と同じ理由）。
+            for row in start..<(start + thickness) {
+                for k in 0..<rowScale {
+                    let at = row * rowScale + k
+                    guard at >= 0, at < rows else { continue }
+                    write(row: at, column: column, value: value,
+                          color: display.resolution == .high
+                              ? fineColor(pitch: first + best)
+                              : noteColor(note: note))
+                }
             }
         }
     }

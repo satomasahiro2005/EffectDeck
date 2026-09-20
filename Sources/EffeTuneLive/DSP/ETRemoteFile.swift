@@ -68,11 +68,18 @@ enum ETRemoteFile {
         }
 
         if host == "gist.github.com" {
-            // 既に /raw で終わっていなければ足す。
+            // **どのファイルかは `#file-...` に入っている。**gist に 2 本以上
+            // 置いてあるとき、印を捨てて /raw だけ足すと先頭の 1 本が落ちてくる。
+            // 印の綴りは名前の記号を `-` にしたもの（`a.jsfx` → `file-a-jsfx`）。
+            let wanted = comps.fragment.flatMap { f -> String? in
+                guard f.hasPrefix("file-") else { return nil }
+                return String(f.dropFirst("file-".count))
+            }
             if parts.last != "raw" {
                 parts.append("raw")
-                comps.path = "/" + parts.joined(separator: "/")
             }
+            if let wanted { parts.append(wanted) }
+            comps.path = "/" + parts.joined(separator: "/")
             comps.fragment = nil
             return comps.url
         }

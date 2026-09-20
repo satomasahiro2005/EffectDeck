@@ -54,9 +54,13 @@ enum ETDebugPresets {
 
     /// 図を見る。畳んだ段（図だけ）で押せない札が出ていないか、
     /// 図の見せ方（`cl` / `sc` / `dm`）がアプリを開き直しても残るか。
+    ///
+    /// **`sc: log-hq` には `hq` も要る。**Spectrum Analyzer の effectiveScale は
+    /// HQ を DSP 側の `hq` で決めるので、`sc` だけ置いても Log に落ちる
+    /// （保存が効いていても失敗に見える）。
     private static let graphs = """
     [{"nm":"Spectrogram","en":true,"sc":"linear"},
-     {"nm":"Spectrum Analyzer","en":true,"sc":"log-hq","dm":"bar"},
+     {"nm":"Spectrum Analyzer","en":true,"sc":"log-hq","hq":true,"dm":"bar"},
      {"nm":"Note Spectrogram","en":true,"cl":"Rainbow","pr":"High"},
      {"nm":"Level Meter","en":true},
      {"nm":"Stereo Meter","en":true}]

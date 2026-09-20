@@ -215,6 +215,9 @@ targets:
       # 図に重ねるスペクトラムの平滑。SwiftUI にも et_* にも触らないので、
       # この 1 本だけをここへ入れれば数で照合できる。
       - path: Sources/EffeTuneLive/DSP/SpectrumSmoothing.swift
+      # 鎖の意味と正規形。Foundation だけなので実機なしで試せる。
+      # 判断をここへ出してあるのは、そのため（PipelineRulesTests）。
+      - path: Sources/EffeTuneLive/DSP/PipelineAnalysis.swift
       - path: Sources/EffeTuneLive/DSP/ETParamCoding.swift
       - path: Sources/EffeTuneLive/DSP/EffectPresetApply.swift
       - path: Sources/EffeTuneLive/DSP/EffectSpec.swift
