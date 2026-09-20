@@ -10,7 +10,7 @@
 
 import CoreGraphics
 import XCTest
-@testable import EffeTuneLive
+
 
 final class VirtualRoomTests: XCTestCase {
 
