@@ -1,0 +1,301 @@
+{
+  "$comment": [
+    "EffeTune 互換。dsp/plugins/spatial/virtual_room/params.json としてそのまま",
+    "上流へ出せる形にしてある（docs/virtual-room-design.md §50）。",
+    "fields の並びがそのまま et_instance_set_params に渡す float の並び（§12）。",
+    "並べ替えると保存済みのプリセットと share link が別の音になる。",
+    "画面に出る文字はここに入れない。上流は .js が持つ。EffectDeck は catalog.json。"
+  ],
+  "type": "VirtualRoomPlugin",
+  "tolerance": {
+    "abs": 0.0001,
+    "policy": "per-sample"
+  },
+  "fields": [
+    {
+      "name": "roomWidth",
+      "key": "rw",
+      "kind": "float",
+      "min": 2,
+      "max": 20,
+      "step": 0.1,
+      "default": 4.2,
+      "unit": "m",
+      "automation": true
+    },
+    {
+      "name": "roomDepth",
+      "key": "rd",
+      "kind": "float",
+      "min": 2,
+      "max": 30,
+      "step": 0.1,
+      "default": 3.6,
+      "unit": "m",
+      "automation": true
+    },
+    {
+      "name": "roomHeight",
+      "key": "rh",
+      "kind": "float",
+      "min": 2,
+      "max": 10,
+      "step": 0.1,
+      "default": 2.6,
+      "unit": "m",
+      "automation": true
+    },
+    {
+      "name": "listenerX",
+      "key": "lx",
+      "kind": "float",
+      "min": 5,
+      "max": 95,
+      "step": 1,
+      "default": 50,
+      "unit": "%",
+      "automation": true
+    },
+    {
+      "name": "listenerY",
+      "key": "ly",
+      "kind": "float",
+      "min": 5,
+      "max": 95,
+      "step": 1,
+      "default": 36,
+      "unit": "%",
+      "automation": true
+    },
+    {
+      "name": "listenerHeight",
+      "key": "lz",
+      "kind": "float",
+      "min": 0.5,
+      "max": 2.5,
+      "step": 0.01,
+      "default": 1.2,
+      "unit": "m",
+      "automation": true
+    },
+    {
+      "name": "speakerAngle",
+      "key": "sa",
+      "kind": "float",
+      "min": 5,
+      "max": 90,
+      "step": 1,
+      "default": 30,
+      "unit": "deg",
+      "automation": true
+    },
+    {
+      "name": "speakerDistance",
+      "key": "sd",
+      "kind": "float",
+      "min": 0.5,
+      "max": 6,
+      "step": 0.05,
+      "default": 1.8,
+      "unit": "m",
+      "automation": true
+    },
+    {
+      "name": "speakerElevation",
+      "key": "se",
+      "kind": "float",
+      "min": -30,
+      "max": 30,
+      "step": 1,
+      "default": 0,
+      "unit": "deg",
+      "automation": true
+    },
+    {
+      "name": "roomAmount",
+      "key": "rm",
+      "kind": "float",
+      "min": 0,
+      "max": 200,
+      "step": 1,
+      "default": 100,
+      "unit": "%",
+      "automation": true
+    },
+    {
+      "name": "decayScale",
+      "key": "ds",
+      "kind": "float",
+      "min": 0.25,
+      "max": 4,
+      "step": 0.01,
+      "default": 1,
+      "unit": "x",
+      "automation": true
+    },
+    {
+      "name": "sideMaterial",
+      "key": "sm",
+      "kind": "enum",
+      "values": [
+        "Concrete",
+        "Painted Wall",
+        "Drywall",
+        "Wood",
+        "Glass",
+        "Heavy Curtain",
+        "Carpet",
+        "Acoustic Panel"
+      ],
+      "default": "Drywall"
+    },
+    {
+      "name": "frontMaterial",
+      "key": "fm",
+      "kind": "enum",
+      "values": [
+        "Concrete",
+        "Painted Wall",
+        "Drywall",
+        "Wood",
+        "Glass",
+        "Heavy Curtain",
+        "Carpet",
+        "Acoustic Panel"
+      ],
+      "default": "Drywall"
+    },
+    {
+      "name": "rearMaterial",
+      "key": "bm",
+      "kind": "enum",
+      "values": [
+        "Concrete",
+        "Painted Wall",
+        "Drywall",
+        "Wood",
+        "Glass",
+        "Heavy Curtain",
+        "Carpet",
+        "Acoustic Panel"
+      ],
+      "default": "Drywall"
+    },
+    {
+      "name": "floorMaterial",
+      "key": "fl",
+      "kind": "enum",
+      "values": [
+        "Concrete",
+        "Painted Wall",
+        "Drywall",
+        "Wood",
+        "Glass",
+        "Heavy Curtain",
+        "Carpet",
+        "Acoustic Panel"
+      ],
+      "default": "Carpet"
+    },
+    {
+      "name": "ceilingMaterial",
+      "key": "ce",
+      "kind": "enum",
+      "values": [
+        "Concrete",
+        "Painted Wall",
+        "Drywall",
+        "Wood",
+        "Glass",
+        "Heavy Curtain",
+        "Carpet",
+        "Acoustic Panel"
+      ],
+      "default": "Drywall"
+    },
+    {
+      "name": "earlyOrder",
+      "key": "eo",
+      "kind": "enum",
+      "values": [
+        "First Order",
+        "Second Order"
+      ],
+      "default": "Second Order"
+    },
+    {
+      "name": "headRadius",
+      "key": "hr",
+      "kind": "float",
+      "min": 7,
+      "max": 11,
+      "step": 0.05,
+      "default": 8.75,
+      "unit": "cm",
+      "automation": true
+    },
+    {
+      "name": "pinnaAmount",
+      "key": "pa",
+      "kind": "float",
+      "min": 0,
+      "max": 150,
+      "step": 1,
+      "default": 100,
+      "unit": "%",
+      "automation": true
+    },
+    {
+      "name": "headShadowAmount",
+      "key": "hs",
+      "kind": "float",
+      "min": 0,
+      "max": 150,
+      "step": 1,
+      "default": 100,
+      "unit": "%",
+      "automation": true
+    },
+    {
+      "name": "outputGain",
+      "key": "og",
+      "kind": "float",
+      "min": -24,
+      "max": 12,
+      "step": 0.1,
+      "default": 0,
+      "unit": "dB",
+      "automation": true
+    },
+    {
+      "name": "modelVersion",
+      "key": "mv",
+      "kind": "int",
+      "min": 1,
+      "max": 16,
+      "step": 1,
+      "default": 1,
+      "automation": true
+    },
+    {
+      "name": "seedLow",
+      "key": "s0",
+      "kind": "int",
+      "min": 0,
+      "max": 65535,
+      "step": 1,
+      "default": 31777,
+      "automation": true
+    },
+    {
+      "name": "seedHigh",
+      "key": "s1",
+      "kind": "int",
+      "min": 0,
+      "max": 65535,
+      "step": 1,
+      "default": 41887,
+      "automation": true
+    }
+  ]
+}

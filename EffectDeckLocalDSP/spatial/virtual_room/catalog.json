@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "EffectDeck の画面に出る文字。上流では plugins/spatial/virtual_room.js が",
+    "createUI で持っているもの。**ABI はここに書かない**（params.json が正）。"
+  ],
+  "name": "Virtual Room",
+  "category": "spatial",
+  "about": "Binaural virtual loudspeakers and room simulation with realtime geometry",
+  "labels": {
+    "rw": "Width",
+    "rd": "Depth",
+    "rh": "Height",
+    "lx": "Horizontal Position",
+    "ly": "Depth Position",
+    "lz": "Ear Height",
+    "sa": "Angle",
+    "sd": "Distance",
+    "se": "Elevation",
+    "rm": "Room Amount",
+    "ds": "Decay",
+    "sm": "Side Walls",
+    "fm": "Front Wall",
+    "bm": "Rear Wall",
+    "fl": "Floor",
+    "ce": "Ceiling",
+    "eo": "Early Reflections",
+    "hr": "Head Size",
+    "pa": "Pinna",
+    "hs": "Head Shadow",
+    "og": "Output Gain",
+    "mv": "Model Version",
+    "s0": "Diffusion Seed Low",
+    "s1": "Diffusion Seed High"
+  }
+}

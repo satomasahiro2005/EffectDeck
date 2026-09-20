@@ -22,6 +22,9 @@ dspSettings: &dspSettings
   CLANG_CXX_LANGUAGE_STANDARD: "c++20"
   CLANG_CXX_LIBRARY: "libc++"
   GCC_OPTIMIZATION_LEVEL: "s"
+  # 自前の kernel を registry へ足す口を開ける（§48）。
+  # Patches/effetune-local-kernels.diff がこの定義を見ている。
+  GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) ET_EFFECTDECK_EXTENSIONS=1"
   HEADER_SEARCH_PATHS:
     - $(SRCROOT)/Vendor/effetune/dsp/include
     - $(SRCROOT)/Vendor/effetune/dsp
@@ -29,6 +32,8 @@ dspSettings: &dspSettings
     - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
     - $(SRCROOT)/Vendor/effetune/dsp/vendor/pffft/include/pffft
     - $(SRCROOT)/Generated/note-models
+    - $(SRCROOT)/Generated/dsp
+    - $(SRCROOT)/EffectDeckLocalDSP
     - $(SRCROOT)/Vendor/ysfx/include
     - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
 
@@ -66,6 +71,13 @@ targets:
       - path: Vendor/effetune/dsp/vendor/pffft/src
         includes: ["**/*.c", "**/*.h"]
         excludes: ["**/*test*"]
+      # EffectDeck 自前の kernel。**上流と同じレイアウトで置いてある**ので、
+      # そのまま dsp/plugins/<分類>/<名前>/ へ移せる（docs/virtual-room-design.md §46）。
+      - path: EffectDeckLocalDSP
+        includes: ["**/*.cpp", "**/*.h"]
+      # 詰め順ヘッダ。Tools/gen_catalog.py が params.json から吐く。
+      - path: Generated/dsp
+        includes: ["**/*.h"]
       # Note Spectrogram はモデルを実行ファイルへ埋め込む。
       # Scripts/build.sh が embed_models.py を走らせてここへ吐く。
       - path: Generated/note-models

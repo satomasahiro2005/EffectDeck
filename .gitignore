@@ -43,3 +43,4 @@ docs/mac.md
 
 # Apple の公式文書の写し。**再配布しない。**手元で読むためだけに置く。
 docs/apple/
+__pycache__/

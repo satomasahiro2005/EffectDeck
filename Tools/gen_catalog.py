@@ -31,7 +31,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DSP = ROOT / "Vendor" / "effetune" / "dsp"
 JS_PLUGINS = ROOT / "Vendor" / "effetune" / "plugins"
-LOCAL_DSP = ROOT / "Sources" / "EffeTuneLive" / "DSP"
+LOCAL_DSP = ROOT / "EffectDeckLocalDSP"
+LOCAL_HEADERS = ROOT / "Generated" / "dsp"
 OUT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "EffectCatalog.swift"
 
 MEMBER = re.compile(r"^\s*float\s+(\w+)\s*(?:\[(\d+)\])?\s*;")
@@ -420,12 +421,34 @@ def layout_hash(fields):
 
 
 def read_manifest(path):
-    """effect.json を読んで検証する。緩く通さない。"""
+    """params.json と隣の catalog.json を読んで検証する。緩く通さない。
+
+    params.json は**上流と同じ形のまま**にしておく（表示の文字を混ぜない）。
+    そのまま dsp/plugins/<分類>/<名前>/params.json として出せるのが狙い。
+    画面に出る名前・分類・説明・ラベルは隣の catalog.json から重ねる
+    （上流ではそれを plugins/<分類>/<名前>.js の createUI が持っている）。
+    """
     src = path.relative_to(ROOT)
     meta = json.loads(path.read_text(encoding="utf-8"))
-    for required in ("type", "name", "category", "fields"):
+    for required in ("type", "fields"):
         if not meta.get(required):
             sys.exit("!! %s: %s が無い" % (src, required))
+
+    catalog_path = path.parent / "catalog.json"
+    if not catalog_path.exists():
+        sys.exit("!! %s: 隣に catalog.json が無い" % src)
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    for required in ("name", "category"):
+        if not catalog.get(required):
+            sys.exit("!! %s: %s が無い" % (catalog_path.relative_to(ROOT), required))
+    meta["name"] = catalog["name"]
+    meta["category"] = catalog["category"]
+    meta["about"] = catalog.get("about", "")
+    labels = catalog.get("labels", {})
+    for f in meta["fields"]:
+        if f.get("key") in labels:
+            f["label"] = labels[f["key"]]
+
     seen_keys, seen_names = set(), set()
     for f in meta["fields"]:
         for required in ("name", "key", "kind", "default"):
@@ -463,31 +486,49 @@ def write_local_header(meta, out_path):
     割り込むと、上流が同名の型を足したときに黙って衝突する。
     """
     type_name = meta["type"]
-    guard = "EFFECTDECK_GENERATED_%s_PARAMS_H" % type_name.upper()
+    guard = "EFFETUNE_GENERATED_%s_PARAMS_H" % type_name.upper()
     members = "".join("  float %s;\n" % f["name"] for f in meta["fields"])
     count = len(meta["fields"])
+
+    # 範囲も一緒に出す。kernel は geometry の検証（§53）と buffer の確保（§33）で
+    # 上限が要る。ここで出さないと effect.json と kernel で同じ数を二重に持つ。
+    limits = []
+    for f in meta["fields"]:
+        upper = f["name"][:1].upper() + f["name"][1:]
+        if f["kind"] == "enum":
+            limits.append("  static constexpr std::uint32_t k%sCount = %du;\n"
+                          % (upper, len(f["values"])))
+        else:
+            limits.append("  static constexpr float k%sMin = %sF;\n"
+                          % (upper, repr(float(f.get("min", 0)))))
+            limits.append("  static constexpr float k%sMax = %sF;\n"
+                          % (upper, repr(float(f.get("max", 1)))))
+
     text = (
-        "// Tools/gen_catalog.py が Sources/EffeTuneLive/DSP/%s/effect.json から作る。\n"
-        "// 手で直さないこと。\n" % out_path.parent.name +
+        "// Tools/gen_catalog.py が EffectDeckLocalDSP/**/params.json から作る。\n"
+        "// 手で直さないこと。上流の gen-dsp-params.mjs が吐くものと同じ形にしてある。\n" +
         "#ifndef %s\n#define %s\n\n" % (guard, guard) +
         "#include <cstdint>\n\n"
-        "namespace effectdeck::generated {\n\n"
+        "namespace effetune::generated {\n\n"
         "struct %sParams {\n%s" % (type_name, members) +
         "  static constexpr std::uint32_t kHash = %#010xu;\n" % layout_hash(meta["fields"]) +
         "  static constexpr std::uint32_t kFloatCount = %du;\n" % count +
         "};\n"
         "static_assert(sizeof(%sParams) == sizeof(float) * %du);\n\n" % (type_name, count) +
-        "} // namespace effectdeck::generated\n\n#endif\n")
+        "// effect.json の範囲。kernel が clamp と buffer の確保に使う。\n"
+        "struct %sRange {\n%s};\n\n" % (type_name, "".join(limits)) +
+        "} // namespace effetune::generated\n\n#endif\n")
     out_path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def local_specs():
     """Sources/EffeTuneLive/DSP/**/effect.json を spec へ。ヘッダも同時に吐く。"""
     specs = []
-    for manifest in sorted(LOCAL_DSP.glob("*/effect.json")):
+    LOCAL_HEADERS.mkdir(parents=True, exist_ok=True)
+    for manifest in sorted(LOCAL_DSP.glob("*/*/params.json")):
         meta = read_manifest(manifest)
         type_name = meta["type"]
-        header = manifest.parent / (type_name + "Params.h")
+        header = LOCAL_HEADERS / (type_name + "Params.h")
         write_local_header(meta, header)
 
         params, defaults = [], []

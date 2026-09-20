@@ -1,0 +1,30 @@
+diff --git a/dsp/core/registry.cpp b/dsp/core/registry.cpp
+index 8f275306..0798e381 100644
+--- a/dsp/core/registry.cpp
++++ b/dsp/core/registry.cpp
+@@ -7,6 +7,13 @@
+ #include "../registry.inc"
+ #undef EFFETUNE_PLUGIN
+ 
++#if defined(ET_EFFECTDECK_EXTENSIONS)
++#define EFFETUNE_PLUGIN(Name, Path)                                                                \
++  extern "C" const ::effetune::KernelDescriptor *et_kernel_descriptor_##Name() noexcept;
++#include "effectdeck_registry.inc"
++#undef EFFETUNE_PLUGIN
++#endif
++
+ #if defined(ET_ENABLE_TEST_KERNEL)
+ extern "C" const ::effetune::KernelDescriptor *et_kernel_descriptor_TestGainPlugin() noexcept;
+ extern "C" const ::effetune::KernelDescriptor *et_kernel_descriptor_TestDelayPlugin() noexcept;
+@@ -21,6 +28,11 @@ constexpr DescriptorFunction kDescriptors[] = {
+ #define EFFETUNE_PLUGIN(Name, Path) &et_kernel_descriptor_##Name,
+ #include "../registry.inc"
+ #undef EFFETUNE_PLUGIN
++#if defined(ET_EFFECTDECK_EXTENSIONS)
++#define EFFETUNE_PLUGIN(Name, Path) &et_kernel_descriptor_##Name,
++#include "effectdeck_registry.inc"
++#undef EFFETUNE_PLUGIN
++#endif
+ #if defined(ET_ENABLE_TEST_KERNEL)
+     &et_kernel_descriptor_TestGainPlugin, &et_kernel_descriptor_TestDelayPlugin,
+ #endif

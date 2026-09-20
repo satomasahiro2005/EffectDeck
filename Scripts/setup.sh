@@ -153,6 +153,23 @@ for m in learned_model fine_model octave_model; do
 done
 ls Generated/note-models
 
+
+# EffectDeck 自前の kernel を registry へ足す口。docs/virtual-room-design.md §48。
+# Vendor の中へ EffectDeck のコードを置かず、ET_EFFECTDECK_EXTENSIONS を立てた
+# ときだけ外側の EffectDeckLocalDSP/effectdeck_registry.inc を読ませる。
+if grep -q "ET_EFFECTDECK_EXTENSIONS" Vendor/effetune/dsp/core/registry.cpp 2>/dev/null; then
+  echo "当たっている: effetune-local-kernels.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --check ../../Patches/effetune-local-kernels.diff 2>/dev/null; then
+  git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace ../../Patches/effetune-local-kernels.diff \
+    && echo "当てた: effetune-local-kernels.diff"
+elif patch --batch --dry-run --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-local-kernels.diff >/dev/null 2>&1; then
+  patch --batch --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-local-kernels.diff \
+    && echo "当てた: effetune-local-kernels.diff (patch)"
+else
+  echo "!! effetune-local-kernels.diff が当たらない。Vendor/effetune の版を確かめること"
+  exit 1
+fi
+
 echo "--- プロジェクトを作る ---"
 python3 Tools/gen_version.py 2>&1 | tail -1
 xcodegen generate --spec project.yml 2>&1 | tail -5

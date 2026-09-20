@@ -1671,6 +1671,8 @@ current processing sample rate
 
 ## 46. C++構造
 
+> **この節の置き場は §61 で差し替えた。**
+
 ```text
 Sources/EffeTuneLive/DSP/VirtualRoom/
 
@@ -1801,6 +1803,8 @@ ETCatalog
 ---
 
 ## 50. Local effect manifest
+
+> **`effect.json` は §61 で撤回した。正本は上流と同じ `params.json`。**
 
 Virtual RoomにはEffectDeck側のmanifestを置く。
 
@@ -2178,3 +2182,75 @@ seed
 まで完全再現できる。
 
 これをVirtual Roomの基本アーキテクチャとする。
+
+---
+
+## 61. 上流へ出せる形にする（§46 / §50 の差し替え）
+
+Virtual Room は EffectDeck 独自 effect だが、**いずれ EffeTune へ PR できる形**で作る。
+C++ の DSP 本体と ABI は上流とまったく同じ規約にし、EffectDeck 側は Swift の
+前面を被せるだけにする。
+
+```text
+                    Virtual Room
+                         |
+            +------------+------------+
+            |                         |
+       Portable Core             Host-specific
+            |                         |
+ params.json                    Swift UI
+ kernel.cpp                     share projection
+ room model / image source      routing 制約
+ HRTF / FDN                     出荷時プリセット
+            |
+            +---------> EffeTune PR（+ JS UI と parity）
+```
+
+### 置き場
+
+```text
+EffectDeckLocalDSP/spatial/virtual_room/
+    params.json            ABI の正本。**上流とまったく同じ形**
+    catalog.json           EffectDeck の画面に出る文字だけ
+    kernel.cpp
+    virtual_room_engine.h / .cpp
+    virtual_room_model.h
+EffectDeckLocalDSP/effectdeck_registry.inc
+Generated/dsp/VirtualRoomPluginParams.h   生成物
+```
+
+上流へ出すときは `EffectDeckLocalDSP/spatial/virtual_room/` を
+`effetune/dsp/plugins/spatial/virtual_room/` へ写し、`catalog.json` を捨てて
+`plugins/spatial/virtual_room.js` を書く。`registry.inc` へ 1 行足す。
+
+### 変えたこと
+
+| | 前（§46 / §50） | いま |
+|---|---|---|
+| 正本 | `effect.json`（EffectDeck 独自） | `params.json`（上流と同形）|
+| 置き場 | `Sources/EffeTuneLive/DSP/VirtualRoom/` | `EffectDeckLocalDSP/<分類>/<名前>/` |
+| 名前空間 | `effectdeck::virtualroom` | `effetune::plugins::spatial` |
+| 生成ヘッダ | `effectdeck::generated` | `effetune::generated` |
+| ファイル名 | `VirtualRoomKernel.cpp` など | `kernel.cpp` / `virtual_room_*.{h,cpp}` |
+
+画面に出る文字を `params.json` に入れない。上流はそれを `.js` の `createUI` が
+持っていて、`params.json` は DSP の都合だけを書く決まりになっている。
+EffectDeck には `.js` が無いので、その一枚だけ `catalog.json` として隣に置く。
+
+`Range`（`kRoomWidthMin` など）は上流の生成物には無い。こちらの kernel が
+clamp と確保に使っている。**上流へ出すときはここだけ kernel の中へ畳む。**
+
+### registry
+
+Vendor の中へ EffectDeck のコードを置かない。`Patches/effetune-local-kernels.diff` が
+`ET_EFFECTDECK_EXTENSIONS` を立てたときだけ `effectdeck_registry.inc` を読む口を開ける。
+上流との差分は registry.cpp の 13 行だけで、上流へ入ったら丸ごと外せる。
+
+### 残っている上流化の宿題
+
+- `plugins/spatial/virtual_room.js`（UI と JS reference DSP）
+- `cases.json` / `golden/` / `native_test.cpp`（上流は JS と C++ の parity を厳密に取る）
+- `executionCapabilities`（`supportedChannelModes: ["stereo-pair"]`。§52 の制約がそのまま乗る）
+
+**いちばん重いのは C++ ではなく、同じ結果を出す JavaScript reference を書くこと。**
+Swift の `VirtualRoomView` / `VirtualRoomSceneView` は移植できない。書き直しになる。
