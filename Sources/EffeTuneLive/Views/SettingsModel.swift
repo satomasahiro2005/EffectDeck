@@ -133,9 +133,24 @@ enum ETRunState {
             return "Close any other app that is holding the audio device, then try again."
         case .interrupted:
             return "A call or another app took the audio device. Play something again to restart."
+        // **「少し鳴らしてから選ぶ」を先に書く。**ここがいちばん効く条件で、
+        // 外すと 1.5 秒後に黙ってスピーカーへ戻る（#1 / #3）。
+        //
+        // iOS は、こちらの protocolID を支持していないアプリの音を回してよいかを
+        // 選ぶたびに判定する。実際に通しているのは「MusicVAD が居る」の 1 本で
+        // （20 回中 17 回。`docs/connect-log.md` A-10）、**その検出器は
+        // 鳴り始めてから数秒おいて作られる**。2026-09-21 に生成の瞬間を実機で
+        // 撮った（経路が動いてから約 4 秒後。`docs/mde-routing-answer.md`）。
+        //
+        // **「止めていると駄目」ではない。**落ちた回のログにも
+        // `mediaIsPlaying=YES` が出ている。鳴ってはいたが検出器がまだ無かった。
+        // 同じ操作を 9 秒後にやり直すと通っている。だから文面は「少し待つ」。
+        // こちらから直せる所ではないので、手順で外す。
         case .waiting:
-            return "Open Control Center, press and hold the audio card, then choose EffectDeck "
-                 + "as the output for the app you are playing."
+            return "Start playback and let it run for a few seconds, then open Control Center, "
+                 + "press and hold the audio card, and choose EffectDeck. Picking it too early "
+                 + "does not stick — iOS drops back to the speaker a moment later. Try again if "
+                 + "that happens."
         case .idle:
             return "The input has been silent, so the effects are paused. They start again "
                  + "the moment sound returns."
