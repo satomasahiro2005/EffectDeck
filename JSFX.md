@@ -198,7 +198,10 @@ anything that can run once per block into `@block`.
 - up to 256 numeric, enum, hidden, and custom-variable sliders
 - linear, `:log`, `:sqr`, `:log!`, and `:sqr!` slider curves; UI movement is
   converted through ysfx's pinned normalized-value functions
-- 10 host triggers, `sliderchange()`, and `slider_automate()`
+- 10 host triggers, `sliderchange()`, and `slider_automate()`. The trigger
+  buttons only appear on scripts whose source reads `trigger`; there is no MIDI
+  or action binding in EffectDeck, so a script that ignores them would show ten
+  buttons with nothing behind them
 - `spl0` through `spl63`, analyzer passthrough, and audio generators
 - dynamic PDC notification and conservative infinite-tail processing
 - persistent in-memory LICE graphics, text, Retina, basic keyboard/mouse input,

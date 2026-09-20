@@ -656,7 +656,18 @@ private struct ExternalProcessorView: View {
     /// **押しても受け取られないときは無効にして見せる。**running でない
     /// （自動バイパス中・状態保存中・再設定中）ときに送ると捨てられるので、
     /// 押せるままだと「効かないのか溜まっているのか」が区別できない。
+    ///
+    /// **`trigger` を読まないスクリプトには出さない。**REAPER では MIDI や
+    /// アクションから叩くもので、EffectDeck には叩く手段が無い。同梱 3 本と
+    /// 手元の実物 6 本のうち読んでいるのは検証用の 1 本だけで、残りでは
+    /// 押せる先の無い札が 10 個並ぶだけだった。ホスト側の実装
+    /// （`ETJSFX_SendTrigger` / `ETJSFX_MaxTriggers`）はそのまま残す。
+    @ViewBuilder
     private var jsfxTriggers: some View {
+        if jsfx.usesTrigger(instanceID: instanceID) { triggerChips }
+    }
+
+    private var triggerChips: some View {
         let live = jsfx.isRunning(instanceID: instanceID)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Trigger (trigger bits 1–\(ETJSFX_MaxTriggers()))")

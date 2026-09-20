@@ -38,6 +38,11 @@ double ETJSFX_GetSlider(ETJSFX *host, uint32_t index);
 bool ETJSFX_SendTrigger(ETJSFX *host, uint32_t index);
 /// trigger の本数（ysfx_max_triggers）。UI が 10 を直書きしないため。
 uint32_t ETJSFX_MaxTriggers(void);
+/// このスクリプトが `trigger` を読むか。**読まないものに札を出さない。**
+/// REAPER では MIDI やアクションから叩くもので、EffectDeck には叩く手段が
+/// 無いので、使っていないスクリプトに 10 個並べても押せる先が無い。
+/// `import` は拒否しているので、見るのは 1 ファイルだけで足りる。
+bool ETJSFX_UsesTrigger(const ETJSFX *host);
 /// いま音を通しているか。false のあいだ SendTrigger は捨てる。
 bool ETJSFX_IsRunning(const ETJSFX *host);
 /// 自動バイパスを解く。診断を消し、締切の回数を 0 に戻し、

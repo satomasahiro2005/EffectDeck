@@ -406,6 +406,12 @@ final class ETJSFXHost: ObservableObject {
         return ETJSFX_IsRunning(host)
     }
 
+    /// このスクリプトが `trigger` を読むか。**読まないものに札を出さない。**
+    func usesTrigger(instanceID: String) -> Bool {
+        guard let host = instances[instanceID]?.host else { return false }
+        return ETJSFX_UsesTrigger(host)
+    }
+
     /// trigger を送る。**受け取られたかを返す。**
     /// running でない（自動バイパス中・状態保存中・再設定中）ときは捨てられる。
     /// 呼び出し側はそれを見せる（黙って溜めると再開時に一斉に鳴る）。
