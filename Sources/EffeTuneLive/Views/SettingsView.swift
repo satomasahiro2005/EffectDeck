@@ -417,20 +417,22 @@ enum ETReportLink {
         if !log.isEmpty {
             // 直近から入るだけ入れる。encode 後の長さで測る。
             var tail = String(log.suffix(4000))
-            while !tail.isEmpty && encode(text + "
+            let marker = """
 
---- log (tail) ---
-" + tail).count > budget {
+
+                --- log (tail) ---
+
+                """
+            while !tail.isEmpty && encode(text + marker + tail).count > budget {
                 tail = String(tail.dropFirst(256))
             }
             if !tail.isEmpty {
-                text += "
+                text += marker + tail
+                text += """
 
---- log (tail) ---
-" + tail
-                text += "
 
-(The full log is longer. Attach it with “Attach log” in Settings.)"
+                    (The full log is longer. Attach it with "Attach log" in Settings.)
+                    """
             }
         }
         return text

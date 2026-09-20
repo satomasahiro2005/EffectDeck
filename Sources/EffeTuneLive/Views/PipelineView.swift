@@ -604,7 +604,8 @@ struct PipelineView: View {
         anchorRect = rowRects[row.node.id] ?? .zero
         dragShift = .zero
         dragLog.notice("掴む at=\(row.visible, privacy: .public) rect=\(Int(anchorRect.minY), privacy: .public)..\(Int(anchorRect.maxY), privacy: .public)")
-        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        // **触覚は出さない。**入れ替わる量を「低い方の半分」に下げたので入れ替えが
+        // 頻発し、そのたびに鳴ると手の中で暴れる。掴みの合図も、絵が持ち上がるので要らない。
     }
 
     /// 掴みを終える。**どの道から来ても必ずここを通す。**
@@ -707,11 +708,9 @@ struct PipelineView: View {
             // とき）。そのときはこの掃除が挿した本人を取り消すので、鎖は変わらない。
             dsp.sweepDeadSections()
         }
-        // **打ち消されたら振動は出さない。**指に成功を返しておいて何も起きないと、
-        // 効かない操作を繰り返させることになる。
-        if dsp.chain.count > was {
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-        }
+        // **触覚は出さない。**並べ替えの触覚は全部落とした（掴みも入れ替えも）。
+        // 打ち消されたかどうかで出し分ける話ではなく、この一連では鳴らさない。
+        _ = was
     }
 
     /// 入れ替える。**基準（anchorRect）には手を触れない。**
@@ -732,7 +731,6 @@ struct PipelineView: View {
     private func swap(_ at: Int, to destination: Int) {
         dragLog.notice("入替 \(at, privacy: .public)->\(destination, privacy: .public) shift=\(Int(dragShift.height), privacy: .public)")
         withAnimation(.snappy(duration: 0.22)) { moveRow(at, to: destination) }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     // MARK: - 行の組み立て
