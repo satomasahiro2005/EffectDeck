@@ -186,7 +186,7 @@ struct FiveBandDynamicEQView: View {
                             .font(.system(size: 8, design: .monospaced))
                     }
                     .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .frame(maxWidth: .infinity, minHeight: 30)
                     .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                                 in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                     .opacity(bands[i].enabled ? 1 : 0.45)

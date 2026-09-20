@@ -913,7 +913,7 @@ struct PhaseSelectEqView: View {
                 .font(.system(size: 13, weight: picked ? .bold : .regular))
                 .foregroundStyle(picked ? AnyShapeStyle(.white)
                                         : (on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
-                .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                .frame(maxWidth: .infinity, minHeight: 30)
                 .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(on ? 1 : 0.45)

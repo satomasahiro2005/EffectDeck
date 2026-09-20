@@ -604,8 +604,7 @@ struct PipelineView: View {
         anchorRect = rowRects[row.node.id] ?? .zero
         dragShift = .zero
         dragLog.notice("掴む at=\(row.visible, privacy: .public) rect=\(Int(anchorRect.minY), privacy: .public)..\(Int(anchorRect.maxY), privacy: .public)")
-        // **触覚は出さない。**入れ替わる量を「低い方の半分」に下げたので入れ替えが
-        // 頻発し、そのたびに鳴ると手の中で暴れる。掴みの合図も、絵が持ち上がるので要らない。
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
 
     /// 掴みを終える。**どの道から来ても必ずここを通す。**
@@ -653,19 +652,23 @@ struct PipelineView: View {
         // 判定は縦だけ見る。鎖は 1 列なので横は絵の都合でしかない。
         let moving = anchorRect.offsetBy(dx: 0, dy: dragShift.height)
 
-        // **越える量は「低い方の半分」。**相手の高さの半分にしていたので、
-        // 小さいカードを大きいカード（図付きは 260〜360pt）の上へ動かすとき、
-        // 130〜180pt も運ばないと入れ替わらなかった。自分の半分で足りる。
+        // **越える量は「相手の高さの半分」。**
+        //
+        // 一度「低い方の半分」に下げたことがある（小さいカードを図付きの大きいカードへ
+        // 重ねるのに 130〜180pt 運ぶ必要があったため）。**これが手の中で暴れる原因だった。**
+        // 自分の半分で入れ替わると、入れ替わった直後の位置が逆向きの条件も満たすので、
+        // 指を止めていても行ったり来たりを繰り返す。相手の半分なら、入れ替わったあとは
+        // 相手だった側に深く入っているので戻る条件を満たさない。
         if at > 0, let above = rowRects[visible[at - 1].node.id] {
             let overlap = moving.intersection(above).height
-            if moving.minY < above.minY || overlap > min(moving.height, above.height) / 2 {
+            if moving.minY < above.minY || overlap > above.height / 2 {
                 swap(at, to: at - 1)
                 return
             }
         }
         if at < visible.count - 1, let below = rowRects[visible[at + 1].node.id] {
             let overlap = moving.intersection(below).height
-            if moving.maxY > below.maxY || overlap > min(moving.height, below.height) / 2 {
+            if moving.maxY > below.maxY || overlap > below.height / 2 {
                 // **組の最後から下へ出ようとしたら、組を閉じる。**
                 // そのまま入れ替えると、次の組の見出しを飛び越えて
                 // 今度はそちらの中に入るだけで、外に出ることができない。
@@ -708,9 +711,11 @@ struct PipelineView: View {
             // とき）。そのときはこの掃除が挿した本人を取り消すので、鎖は変わらない。
             dsp.sweepDeadSections()
         }
-        // **触覚は出さない。**並べ替えの触覚は全部落とした（掴みも入れ替えも）。
-        // 打ち消されたかどうかで出し分ける話ではなく、この一連では鳴らさない。
-        _ = was
+        // **打ち消されたら振動は出さない。**指に成功を返しておいて何も起きないと、
+        // 効かない操作を繰り返させることになる。
+        if dsp.chain.count > was {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        }
     }
 
     /// 入れ替える。**基準（anchorRect）には手を触れない。**
@@ -731,6 +736,7 @@ struct PipelineView: View {
     private func swap(_ at: Int, to destination: Int) {
         dragLog.notice("入替 \(at, privacy: .public)->\(destination, privacy: .public) shift=\(Int(dragShift.height), privacy: .public)")
         withAnimation(.snappy(duration: 0.22)) { moveRow(at, to: destination) }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     // MARK: - 行の組み立て

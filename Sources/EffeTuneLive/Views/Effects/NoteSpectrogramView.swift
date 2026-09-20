@@ -170,6 +170,8 @@ struct NoteSpectrogramView: View {
     @State private var display = ETNoteDisplay()
     /// 全画面を出しているか。
     @State private var fullScreen = false
+    /// 横へ回し終わるのを待っている間。
+    @State private var movingToFullScreen = false
     /// 升目の履歴。**@State で参照だけ持つ**（@StateObject にすると 30Hz で body が
     /// 作り直されて下のボタンが固まる）。ここに置くのは、全画面と元の図で同じ履歴を
     /// 見せるため。図の側に持たせると、開いた瞬間に空から流れ直す。
@@ -177,24 +179,36 @@ struct NoteSpectrogramView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            NoteSpectrogramGraph(tapId: node.tapId, display: display,
-                                 range: midiRange, band: band)
-            // **全画面の口は図の外に置く。**矩形の上に置くと、押すたびに指が
-            // プレビュー音に繋がる。
-            //
-            // **1/60（5x）の線が細いのはここで解く。**61 音 × 5 = 305 行を
-            // カードの高さに詰めると 1 行が 1〜2 画素にしかならない。
-            // 上流は細分の行を補間なしで表示の高さへ拡大する形なので、
-            // 行数に見合う高さを与えるのが筋。
-            if !graphOnly {
-                Button {
-                    fullScreen = true
-                } label: {
-                    Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 13))
+            // **全画面の口は AU と同じ形にする。**図の右上に丸い札を重ね、
+            // 押したら横へ回してから開く。**1/60（5x）の線が細いのはここで解く。**
+            // 61 音 × 5 = 305 行をカードの高さに詰めると 1 行が 1〜2 画素にしかならない。
+            // 横に倒して画面いっぱいに使えば、行に見合う高さが渡る。
+            ZStack(alignment: .topTrailing) {
+                NoteSpectrogramGraph(tapId: node.tapId, display: display,
+                                     range: midiRange, band: band)
+                if !graphOnly {
+                    Button {
+                        movingToFullScreen = true
+                        Task { @MainActor in
+                            // 先に回す。縦のまま出してから倒すと、図が 1 枚
+                            // 縦の姿で描かれてから横へ跳ねる。
+                            await Task.yield()
+                            ETInterfaceOrientation.request(.landscapeRight)
+                            for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
+                                try? await Task.sleep(nanoseconds: 20_000_000)
+                            }
+                            fullScreen = true
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .buttonStyle(.glass(.regular.interactive()))
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .accessibilityLabel("Full Screen")
+                    .padding(8)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
             }
             // 上流 :748-755 の並びは Color → Pitch Resolution → Layout → Volume →
             // Time Span → Regular Note Limit → Lowest Note → Highest Note。
@@ -203,9 +217,20 @@ struct NoteSpectrogramView: View {
                 parameterRow(param)
             }
         }
-        .fullScreenCover(isPresented: $fullScreen) {
+        // **畳んでも選択を戻さない。**カードを畳むと View ごと木から消えるので、
+        // @State のままでは開き直すたびに既定へ戻る。音に関わらない 5 つを覚えておく。
+        .etRemembers($display.color, key: "noteColor", node: node.id)
+        .etRemembers($display.resolution, key: "noteResolution", node: node.id)
+        .etRemembers($display.layout, key: "noteLayout", node: node.id)
+        .etRemembers($display.volume, key: "noteVolume", node: node.id)
+        .etRemembers($display.timeSpan, key: "noteTimeSpan", node: node.id)
+        .fullScreenCover(isPresented: $fullScreen, onDismiss: {
+            ETInterfaceOrientation.request(.portrait)
+            movingToFullScreen = false
+        }) {
             NoteSpectrogramFullScreen(tapId: node.tapId, display: display,
-                                      range: midiRange, band: band)
+                                      range: midiRange, band: band,
+                                      isPresented: $fullScreen)
         }
     }
 
@@ -485,6 +510,7 @@ private struct NoteSpectrogramGraph: View {
 
                 context.drawLayer { layer in
                     frame.apply(&layer)
+                    drawBands(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
                     drawGrid(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
                     drawRoll(&layer, frame: frame, rollWidth: rollWidth, slots: slots)
                     drawKeys(&layer, frame: frame, rollWidth: rollWidth,
@@ -575,13 +601,40 @@ private struct NoteSpectrogramGraph: View {
                 .interpolation(.none)
                 .antialiased(false)
         }
-        // **型抜きをやめた。**画像は Normal でも色を持っている（上流の _writePixels と
-        // 同じく、鍵の地色からトレース色へ確からしさで混ぜた不透明な升目）。
-        // alpha を確からしさに使っていたときは、1/60 で活きた 1 細分だけが薄く残って
-        // 髪の毛になっていた。
-        for piece in pieces {
-            context.draw(tile(piece.image), in: piece.rect)
+        if display.color == .rainbow {
+            // 画像が色を持っているので、そのまま貼る。
+            for piece in pieces {
+                context.draw(tile(piece.image), in: piece.rect)
+            }
+        } else {
+            // 画像は alpha だけを持つ。それで型を抜いて .tint を流し込む。
+            context.drawLayer { layer in
+                layer.clipToLayer { mask in
+                    for piece in pieces {
+                        mask.draw(tile(piece.image), in: piece.rect)
+                    }
+                }
+                layer.fill(Path(rect), with: ETGraphShading.curve)
+            }
         }
+    }
+
+    /// 鍵の地の帯。**画像には入れない。**
+    ///
+    /// 上流は地色を升目そのものへ焼き込む（note_spectrogram.js:436-443 の _writePixels）。
+    /// 同じことをすると、こちらは**画像を横へ流す**作りなので**地色まで一緒に流れる**。
+    /// 上流は canvas を毎回描き直すので流れない。地は動かないものなので、
+    /// 静止した層としてここで敷き、画像はトレースだけを持たせる。
+    private func drawBands(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                           rollWidth: CGFloat, rowHeight: CGFloat) {
+        var black = Path()
+        for midi in range
+        where ETNoteKeyboard.blackClasses.contains(((midi % 12) + 12) % 12) {
+            let y = CGFloat(range.upperBound - midi) * rowHeight
+            guard y + rowHeight > 0, y < frame.height else { continue }
+            black.addRect(CGRect(x: 0, y: y, width: rollWidth, height: rowHeight))
+        }
+        context.fill(black, with: ETGraphShading.grid)
     }
 
     /// 鍵盤。白鍵は帯いっぱい、黒鍵は手前だけ。最新の列の confidence で光らせる。
@@ -1017,16 +1070,14 @@ final class ETNoteBand: ObservableObject {
                     if v > value { value = v }
                 }
                 write(row: Self.notes - 1 - note, column: column, value: value,
-                      color: noteColor(note: note),
-                      isBlackKey: Self.isBlackKey(note: note))
+                      color: noteColor(note: note))
             } else {
                 for division in 0..<Self.divisions {
                     let value = fine[(first + division) * Self.columns + column]
                     let row = (Self.notes - 1 - note) * rowsPerNote
                         + (Self.divisions - 1 - division)
                     write(row: row, column: column, value: value,
-                          color: fineColor(pitch: first + division),
-                          isBlackKey: Self.isBlackKey(note: note))
+                          color: fineColor(pitch: first + division))
                 }
             }
         }
@@ -1060,8 +1111,7 @@ final class ETNoteBand: ObservableObject {
                 write(row: row, column: column, value: value,
                       color: display.resolution == .high
                           ? fineColor(pitch: first + best)
-                          : noteColor(note: note),
-                      isBlackKey: Self.isBlackKey(note: note))
+                          : noteColor(note: note))
             }
         }
     }
@@ -1091,41 +1141,29 @@ final class ETNoteBand: ObservableObject {
         return UInt8((pow(t, 0.75) * 255).rounded())
     }
 
-    /// 1 升を塗る。**上流と同じ形にしてある**（note_spectrogram.js:422-451 の _writePixels）。
+    /// 1 升を塗る。**画像はトレースだけを持つ。**
     ///
-    /// **alpha は常に 255。地色からトレース色へ確からしさで混ぜる。**
-    /// 前は確からしさを alpha に入れて型抜きにしていたので、1/12 では 1 行が
-    /// 半音ぶんの高さを持つため見えていたが、**1/60 では活きた 1 細分だけが
-    /// 薄く残って髪の毛になっていた**（残りの 4 細分は透明）。
-    /// 上流は全部の行を不透明に塗り、太さは混ぜ具合で出す。
-    ///
-    /// 地色は鍵で変える（黒鍵は少し明るい）。上流の whiteBand / blackBand。
+    /// 一度、上流の `_writePixels`（note_spectrogram.js:436-443）をそのまま写して
+    /// 地色を焼き込んだことがある。**あれは上流だから成り立つ形だった。**
+    /// 上流は canvas を毎フレーム描き直すが、こちらは画像を横へ流すので、
+    /// 地色を入れると地色まで流れる。地は `drawBands` が静止した層として敷く。
     private func write(row: Int, column: Int, value raw: UInt8,
-                       color: (r: Double, g: Double, b: Double)?,
-                       isBlackKey: Bool) {
-        let value = Double(Self.shaped[Int(raw)]) / 255
+                       color: (r: Double, g: Double, b: Double)?) {
+        let value = Self.shaped[Int(raw)]
         let offset = (row * Self.columns + column) * 4
-        let bg = isBlackKey ? Self.blackBand : Self.whiteBand
-        let fg = color ?? Self.trace
-        // 前乗算だが alpha=255 なので、混ぜた値をそのまま置ける。
-        pixels[offset] = UInt8(min(255, max(0, (bg.r + (fg.r - bg.r) * value).rounded())))
-        pixels[offset + 1] = UInt8(min(255, max(0, (bg.g + (fg.g - bg.g) * value).rounded())))
-        pixels[offset + 2] = UInt8(min(255, max(0, (bg.b + (fg.b - bg.b) * value).rounded())))
-        pixels[offset + 3] = 255
-    }
-
-    /// 地色とトレース色。上流は ThemePalette から引く（graph-bg-deep /
-    /// graph-base-soft / graph-trace）。こちらは図が自分の地を持つ形にする。
-    /// **この図だけは色を決める**（Spectrogram の配色と同じ例外）。
-    private static let whiteBand = (r: 12.0, g: 14.0, b: 18.0)
-    /// 黒鍵の帯は少し明るい。上流 MULTI_F0_BLACK_KEY_BACKGROUND と同じ扱い。
-    private static let blackBand = (r: 30.0, g: 33.0, b: 38.0)
-    /// Normal のときのトレース色。上流の graph-trace に当たる。
-    private static let trace = (r: 108.0, g: 198.0, b: 255.0)
-
-    /// その音が黒鍵か。
-    private static func isBlackKey(note: Int) -> Bool {
-        ETNoteKeyboard.blackClasses.contains(((firstMidi + note) % 12 + 12) % 12)
+        if let color = color {
+            // 前乗算なので、確からしさを掛けた色を置く。
+            let alpha = Double(value) / 255
+            pixels[offset] = UInt8(min(255, max(0, (color.r * alpha).rounded())))
+            pixels[offset + 1] = UInt8(min(255, max(0, (color.g * alpha).rounded())))
+            pixels[offset + 2] = UInt8(min(255, max(0, (color.b * alpha).rounded())))
+            pixels[offset + 3] = value
+        } else {
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+            pixels[offset + 3] = value
+        }
     }
 
     // MARK: 音量の目盛り
@@ -1204,24 +1242,27 @@ private struct NoteSpectrogramFullScreen: View {
     let display: ETNoteDisplay
     let range: ClosedRange<Int>
     @ObservedObject var band: ETNoteBand
-
-    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
 
     var body: some View {
-        NavigationStack {
+        ZStack(alignment: .topTrailing) {
             GeometryReader { geo in
                 NoteSpectrogramGraph(tapId: tapId, display: display, range: range,
                                      band: band,
                                      height: max(200, geo.size.height - 16))
                     .padding(.horizontal, 12)
             }
-            .navigationTitle("Note Spectrogram")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
+            Button { isPresented = false } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
             }
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .accessibilityLabel("Close")
+            .padding(.top, 8)
+            .padding(.trailing, 12)
         }
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
     }
 }

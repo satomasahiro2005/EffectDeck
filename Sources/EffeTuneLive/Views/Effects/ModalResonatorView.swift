@@ -364,7 +364,7 @@ struct ModalResonatorView: View {
                 .font(.system(size: 13, weight: isPicked ? .bold : .regular))
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
-                .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
+                .frame(maxWidth: .infinity, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)

@@ -187,6 +187,18 @@ extension View {
             }
     }
 
+    func etRemembers(_ value: Binding<Double>, key: String, node id: UUID) -> some View {
+        self
+            .onAppear {
+                if let s = ETCardSelection.shared.raw(key, for: id), let v = Double(s) {
+                    value.wrappedValue = v
+                }
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                ETCardSelection.shared.set(String(v), key: key, for: id)
+            }
+    }
+
     func etRemembers<T>(_ value: Binding<T>, key: String, node id: UUID) -> some View
     where T: RawRepresentable & Equatable, T.RawValue == String {
         self

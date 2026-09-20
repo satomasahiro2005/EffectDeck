@@ -507,8 +507,9 @@ private struct ETAUFullScreenEditor: View {
     }
 }
 
+/// 画面の向きを頼む。**AU の全画面と Note Spectrogram の全画面で共有する。**
 @MainActor
-private enum ETInterfaceOrientation {
+enum ETInterfaceOrientation {
     static var isLandscape: Bool {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }

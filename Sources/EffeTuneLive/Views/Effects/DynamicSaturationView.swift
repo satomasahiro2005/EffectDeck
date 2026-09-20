@@ -26,6 +26,8 @@ struct DynamicSaturationView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    @Environment(\.etGraphOnly) private var graphOnly
+
     var body: some View {
         let drive = SaturationShaperCurve.value(node, "dd")
         let bias = SaturationShaperCurve.value(node, "db")
@@ -33,11 +35,15 @@ struct DynamicSaturationView: View {
         let biasTerm = tanh(drive * bias)
 
         return VStack(alignment: .leading, spacing: 12) {
-            label("Speaker")
-            rows(["sd", "ss", "sp", "sm"])
+            // **図だけの段では見出しも出さない。**ParameterRow は graphOnly のとき
+            // 自分で消えるが、見出しは残って宙に浮く。
+            if !graphOnly {
+                label("Speaker")
+                rows(["sd", "ss", "sp", "sm"])
 
-            label("Distortion")
-            rows(["dd", "db", "dm"])
+                label("Distortion")
+                rows(["dd", "db", "dm"])
+            }
 
             SaturationShaperCurve(
                 shape: { x in
@@ -46,8 +52,10 @@ struct DynamicSaturationView: View {
                 },
                 caption: "Cone displacement in, shaped displacement out.")
 
-            label("Output")
-            rows(["cm", "og"])
+            if !graphOnly {
+                label("Output")
+                rows(["cm", "og"])
+            }
         }
     }
 

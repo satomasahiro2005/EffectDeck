@@ -81,6 +81,8 @@ struct SpectrogramView: View {
     @State private var scale: ETSpectrogramScale = .log
     /// 全画面を出しているか。
     @State private var fullScreen = false
+    /// 横へ回し終わるのを待っている間。
+    @State private var movingToFullScreen = false
     /// 列の履歴。**@State で参照だけ持つ。**@StateObject や @ObservedObject にすると
     /// 30Hz で body が作り直されて下のボタンが固まる。図の中だけで観測する。
     /// ここに置くのは、全画面と元の図で同じ履歴を見せるため（図の側に持たせると、
@@ -94,20 +96,32 @@ struct SpectrogramView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SpectrogramGraph(tapId: node.tapId, floorDB: floorDB,
-                             scale: effectiveScale, band: band)
-            // **全画面の口は図の外に置く。**プロット矩形の上に置くと、押すたびに
-            // 指がプレビュー音に繋がる（GraphCanvas は isFrequency の図で
-            // 矩形に触れた指を音にしている）。
-            if !graphOnly {
-                Button {
-                    fullScreen = true
-                } label: {
-                    Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 13))
+            // **全画面の口は AU と同じ形。**図の右上に丸い札を重ね、
+            // 押したら横へ回してから開く。
+            ZStack(alignment: .topTrailing) {
+                SpectrogramGraph(tapId: node.tapId, floorDB: floorDB,
+                                 scale: effectiveScale, band: band)
+                if !graphOnly {
+                    Button {
+                        movingToFullScreen = true
+                        Task { @MainActor in
+                            await Task.yield()
+                            ETInterfaceOrientation.request(.landscapeRight)
+                            for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
+                                try? await Task.sleep(nanoseconds: 20_000_000)
+                            }
+                            fullScreen = true
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .buttonStyle(.glass(.regular.interactive()))
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .accessibilityLabel("Full Screen")
+                    .padding(8)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
             }
             // 上流は DB Range・Points・Frequency Scale の順に並べている
             // （spectrogram.js:631-678）。同じ順にする。
@@ -118,9 +132,13 @@ struct SpectrogramView: View {
         }
         // **畳むとこの View ごと消える。**開き直すたびに Log へ戻っていたのがこれ。
         .etRemembers($scale, key: "scale", node: node.id)
-        .fullScreenCover(isPresented: $fullScreen) {
+        .fullScreenCover(isPresented: $fullScreen, onDismiss: {
+            ETInterfaceOrientation.request(.portrait)
+            movingToFullScreen = false
+        }) {
             SpectrogramFullScreen(tapId: node.tapId, floorDB: floorDB,
-                                  scale: effectiveScale, band: band)
+                                  scale: effectiveScale, band: band,
+                                  isPresented: $fullScreen)
         }
     }
 
@@ -628,24 +646,27 @@ private struct SpectrogramFullScreen: View {
     let floorDB: Double
     let scale: ETSpectrogramScale
     @ObservedObject var band: ETSpectrogramBand
-
-    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
 
     var body: some View {
-        NavigationStack {
+        ZStack(alignment: .topTrailing) {
             GeometryReader { geo in
                 SpectrogramGraph(tapId: tapId, floorDB: floorDB, scale: scale,
                                  band: band,
                                  height: max(200, geo.size.height - 16))
                     .padding(.horizontal, 12)
             }
-            .navigationTitle("Spectrogram")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
+            Button { isPresented = false } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
             }
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .accessibilityLabel("Close")
+            .padding(.top, 8)
+            .padding(.trailing, 12)
         }
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
     }
 }

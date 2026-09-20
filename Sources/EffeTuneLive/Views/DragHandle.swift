@@ -82,8 +82,14 @@ struct ETDragHandle: UIViewRepresentable {
         private var origin: CGPoint = .zero
         /// 掴んでいる間だけスクロールを止めた相手。必ず戻す。
         private weak var lockedScrollView: UIScrollView?
-        /// 掴んでいる間、送るのに指 2 本を要求している相手。**必ず 1 に戻す。**
+        /// 掴んでいる間、送るのを預かっている相手。**必ず戻す。**
         private weak var heldScrollView: UIScrollView?
+        /// 掴んでいる間だけ足す、**残った指で送るための認識器**。
+        /// 掴んだ「あと」に足すのが肝で、そうすると既に画面に触れている指
+        /// （掴んでいる指）は届かない。新しく置いた指だけがここへ来る。
+        private var carryPan: UIPanGestureRecognizer?
+        /// 送り始めたときの位置。`translation` を足す基準。
+        private var carryOrigin: CGFloat = 0
         /// 付ける試みを何回ログに出したか。黙って失敗されると分からない。
         private static var reports = 0
 
@@ -169,8 +175,8 @@ struct ETDragHandle: UIViewRepresentable {
             // **window は入口で要求しない。**
             // 掴んでいる行の面が階層から外れると（Section の挿入や行の削除で面が
             // 作り直される）window が nil になり、この guard で .ended ごと取りこぼす。
-            // すると holdScroll が要求した指 2 本が 1 に戻らず、
-            // **1 本指では送れないまま残る。**window が要るのは .changed の座標だけ。
+            // すると holdScroll が止めた送りが戻らず、
+            // **スクロールが死んだまま残る。**window が要るのは .changed の座標だけ。
             guard let anchor else { return }
             switch g.state {
             case .began:
@@ -202,21 +208,32 @@ struct ETDragHandle: UIViewRepresentable {
             }
         }
 
-        /// 掴んでいる間、**スクロールを止めずに「1 本指では効かない」ようにする。**
+        /// 掴んでいる間、**掴んだ指では送らず、残った指で送れるようにする。**
         ///
-        /// 前は `isScrollEnabled = false` にしていた。掴んだ指で列まで動くのを防ぐため
-        /// だが、**掴んだままもう一方の指で送ることもできなくなっていた。**
+        /// `isScrollEnabled = false` だけにすると、掴んだままどちらの指でも送れない。
         /// 画面の外へ運べないのがこれ。手本（Shortcuts）は掴んだまま送れる。
         ///
-        /// 送るのに指 2 本を要求すれば、掴んでいる 1 本では動かず、足した指で送れる。
-        /// 掴んでいる位置は `finger(_:in:)` が最初の指から取るので、指を足しても
-        /// 札が重心へ寄らない。
+        /// 一度 `panGestureRecognizer.minimumNumberOfTouches = 2` で解こうとしたが、
+        /// **実機で効かなかった。**元から付いている認識器は掴んでいる指を既に握って
+        /// いるので、こちらが途中で本数を変えても素直には立ち直らない。
+        ///
+        /// そこで元の pan は止めたまま、**掴んだあとに自前の pan を足す。**
+        /// 認識器は足した時点で既に触れている指を拾わないので、ここへ来るのは
+        /// **新しく置いた指だけ**になる。掴んでいる指は決して届かない。
         private func holdScroll(from view: UIView) {
             var v: UIView? = view
             while let current = v {
                 if let scroll = current as? UIScrollView {
-                    scroll.panGestureRecognizer.minimumNumberOfTouches = 2
+                    scroll.isScrollEnabled = false
                     heldScrollView = scroll
+                    let pan = UIPanGestureRecognizer(target: self, action: #selector(carry(_:)))
+                    // 1 本だけ見る。掴んでいる指は届かないので、ここの 1 本は
+                    // 必ず「あとから置いた指」になる。
+                    pan.minimumNumberOfTouches = 1
+                    pan.maximumNumberOfTouches = 1
+                    pan.delegate = self
+                    scroll.addGestureRecognizer(pan)
+                    carryPan = pan
                     return
                 }
                 v = current.superview
@@ -224,8 +241,33 @@ struct ETDragHandle: UIViewRepresentable {
         }
 
         private func releaseScroll() {
-            heldScrollView?.panGestureRecognizer.minimumNumberOfTouches = 1
+            if let pan = carryPan { pan.view?.removeGestureRecognizer(pan) }
+            carryPan = nil
+            heldScrollView?.isScrollEnabled = true
             heldScrollView = nil
+        }
+
+        /// 残った指で送る。**`contentOffset` を直に動かす。**
+        ///
+        /// 元の pan は止めてあるので、慣性は付かない。指を離せばその場で止まる。
+        /// 並べ替えの最中に効かせるものなので、むしろ止まったほうが狙いを定めやすい。
+        @objc func carry(_ g: UIPanGestureRecognizer) {
+            guard let scroll = heldScrollView else { return }
+            switch g.state {
+            case .began:
+                carryOrigin = scroll.contentOffset.y
+            case .changed:
+                // 端を越えて引き出さない（元の pan が持っていた跳ね返りは無い）。
+                let top = -scroll.adjustedContentInset.top
+                let bottom = max(top,
+                                 scroll.contentSize.height
+                                 + scroll.adjustedContentInset.bottom
+                                 - scroll.bounds.height)
+                let moved = carryOrigin - g.translation(in: scroll).y
+                scroll.contentOffset.y = min(max(moved, top), bottom)
+            default:
+                break
+            }
         }
 
         /// 掴んでいる指の位置。`location(in:)` は触りの重心なので、送るために指を足すと
@@ -269,8 +311,8 @@ struct ETDragHandle: UIViewRepresentable {
             //
             // 長押しの閾値は 0.4 秒 / 10pt。指を置いたまま 0.4 秒のあいだに 10pt
             // 動かさず、そこからゆっくりスクロールを始めた回はこれを満たす。
-            // 立ってしまうと、その touch のあいだ holdScroll が指 2 本を要求するので
-            // **1 本指では送れなくなる**（掴むつもりが無かったのに止まる）。
+            // 立ってしまうと、その touch のあいだ holdScroll が送りを止めるので
+            // **スクロールが死ぬ**（掴むつもりが無かったのに止まる）。
             //
             // 見るのは isDragging だけ。isDecelerating まで見ると、惰性が止まり
             // きるまで掴めない（勢いよく送った直後に掴もうとすると無反応になる）。
