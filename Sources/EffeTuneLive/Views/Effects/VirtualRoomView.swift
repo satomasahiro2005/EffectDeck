@@ -33,12 +33,9 @@ struct VirtualRoomView: View {
                     Text("The speakers do not fit in this room, so they are being placed as far out as the walls allow. Widen the room to get the distance back.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                group("Room", [ETVirtualRoom.Key.width, ETVirtualRoom.Key.depth,
-                               ETVirtualRoom.Key.height])
-                group("Speakers", [ETVirtualRoom.Key.speakerAngle,
-                                   ETVirtualRoom.Key.speakerDistance])
-                group("Acoustics", [ETVirtualRoom.Key.roomAmount,
-                                    ETVirtualRoom.Key.decayScale])
+                group("Room", ETVirtualRoom.roomKeys)
+                group("Speakers", ETVirtualRoom.speakerKeys)
+                group("Acoustics", ETVirtualRoom.acousticsKeys)
                 DisclosureGroup("Advanced", isExpanded: $advanced) {
                     VStack(alignment: .leading, spacing: 12) {
                         group("Listener", ETVirtualRoom.listenerKeys)
@@ -128,11 +125,6 @@ struct VirtualRoomView: View {
     private func value(_ key: String) -> Double {
         guard let p = param(key), node.values.indices.contains(p.offset) else { return 0 }
         return Double(node.values[p.offset])
-    }
-
-    private func set(_ key: String, _ v: Double) {
-        guard let p = param(key) else { return }
-        dsp.setValue(Float(clamp(v, to: p)), at: index, offset: p.offset)
     }
 
     private func clamp(_ v: Double, to param: ETParam) -> Double {

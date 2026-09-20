@@ -47,10 +47,10 @@ enum ETVirtualRoom {
         static let seedHigh = "s1"
     }
 
-    /// カードに常に出す 7 本（§8〜§10）。Advanced に入るものはここに含めない。
-    static let basicKeys = [Key.width, Key.depth, Key.height,
-                            Key.speakerAngle, Key.speakerDistance,
-                            Key.roomAmount, Key.decayScale]
+    /// カードに常に出す 3 節（§8〜§10）。Advanced に入るものは含めない。
+    static let roomKeys = [Key.width, Key.depth, Key.height]
+    static let speakerKeys = [Key.speakerAngle, Key.speakerDistance]
+    static let acousticsKeys = [Key.roomAmount, Key.decayScale]
 
     /// §11 Advanced の並び。節ごとに分ける。
     static let listenerKeys = [Key.listenerX, Key.listenerY, Key.listenerZ]
@@ -61,9 +61,8 @@ enum ETVirtualRoom {
     static let renderingKeys = [Key.earlyOrder]
     static let outputKeys = [Key.outputGain]
 
-    /// 画面に出さないもの（§13）。`mv` は保存はするが操作させない。
-    /// seed は専用の行（16 進表示 + Randomize）で扱うので汎用の行から外す。
-    static let hiddenKeys: Set<String> = [Key.modelVersion, Key.seedLow, Key.seedHigh]
+    // `mv` は保存だけして操作させない（§13）。seed は専用の行（16 進表示 +
+    // Randomize）で扱う。どちらも上の一覧に入れていないので、汎用の行には出ない。
 
     // MARK: - Seed
 
