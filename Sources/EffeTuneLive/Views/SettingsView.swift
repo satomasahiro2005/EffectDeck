@@ -92,7 +92,7 @@ struct SettingsView: View {
         } header: {
             Text("Plug-ins")
         } footer: {
-            Text("Pixel Perfect preserves the canvas size requested by the JSFX. Adaptive lets the canvas follow the available screen size.")
+            Text("Adaptive fits the whole canvas on screen. Pixel Perfect keeps the size the JSFX asked for and scrolls, which can leave a large canvas partly out of view.")
         }
     }
 
@@ -220,15 +220,20 @@ struct SettingsView: View {
         // 置かないと、困った人は EffeTune の作者に聞きに行く。
         // 向こうはこのアプリを作っていないので答えようがない。
         //
-        // **診断を貼る札を同じ節の先頭に置く。**数字は Audio の Details にも在るが、
+        // **診断を貼る札を同じ節に置く。**数字は Audio の Details にも在るが、
         // 報告する人はここに居る。別のペインへ取りに行かせると、たいてい何も付かない
         // 報告が来る。Details 節はそのまま残す（音の数字は Audio に置く、の判断は
         // 壊さない）。押した瞬間に作るので、ここで io を観測する必要は無い。
+        //
+        // **並びを手順の順にする。**やることは「報告先を選ぶ → 必要ならログを添える」
+        // なので、報告先を上に、道具を下に置く。以前は Copy details と Attach log が
+        // 先頭に並んでいて、報告する口はその下に隠れていた。道具が先に来ると、
+        // 何をさせたい画面なのか読めない。
+        //
+        // **Copy details を先に押させない。**本文には診断もログの末尾も
+        // ETReportLink が既に詰めている。貼り直しは要らないので、Copy details は
+        // 本文に入りきらなかったぶんを自分で足したい人のための道具として下に置く。
         Section {
-            ETCopyDiagnosticsButton {
-                ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
-            }
-            ETShareLogButton()
             // **本文を先に詰めて開く。**押してから診断を貼らせると、たいてい
             // 何も付かない報告が来る。1 MB のログは URL に載らないので、
             // 入るだけの直近ぶんと「添付してほしい」の 1 行を入れる。
@@ -238,13 +243,25 @@ struct SettingsView: View {
             ETReportDestinationButton(title: "Email", detail: "support@nemut.ai") {
                 ETReportLink.mail(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
             }
+
+            // ここから下は道具。報告先を開いたあと、本文に入らなかったぶんを
+            // 足すためのもの。
+            // **節は割らない。**行の間は List が既に区切っている。見出しの無い節を
+            // もう 1 つ足しても、間が空くだけで名前の無い箱が増える。
+            ETShareLogButton()
+            ETCopyDiagnosticsButton {
+                ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
+            }
             Link(destination: URL(string: "https://nemut.ai/effetune-live/privacy.html")!) {
                 Text("Privacy policy")
             }
         } header: {
             Text("Contact")
         } footer: {
-            Text("Copy details first, then paste it into the report. It includes the app version, the device, and what the audio path is doing right now.")
+            // **実装のとおりに書く。**以前は「先に Copy details を押して報告に貼れ」で、
+            // ETReportLink が本文を詰めるようになった後もその文面が残っていた。
+            // 要らない手作業を指示している状態だった。
+            Text("Opening a report fills in the diagnostics and the end of the log. Only a few kilobytes fit in a link, so use Attach log to send the whole log.")
         }
     }
 }
@@ -472,21 +489,39 @@ enum ETReportLink {
 /// ShareLink の前例は PresetsView。MessageUI は足さない。
 ///
 /// 溜まっていないときは出さない。押せて何も付かない札は混乱の元。
+///
+/// **1 タップで共有シートまで出す。**以前は file が nil のあいだ "Prepare log" を
+/// 出し、押すと同じ行が ShareLink（"Attach log"）に化けていた。押しても何も開かず
+/// 名前だけ変わるので、何のための札か読めないまま 2 回押させていた。
+/// ShareLink は item を先に要求するので、押した瞬間に書く形には使えない
+/// （PresetsView で使えているのは、鎖の URL が押す前から在るから）。
+/// Button で書いてから UIActivityViewController を出す。
+///
+/// **提示はこの札の中だけに付ける。**同じ View に提示を重ねると後から付けた方しか
+/// 出ない（BackupSection.swift:17-20）。Contact 節の他の行には付けない。
 private struct ETShareLogButton: View {
-    @State private var file: URL?
+    /// 押した瞬間に作ったもの。終わったら nil に戻す（戻さないと次が開かない）。
+    @State private var sharing: ETLogAttachment?
 
     var body: some View {
         if ETLogTap.byteCount > 0 {
-            if let file {
-                ShareLink(item: file) {
-                    LabeledContent("Attach log", value: Self.size(ETLogTap.byteCount))
+            Button {
+                // **押した瞬間に書く。**ログは走っている間も伸びるので、
+                // 先に書いて持っておくと、開いたときには古い末尾が付く。
+                //
+                // **書けなくても共有シートは出す。**writeAttachment は一時置き場に
+                // 書けなければ nil を返す。そこで黙って終わると、押しても何も
+                // 起きない札に戻る。ファイルが作れないときは本文そのものを渡す。
+                if let file = ETLogTap.writeAttachment() {
+                    sharing = ETLogAttachment(items: [file])
+                } else {
+                    sharing = ETLogAttachment(items: [ETLogTap.text])
                 }
-            } else {
-                Button {
-                    file = ETLogTap.writeAttachment()
-                } label: {
-                    LabeledContent("Prepare log", value: Self.size(ETLogTap.byteCount))
-                }
+            } label: {
+                LabeledContent("Attach log", value: Self.size(ETLogTap.byteCount))
+            }
+            .sheet(item: $sharing) { attachment in
+                ETActivityView(items: attachment.items) { sharing = nil }
             }
         }
     }
@@ -495,6 +530,40 @@ private struct ETShareLogButton: View {
         bytes >= 1_000_000 ? String(format: "%.1f MB", Double(bytes) / 1_000_000)
                            : String(format: "%d KB", max(1, bytes / 1000))
     }
+}
+
+/// .sheet(item:) へ渡す入れ物。URL も String も Identifiable ではないので包む
+/// （.fileExporter へ渡す入れ物が BackupSection に在るのと同じ理由）。
+///
+/// **id は毎回新しくする。**ログは同じ名前のファイルに上書きするので
+/// （ETLogTap.writeAttachment）、URL を id にすると 2 回目を同じものと見なされて
+/// 開かなくなる。
+private struct ETLogAttachment: Identifiable {
+    let id = UUID()
+    let items: [Any]
+}
+
+/// 共有シート。ShareLink が item を先に要求するので、押してから中身を作る
+/// ここだけ UIKit で出す。
+private struct ETActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+    /// 閉じたことを知らせる口。下の completionWithItemsHandler から呼ぶ。
+    let onFinish: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let sheet = UIActivityViewController(activityItems: items,
+                                             applicationActivities: nil)
+        // **終わりを自分で知らせる。**SwiftUI の提示の中身として出しているので、
+        // 共有シート側が閉じても item の binding は立ったまま残る。
+        // 戻さないと、次に押したときに開かない札になる。
+        sheet.completionWithItemsHandler = { _, _, _, _ in onFinish() }
+        // iPad は popover で出ようとする。出所を指していないと落ちるので、
+        // シートの中に収まるよう自分の view を出所にしておく。
+        sheet.popoverPresentationController?.sourceView = sheet.view
+        return sheet
+    }
+
+    func updateUIViewController(_ sheet: UIActivityViewController, context: Context) {}
 }
 
 /// 診断を貼る札。Audio の Details と About の Report の両方から呼ぶ。

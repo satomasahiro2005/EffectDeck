@@ -23,11 +23,15 @@ struct PresetsView: View {
     private enum Pending {
         case user(String)
         case system(ETSystemPreset)
+        /// 同梱の JSFX を全部並べた鎖。**json では書けない**（鍵は取り込んだ
+        /// ファイルの sha なので、固定の字にできない）。その場で組む。
+        case debugJSFX
 
         var name: String {
             switch self {
             case .user(let name):    return name
             case .system(let preset): return preset.name
+            case .debugJSFX:         return "JSFX Host Test"
             }
         }
     }
@@ -109,6 +113,28 @@ struct PresetsView: View {
         }
     }
 
+    /// 手で組み直さずに見るための鎖（DSP/DebugPresets.swift）。**Debug ビルドだけ。**
+    ///
+    /// 出す形は出荷時のものと同じにしてある（ETSystemPreset に包む）ので、
+    /// 選んだあとの道は 1 本で済む。category は下の見出しに使う。
+    private var debugPresets: [ETSystemPreset] {
+        #if DEBUG
+        return ETDebugPresets.all.map {
+            ETSystemPreset(category: "Debug", name: $0.name,
+                           effectCount: ETShareLink.parse($0.json, catalog: ETCatalog).count,
+                           json: $0.json)
+        }
+        #else
+        return []
+        #endif
+    }
+
+    /// 同梱の JSFX が何本あるか。0 本なら札を出さない。
+    private var jsfxFixtureCount: String {
+        let n = ETJSFXHost.shared.debugPresetItems().count
+        return n == 0 ? "" : countLabel(n)
+    }
+
     private var systemCategories: [String] {
         var seen = Set<String>()
         return ETSystemPresets.compactMap { seen.insert($0.category).inserted ? $0.category : nil }
@@ -139,6 +165,7 @@ struct PresetsView: View {
         switch what {
         case .user(let name): dialog = .loadUser(name)
         case .system:         load(what)
+        case .debugJSFX:      load(what)
         }
     }
 
@@ -169,6 +196,7 @@ struct PresetsView: View {
         switch what {
         case .user(let name):     loaded = store.load(name)
         case .system(let preset): loaded = ETShareLink.parse(preset.json, catalog: ETCatalog)
+        case .debugJSFX:          loaded = ETJSFXHost.shared.debugPresetItems()
         }
         guard !loaded.isEmpty else {
             dialog = .failed("“\(what.name)” could not be read. "
@@ -546,6 +574,39 @@ struct PresetsView: View {
 
     private var systemSection: some View {
         Section {
+            // 見るための鎖を先に置く（Debug ビルドだけ空でない）。
+            if !debugPresets.isEmpty || !jsfxFixtureCount.isEmpty {
+                DisclosureGroup("Debug") {
+                    // **同梱の JSFX を全部載せた鎖。**上の 3 本は EffeTune の
+                    // エフェクトだけなので、JSFX を見るにはこちらが要る。
+                    if !jsfxFixtureCount.isEmpty {
+                        Button {
+                            request(.debugJSFX)
+                        } label: {
+                            HStack {
+                                Text("JSFX Host Test").foregroundStyle(.primary)
+                                Spacer(minLength: 8)
+                                Text(jsfxFixtureCount)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    ForEach(debugPresets) { preset in
+                        Button {
+                            request(.system(preset))
+                        } label: {
+                            HStack {
+                                Text(preset.name).foregroundStyle(.primary)
+                                Spacer(minLength: 8)
+                                Text(countLabel(preset.effectCount))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
             ForEach(systemCategories, id: \.self) { category in
                 DisclosureGroup(category) {
                     ForEach(systemPresets(in: category)) { preset in

@@ -1,0 +1,5 @@
+desc:Forbidden Import
+author:nemut.ai
+import other.jsfx-inc
+
+@sample

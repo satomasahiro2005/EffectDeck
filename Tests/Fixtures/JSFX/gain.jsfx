@@ -1,0 +1,13 @@
+desc:Gain
+author:nemut.ai
+slider1:1<0,2,0.001>Gain
+
+@init
+g = 1;
+
+@slider
+g = slider1;
+
+@sample
+spl0 *= g;
+spl1 *= g;

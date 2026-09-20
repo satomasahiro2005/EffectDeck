@@ -1,0 +1,13 @@
+desc:Slow
+author:nemut.ai
+slider1:200<0,20000,1>Spin
+
+@init
+n = 200;
+
+@slider
+n = slider1;
+
+@sample
+i = 0;
+loop(n, i += 1;);

@@ -101,14 +101,15 @@ enum ETLatency: String, CaseIterable, Identifiable {
 /// declared by the script; Adaptive lets the host resize `gfx_w` / `gfx_h` to
 /// the available card or full-screen viewport.
 enum ETJSFXCanvasMode: String, CaseIterable, Identifiable {
-    case pixelPerfect
+    // **並びは既定を左に。**allCases がそのまま札の順になる。
     case adaptive
+    case pixelPerfect
 
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .pixelPerfect: return "Pixel Perfect"
         case .adaptive:     return "Adaptive"
+        case .pixelPerfect: return "Pixel Perfect"
         }
     }
 }
@@ -176,8 +177,11 @@ final class Preferences: ObservableObject {
         silenceThresholdDb = d.object(forKey: "pref.silence") as? Double ?? -80
         keepScreenAwake = d.object(forKey: "pref.awake") as? Bool ?? false
         syncVisualsToAudio = d.bool(forKey: "pref.syncVisualsToAudio")
+        // **既定は Adaptive。**Pixel Perfect は原寸のまま ScrollView に入れる形で、
+        // 大きい canvas を宣言しているスクリプトでは枠に収まらず、
+        // 見えているのが一部だけになる。まず全体が見えるほうを既定にする。
         jsfxCanvasMode = ETJSFXCanvasMode(rawValue: d.string(forKey: "pref.jsfxCanvasMode") ?? "")
-            ?? .pixelPerfect
+            ?? .adaptive
 
         // **init の代入では didSet が走らない。**
         // そのため、保存値が true でも起動直後だけ画面が落ちていた。

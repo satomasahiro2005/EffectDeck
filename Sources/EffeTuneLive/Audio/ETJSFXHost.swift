@@ -1,6 +1,9 @@
 import CryptoKit
 import Foundation
+import OSLog
 import UIKit
+
+private let jsfxMenuLog = Logger(subsystem: "ai.nemut.effetune", category: "jsfxmenu")
 
 private final class ETJSFXMenuResult: @unchecked Sendable {
     let semaphore = DispatchSemaphore(value: 0)
@@ -21,11 +24,13 @@ private let etJSFXMenuCallback: @convention(c)
     (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { _, menu, _, _ in
         guard let menu else { return 0 }
         let spec = String(cString: menu)
+        jsfxMenuLog.notice("menu 呼ばれた 項目=\(spec.split(separator: "|").count, privacy: .public)")
         let result = ETJSFXMenuResult()
         DispatchQueue.main.async {
             guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                     .first(where: { $0.activationState == .foregroundActive }),
                   let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else {
+                jsfxMenuLog.notice("menu 出せない 面が見つからない")
                 result.finish(0); return
             }
             var presenter = root
@@ -57,9 +62,11 @@ private let etJSFXMenuCallback: @convention(c)
                 popover.sourceRect = CGRect(x: presenter.view.bounds.midX,
                                             y: presenter.view.bounds.midY, width: 1, height: 1)
             }
+            jsfxMenuLog.notice("menu 出す 上=\(String(describing: type(of: presenter)), privacy: .public) 札=\(alert.actions.count, privacy: .public)")
             presenter.present(alert, animated: true)
         }
-        _ = result.semaphore.wait(timeout: .now() + 30)
+        let waited = result.semaphore.wait(timeout: .now() + 30)
+        jsfxMenuLog.notice("menu 終わり \(waited == .success ? "選ばれた" : "時間切れ", privacy: .public) 値=\(result.read(), privacy: .public)")
         return result.read()
     }
 
@@ -110,6 +117,10 @@ final class ETJSFXHost: ObservableObject {
         var ready: ((Result<UInt8, Error>) -> Void)?
         let gfxQueue: DispatchQueue
         var lastGFXImage: CGImage?
+        /// 押しが 1 枚でも描かれたか。updateMouse の説明を読むこと。
+        var pressSeen = false
+        /// 描かれるまで待たせている離し。
+        var pendingRelease: (Int32, Int32)?
         var visibleGFXOwners: Set<UUID> = []
         var focusedGFXOwners: Set<UUID> = []
 
@@ -492,15 +503,48 @@ final class ETJSFXHost: ObservableObject {
                 if self.instances[instanceID] === instance, let image {
                     instance.lastGFXImage = image
                 }
+                // 1 枚描けた。待たせていた離しが在ればここで渡す。
+                if self.instances[instanceID] === instance { self.mouseFrameDrawn(instance) }
                 completion(image)
             }
         }
     }
 
+    /// 指の位置と押し下げを渡す。
+    ///
+    /// **離しは 1 枚描いてから渡す。**軽く叩いただけだと、押しと離しが
+    /// 10 マイクロ秒と離れずに来る（実測: 02:27:27.663141 押し →
+    /// .663149 離し → .671235 で初めて @gfx）。その間に @gfx が 1 度も回らないので、
+    /// スクリプトから見た `mouse_cap` はずっと 0 のままになる。
+    ///
+    /// つまみの類は「押している間に座標が変わる」ことで動くので、押しを 1 枚も
+    /// 見なくても最後の座標で動く。**`gfx_showmenu` だけが「押した瞬間」
+    /// （`down && !last_down`）を要る**ので、そこだけが落ちていた。
     func updateMouse(instanceID: String, point: CGPoint, buttons: UInt32) {
         guard let instance = instances[instanceID], let host = instance.host else { return }
+        let x = Int32(point.x), y = Int32(point.y)
+        guard buttons == 0 else {
+            instance.pressSeen = false
+            instance.gfxQueue.async { ETJSFX_GFXMouse(host, 0, x, y, buttons, 0, 0) }
+            return
+        }
+        // 押しがまだ 1 枚も描かれていなければ、描かれるまで離さない。
+        guard instance.pressSeen else {
+            instance.pendingRelease = (x, y)
+            return
+        }
+        instance.gfxQueue.async { ETJSFX_GFXMouse(host, 0, x, y, 0, 0, 0) }
+    }
+
+    /// 1 枚描き終えたときに呼ぶ。押しが見られたことを控え、
+    /// 待たせていた離しが在ればここで渡す。
+    private func mouseFrameDrawn(_ instance: Instance) {
+        guard let host = instance.host else { return }
+        instance.pressSeen = true
+        guard let release = instance.pendingRelease else { return }
+        instance.pendingRelease = nil
         instance.gfxQueue.async {
-            ETJSFX_GFXMouse(host, 0, Int32(point.x), Int32(point.y), buttons, 0, 0)
+            ETJSFX_GFXMouse(host, 0, release.0, release.1, 0, 0, 0)
         }
     }
 
@@ -562,6 +606,7 @@ final class ETJSFXHost: ObservableObject {
                 do {
                     let index = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
                     ETJSFX_SetGFXMenuCallback(host, etJSFXMenuCallback, nil)
+                    jsfxMenuLog.notice("menu 口を付けた id=\(id, privacy: .public) gfx=\(ETJSFX_HasGFX(host), privacy: .public)")
                     current.host = host; current.parameters = Self.readParameters(host); current.error = nil
                     self.snapshotState(current)
                     current.ready?(.success(index)); current.ready = nil

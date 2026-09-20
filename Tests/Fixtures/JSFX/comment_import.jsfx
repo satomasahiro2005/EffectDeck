@@ -1,0 +1,9 @@
+desc:Comment Import
+author:nemut.ai
+
+@init
+// import other.jsfx-inc
+// include(other.jsfx-inc)
+label = "import other";
+
+@sample
