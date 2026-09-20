@@ -510,6 +510,7 @@ enum AssetUpload {
         if let error = thrown {
             let line = "asset 送り込み失敗 instance=\(instance) slot=\(slot) \(String(describing: error))"
             log.error("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             throw error
         }

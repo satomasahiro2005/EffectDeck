@@ -372,6 +372,7 @@ final class AudioIO: ObservableObject {
             // np は NowPlaying を止めているか（-ETNoNowPlaying 1）。
             let line = "session out=\(outs) rsp=\(session.routeSharingPolicy.rawValue) np=\(NowPlaying.mode.rawValue)"
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             refreshRoute()
         } catch {
@@ -646,6 +647,7 @@ final class AudioIO: ObservableObject {
             // ログの口が無い。USB を挿さないと idevicesyslog が使えず、
             // ルートの取り回しを測れなかった。標準出力へ出しておけば
             // devicectl device process launch --console で無線でも読める。
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
         }
 
@@ -688,6 +690,7 @@ final class AudioIO: ObservableObject {
                               nowPeer ? "up" : "down", up,
                               ETLinkReceiver.shared.receivedFrames)
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             hasPeer = nowPeer
         }
@@ -867,6 +870,7 @@ final class AudioIO: ObservableObject {
                 reportedGaveUp = true
                 let line = "escape 打ち止め attempts=\(escape.attempts) route=\(outs.map(\.portName).joined(separator: ","))"
                 log.notice("\(line, privacy: .public)")
+                ETLogTap.record(line)
                 if ETConsoleLog.on { print(line) }
             }
         }
@@ -878,11 +882,13 @@ final class AudioIO: ObservableObject {
             try session.overrideOutputAudioPort(port)
             let line = "escape \(reason) -> \(port == .speaker ? "speaker" : "none") route=\(session.currentRoute.outputs.map(\.portName).joined(separator: ","))"
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
         } catch {
             let ns = error as NSError
             let line = "escape 失敗 \(reason) code=\(ns.code) \(ns.domain)"
             log.error("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
         }
     }
@@ -927,6 +933,7 @@ final class AudioIO: ObservableObject {
                               overriding ? "true" : "false",
                               ETLinkReceiver.shared.receivedFrames)
             log.notice("\(line, privacy: .public)")
+            ETLogTap.record(line)
             if ETConsoleLog.on { print(line) }
             route = nowRoute
         }

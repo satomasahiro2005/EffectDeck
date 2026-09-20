@@ -916,6 +916,7 @@ final class EffeTuneDSP: ObservableObject {
         }
         let made = "instance=\(inst) tap=\(tap) setTap=\(tapStatus) \(typeName)"
         log.notice("\(made, privacy: .public)")
+        ETLogTap.record(made)
         if ETConsoleLog.on { print(made) }
         pushParams(node)
         return true
@@ -1114,6 +1115,7 @@ final class EffeTuneDSP: ObservableObject {
         let gated = nodes.filter { $0.enabled != 0 && $0.sectionGate == 0 }.count
         let pub = "publish nodes=\(nodes.count) chain=\(chain.count) sections=\(sections) dead=\(dead) active=\(active) gated=\(gated) taps=\(chain.map { String($0.tapId) }.joined(separator: ",")) types=\(chain.map(\.spec.type).joined(separator: ","))"
         log.notice("\(pub, privacy: .public)")
+        ETLogTap.record(pub)
         if ETConsoleLog.on { print(pub) }
         persist()
     }
@@ -1215,6 +1217,7 @@ final class EffeTuneDSP: ObservableObject {
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
         let line = "republish nodes=\(nodes.count) （\(reason)）"
         log.notice("\(line, privacy: .public)")
+        ETLogTap.record(line)
         if ETConsoleLog.on { print(line) }
     }
 }

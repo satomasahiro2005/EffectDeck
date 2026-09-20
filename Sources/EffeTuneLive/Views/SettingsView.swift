@@ -214,6 +214,7 @@ struct SettingsView: View {
             ETCopyDiagnosticsButton {
                 ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
             }
+            ETShareLogButton()
             Link(destination: URL(string: "https://github.com/satomasahiro2005/EffectDeck/issues")!) {
                 LabeledContent("Report a problem", value: "GitHub")
             }
@@ -360,6 +361,39 @@ private struct DetailsRows: View {
 
         // 貼るほうには端末と iOS と設定も入れる。報告を 1 回で受け取るため。
         ETCopyDiagnosticsButton { diagnostics }
+    }
+}
+
+/// ログを添付として渡す札。
+///
+/// **本文には入れない。**メールの本文も GitHub の issue の URL もクエリに載るので、
+/// パーセント符号化で 1.5〜2.3 倍に膨らむ。URL に載る生ログは数 KB が上限で、
+/// 1 MB は入らない。ファイルならクエリを通らない。
+/// ShareLink の前例は PresetsView。MessageUI は足さない。
+///
+/// 溜まっていないときは出さない。押せて何も付かない札は混乱の元。
+private struct ETShareLogButton: View {
+    @State private var file: URL?
+
+    var body: some View {
+        if ETLogTap.byteCount > 0 {
+            if let file {
+                ShareLink(item: file) {
+                    LabeledContent("Attach log", value: Self.size(ETLogTap.byteCount))
+                }
+            } else {
+                Button {
+                    file = ETLogTap.writeAttachment()
+                } label: {
+                    LabeledContent("Prepare log", value: Self.size(ETLogTap.byteCount))
+                }
+            }
+        }
+    }
+
+    private static func size(_ bytes: Int) -> String {
+        bytes >= 1_000_000 ? String(format: "%.1f MB", Double(bytes) / 1_000_000)
+                           : String(format: "%d KB", max(1, bytes / 1000))
     }
 }
 
