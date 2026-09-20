@@ -723,8 +723,7 @@ final class ETJSFXHost: ObservableObject {
     /// セクション記号との or を必ず残す。頭 80 行だけ見る。
     private static func looksLikeJSFX(_ text: String) -> Bool {
         let sections = ["@init", "@slider", "@block", "@sample", "@serialize", "@gfx"]
-        for line in text.split(separator: "
-", omittingEmptySubsequences: false).prefix(80) {
+        for line in text.split(whereSeparator: { $0.isNewline }).prefix(80) {
             let t = line.trimmingCharacters(in: .whitespaces)
             if t.hasPrefix("desc:") { return true }
             if sections.contains(where: { t.hasPrefix($0) }) { return true }

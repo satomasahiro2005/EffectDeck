@@ -427,10 +427,9 @@ private struct ExternalProcessorView: View {
                 // まだビューが立ち上がっていない AU では snapshot が必ず nil になるので、
                 // 掴んだ瞬間にカードの中身が真っ黒な板になっていた。
                 // 掴んでいる間だけの絵なので、名前が出ていれば足りる。
-                Text(node.spec.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 72)
+                // この View は node を持たない（externalID と instanceID だけ）。
+                // 掴んでいる間の絵なので、場所が空いていることが分かれば足りる。
+                Color.clear.frame(height: 72)
             }
         } else if externalID.hasPrefix("jsfx:") {
             let jsfxParameters = jsfx.parameters(instanceID: instanceID)
