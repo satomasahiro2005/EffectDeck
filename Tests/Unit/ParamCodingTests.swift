@@ -216,14 +216,48 @@ final class ParamCodingTests: XCTestCase {
         for i in 0..<5 { XCTAssertEqual(back[g.offset + i], v[g.offset + i], "バンド\(i + 1)") }
     }
 
-    /// 配列を持つプラグインはすべて object か添字付きで書くこと。平らは 1 つも無い。
-    func testNoPluginWritesFlatArrays() {
+    /// 配列を持つプラグインは object か添字付きで書くこと。
+    ///
+    /// **`flatArrayKey` を宣言したものだけが例外。**以前は「平らは 1 つも無い」と
+    /// 書いていたが、EffeTune 2.10.0 が Spatial Mapper を足して破れた。
+    /// あれは 16×16 の行列を 3 つ持っていて、上流が平らで書く
+    /// （`Tools/gen_catalog.py` がその 3 つにだけ `flatArrayKey` を付けている）。
+    /// こちらが object で書くと web 版も同梱プリセットも読めなくなるので、
+    /// **平らが正しい。**
+    ///
+    /// なので見るのは「宣言していないものが平らになっていないか」。
+    /// 宣言したほうは逆に平らであることを見る。どちらへずれても捕まる。
+    func testFlatArraysOnlyWhereDeclared() {
         for s in ETCatalog {
             let o = ETParamCoding.encode(params: s.params, values: s.defaults)
             for p in s.params where p.isArray {
-                XCTAssertNil(o[p.key] as? [Any], "\(s.type).\(p.key) を平らな配列で書いている")
+                if let key = p.flatArrayKey {
+                    XCTAssertNotNil(o[key] as? [Any],
+                                    "\(s.type).\(key) は平らで書くはずが平らでない")
+                } else {
+                    XCTAssertNil(o[p.key] as? [Any],
+                                 "\(s.type).\(p.key) を平らな配列で書いている")
+                }
             }
         }
+    }
+
+    /// 平らで書くと宣言しているものが、いま何本あるか。
+    ///
+    /// **数を書いて留める。**上流が別のプラグインでも平らを使い始めたら、
+    /// 黙って通さずここで止める（通してよいかは人が決めること）。
+    func testDeclaredFlatArraysAreOnlySpatialMapper() {
+        var declared: [String] = []
+        for s in ETCatalog {
+            for p in s.params where p.flatArrayKey != nil {
+                declared.append("\(s.type).\(p.flatArrayKey!)")
+            }
+        }
+        XCTAssertEqual(declared.sorted(), [
+            "SpatialMapperPlugin.dm",
+            "SpatialMapperPlugin.fm",
+            "SpatialMapperPlugin.rm",
+        ])
     }
 
     /// 古い保存（平らな配列）も読めること。作った鎖を失わない。

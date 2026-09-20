@@ -110,7 +110,10 @@ final class EffectPresetTests: XCTestCase {
             walk(preset.params, s.params, preset.id)
         }
         XCTAssertEqual(bad, [])
-        XCTAssertEqual(checked, 416, "数えた文字列の数が変わった")
+        // **数を留める。**上の `bad` が空でも、数えた口が減っていれば
+        // 見ていないものが増えたということ。416 → 449 は EffeTune 2.10.0 で
+        // 効果が 3 本増えたぶん（Pitch Meter / Spatial Mapper / TV Audio Simulator）。
+        XCTAssertEqual(checked, 449, "数えた文字列の数が変わった")
     }
 
     // MARK: - 適用
