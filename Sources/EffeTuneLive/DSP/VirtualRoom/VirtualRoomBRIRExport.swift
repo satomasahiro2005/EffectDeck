@@ -75,9 +75,11 @@ enum ETVirtualRoomBRIR {
 
         let total = Int((sampleRate * maximumSeconds).rounded())
         let left = try sweep(engine: engine, instance: instance, spec: spec,
-                             values: values, frames: total, impulseOn: 0)
+                             values: values, frames: total, impulseOn: 0,
+                             sampleRate: sampleRate)
         let right = try sweep(engine: engine, instance: instance, spec: spec,
-                              values: values, frames: total, impulseOn: 1)
+                              values: values, frames: total, impulseOn: 1,
+                              sampleRate: sampleRate)
 
         var channels = [left.0, left.1, right.0, right.1]
         let keep = tailLength(of: channels, sampleRate: sampleRate)
@@ -90,7 +92,8 @@ enum ETVirtualRoomBRIR {
     /// 片方の耳ではなく、片方の**スピーカー**を叩く 1 回分。
     private static func sweep(engine: et_engine, instance: et_instance,
                               spec: ETEffect, values: [Float],
-                              frames: Int, impulseOn: Int) throws -> ([Float], [Float]) {
+                              frames: Int, impulseOn: Int,
+                              sampleRate: Double) throws -> ([Float], [Float]) {
         // reset してから値を入れ直す。reset が内部の係数まで捨てる作りでも、
         // 入れ直しておけば 2 回目が 1 回目と同じ部屋になる。
         et_instance_reset(engine, instance)
@@ -159,7 +162,7 @@ enum ETVirtualRoomBRIR {
         let layout = AVAudioChannelLayout(
             layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 4)!
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate,
-                                   channelLayout: layout)!
+                                   channelLayout: layout)
 
         let name = "VirtualRoom-BRIR-\(Int(sampleRate))Hz.wav"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
