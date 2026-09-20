@@ -145,12 +145,16 @@ enum ETRunState {
         // **「止めていると駄目」ではない。**落ちた回のログにも
         // `mediaIsPlaying=YES` が出ている。鳴ってはいたが検出器がまだ無かった。
         // 同じ操作を 9 秒後にやり直すと通っている。だから文面は「少し待つ」。
+        //
+        // **時機だけが条件ではない。**検出器が既に居れば早く選んでも通るし、
+        // MediaToolbox が `isPlayingVideoOutput = YES` と分類した回は
+        // 待っても通らない（そちらは #3 / #4）。だから断定せず "may" にする。
         // こちらから直せる所ではないので、手順で外す。
         case .waiting:
             return "Start playback and let it run for a few seconds, then open Control Center, "
                  + "press and hold the audio card, and choose EffectDeck. Picking it too early "
-                 + "does not stick — iOS drops back to the speaker a moment later. Try again if "
-                 + "that happens."
+                 + "may not stick — iOS can drop back to the speaker a moment later. Try again "
+                 + "if that happens."
         case .idle:
             return "The input has been silent, so the effects are paused. They start again "
                  + "the moment sound returns."

@@ -271,3 +271,73 @@ MediaExperience から輸入している（symtab の undefined external で確�
 実測では、ytlite が動画を再生していても `IsPlayingVideoOutput = NO` だった
 （`MXSession` の状態ダンプ、`clientType = 4`, `PiP = NO`）。
 **「画面に動画が出ているか」という単純な話ではない。**
+
+---
+
+# 呼び分け直し: 「映像が立っている回」ではない（2026-09-21）
+
+上で `#3 (a)` を「本当に映像が立っている回」と書いたが、**これは誤り**なので
+呼び方を直す。正しくは **「MediaToolbox が `isPlayingVideoOutput = YES` と
+分類した回」**。
+
+同じ YouTube（`ai.nemut.ytlite`）が、同じ動画を再生していても
+`YES` と `NO` の両方を出す。実際に映像が出ているかと同じものとして扱うと、
+せっかく 1 点に収束した #3 / #4 の共通問題がまた曖昧になる。
+
+`YES` になった後が構造的に詰みであることは変わらない。
+
+```
+MDE の経路判定                     … 解決済み（分岐順まで確定）
+MusicVAD の時機                    … ほぼ解決（生成の瞬間を実測）
+残り: MediaToolbox が isPlayingVideoOutput を YES/NO にする条件
+        ↓
+    #3 と #4 はここで分岐
+```
+
+## sink から逆に辿る
+
+候補の関数名から読むのをやめ、**書き込み先から後ろ向きに辿る**。
+
+```
+_MXSessionSetProperty                     0x1ae8922c8  MediaExperience
+_kMXSessionProperty_IsPlayingVideoOutput  0x1e1147208  MediaExperience
+```
+
+どちらも `ipsw dyld symaddr` で DSC から解決できた。
+
+**抜き出した dylib を grep してはいけない。**共有キャッシュから
+`ipsw dyld extract` したものは GOT が解決されていないので、
+328 万行の `MediaToolbox.asm` に鍵の番地が 1 件も出ない。
+**DSC のまま `ipsw dyld xref` を使う。**
+
+### 完全な DSC の在処
+
+```
+/mnt/fs27/root/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e
+```
+
+`/root/img/fs27.dmg`（= `H:\ios27-nfc\dmg\24A435__iPhone17,3\043-70113-702.dmg`）を
+`/opt/apfs-fuse/build/apfs-fuse` でマウントしたもの。
+
+**パスに `,` が入っていると FUSE の option 解析が壊れる**ので、
+記号の無い所（`/root/img/`）へ symlink を貼ってから渡す。
+
+### 鍵への xref が 0 件でも「参照していない」ではない
+
+輸入したデータシンボルなので、`鍵 → MediaToolbox の GOT 枠 → ADRP/LDR` という
+間接参照になっている。0 件なら次の順で探す。
+
+1. MediaToolbox 側のその輸入の slot を特定する
+2. slot への xref
+3. `_MXSessionSetProperty` の callsite と交差させる
+
+## 動的側は塞がっている
+
+`_MXSessionSetProperty` に breakpoint を置くのが最短だが、非脱獄では無理。
+
+- `devicectl device process launch --start-stopped ai.nemut.ytlite` は
+  `error 10004` で失敗。自前署名でも `get-task-allow` が無いと attach できない
+- 値を保持して判定に使うのは **audiomxd**（システムデーモン）側で、
+  こちらはそもそも attach できない
+
+ytlite を再署名して `get-task-allow` を付ければ開くが、別の作業。
