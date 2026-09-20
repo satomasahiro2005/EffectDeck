@@ -817,3 +817,77 @@ MediaToolbox の中で setter まで完結しているとは、もう仮定し�
 - **YES を発生させる主体（mediaplaybackd）と状態遷移** … 確定
 - **残り** … 何が mediaplaybackd / FigPlayer 経路への切り替えを起こすか、
   と内部実装の静的な裏取り
+
+## 訂正: プロセスと image を分ける
+
+「書き手が `mediaplaybackd` だと確定したので callsite も `mediaplaybackd` 側かも」
+と書いたが、**プロセスと callsite を持つ Mach-O image は別物。**
+
+ログから確定したのは
+
+```
+mediaplaybackd プロセスが CoreSession に対して
+IsPlayingVideoOutput = 0 / 1 を更新した
+```
+
+まで。実際の PC は、そのプロセスにロードされている
+`MediaToolbox.framework` / `MediaExperience.framework` /
+`AVFoundation` / `CoreMedia` の中かもしれない。
+
+```
+mediaplaybackd
+    ↓  MediaToolbox.framework をロード
+MediaToolbox::_fpfsi_handleVideoOutputsChanged
+    ↓
+_MXSessionSetProperty(...)
+```
+
+この形でも、ログ上の writer process は `mediaplaybackd(295)` になる。
+
+**探索の順は変えない。**
+
+```
+1. MediaToolbox の key xref
+2. MediaToolbox の sink xref
+3. _fpfsi_handleVideoOutputsChanged まわり
+```
+
+**MediaToolbox で空だったときに初めて**、`mediaplaybackd` 実行ファイルと
+それがロードする framework へ広げる。
+
+## いちばん厳密な #3 の書き方
+
+```
+mediaplaybackd プロセス内の再生パイプラインが、
+FigPlayer 系の兄弟セッションの出現に伴って
+IsPlayingVideoOutput を 0 → 1 に更新することを実測した。
+
+ただし、その更新命令を所有する Mach-O image
+（MediaToolbox / mediaplaybackd 実行ファイル / その他の framework）は
+静的解析中。
+```
+
+## `_fpfsi_handleVideoOutputsChanged` で見たいこと
+
+名前だけで読んでいた段階とは違い、**動的観測で video-output topology が
+犯人だと分かった後に読む候補**なので価値が高い。
+
+中で探すのは:
+
+```
+video outputs changed
+    ↓  array / count / target / state を読む
+    ↓  bool を作る
+    ↓  MXSession の property を更新
+```
+
+**決め手は「存在」か「稼働」か。**
+
+```c
+bool playingVideo = CFArrayGetCount(videoOutputs) != 0;   // 存在
+bool playingVideo = anyOutputIsActive(videoOutputs);      // 稼働
+```
+
+**「存在」基準なら #4 の stale とも噛み合う。**Canvas の FigPlayer が
+終了相当になっても output / session の object が残っていれば、
+集約した値が YES のままになる説明が付く。
