@@ -1099,3 +1099,53 @@ sink を指す枠  0          ← 見つからない
 
 **どれも EffectDeck の挙動にも出荷判断にも影響しない。**
 #3 / #4 の答え（原因・証拠・回避策・こちらから直せないこと）は既に出ている。
+
+## 壁の正体が確定した（2026-09-21）
+
+両方の image で数えた。
+
+```
+MediaToolbox       枠 3,747  うち 0 が 101（呼び出し   844 件）  非 0 3,646
+MediaPlaybackCore  枠   843  うち 0 が 124（呼び出し 1,354 件）  非 0   719
+```
+
+`MediaToolbox` は symtab で
+
+```
+(undefined) weak external automatically hidden  _MXSessionSetProperty                     (from MediaExperience)
+(undefined) weak external automatically hidden  _kMXSessionProperty_IsPlayingVideoOutput  (from MediaExperience)
+```
+
+**weak な輸入の枠は、キャッシュの中では 0。起動時に解決される。**
+
+だから両方で「sink を指す枠 0 件」になった。
+**呼んでいないのではなく、ファイルからは行き先が出せない。**
+道具の不備ではなく、キャッシュの性質による原理的な壁。
+
+### 3 つの道が同時に塞がっている
+
+| 道 | 状態 |
+|---|---|
+| `ipsw dyld xref` | RSS 6.9GB で WSL ごと落ちる。母艦 15.9GB では割当を上げられない |
+| 枠をファイルから読む | **道具は完成した**が、weak 輸入の枠は 0 |
+| 実機で動的に取る | ytlite に `get-task-allow` が無く attach できない |
+
+開くのは **「32GB 以上の機械で xref」** か **「ytlite を再署名して動的に取る」**。
+どちらも別作業。
+
+### できた道具（残しておく）
+
+| | |
+|---|---|
+| `H:\ios-audio\scripts\mde_indirect.py` | `--quiet` の逆アセンブルから `adrp/ldr/blraa` の 3 つ組を拾って枠の番地を出す |
+| `H:\ios-audio\scripts\mde_slotscan2.py` | 枠の中身をキャッシュのファイルから直に読む（mapping を自分で引く。メモリ一定） |
+| `H:\ios-audio\scripts\mde-routing_79.sh` | image 1 つを `--quiet` で逆アセンブルして枠まで出す |
+
+`disass --image --quiet` の実測:
+
+```
+MediaPlaybackCore  129 万行 / 39 秒
+MediaToolbox       332 万行 / 69 秒
+```
+
+**`xref` と違って落ちない。**参照を逆に辿れないだけで、読むぶんには十分速い。
