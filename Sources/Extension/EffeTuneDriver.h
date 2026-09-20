@@ -14,12 +14,28 @@
 //      ASD_AddAudioDeviceRealTimeOperations / ASD_RemoveAudioDeviceRealTimeOperations
 //      ASD_SetRealtimeOperationTableSize
 //
-//  登録は CoreAudio の以下で行う（逆アセンブルで引数を確定済み）:
+//  登録は CoreAudio の以下で行う。**引数は最初こちらで逆アセンブルして確定したが、
+//  いまは iOS 27 の公開 API として Apple が文書に載せている**（Core Audio）。
 //      void AudioServerPlugInRegisterMediaDeviceExtension(
 //              AudioServerPlugInDriverInterface **iface,
 //              void (^invalidationHandler)(void));
 //      // 実体は AudioServerPlugInRegisterDriver(Driver_Type=2, iface, block) への tail call
 //      // Driver_Type: 1 = Remote, 2 = MediaDeviceExtension
+//
+//  出力デバイスは 1 個、transport は RemoteStreaming、UID は MediaOutputDevice.id と
+//  同じ、という制約もこちらで測ったものが、そのまま Apple の文書に書かれている。
+//
+//  **公開仕様から外している所が 2 つある。どちらも承知の上。**
+//   1. 本体の entitlement を空配列にしている（EffeTuneLive.entitlements の頭に理由）。
+//      配信の検査はキーの存在を求め、実行時は中身が空でないときだけ '!pla' で
+//      AVAudioSession を拒む。2 本に分けずに 1 本で成立させるための形。
+//      Apple は「container app の唯一の目的は拡張の配送」と書いているので、
+//      **そこからは意図的に外れている。**
+//   2. publish を activateDevice の中で先に撃っている。Apple の掲載例は
+//      startRealtimeSampleDelivery の中。ただし Apple 自身が
+//      「activate 後すみやかに機器が現れないと deactivate されて Unable to Connect
+//      になる」と書いており、こちらの順はその要求に合わせたもの。
+//  どちらも iOS の版が上がったときに真っ先に見る所。
 
 #import <Foundation/Foundation.h>
 

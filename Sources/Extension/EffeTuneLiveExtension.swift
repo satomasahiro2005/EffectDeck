@@ -220,8 +220,13 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         routingManager.foundDevice(dev)
     }
 
+    /// 探索を止める。**lostDevice は呼ばない。**
+    ///
+    /// あれは「機器が実際に消えたとき」に系へ知らせる口。こちらの機器はアプリが
+    /// 入っている限り消えない仮想の出力先なので、探索が止まるたびに消えたと言うのは嘘になる。
+    /// 系は見つけた機器を控えておいて、次にルートピッカーを開いたとき素早く出す設計なので、
+    /// 毎回それを捨てていたことになる。
     func stopDeviceDiscovery() {
-        if let dev = localDevice { routingManager.lostDevice(dev) }
         log.notice("stopDeviceDiscovery")
     }
 
