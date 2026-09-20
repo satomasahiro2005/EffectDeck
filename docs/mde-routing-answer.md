@@ -1049,3 +1049,53 @@ blraa xN, …
   （5537 dylib に `libexec` は 0 件、7-Zip の全文検索でも出ない）
 - 代わりに **`MediaPlaybackCore.framework`**（cache 494 番）が在る。
   `mediaplaybackd` の実体はここと見るのが自然
+
+## 間接呼び出しの枠は解けた。ただし weak な輸入は 0（2026-09-21）
+
+`--quiet` の出力から `adrp / ldr / blraa` の 3 つ組を拾えば、
+**名前解決も xref も無しに枠の番地が出る**（`H:\ios-audio\scripts\mde_indirect.py`）。
+枠の中身はキャッシュのファイルから直に読める
+（`mde_slotscan2.py`。各 subcache の mapping を自分で引く。メモリ一定）。
+
+`MediaPlaybackCore` で実測:
+
+```
+命令          129 万
+間接呼び出し  9,705 件
+枠            843 種
+読めなかった枠 0
+sink を指す枠  0          ← 見つからない
+```
+
+**理由はたぶんこれ。**
+
+```
+枠 843 種のうち 124 個が 0（呼び出し 1,354 件ぶん）
+```
+
+**weak / lazy な輸入はキャッシュの中では 0 で、起動時に解決される。**
+`_MXSessionSetProperty` は MediaToolbox の symtab で
+`weak external automatically hidden` だった。**この 124 個の中に居る公算が高い。**
+
+だとすると、**ファイルから行き先を出すことは原理的にできない。**
+
+### 復号の形（次に使う人へ）
+
+枠の値は連鎖 fixup の圧縮ポインタ。
+
+```
+0x0010000002222178   通常     … (v & 0xFFFFFFFF) + 0x180000000
+0x801df53002238654   auth 付き … 同じ。bit63 が立つ
+0x0000000072656761   これは文字列。ポインタではない枠も混ざる
+```
+
+### 残る道
+
+1. **メモリの潤沢な機械（32GB 以上）で `ipsw dyld xref`**
+   0 の枠も解決した状態で探せる
+2. **実機で動的に取る**。ytlite を再署名して `get-task-allow` を付け、
+   `_MXSessionSetProperty` に breakpoint。**writer だけなら audiomxd は要らない**
+3. 起動済みプロセスのメモリから GOT を読む（要脱獄）
+
+**どれも EffectDeck の挙動にも出荷判断にも影響しない。**
+#3 / #4 の答え（原因・証拠・回避策・こちらから直せないこと）は既に出ている。
