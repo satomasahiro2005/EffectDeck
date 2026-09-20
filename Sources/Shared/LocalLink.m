@@ -58,6 +58,8 @@ static os_log_t ETLinkLog(void) {
     size_t _txLen;
     size_t _txOff;
     uint32_t _txSamples;
+    // 繋がっていないあいだの空回りの回数。connect 試行を間引くのに使う。
+    uint32_t _idlePumps;
 }
 
 + (ETLinkSender *)shared {
@@ -86,6 +88,7 @@ static os_log_t ETLinkLog(void) {
     _r = atomic_load(&_w);
     _txLen = _txOff = 0;
     _txSamples = 0;
+    _idlePumps = 0;   // 新しい回は 1 回目で撃つ
     // 毎回 0 から数える。累計のままだと、今回何も送っていなくても
     // 「送信=188万」のように見えて、ログで判断を誤る。
     _sentFrames = 0;
@@ -182,6 +185,14 @@ static os_log_t ETLinkLog(void) {
 
 - (void)pump {
     if (!_running) return;
+    // **繋がっていないあいだの connect 試行を間引く。**
+    // 周期は 2ms なので、本体が 47101 を開くまで socket → connect → close の
+    // 三連が 500 回/秒走っていた。100 回に 1 回（5 回/秒）まで落とす。
+    //
+    // 剰余が 0 の回に撃つので、**最初の 1 回は必ず撃つ**。
+    // ここを `++_idlePumps % 100` と書くと初回が飛んで、繋がるまで 200ms 待つ。
+    // 繋がったあとはこの行を通らないので、送出の周期は変えていない。
+    if (_fd < 0 && (_idlePumps++ % 100) != 0) return;
     [self ensureConnected];
     if (_fd < 0) return;
 
