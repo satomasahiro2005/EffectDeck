@@ -2185,6 +2185,171 @@ seed
 
 ---
 
+## 60. ライセンス・由来・帰属
+
+### 60.1 EffectDeck本体
+
+EffectDeck本体はMIT Licenseで配布する。
+
+Virtual RoomのEffectDeck独自実装部分も、原則としてEffectDeck本体と同じMIT Licenseとする。
+
+### 60.2 Synthetic Binaural Room由来コード
+
+Virtual Roomの初期音響モデルは、
+
+```text
+M0Rf30/easyeffects-presets
+scripts/generate-synthetic-binaural-room.js
+```
+
+を技術的な出発点とする。
+
+同repositoryはMIT Licenseで公開されている。
+
+したがって、当該JavaScriptのコードをC++/Swiftへ直接移植、トランスパイル、または実質的に同じコード構造で翻案する部分は、MIT Licenseに基づく派生コードとして扱う。
+
+MIT Licenseは改変・再配布・商用利用を許可するが、Softwareのcopyまたはsubstantial portionを配布する場合、元のcopyright noticeとlicense noticeを保持する必要がある。
+
+元repositoryのLICENSEには、現時点で以下のcopyright noticeが置かれている。
+
+```text
+Copyright (c) 2018 Matteo Iervasi
+```
+
+したがって、Virtual Roomに元JS由来の実装を含める場合、EffectDeckの配布物からこのMIT noticeを落とさない。
+
+### 60.3 EffectDeckでの表示・収録
+
+EffectDeckにはすでに第三者ライセンスを
+
+```text
+NOTICE.md
+Tools/gen_licenses.py
+Sources/EffeTuneLive/Generated/Licenses.swift
+Settings → Licenses
+```
+
+へ集約する仕組みがある。
+
+Virtual Room実装時には `Tools/gen_licenses.py` へ少なくとも以下を追加する。
+
+```text
+Synthetic Binaural Room / easyeffects-presets
+MIT
+M0Rf30/easyeffects-presets
+```
+
+license textには、使用時点での `M0Rf30/easyeffects-presets/LICENSE` をそのまま収録する。
+
+`NOTICE.md` にも、Virtual Roomの一部が同repositoryのMIT-licensed implementationを基にしていることを明記する。
+
+アプリ内のSettings → Licensesから当該license全文を確認できる状態にする。
+
+### 60.4 ソースファイル上の帰属
+
+元JSを直接移植したコードが残るファイルには、ファイル冒頭で由来を明示する。
+
+```cpp
+// Virtual Room binaural room model.
+//
+// Portions derived from:
+//   M0Rf30/easyeffects-presets
+//   scripts/generate-synthetic-binaural-room.js
+//
+// Licensed under the MIT License.
+// See NOTICE.md and the bundled third-party license notices.
+```
+
+配布物にlicense noticeを確実に保持し、ソースファイルからその所在を追えるようにする。
+
+### 60.5 新規実装部分との区別
+
+以下は元JSの単純移植ではなく、EffectDeck側で新規設計・実装する。
+
+```text
+Realtime RenderState architecture
+triple-buffered control → audio state transfer
+fractional-delay morphing
+second-order image-source renderer
+frequency-dependent material model
+16-line FDN
+Eyring-based RT60 calculation
+realtime room resizing
+BRIR export path
+EffectDeck UI / preset / share integration
+```
+
+これらについて、M0Rf30側のコードをコピーせずEffectDeckで独自実装した部分はEffectDeck自身のMIT-licensed codeとして扱う。
+
+一方、元JSからコード表現・定数表・処理構造を直接引き継いだ部分については、書き直し後も由来を消さない。
+
+「最終的にコードが大きく変わったから帰属を外す」という運用にはしない。
+
+### 60.6 論文・アルゴリズムの扱い
+
+以下のような一般的な音響/DSP手法そのものについては、特定repositoryのコードをコピーせず、論文・数式・公開仕様を基に独自実装する。
+
+```text
+Brown & Duda系 structural HRTF
+image-source method
+Eyring reverberation equation
+feedback delay network
+Hadamard feedback matrix
+fractional delay interpolation
+```
+
+設計書・コードコメントでは、必要に応じて原論文や技術資料を参考文献として示す。
+
+参考文献へのcitationと、ソースコードのcopyright/license attributionは別のものとして管理する。
+
+### 60.7 外部HRTF / IRデータ
+
+初期Virtual Roomは、
+
+```text
+SOFA HRTF
+measured BRIR
+third-party IR
+external material dataset
+```
+
+を同梱しない。
+
+built-in structural modelだけで生成する。
+
+これにより、Virtual Room本体についてIR/HRTFデータセット固有の `CC BY`、`CC BY-NC`、`CC BY-SA`、研究用途限定、再配布禁止等の追加条件を持ち込まない。
+
+将来外部データを追加する場合は、コードとは別に各データセットのlicenseを個別審査し、App Store配布・商用配布・改変・再配布が許可されるものだけを採用する。
+
+### 60.8 EffeTuneとの関係
+
+Virtual RoomはEffeTuneのDSP engine / PluginKernel ABI上で動作するが、Virtual RoomそのものはEffectDeck独自effectである。
+
+EffeTuneはMIT Licenseであり、EffectDeckは既にそのlicense noticeを配布物へ収録している。
+
+Virtual Room追加後も、
+
+```text
+EffectDeck
+EffeTune
+Synthetic Binaural Room / easyeffects-presets
+```
+
+の帰属を混同しない。
+
+アプリ上でも、Virtual RoomをEffeTune公式effectであるかのように表示しない。
+
+### 60.9 ライセンス上の実装原則
+
+Virtual Roomについては、次を必須とする。
+
+1. 元JSを利用するなら、MIT noticeを保持する。
+2. 元JS由来コードのprovenanceをソースから追跡可能にする。
+3. 新規DSP部分は論文・数式を基に独自実装し、不必要な第三者コードコピーを増やさない。
+4. 外部IR/HRTFデータは初期版に同梱しない。
+5. `NOTICE.md` とアプリ内Licensesをリリース前テスト対象にする。
+6. dependency/license追加時は `Tools/gen_licenses.py` をsingle source of truthとして更新する。
+
 ## 61. 上流へ出せる形にする（§46 / §50 の差し替え）
 
 Virtual Room は EffectDeck 独自 effect だが、**いずれ EffeTune へ PR できる形**で作る。

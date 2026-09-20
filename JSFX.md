@@ -141,9 +141,9 @@ word in a string, break it up (`"inclu" + "de("`).
 
 EffectDeck draws at the size you declare with `@gfx <w> <h>` and then scales the
 result to fit the card, so **a script that hard-codes coordinates to its
-declared size still looks right**. But the canvas can also be handed a different
-size (full screen, or the Pixel Perfect setting), so reading `gfx_w` / `gfx_h`
-and laying out from them is better:
+declared size still looks right**. But full screen hands the canvas the whole
+viewport instead, so reading `gfx_w` / `gfx_h` and laying out from them is
+better:
 
 ```jsfx
 @gfx 640 360
@@ -198,7 +198,10 @@ anything that can run once per block into `@block`.
 - up to 256 numeric, enum, hidden, and custom-variable sliders
 - linear, `:log`, `:sqr`, `:log!`, and `:sqr!` slider curves; UI movement is
   converted through ysfx's pinned normalized-value functions
-- 10 host triggers, `sliderchange()`, and `slider_automate()`
+- 10 host triggers, `sliderchange()`, and `slider_automate()`. The trigger
+  buttons only appear on scripts whose source reads `trigger`; there is no MIDI
+  or action binding in EffectDeck, so a script that ignores them would show ten
+  buttons with nothing behind them
 - `spl0` through `spl63`, analyzer passthrough, and audio generators
 - dynamic PDC notification and conservative infinite-tail processing
 - persistent in-memory LICE graphics, text, Retina, basic keyboard/mouse input,

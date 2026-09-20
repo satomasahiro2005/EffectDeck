@@ -105,7 +105,7 @@ struct SettingsView: View {
         } header: {
             Text("Plug-ins")
         } footer: {
-            Text("Adaptive fits the whole canvas on screen. Pixel Perfect keeps the size the JSFX asked for and scrolls, which can leave a large canvas partly out of view.")
+            Text("Adaptive scales the canvas up to fill the card. Pixel Perfect stops at one canvas pixel per screen pixel, so most canvases look smaller and sharper. Either way the whole canvas stays on screen.")
         }
     }
 

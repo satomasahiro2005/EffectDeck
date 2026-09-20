@@ -462,19 +462,17 @@ private struct ExternalProcessorView: View {
             if jsfx.hasGFX(instanceID: instanceID) {
                 VStack(alignment: .leading, spacing: 12) {
                     ZStack(alignment: .topTrailing) {
-                        if prefs.jsfxCanvasMode == .pixelPerfect {
-                            let size = jsfx.preferredGFXSize(instanceID: instanceID)
-                            ScrollView([.horizontal, .vertical]) {
-                                JSFXGFXView(instanceID: instanceID, fixedSize: size,
-                                            isVisible: isOnScreen && !fullScreen)
-                            }
-                            .frame(height: min(360, max(180, size.height)))
-                        } else {
-                            // 枠は JSFXGFXLayout が持つ（比と高さの上下）。
-                            // ここで重ねて付けない。
-                            JSFXGFXView(instanceID: instanceID,
-                                        isVisible: isOnScreen && !fullScreen)
-                        }
+                        // 枠は JSFXGFXLayout が持つ（比と高さの上下）。
+                        // ここで重ねて付けない。
+                        //
+                        // **Pixel Perfect を ScrollView に入れない。**canvas は
+                        // 指の触りを丸ごと食う（minimumDistance 0 の DragGesture が
+                        // 面いっぱいに載っている）ので、中身が枠からはみ出しても
+                        // 送り出せない。送れたとしても、送る指がそのまま
+                        // つまみを掴む。**はみ出させないのが直し方。**
+                        JSFXGFXView(instanceID: instanceID,
+                                    pixelPerfect: prefs.jsfxCanvasMode == .pixelPerfect,
+                                    isVisible: isOnScreen && !fullScreen)
                         Button {
                                 movingToFullScreen = true
                                 Task { @MainActor in
@@ -658,7 +656,18 @@ private struct ExternalProcessorView: View {
     /// **押しても受け取られないときは無効にして見せる。**running でない
     /// （自動バイパス中・状態保存中・再設定中）ときに送ると捨てられるので、
     /// 押せるままだと「効かないのか溜まっているのか」が区別できない。
+    ///
+    /// **`trigger` を読まないスクリプトには出さない。**REAPER では MIDI や
+    /// アクションから叩くもので、EffectDeck には叩く手段が無い。同梱 3 本と
+    /// 手元の実物 6 本のうち読んでいるのは検証用の 1 本だけで、残りでは
+    /// 押せる先の無い札が 10 個並ぶだけだった。ホスト側の実装
+    /// （`ETJSFX_SendTrigger` / `ETJSFX_MaxTriggers`）はそのまま残す。
+    @ViewBuilder
     private var jsfxTriggers: some View {
+        if jsfx.usesTrigger(instanceID: instanceID) { triggerChips }
+    }
+
+    private var triggerChips: some View {
         let live = jsfx.isRunning(instanceID: instanceID)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Trigger (trigger bits 1–\(ETJSFX_MaxTriggers()))")
@@ -681,7 +690,9 @@ private struct JSFXGFXView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var jsfx = ETJSFXHost.shared
     let instanceID: String
-    var fixedSize: CGSize? = nil
+    /// 貼るときに原寸（framebuffer の 1 画素 = 画面の 1 画素）で止めるか。
+    /// **描く寸法は変えない。**変わるのは表示の大きさだけ。
+    var pixelPerfect = false
     var fullScreen = false
     var isVisible = true
     @State private var image: CGImage?
@@ -699,7 +710,10 @@ private struct JSFXGFXView: View {
         // 宣言どおりの面へ描かせて、貼るときに縮めれば、どちらの書き方でも全部出る。
         //
         // 全画面だけは見えている枠に合わせる（あちらは広さを使い切りたい）。
-        let canvas = fixedSize ?? preferred
+        //
+        // **Pixel Perfect でもここは同じ。**あちらが決めるのは貼る大きさだけで、
+        // 描く寸法は両方とも宣言どおり。
+        let canvas = preferred
         GeometryReader { geometry in
             let active = isVisible && scenePhase == .active
             let drawSize = fullScreen ? geometry.size : canvas
@@ -756,8 +770,12 @@ private struct JSFXGFXView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .modifier(JSFXGFXLayout(preferred: fixedSize ?? preferred,
-                                fixedSize: fixedSize, fullScreen: fullScreen))
+        .modifier(JSFXGFXLayout(preferred: canvas,
+                                nativeHeight: pixelPerfect
+                                    ? jsfx.gfxNativeHeight(instanceID: instanceID, canvas: canvas,
+                                                           screenScale: UIScreen.main.scale)
+                                    : nil,
+                                fullScreen: fullScreen))
         .clipped()
         .onDisappear {
             jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
@@ -787,19 +805,31 @@ private struct JSFXGFXRenderKey: Hashable {
 
 private struct JSFXGFXLayout: ViewModifier {
     let preferred: CGSize
-    let fixedSize: CGSize?
+    /// 原寸で貼ったときの高さ（point）。nil なら Adaptive。
+    let nativeHeight: CGFloat?
     let fullScreen: Bool
+
+    /// 潰れた比で貼らないよう下限だけ置く。
+    private var ratio: CGFloat { max(0.25, preferred.width / max(1, preferred.height)) }
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if let fixedSize {
-            content.frame(width: fixedSize.width, height: fixedSize.height)
-        } else if fullScreen {
+        if fullScreen {
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let nativeHeight {
+            // **原寸を上限にするだけ。**高さを原寸で止めれば、比が保たれる以上
+            // 幅も原寸を超えない。カードより広いものは aspectRatio が縮めるので、
+            // 枠の外へ出る部分は残らない。360 は Adaptive と同じカードの上限。
+            //
+            // idealHeight を添えるのは、縦の提案が来ない所（VStack の中）で
+            // GeometryReader の既定の大きさへ落ちないようにするため。
+            let height = min(nativeHeight, 360)
+            content
+                .aspectRatio(ratio, contentMode: .fit)
+                .frame(idealHeight: height, maxHeight: height)
         } else {
             content
-                .aspectRatio(max(0.25, preferred.width / max(1, preferred.height)),
-                             contentMode: .fit)
+                .aspectRatio(ratio, contentMode: .fit)
                 .frame(minHeight: 180, maxHeight: 360)
         }
     }

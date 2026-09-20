@@ -79,6 +79,40 @@ bool sourceWithinBudgets(const std::string &source, std::string &reason)
     return true;
 }
 
+/// `trigger` という識別子が本文に出るか。コメントと文字列は飛ばす。
+///
+/// 前後が識別子の文字でないことだけ見る。`triggerCount` のような別の名前を
+/// 拾わないため。取りこぼすより多めに拾うほうが安全（札が出るだけ）。
+bool sourceUsesTrigger(const std::string &source)
+{
+    static const std::string word = "trigger";
+    bool quoted = false, escaped = false, lineComment = false;
+    for (size_t i = 0; i < source.size(); ++i) {
+        char c = source[i];
+        if (lineComment) { if (c == '\n') lineComment = false; continue; }
+        if (!quoted && c == '/' && i + 1 < source.size() && source[i + 1] == '/') {
+            lineComment = true; ++i; continue;
+        }
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') quoted = false;
+            continue;
+        }
+        if (c == '"') { quoted = true; continue; }
+        if (c != word[0] || source.compare(i, word.size(), word) != 0) continue;
+        const char before = i == 0 ? ' ' : source[i - 1];
+        const size_t after = i + word.size();
+        const char next = after < source.size() ? source[after] : ' ';
+        auto part = [](char ch) {
+            return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.';
+        };
+        if (!part(before) && !part(next)) return true;
+    }
+    return false;
+}
+
 void put32(std::vector<uint8_t> &o, uint32_t v)
 { o.push_back(v); o.push_back(v >> 8); o.push_back(v >> 16); o.push_back(v >> 24); }
 uint32_t get32(const uint8_t *p)
@@ -109,6 +143,8 @@ struct ETJSFX {
     /// deadlineWorst は「1 ブロックの持ち時間に対する割合」の最大値を 1/1000 で持つ。
     std::atomic<uint32_t> deadlineTrips{}, deadlineWorst{};
     std::atomic<uint32_t> pendingTriggers{};
+    /// 本文に `trigger` が出たか。作るときに 1 度だけ見る。
+    bool usesTrigger{};
     std::atomic<bool> latencyChanged{};
     std::atomic<bool> sliderChanged{};
     std::atomic<uint8_t> diagnostic{(uint8_t)Diagnostic::none};
@@ -248,6 +284,7 @@ ETJSFX *ETJSFX_Create(const char *path, double rate, uint32_t maxFrames, char *e
     if (forbiddenSource(source, reason)) { errorCopy(error, cap, reason); return nullptr; }
     if (!sourceWithinBudgets(source, reason)) { errorCopy(error, cap, reason); return nullptr; }
     auto *h = new ETJSFX; h->maxFrames = maxFrames; h->sampleRate = rate;
+    h->usesTrigger = sourceUsesTrigger(source);
     NSEEL_RAM_limitmem = kGlobalEEL;
     h->config = ysfx_config_new();
     if (!h->config) { errorCopy(error, cap, "Could not create EEL2 runtime."); delete h; return nullptr; }
@@ -359,6 +396,7 @@ bool ETJSFX_SendTrigger(ETJSFX *h,uint32_t i)
     h->pendingTriggers.fetch_or(1u<<i,std::memory_order_release);return true;
 }
 uint32_t ETJSFX_MaxTriggers(void){return ysfx_max_triggers;}
+bool ETJSFX_UsesTrigger(const ETJSFX *h){return h&&h->usesTrigger;}
 bool ETJSFX_ClearDiagnostic(ETJSFX *h)
 {
     if(!h)return false;

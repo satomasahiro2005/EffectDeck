@@ -26,3 +26,17 @@ Copyright (c) 2013 Julien Pommier
 Copyright (c) 2004 the University Corporation for Atmospheric Research (UCAR)
 
 Full text in `Vendor/effetune/plugins/dsp/NOTICE.txt`.
+
+## Synthetic Binaural Room
+
+The acoustic model behind **Virtual Room** starts from
+`scripts/generate-synthetic-binaural-room.js` in
+[M0Rf30/easyeffects-presets](https://github.com/M0Rf30/easyeffects-presets).
+
+MIT License / Copyright (c) 2018 Matteo Iervasi
+
+Full text in `Licenses/easyeffects-presets.LICENSE`, and in the app under
+Settings → About → Licenses. Source files that carry code derived from that
+script say so at the top.
+
+Virtual Room is an EffectDeck effect. It is not part of EffeTune.

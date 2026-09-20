@@ -16,6 +16,10 @@ ITEMS = [
     ("PFFFT", "BSD-3-Clause", "Julien Pommier", "Vendor/effetune/dsp/vendor/pffft/LICENSE.txt"),
     ("ysfx", "Apache-2.0", "Jean Pierre Cimalando, Joep Vanlier and contributors", "Vendor/ysfx/LICENSE"),
     ("WDL / LICE", "zlib-style", "Cockos Incorporated and contributors", "Vendor/ysfx/thirdparty/WDL/LICENSE.txt"),
+    # Virtual Room の音響モデルの出発点（docs/virtual-room-design.md §60.2）。
+    # 本文は使った時点の M0Rf30/easyeffects-presets/LICENSE をそのまま置いてある。
+    ("Synthetic Binaural Room", "MIT", "Matteo Iervasi (M0Rf30/easyeffects-presets)",
+     "Licenses/easyeffects-presets.LICENSE"),
 ]
 
 
