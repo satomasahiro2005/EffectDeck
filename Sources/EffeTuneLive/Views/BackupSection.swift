@@ -68,7 +68,8 @@ struct ETBackupSection: View {
                 Label("Import presets & chain", systemImage: "square.and.arrow.down")
             }
             .fileImporter(isPresented: $importing,
-                          allowedContentTypes: [.json, .text, .data],
+                          // 型で絞らない。中身が読めるかは受け側が決める。
+                          allowedContentTypes: [.item],
                           allowsMultipleSelection: false) { result in
                 switch result {
                 case .success(let urls):

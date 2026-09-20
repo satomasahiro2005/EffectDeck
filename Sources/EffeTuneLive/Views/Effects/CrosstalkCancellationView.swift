@@ -168,7 +168,7 @@ struct CrosstalkCancellationView: View {
         // fileImporter と sheet は同じビューに重ねない（IRReverbView.swift:85-86）。
         // シートの方は上の VStack に付けてある。
         .fileImporter(isPresented: $picking,
-                      allowedContentTypes: [.audio, .wav, .aiff, .mpeg4Audio, .data],
+                      allowedContentTypes: [.item],
                       allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
                 importFile(url, into: target)

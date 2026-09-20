@@ -41,21 +41,25 @@ enum ETInbox {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-        // **音が先。**IRLibrary.importFile は拡張子をそのまま複製先の名前に使い、
-        // 読めない中身は自分で落とす。JSFX は UTF-8 のテキストしか通らないので、
-        // 音のファイルがこちらへ紛れ込むことはない。
+        // **どちらも中身で判定する。拡張子では振らない。**
+        //
+        // 前は音を先に試していた。IRLibrary.importFile は読めさえすれば何でも
+        // 受けていたので（拡張子は複製先の名前に使うだけ）、**JSFX を渡しても
+        // IR として取り込まれて終わっていた。**いまは両方が頭の印と中身を見る。
+
+        // 音（IRLibrary.looksLikeAudio が RIFF/FORM/fLaC/caff を見る）。
         if let id = IRLibrary.shared.importFile(at: url) { return .ir(id) }
 
-        // **JSFX は中身で判定する**（ETJSFXHost.importFile の looksLikeJSFX）。
+        // JSFX（ETJSFXHost.importFile の looksLikeJSFX が `desc:` と `@…` を見る）。
         // 拡張子が無いもの、`.txt` が付いたものも同じ道を通る。
         do {
             let entry = try ETJSFXHost.shared.importFile(url)
             return .jsfx(entry.id)
         } catch let error as NSError where error.domain == "ETJSFX" && error.code == 10 {
-            // JSFX ではなかった。音でもないので、ここは素通り。
+            // JSFX でも音でもなかった。
             return .unsupported
         } catch {
-            // JSFX らしいが受けられなかった（大きすぎる、UTF-8 でない、写せない）。
+            // JSFX らしいが受けられなかった（大きすぎる、字に起こせない、写せない）。
             // 黙って落とすと「押しても何も起きない」になるので、理由を返す。
             return .failed(error.localizedDescription)
         }

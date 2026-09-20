@@ -73,15 +73,14 @@
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>JSFX Source</string>
+			<string>EffectDeck File</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>public.plain-text</string>
-				<string>public.data</string>
+				<string>public.item</string>
 			</array>
 		</dict>
 	</array>

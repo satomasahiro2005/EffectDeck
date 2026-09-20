@@ -86,6 +86,13 @@ final class IRLibrary: ObservableObject {
             log.error("読めない \(source.lastPathComponent, privacy: .public)")
             return nil
         }
+        // **中身を見る。**ここは読めさえすれば何でも受けていた。拡張子も名前に
+        // 使うだけで判定していない。共有シートから来たものは ETInbox が
+        // 先にここへ渡すので、**JSFX でも何でも IR として取り込まれていた。**
+        guard Self.looksLikeAudio(data) else {
+            log.notice("音ではない \(source.lastPathComponent, privacy: .public)")
+            return nil
+        }
         let id = Self.key(for: data)
         if let existing = entries.first(where: { $0.id == id }) { return existing.id }
 
@@ -106,6 +113,28 @@ final class IRLibrary: ObservableObject {
         reload()
         log.notice("取り込んだ \(id, privacy: .public) \(data.count) bytes")
         return id
+    }
+
+    /// 音のファイルか。**頭の印だけ見る。**
+    ///
+    /// 受けるのは Info.plist に出してある 4 種（WAV / AIFF / FLAC / CAF）。
+    /// 中身まで解くのは取り込みの場では重すぎるし、解けるかどうかは
+    /// 読み込む側（ETIRLoader）が落とす。ここで止めたいのは
+    /// **そもそも音ではないもの**だけ。
+    static func looksLikeAudio(_ data: Data) -> Bool {
+        guard data.count >= 12 else { return false }
+        let head = data.prefix(12)
+        func tag(_ at: Int) -> String {
+            String(decoding: head[head.startIndex + at ..< head.startIndex + at + 4],
+                   as: UTF8.self)
+        }
+        switch tag(0) {
+        case "RIFF": return tag(8) == "WAVE"      // WAV
+        case "FORM": return tag(8).hasPrefix("AIF")  // AIFF / AIFC
+        case "fLaC": return true                   // FLAC
+        case "caff": return true                   // CAF
+        default:     return false
+        }
     }
 
     func remove(_ entry: Entry) {

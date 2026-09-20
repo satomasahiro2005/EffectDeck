@@ -12,6 +12,7 @@
 //  （plugins/control/section.js）。
 
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct EffectPickerView: View {
@@ -28,6 +29,9 @@ struct EffectPickerView: View {
     @StateObject private var au = ETAUHost.shared
     @StateObject private var jsfx = ETJSFXHost.shared
     @State private var query = ""
+    /// リンクからの取り込み。
+    @State private var askingLink = false
+    @State private var linkText = ""
     @State private var importingJSFX = false
     /// 消そうとしている JSFX。取り消せないので一度確かめる（IR と同じ形）。
     @State private var pendingDeleteJSFX: ETJSFXHost.Entry?
@@ -251,14 +255,24 @@ struct EffectPickerView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 if pane == .plugins {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("Import JSFX", systemImage: "square.and.arrow.down") {
-                            importingJSFX = true
+                        Menu {
+                            Button("From Files", systemImage: "folder") {
+                                importingJSFX = true
+                            }
+                            // **リンクからも入れられる。**GitHub の画面の URL を
+                            // そのまま貼れる（ETRemoteFile が raw へ読み替える）。
+                            Button("From Link", systemImage: "link") {
+                                linkText = UIPasteboard.general.string ?? ""
+                                askingLink = true
+                            }
+                        } label: {
+                            Label("Import JSFX", systemImage: "square.and.arrow.down")
                         }
                     }
                 }
             }
             .fileImporter(isPresented: $importingJSFX,
-                          allowedContentTypes: [.plainText, .data], allowsMultipleSelection: false) { result in
+                          allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
                 do {
                     guard let url = try result.get().first else { return }
                     _ = try jsfx.importFile(url)
@@ -269,6 +283,17 @@ struct EffectPickerView: View {
                 get: { importError != nil }, set: { if !$0 { importError = nil } })) {
                     Button("OK", role: .cancel) { importError = nil }
                 } message: { Text(importError ?? "Unknown error") }
+            // **リンクを貼る。**貼り付けを先に入れてあるので、たいていはそのまま押すだけ。
+            .alert("Import from Link", isPresented: $askingLink) {
+                TextField("https://github.com/…", text: $linkText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                Button("Cancel", role: .cancel) { }
+                Button("Import") { fetchLink() }
+            } message: {
+                Text("A link to a JSFX source. A GitHub page works as well as a raw link.")
+            }
             // 一覧と検索結果の両方を覆う階層に 1 つ置く。行ごとに持たせると
             // 検索から払ったときに出ない。
             .confirmationDialog(pendingDeleteJSFX.map { "Remove “\($0.name)”?" } ?? "",
@@ -650,6 +675,14 @@ struct EffectPickerView: View {
                             jsfx.debugPresetItems()
                         }
                         .id(Self.jumpTarget(category))
+                        // 手で組み直さずに見るための鎖（DSP/DebugPresets.swift）。
+                        ForEach(Array(ETDebugPresets.all.enumerated()), id: \.offset) {
+                            _, item in
+                            presetRow(name: item.name,
+                                      payload: "preset:debug:" + item.name) {
+                                ETShareLink.parse(item.json, catalog: ETCatalog)
+                            }
+                        }
                     } else {
                         let presets = ETSystemPresets.filter { $0.category == category }
                         ForEach(Array(presets.enumerated()), id: \.element.id) { offset, preset in
@@ -717,7 +750,8 @@ struct EffectPickerView: View {
             seen.insert($0.category).inserted ? $0.category : nil
         }
         #if DEBUG
-        return jsfx.debugPresetItems().isEmpty ? regular : [Self.debugJSFXCategory] + regular
+        // 見るための鎖は JSFX が無くても出す。
+        return [Self.debugJSFXCategory] + regular
         #else
         return regular
         #endif
@@ -792,6 +826,36 @@ struct EffectPickerView: View {
 
     private func effects(in category: String) -> [ETEffect] {
         catalog.filter { $0.category == category }.sorted { $0.name < $1.name }
+    }
+
+    /// リンクから取ってきて入れる。
+    ///
+    /// 取るのは ETRemoteFile、入れるのは ETInbox。**判定はどちらもしない**
+    /// （音か JSFX かは取り込み先が中身の頭で決める）。ここは繋ぐだけ。
+    private func fetchLink() {
+        let text = linkText
+        guard let address = ETRemoteFile.address(from: text) else {
+            importError = ETRemoteFile.Failure.notAnAddress.localizedDescription
+            return
+        }
+        Task { @MainActor in
+            do {
+                let file = try await ETRemoteFile.fetch(address)
+                switch ETInbox.receive(file) {
+                case .jsfx:
+                    pane = .plugins
+                case .ir:
+                    // 音として入った。IR の一覧へ入るので、ここでは閉じるだけ。
+                    dismiss()
+                case .failed(let why):
+                    importError = why
+                case .unsupported:
+                    importError = "That link is neither a JSFX source nor an impulse response."
+                }
+            } catch {
+                importError = error.localizedDescription
+            }
+        }
     }
 
     private var searchList: some View {

@@ -113,7 +113,7 @@ struct IRLibraryView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
             .fileImporter(isPresented: $picking,
-                          allowedContentTypes: [.audio, .wav, .aiff, .mpeg4Audio, .data],
+                          allowedContentTypes: [.item],
                           allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls): report(importing: urls)

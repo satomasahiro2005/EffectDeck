@@ -90,8 +90,10 @@ struct RoomEQView: View {
                 actionButton("Import measurement…") { picking = true }
                     .disabled(!AssetUpload.canStage)
                     .fileImporter(isPresented: $picking,
-                                  allowedContentTypes: [.audio, .wav, .aiff,
-                                                        .mpeg4Audio, .data],
+                                  // **全部選べるようにする。**型で絞ると、拡張子が
+                                  // 無いものや別の型を名乗るものが灰色になって選べない。
+                                  // 音かどうかは IRLibrary が中身の頭を見て判じる。
+                                  allowedContentTypes: [.item],
                                   allowsMultipleSelection: true) { result in
                         if case .success(let urls) = result { load(urls) }
                     }

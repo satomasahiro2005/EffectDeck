@@ -867,13 +867,24 @@ struct PipelineView: View {
         /// 畳んだ Section（配下が画面に無い）に線だけ残った。
         var block: ETBlockPosition = .alone
 
+        /// 畳んでいるか。線を引くかの判定に使う。
+        var isCollapsed = false
+
         /// 左の線を出すか。
         ///
-        /// 組の中の行に加えて、**畳んだ Section 自身にも出す。**畳むと配下の行が
-        /// 消えるので position() は `.alone` を返すが、そこで線まで消すと
-        /// 「中に何か入っている組」なのか「ただの段」なのか見分けが付かない。
+        /// 組の中の行と、**畳んだ Section 自身**。畳むと配下の行が消えるので
+        /// position() は `.alone` を返すが、そこで線まで消すと「中に何か入っている
+        /// 組」なのか「ただの段」なのか見分けが付かない。
         /// 線は出すが下へは伸ばさない（`.alone` は roundsBottom なので伸びない）。
-        var showsBracket: Bool { block != .alone || node.isSection }
+        ///
+        /// **開いている無名の Section には出さない。**あれは組を始める印ではなく、
+        /// 直前の組を閉じるために置く代用品（ETSection.isUnnamed）。開いたまま
+        /// 線を引くと、そこから新しい組が始まるように見える。畳んだときは中身が
+        /// 隠れているので、在ることを示すために引く。
+        var showsBracket: Bool {
+            if block != .alone { return true }
+            return node.isSection && isCollapsed
+        }
 
     }
 
@@ -885,10 +896,14 @@ struct PipelineView: View {
     private var rows: [Row] {
         let types = dsp.chain.map(\.spec.type)
         var hidden: Set<Int> = []
+        // **無名の Section も畳める。**
+        //
+        // 一度、無名で有効なものをここから外したことがある（組を閉じる印は組を
+        // 持たない、という理屈）。**畳む札は出ているのに押しても何も起きない**
+        // という形になっていた。組を作らない（member に入れない）ことと、
+        // 畳めないことは別で、外に出た段をまとめて隠したい場面は普通に在る。
         for i in dsp.chain.indices
-        where dsp.chain[i].isSection
-            && (!ETSection.isUnnamed(dsp.chain[i].sectionName) || !dsp.chain[i].enabled)
-            && !expanded.contains(dsp.chain[i].id) {
+        where dsp.chain[i].isSection && !expanded.contains(dsp.chain[i].id) {
             hidden.formUnion(ETSection.range(after: i, types: types))
         }
         // どの段がどの Section のものか。区切りは入れ子にならない。
@@ -938,8 +953,10 @@ struct PipelineView: View {
             }
         }
         return shown.indices.map {
-            Row(visible: $0, index: shown[$0], node: dsp.chain[shown[$0]],
-                block: position($0))
+            let node = dsp.chain[shown[$0]]
+            return Row(visible: $0, index: shown[$0], node: node,
+                       block: position($0),
+                       isCollapsed: node.isSection && !expanded.contains(node.id))
         }
     }
 

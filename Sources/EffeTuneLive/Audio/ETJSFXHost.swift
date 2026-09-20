@@ -209,9 +209,12 @@ final class ETJSFXHost: ObservableObject {
         // importFile は @MainActor なので、鳴っている最中に画面が止まる。
         let data = try Data(contentsOf: source, options: .mappedIfSafe)
         guard data.count <= 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
-        guard let text = String(data: data, encoding: .utf8) else {
+        // **UTF-8 だけに限らない。**REAPER から出たものは Windows の綴りのことがある。
+        // ysfx は素のバイトを読むので、ここで起こすのは判定のためだけ。
+        guard let text = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1) else {
             throw NSError(domain: "ETJSFX", code: 11,
-                          userInfo: [NSLocalizedDescriptionKey: "The JSFX source is not valid UTF-8."])
+                          userInfo: [NSLocalizedDescriptionKey: "The JSFX source is not text."])
         }
         guard Self.looksLikeJSFX(text) else {
             throw NSError(domain: "ETJSFX", code: 10,
@@ -662,8 +665,13 @@ final class ETJSFXHost: ObservableObject {
     }
 
     private static func entry(for owned: URL, fallbackName: String, debug: Bool) -> Entry? {
+        // **綴りは UTF-8 に限らない。**importFile はここへ来る前に Latin-1 でも
+        // 起こしてみる。ここだけ UTF-8 に絞っていると、通ったはずのものが
+        // 名前を引けずに nil になり、「字に起こせない」で弾かれていた。
         guard owned.pathExtension.lowercased() == "jsfx",
-              let text = try? String(contentsOf: owned, encoding: .utf8) else { return nil }
+              let data = try? Data(contentsOf: owned, options: .mappedIfSafe),
+              let text = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1) else { return nil }
         let metadata = metadata(text)
         let identifier: String
         if debug {
@@ -724,7 +732,11 @@ final class ETJSFXHost: ObservableObject {
     private static func looksLikeJSFX(_ text: String) -> Bool {
         let sections = ["@init", "@slider", "@block", "@sample", "@serialize", "@gfx"]
         for line in text.split(whereSeparator: { $0.isNewline }).prefix(80) {
+            // **頭の見えない字を落とす。**メールや Files を通ると UTF-8 の印（BOM）が
+            // 頭に付くことがある。付いたままだと 1 行目が `desc:` で始まらず、
+            // **中身は JSFX なのに弾いていた**（`.txt` が受理されなかったのがこれ）。
             let t = line.trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\u{FEFF}\u{200B}"))
             if t.hasPrefix("desc:") { return true }
             if sections.contains(where: { t.hasPrefix($0) }) { return true }
         }
