@@ -457,3 +457,123 @@ apfs-fuse の大きな読みが不安定なのは確か（同じファイルで 
 
 **4 が本命の逃げ道。**抜き出した dylib でも `__got` の**枠の番地**は残っているので、
 「鍵の export 番地」ではなく「枠の番地」で探せば当たる。
+
+## 道具の詰まりは 2 段階だった（解決）
+
+**1. 読んでいた MediaToolbox が壊れていた。**
+
+`H:\ios27-nfc\dsc27` は **535MB の部分キャッシュ**で、そこから
+`ipsw dyld extract` したものを読んでいた。`ipsw macho info -l` が
+`failed to read lazy load dylib info data at offset 0x164e2b10: EOF` で落ちる。
+
+**328 万行の逆アセンブルに GOT の参照が 1 件も出なかったのはこれが理由。**
+grep の当て方の問題ではなかった。
+
+完全なキャッシュの `.77.dyldlinkedit` だけで 678MB あるので、
+535MB の部分キャッシュに収まるはずがない。**先に大きさを見れば気づけた。**
+
+**2. 完全なキャッシュは apfs-fuse で扱えない。**
+
+```
+dyld_shared_cache_arm64e.77.dyldlinkedit   678 MB  … Input/output error
+dyld_shared_cache_arm64e.symbols         1,223 MB  … Input/output error
+```
+
+`open` すら通らない（`dd conv=noerror` でも駄目）。この 2 つが欠けると
+`xref` も `dyld extract` も `invalid dyld_shared_cache magic … at byte 0x0`。
+**`symaddr` のような小さい読みは通るので気づきにくい。**
+
+**逃げ道: 7-Zip。**26.03 は APFS を直に読める（`Type = APFS`）。
+この dmg は元々 7-Zip で扱っていた（`H:\ios27-nfc\7z.log`）。
+
+```powershell
+& 'C:\Program Files\7-Zip\7z.exe' e <dmg> -o<出力先> -y `
+  "System\Library\Caches\com.apple.dyld\dyld_shared_cache_arm64e.77.dyldlinkedit" `
+  "System\Library\Caches\com.apple.dyld\dyld_shared_cache_arm64e.symbols"
+```
+
+**Mac は使わない。**空きが 15 GiB しかなく、6GB の dmg を置くと
+ビルド機を圧迫する。
+
+## 完全な DSC の置き場（これから使うもの）
+
+```
+/mnt/h/ios-audio/dsc27full/dyld_shared_cache_arm64e
+```
+
+5.0G を apfs-fuse で写し、欠けた 2 つを 7-Zip で足したもの。
+
+---
+
+# #4 の真因（2026-09-21 実測で確定）
+
+**Canvas のプレイヤーが `IsPlayingVideoOutput = YES` を立てたまま戻さない。**
+
+見張りが捕まえた並び（`~/mde-watch.log`）:
+
+```
+04:17:07.896  -[MXSession(InterfaceImpl) initWithSession:]
+              Creating MXSession = <ID: 45a, CoreSessionID = 48
+              Name = sid:0x7406f, Spotify(841), 'prim', …
+              clientType = 1, IsPlayingOutput = NO, IsPlayingVideoOutput = NO>
+
+04:17:09.043  -[MXSession(InternalUse) setIsPlayingVideoOutput:]
+              MXSession(45a) of type FigPlayer for CoreSession sid:0x7406f, Spotify(841)
+              setting IsPlayingVideoOutput = YES
+
+04:19:09.454  <ID: 45a, … DoesntActuallyPlayAudio = YES, clientType = 3,
+              IsPlayingOutput = NO, IsPlayingVideoOutput = YES>
+
+04:23:05.996  Session with bundleID: com.spotify.client doesn't support currently selected
+              protocolID …  isPlayingVideoOutput: YES.  routeSharingPolicy 1
+04:23:05.997  Session with bundleID: com.spotify.client playing video or a long-form-video
+              app. Will attempt to switch to AirPlay
+```
+
+**`45a` が `NO` に戻した記録は 0 件**（窓の中で `grep -c "MXSession(45a).*= NO"` = 0）。
+立ててから 6 分後の判定がまだ `YES` を見ている。
+
+## 何が起きているか
+
+**1 つの CoreSession に MXSession が複数ぶら下がる。**
+
+| MXSession | type | clientType | 音 | 映像 |
+|---|---|---|---|---|
+| `457` | — | 2 | `IsPlayingOutput = YES` | `IsPlayingVideoOutput = NO` |
+| `45a` | **FigPlayer** | 1 → 3 | `IsPlayingOutput = NO`<br>`DoesntActuallyPlayAudio = YES` | **`IsPlayingVideoOutput = YES`** |
+
+`45a` は **音を出さず映像だけのプレイヤー** ——Canvas（曲に付くループ動画）。
+音を鳴らしているのは `457` のほうで、そちらは `video = NO` のまま。
+
+判定は **CoreSession の値**を読むので、黙っている Canvas のプレイヤーが汚染する。
+
+## 対照
+
+同じ窓で WebKit は**戻している**。
+
+```
+04:19:12.330  MXSession(450) of type None for CoreSession com.apple.WebKit(744)
+              setting IsPlayingVideoOutput = YES
+04:19:14.626  MXSession(450) of type None for CoreSession com.apple.WebKit(744)
+              setting IsPlayingVideoOutput = NO      ← 2.3 秒後
+```
+
+**戻す実装と戻さない実装が同じ端末に居る。**Spotify の FigPlayer は戻さない。
+
+## これで説明が付くもの
+
+- **Canvas の無い曲でも `YES`** … 前の曲の Canvas で立った値が残っている
+- **プロセスを作り直すと直る** … CoreSession ごと消えて、新しいのは `NO` から始まる
+- **「20% くらいで失敗する」** … Canvas 付きの曲を通ったあとかどうか
+
+## 回避（利用者に出せる）
+
+**Spotify を一度終了してから選び直す。**CoreSession が消えるので `YES` も消える。
+EffectDeck 側から消す手は無い（他のアプリのセッションの property）。
+
+## #3 への当て込み（未確認）
+
+同じ形で説明できるはず。ytlite の映像のプレイヤーがサブセッションとして
+`YES` を立て、アプリを作り直すと `NO` から始まる。
+「同じ動画でも通ったり通らなかったり」「再起動で直る」と合う。
+**ただし #3 でこの並びを撮ったわけではない。**見張りは置いてある。
