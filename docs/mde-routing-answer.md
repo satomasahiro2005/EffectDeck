@@ -341,3 +341,119 @@ _kMXSessionProperty_IsPlayingVideoOutput  0x1e1147208  MediaExperience
   こちらはそもそも attach できない
 
 ytlite を再署名して `get-task-allow` を付ければ開くが、別の作業。
+
+---
+
+# 言い方の精度を上げる（2026-09-21）
+
+## 1. 「YES なら詰み」は限定が要る
+
+正しくは**「EffectDeck 側からは救えない」**で、「OS 全体として必ず拒否」ではない。
+`isPlayingVideoOutput == YES` でも、映像の判定より前に在る
+`MDESupportsUniversalURLPlayback` の許可と、video 側の
+`routeSharingPolicy == longFormVideo && !isAirPlayVideoAllowedByClient` の許可は残る。
+
+```
+MediaToolbox が IsPlayingVideoOutput = YES を設定
+    ↓
+MusicVAD / mirroring の枝は到達不能
+    ↓
+いま観測している YouTube の session properties では拒否
+    ↓
+EffectDeck 側の宣言・capability では救えない
+```
+
+**#3 の観測条件では実質詰み**、が言えるところ。
+
+## 2. 「分類する」ではなく「設定する」
+
+`isPlayingVideoOutput` を MediaToolbox が**分類している**のか、
+**映像の出口の状態をそのまま映しているだけ**なのかは、まさにこれから調べる所。
+先に「分類」と呼ぶと結論を先取りする。
+**「`kMXSessionProperty_IsPlayingVideoOutput` に YES/NO を設定する」**と書く。
+
+## 3. xref が 0 件でも証拠にならない
+
+`ipsw dyld xref` は本人が `🚧 [WIP]` と書いている。0 件を「参照していない」の
+根拠に使わない。輸入シンボルの性質も違う。
+
+```
+_MXSessionSetProperty                     … 輸入した関数
+                                            → stub / GOT / stub island 越し
+kMXSessionProperty_IsPlayingVideoOutput   … 輸入したデータ
+                                            → GOT 枠を LDR
+```
+
+**export 本体の `0x1e1147208` に xref が無いのは普通に在り得る。**
+0 件なら「MediaToolbox 側の輸入の slot → slot への xref」へ落とす。
+
+image はフルパスでなく basename（`--image MediaToolbox`）でよい。
+
+## 4. 動的側: 塞がっているのは ytlite だけ
+
+前に「ytlite にも audiomxd にも attach できないから動的は無理」と書いたが、
+**writer を捕まえるだけなら再署名した ytlite に attach できれば足りる。**
+MediaToolbox が `_MXSessionSetProperty` を呼ぶ瞬間は、audiomxd へ届く前に
+アプリのプロセス内で捕まる。**audiomxd への attach は要らない。**
+
+```
+いまの ytlite には get-task-allow が無い   → writer を動的に捕まえられない
+再署名して debuggable にする              → writer 側だけなら動的が開く
+audiomxd                                   → writer の特定には要らない
+```
+
+再署名は別作業なので今は寄り道しない、という判断は変えない。
+
+## 5. 「値を保持しているのは audiomxd」は言い過ぎ
+
+`MXSession` の状態ダンプと経路判定に値が現れることは、**サーバ側にも伝播している**
+ことを示すだけで、「唯一の保持場所が audiomxd」とまでは言えない。
+`_MXSessionSetProperty` の実装か IPC の経路を見てから書く。
+
+## 現時点のいちばん厳密な書き方
+
+```
+MXCustomRoutingController の判定関数
+    → 解決済み
+
+MusicVAD が許可に間に合う／間に合わない現象
+    → 実測でかなり説明できた
+    → ただし「固定の生成遅延」とまでは未確定
+
+残る共通問題:
+MediaToolbox が kMXSessionProperty_IsPlayingVideoOutput に
+YES / NO を設定する条件
+    ↓
+#3: 同じ YouTube 動画でも YES / NO
+#4: non-Canvas の Spotify でも一時的に YES
+```
+
+## 道具の状態（2026-09-21 時点）
+
+`ipsw dyld xref` はまだ動かせていない。**方針の問題ではなく道具の問題。**
+
+| 置き場 | `symaddr` | `xref` |
+|---|---|---|
+| apfs-fuse のマウント越し | 通る | `invalid dyld_shared_cache magic … at byte 0x0` |
+| マウントの外へ写したもの | 通らない | 同じ |
+
+写しでは `dyld_shared_cache_arm64e.symbols` が **I/O error** で落ちた
+（5.0G / 78 ファイルは写せた）。**`xref` が `.symbols` を読みに行っていて、
+そこが壊れているのではないか**というのがいまの読み。
+
+apfs-fuse の大きな読みが不安定なのは確か（同じファイルで `cp` が落ちる）。
+
+**次に試すこと**
+
+1. `.symbols` を `dd conv=noerror,sync` で埋めながら写す
+2. それでも駄目なら `--cache` に自前の a2s を渡す
+3. `xref` を諦めて `dyld disass` で `_MXSessionSetProperty` を読み、
+   IPC の経路と保持場所を確かめる（「保持しているのは audiomxd」を
+   言い過ぎにしないためにも要る）
+4. それも駄目なら、`ipsw dyld extract` に `--force-symbols` 相当が在るか見る。
+   無ければ MediaToolbox の `__got` と輸入表を自前で突き合わせる
+   （slot の番地さえ出れば、抜き出した `MediaToolbox.asm` の
+   328 万行から `adrp/ldr` で拾える）
+
+**4 が本命の逃げ道。**抜き出した dylib でも `__got` の**枠の番地**は残っているので、
+「鍵の export 番地」ではなく「枠の番地」で探せば当たる。
