@@ -607,3 +607,35 @@ GOT の中身はキャッシュ側に在るので、抜き出した単体のフ�
 /System/Library/Frameworks/MediaToolbox.framework/MediaToolbox
 /System/Library/PrivateFrameworks/MediaExperience.framework/MediaExperience
 ```
+
+## #4 の言い方を締める
+
+「WebKit が戻しているので仕様ではない」と書いたが、証明できているのは
+
+> **OS が `YES` を保持し続ける不可避な仕様ではない**
+
+まで。**「`NO` に戻す責任が Spotify 側にある」という責任分界は、まだ言えない。**
+MediaToolbox / FigPlayer 側の契約（誰がいつ戻すことになっているか）を
+読む余地が残っている。
+
+実用上の原因認定 ——**Spotify の Canvas / FigPlayer の生存期間に
+古い状態が残る** ——は十分強い。回避策もそれで足りる。
+
+## #3 を確定させるのに要る観測（1 点だけ）
+
+```
+ytlite で動画を再生
+    ↓
+MXSession(xxx) of type FigPlayer for CoreSession …, ytlite
+    setting IsPlayingVideoOutput = YES
+    ↓
+動画を止める／別のものへ
+    ↓
+… setting IsPlayingVideoOutput = NO が出るか
+```
+
+**出なければ #3 は #4 と同じ形**（サブセッションが立てたきり戻さない）。
+出るなら別の理由。Spotify の `45a` が戻さなかったのと同じ対照になる。
+
+見張りの注意: `grep --line-buffered -A 10` にすると無関係な行を巻き込んで
+**流れが詰まる**（2026-09-21 04:39 で止まった）。`-A` は付けない。
