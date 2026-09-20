@@ -940,3 +940,55 @@ GOT の中身はキャッシュ側に在る。**DSC のまま読むこと。**
 
 `pkill -f 'ipsw dyld'` は広すぎて `disass` まで巻き込む。名前を絞ること。
 WSL が `E_UNEXPECTED` を返したら `wsl --shutdown` で戻る。
+
+## 静的側は道具の壁で止まった（2026-09-21）
+
+**`ipsw dyld xref` はこのキャッシュでは使えない。**
+
+- MediaToolbox 1 image に絞っても RSS が 6.9GB まで伸び、なお増える
+- WSL は 11GB 割当（母艦 15.9GB なので上げる余地が無い）
+- 最後は **WSL の VM ごと落ちる**（`Wsl/Service/E_UNEXPECTED`）。
+  `wsl --shutdown` で戻るが、xref は毎回同じ所で落ちる
+
+`disass --vaddr` は安定して動くので、**番地が分かっているものは読める。
+参照を逆に辿ることだけができない。**
+
+### 読んだ結果
+
+**`_MXSessionSetProperty`（`0x1ae8922c8`、144 命令）は薄い取次。**
+引数を箱に詰めて `___MXSessionSetProperty_block_invoke`（`0x1ae948e08`）へ
+投げているだけ。**受け側なので呼び出し元は出てこない。**
+
+**`_fpfsi_handleVideoOutputsChanged`（822 命令）は書き手ではない。**
+MediaExperience への呼び出しが 1 つも無い。
+
+**`_fpfs_isExternalVideoOutput`（55 命令）は `any(predicate)`。**
+
+```c
+outputs = self->videoOutputs;          // [x20, #0x2d8]
+if (outputs.count < 1) return false;
+for (output in outputs)
+    if (predicate(output)) return true;
+return false;
+```
+
+単なる `count != 0` ではない。**ただし `IsPlayingVideoOutput` の源だとは
+確認できていない。**
+
+### 残ったもの
+
+- setter の callsite を持つ image
+- `IsPlayingVideoOutput` の値を作る式そのもの
+- `_fpfs_isExternalVideoOutput` がその式に参加するか
+
+**どれも EffectDeck の挙動にも出荷判断にも影響しない。**
+#3 / #4 の観測は、これらが分からなくても全部説明できている。
+
+### 次に誰かが続けるなら
+
+1. メモリの潤沢な機械（32GB 以上）で `ipsw dyld xref 0x1ae8922c8 --image MediaToolbox`
+2. それが当たらなければ `--imports` で MediaToolbox を輸入する image へ広げる
+3. `mediaplaybackd` の実行ファイルは DSC に無い。rootfs 側
+   （`/mnt/fs27/root/usr/libexec/mediaplaybackd`）を別に読む
+4. 当たったら value 引数を後ろ向きに辿り、**「存在」か「稼働」か**を決める。
+   稼働なら #4 の stale は配列への残存ではなく**要素の内部状態**
