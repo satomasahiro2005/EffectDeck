@@ -215,11 +215,14 @@ struct SettingsView: View {
                 ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
             }
             ETShareLogButton()
-            Link(destination: URL(string: "https://github.com/satomasahiro2005/EffectDeck/issues")!) {
-                LabeledContent("Report a problem", value: "GitHub")
+            // **本文を先に詰めて開く。**押してから診断を貼らせると、たいてい
+            // 何も付かない報告が来る。1 MB のログは URL に載らないので、
+            // 入るだけの直近ぶんと「添付してほしい」の 1 行を入れる。
+            ETReportDestinationButton(title: "Report a problem", detail: "GitHub") {
+                ETReportLink.github(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
             }
-            Link(destination: URL(string: "mailto:support@nemut.ai")!) {
-                LabeledContent("Email", value: "support@nemut.ai")
+            ETReportDestinationButton(title: "Email", detail: "support@nemut.ai") {
+                ETReportLink.mail(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
             }
             Link(destination: URL(string: "https://nemut.ai/effetune-live/privacy.html")!) {
                 Text("Privacy policy")
@@ -361,6 +364,87 @@ private struct DetailsRows: View {
 
         // 貼るほうには端末と iOS と設定も入れる。報告を 1 回で受け取るため。
         ETCopyDiagnosticsButton { diagnostics }
+    }
+}
+
+/// 報告先を開く札。**URL は押した瞬間に組む。**
+/// Link に渡す形だと body の評価が再描画のたびになり、走っている最中に動く数字が
+/// 古いまま貼られる（About は io を観測していない）。
+private struct ETReportDestinationButton: View {
+    let title: String
+    let detail: String
+    let make: () -> URL?
+
+    var body: some View {
+        Button {
+            if let url = make() { UIApplication.shared.open(url) }
+        } label: {
+            LabeledContent(title, value: detail)
+        }
+    }
+}
+
+/// 問題報告の宛先を、本文つきで組む。
+///
+/// **1 MB のログは本文に入らない。**GitHub は認証済みで 8153 バイトまで通り 8193 で 414、
+/// 未認証の経路は 7042 バイトで 500（実測）。パーセント符号化で ASCII でも 1.5 倍、
+/// 日本語混じりで 2.3 倍に膨らむので、URL に載る生ログは 2〜4 KB。
+/// mailto は HTTP を通らないので同じ壁ではないが、受け入れ長は測っていないので同じ予算で切る。
+/// 1 MB は添付（Attach log）でしか渡さない。
+enum ETReportLink {
+
+    /// URL 全体の予算。未認証の 7042 から余裕を取る。
+    private static let budget = 6000
+
+    /// `+` も符号化する。URLComponents は素通しするので、受け側で空白に化ける
+    /// （同じ罠の対処が ETShareLink に在る）。
+    private static func encode(_ s: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&=?#")
+        return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
+
+    /// 診断と、予算に入るだけの直近のログ。
+    private static func body(_ diagnostics: String) -> String {
+        let head = """
+            (Describe what happened here.)
+
+            ---
+            \(diagnostics)
+            """
+        var text = head
+        let log = ETLogTap.text
+        if !log.isEmpty {
+            // 直近から入るだけ入れる。encode 後の長さで測る。
+            var tail = String(log.suffix(4000))
+            while !tail.isEmpty && encode(text + "
+
+--- log (tail) ---
+" + tail).count > budget {
+                tail = String(tail.dropFirst(256))
+            }
+            if !tail.isEmpty {
+                text += "
+
+--- log (tail) ---
+" + tail
+                text += "
+
+(The full log is longer. Attach it with “Attach log” in Settings.)"
+            }
+        }
+        return text
+    }
+
+    static func github(_ diagnostics: String) -> URL? {
+        URL(string: "https://github.com/satomasahiro2005/EffectDeck/issues/new"
+            + "?title=" + encode("") + "&body=" + encode(body(diagnostics)))
+    }
+
+    static func mail(_ diagnostics: String) -> URL? {
+        URL(string: "mailto:support@nemut.ai"
+            + "?subject=" + encode("EffectDeck")
+            + "&body=" + encode(body(diagnostics)))
     }
 }
 
