@@ -4,6 +4,9 @@
 //  詰め順は EffeTune の dsp/generated/cpp/*Params.h と同じ。
 //  et_instance_set_params にはこの順で float を並べて渡す。
 //  params の並びは EffeTune の createUI が画面に出す順で、詰め順とは別。
+//
+//  EffectDeck 独自の effect は Sources/EffeTuneLive/DSP/<名前>/effect.json が正本。
+//  そちらは fields の並びがそのまま詰め順で、画面の順とも同じ。
 
 import Foundation
 
@@ -1677,5 +1680,39 @@ let ETCatalog: [ETEffect] = [
       defaults: [60.0],
       params: [
         ETParam(name: "stereo", key: "stereo", label: "Stereo", kind: .number(min: -200.0, max: 200.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 60.0, offset: 0, count: 1)
+      ]),
+    ETEffect(
+      type: "VirtualRoomPlugin",
+      name: "Virtual Room",
+      about: "Binaural virtual loudspeakers and room simulation with realtime geometry",
+      category: "spatial",
+      paramsHash: 0x64db6513,
+      floatCount: 24,
+      defaults: [4.2, 3.6, 2.6, 50.0, 36.0, 1.2, 30.0, 1.8, 0.0, 100.0, 1.0, 2.0, 2.0, 2.0, 6.0, 2.0, 1.0, 8.75, 100.0, 100.0, 0.0, 1.0, 31777.0, 41887.0],
+      params: [
+        ETParam(name: "roomWidth", key: "rw", label: "Width", kind: .number(min: 2.0, max: 20.0, step: 0.1, unit: "m", isInteger: false), defaultValue: 4.2, offset: 0, count: 1),
+        ETParam(name: "roomDepth", key: "rd", label: "Depth", kind: .number(min: 2.0, max: 30.0, step: 0.1, unit: "m", isInteger: false), defaultValue: 3.6, offset: 1, count: 1),
+        ETParam(name: "roomHeight", key: "rh", label: "Height", kind: .number(min: 2.0, max: 10.0, step: 0.1, unit: "m", isInteger: false), defaultValue: 2.6, offset: 2, count: 1),
+        ETParam(name: "listenerX", key: "lx", label: "Horizontal Position", kind: .number(min: 5.0, max: 95.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 50.0, offset: 3, count: 1),
+        ETParam(name: "listenerY", key: "ly", label: "Depth Position", kind: .number(min: 5.0, max: 95.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 36.0, offset: 4, count: 1),
+        ETParam(name: "listenerHeight", key: "lz", label: "Ear Height", kind: .number(min: 0.5, max: 2.5, step: 0.01, unit: "m", isInteger: false), defaultValue: 1.2, offset: 5, count: 1),
+        ETParam(name: "speakerAngle", key: "sa", label: "Angle", kind: .number(min: 5.0, max: 90.0, step: 1.0, unit: "deg", isInteger: true), defaultValue: 30.0, offset: 6, count: 1),
+        ETParam(name: "speakerDistance", key: "sd", label: "Distance", kind: .number(min: 0.5, max: 6.0, step: 0.05, unit: "m", isInteger: false), defaultValue: 1.8, offset: 7, count: 1),
+        ETParam(name: "speakerElevation", key: "se", label: "Elevation", kind: .number(min: -30.0, max: 30.0, step: 1.0, unit: "deg", isInteger: true), defaultValue: 0.0, offset: 8, count: 1),
+        ETParam(name: "roomAmount", key: "rm", label: "Room Amount", kind: .number(min: 0.0, max: 200.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 9, count: 1),
+        ETParam(name: "decayScale", key: "ds", label: "Decay", kind: .number(min: 0.25, max: 4.0, step: 0.01, unit: "x", isInteger: false), defaultValue: 1.0, offset: 10, count: 1),
+        ETParam(name: "sideMaterial", key: "sm", label: "Side Walls", kind: .enumeration(["Concrete", "Painted Wall", "Drywall", "Wood", "Glass", "Heavy Curtain", "Carpet", "Acoustic Panel"]), defaultValue: 2.0, offset: 11, count: 1),
+        ETParam(name: "frontMaterial", key: "fm", label: "Front Wall", kind: .enumeration(["Concrete", "Painted Wall", "Drywall", "Wood", "Glass", "Heavy Curtain", "Carpet", "Acoustic Panel"]), defaultValue: 2.0, offset: 12, count: 1),
+        ETParam(name: "rearMaterial", key: "bm", label: "Rear Wall", kind: .enumeration(["Concrete", "Painted Wall", "Drywall", "Wood", "Glass", "Heavy Curtain", "Carpet", "Acoustic Panel"]), defaultValue: 2.0, offset: 13, count: 1),
+        ETParam(name: "floorMaterial", key: "fl", label: "Floor", kind: .enumeration(["Concrete", "Painted Wall", "Drywall", "Wood", "Glass", "Heavy Curtain", "Carpet", "Acoustic Panel"]), defaultValue: 6.0, offset: 14, count: 1),
+        ETParam(name: "ceilingMaterial", key: "ce", label: "Ceiling", kind: .enumeration(["Concrete", "Painted Wall", "Drywall", "Wood", "Glass", "Heavy Curtain", "Carpet", "Acoustic Panel"]), defaultValue: 2.0, offset: 15, count: 1),
+        ETParam(name: "earlyOrder", key: "eo", label: "Early Reflections", kind: .enumeration(["First Order", "Second Order"]), defaultValue: 1.0, offset: 16, count: 1),
+        ETParam(name: "headRadius", key: "hr", label: "Head Size", kind: .number(min: 7.0, max: 11.0, step: 0.05, unit: "cm", isInteger: false), defaultValue: 8.75, offset: 17, count: 1),
+        ETParam(name: "pinnaAmount", key: "pa", label: "Pinna", kind: .number(min: 0.0, max: 150.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 18, count: 1),
+        ETParam(name: "headShadowAmount", key: "hs", label: "Head Shadow", kind: .number(min: 0.0, max: 150.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 19, count: 1),
+        ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -24.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 20, count: 1),
+        ETParam(name: "modelVersion", key: "mv", label: "Model Version", kind: .number(min: 1.0, max: 16.0, step: 1.0, unit: "", isInteger: true), defaultValue: 1.0, offset: 21, count: 1),
+        ETParam(name: "seedLow", key: "s0", label: "Diffusion Seed Low", kind: .number(min: 0.0, max: 65535.0, step: 1.0, unit: "", isInteger: true), defaultValue: 31777.0, offset: 22, count: 1),
+        ETParam(name: "seedHigh", key: "s1", label: "Diffusion Seed High", kind: .number(min: 0.0, max: 65535.0, step: 1.0, unit: "", isInteger: true), defaultValue: 41887.0, offset: 23, count: 1)
       ]),
 ]

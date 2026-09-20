@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EffeTune の DSP 定義から Swift のカタログを作る。
+"""EffeTune の DSP 定義と EffectDeck 独自 effect から Swift のカタログを作る。
 
 詰め順の正本は dsp/generated/cpp/*Params.h。あれは gen-dsp-params.mjs が吐いたもので、
 メンバの並びがそのまま et_instance_set_params に渡す float の並びになっている。
@@ -14,6 +14,12 @@ createUI で見つからなかったパラメータだけ params.json の値を�
 のような目盛りを変換している行は、その -100..100 を持ってくるとモデルに 100 倍の値が入る。
 そういう行は範囲も単位も触らない（表示の変換は Swift 側に無い）。
 
+EffectDeck 独自の effect は Vendor の外に住む。
+Sources/EffeTuneLive/DSP/<名前>/effect.json が正本で（docs/virtual-room-design.md §50）、
+ここから C++ の詰め順ヘッダと Swift の ETEffect を**同じ 1 本の表から**作る。
+手で offset とハッシュを二重管理しない。出来上がる ETCatalog は Vendor 由来と
+EffectDeck 由来が混ざった 1 つの配列で、使う側に分岐は要らない（§49）。
+
   python Tools/gen_catalog.py
 """
 
@@ -25,6 +31,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DSP = ROOT / "Vendor" / "effetune" / "dsp"
 JS_PLUGINS = ROOT / "Vendor" / "effetune" / "plugins"
+LOCAL_DSP = ROOT / "Sources" / "EffeTuneLive" / "DSP"
 OUT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "EffectCatalog.swift"
 
 MEMBER = re.compile(r"^\s*float\s+(\w+)\s*(?:\[(\d+)\])?\s*;")
@@ -387,6 +394,134 @@ def display_name(type_name, category, folder):
     return camel_to_words(type_name.replace("Plugin", "")), ""
 
 
+# ------------------------------------------- EffectDeck 独自 effect（§50）
+
+LOCAL_KINDS = ("float", "int", "bool", "enum")
+
+
+def layout_hash(fields):
+    """EffeTune の詰め順ハッシュ。
+
+    上流 scripts/gen-dsp-params.mjs の computeLayoutHash と**同じ文字列**を
+    同じ FNV-1a で潰す。ここがずれると kernel が ET_ERR_HASH を返して
+    パラメータが一つも届かない（黙って既定値のまま鳴る）。
+    """
+    h = 0x811C9DC5
+    for f in fields:
+        values = f.get("values")
+        enum_layout = ""
+        if f.get("kind") == "enum":
+            enum_layout = ":" + json.dumps(values, separators=(",", ":"),
+                                           ensure_ascii=False)
+        layout = "%s:%s:%d%s;" % (f["name"], f["kind"], f.get("count", 1), enum_layout)
+        for byte in layout.encode("utf-8"):
+            h = ((h ^ byte) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def read_manifest(path):
+    """effect.json を読んで検証する。緩く通さない。"""
+    src = path.relative_to(ROOT)
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    for required in ("type", "name", "category", "fields"):
+        if not meta.get(required):
+            sys.exit("!! %s: %s が無い" % (src, required))
+    seen_keys, seen_names = set(), set()
+    for f in meta["fields"]:
+        for required in ("name", "key", "kind", "default"):
+            if required not in f:
+                sys.exit("!! %s: %s に %s が無い" % (src, f.get("name", "?"), required))
+        if f["kind"] not in LOCAL_KINDS:
+            sys.exit("!! %s: %s の kind が %s" % (src, f["name"], f["kind"]))
+        if f["kind"] == "enum" and not f.get("values"):
+            sys.exit("!! %s: %s に values が無い" % (src, f["name"]))
+        if f["kind"] == "enum" and f["default"] not in f["values"]:
+            sys.exit("!! %s: %s の既定 %r が values に無い" % (src, f["name"], f["default"]))
+        if f["key"] in seen_keys or f["name"] in seen_names:
+            sys.exit("!! %s: %s / %s が重複" % (src, f["name"], f["key"]))
+        seen_keys.add(f["key"])
+        seen_names.add(f["name"])
+        if (f.get("count", 1)) != 1:
+            # 配列は ETParamCoding の書き方（object 配列か添字か）を決めないと
+            # プリセットが往復しない。要るようになったら**その時に**足す。
+            sys.exit("!! %s: %s が配列。まだ対応していない" % (src, f["name"]))
+    return meta
+
+
+def local_default_float(f):
+    if f["kind"] == "enum":
+        return float(f["values"].index(f["default"]))
+    if f["kind"] == "bool":
+        return 1.0 if f["default"] is True else 0.0
+    return float(f["default"])
+
+
+def write_local_header(meta, out_path):
+    """C++ の詰め順ヘッダ。上流 cppForSpec と同じ形にする。
+
+    namespace だけ effectdeck::generated にする。Vendor の生成物と同じ名前空間へ
+    割り込むと、上流が同名の型を足したときに黙って衝突する。
+    """
+    type_name = meta["type"]
+    guard = "EFFECTDECK_GENERATED_%s_PARAMS_H" % type_name.upper()
+    members = "".join("  float %s;\n" % f["name"] for f in meta["fields"])
+    count = len(meta["fields"])
+    text = (
+        "// Tools/gen_catalog.py が Sources/EffeTuneLive/DSP/%s/effect.json から作る。\n"
+        "// 手で直さないこと。\n" % out_path.parent.name +
+        "#ifndef %s\n#define %s\n\n" % (guard, guard) +
+        "#include <cstdint>\n\n"
+        "namespace effectdeck::generated {\n\n"
+        "struct %sParams {\n%s" % (type_name, members) +
+        "  static constexpr std::uint32_t kHash = %#010xu;\n" % layout_hash(meta["fields"]) +
+        "  static constexpr std::uint32_t kFloatCount = %du;\n" % count +
+        "};\n"
+        "static_assert(sizeof(%sParams) == sizeof(float) * %du);\n\n" % (type_name, count) +
+        "} // namespace effectdeck::generated\n\n#endif\n")
+    out_path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def local_specs():
+    """Sources/EffeTuneLive/DSP/**/effect.json を spec へ。ヘッダも同時に吐く。"""
+    specs = []
+    for manifest in sorted(LOCAL_DSP.glob("*/effect.json")):
+        meta = read_manifest(manifest)
+        type_name = meta["type"]
+        header = manifest.parent / (type_name + "Params.h")
+        write_local_header(meta, header)
+
+        params, defaults = [], []
+        for offset, f in enumerate(meta["fields"]):
+            if f["kind"] == "enum":
+                kind_swift = ".enumeration([%s])" % ", ".join(
+                    swift_str(v) for v in f["values"])
+            elif f["kind"] == "bool":
+                kind_swift = ".toggle"
+            else:
+                step = float(f.get("step") or 0)
+                is_int = f["kind"] == "int" or step >= 1
+                kind_swift = (".number(min: %r, max: %r, step: %r, unit: %s, isInteger: %s)"
+                              % (float(f.get("min", 0)), float(f.get("max", 1)), step,
+                                 swift_str(f.get("unit") or ""),
+                                 "true" if is_int else "false"))
+            dv = local_default_float(f)
+            params.append(
+                "        ETParam(name: %s, key: %s, label: %s, kind: %s, defaultValue: %r, "
+                "offset: %d, count: 1)"
+                % (swift_str(f["name"]), swift_str(f["key"]),
+                   swift_str(f.get("label") or camel_to_words(f["name"])),
+                   kind_swift, dv, offset))
+            defaults.append(dv)
+
+        specs.append({
+            "type": type_name, "name": meta["name"], "about": meta.get("about", ""),
+            "category": meta["category"], "hash": layout_hash(meta["fields"]),
+            "floatCount": len(meta["fields"]), "params": params, "defaults": defaults,
+            "header": header,
+        })
+    return specs
+
+
 def main():
     if not DSP.exists():
         sys.exit("Vendor/effetune が無い。git submodule update --init を先に。")
@@ -566,6 +701,15 @@ def main():
             "params": ordered, "defaults": defaults,
         })
 
+    # EffectDeck 独自 effect。Vendor と同じ 1 つの配列に混ぜる（§49）。
+    # 型名がぶつかると et_instance_create がどちらを返すか分からなくなるので止める。
+    local = local_specs()
+    vendor_types = {s["type"] for s in specs}
+    for s in local:
+        if s["type"] in vendor_types:
+            sys.exit("!! %s は Vendor にも居る。EffectDeck 側の型名を変えること" % s["type"])
+    specs.extend(local)
+
     lines = [
         "//  EffectCatalog.swift",
         "//  Tools/gen_catalog.py が作る。手で直さないこと。",
@@ -573,6 +717,9 @@ def main():
         "//  詰め順は EffeTune の dsp/generated/cpp/*Params.h と同じ。",
         "//  et_instance_set_params にはこの順で float を並べて渡す。",
         "//  params の並びは EffeTune の createUI が画面に出す順で、詰め順とは別。",
+        "//",
+        "//  EffectDeck 独自の effect は Sources/EffeTuneLive/DSP/<名前>/effect.json が正本。",
+        "//  そちらは fields の並びがそのまま詰め順で、画面の順とも同じ。",
         "",
         "import Foundation",
         "",
@@ -597,6 +744,9 @@ def main():
     OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
     print("書いた: %s" % OUT.relative_to(ROOT))
+    for s in local:
+        print("書いた: %s" % s["header"].relative_to(ROOT))
+    print("EffectDeck 独自 %d 種" % len(local))
     print("エフェクト %d 種 / パラメータ %d 個"
           % (len(specs), sum(len(s["params"]) for s in specs)))
     print("createUI から: 名前 %d / 単位 %d / 範囲 %d / 並べ替えた型 %d"

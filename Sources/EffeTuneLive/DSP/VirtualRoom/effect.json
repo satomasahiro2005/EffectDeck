@@ -1,0 +1,82 @@
+{
+  "$comment": [
+    "EffectDeck local effect manifest (docs/virtual-room-design.md §50).",
+    "type / name / category / about / パラメータの名前・鍵・範囲・既定・選択肢の正本。",
+    "Tools/gen_catalog.py がここから VirtualRoomPluginParams.h と",
+    "Sources/EffeTuneLive/Generated/EffectCatalog.swift の 1 項目を作る。",
+    "fields の並びがそのまま et_instance_set_params に渡す float の並び（§12）。",
+    "並べ替えると保存済みのプリセットと share link が別の音になる。"
+  ],
+  "type": "VirtualRoomPlugin",
+  "name": "Virtual Room",
+  "category": "spatial",
+  "about": "Binaural virtual loudspeakers and room simulation with realtime geometry",
+  "fields": [
+    { "name": "roomWidth", "key": "rw", "label": "Width", "kind": "float",
+      "min": 2, "max": 20, "step": 0.1, "default": 4.2, "unit": "m" },
+    { "name": "roomDepth", "key": "rd", "label": "Depth", "kind": "float",
+      "min": 2, "max": 30, "step": 0.1, "default": 3.6, "unit": "m" },
+    { "name": "roomHeight", "key": "rh", "label": "Height", "kind": "float",
+      "min": 2, "max": 10, "step": 0.1, "default": 2.6, "unit": "m" },
+
+    { "name": "listenerX", "key": "lx", "label": "Horizontal Position", "kind": "float",
+      "min": 5, "max": 95, "step": 1, "default": 50, "unit": "%" },
+    { "name": "listenerY", "key": "ly", "label": "Depth Position", "kind": "float",
+      "min": 5, "max": 95, "step": 1, "default": 36, "unit": "%" },
+    { "name": "listenerHeight", "key": "lz", "label": "Ear Height", "kind": "float",
+      "min": 0.5, "max": 2.5, "step": 0.01, "default": 1.2, "unit": "m" },
+
+    { "name": "speakerAngle", "key": "sa", "label": "Angle", "kind": "float",
+      "min": 5, "max": 90, "step": 1, "default": 30, "unit": "deg" },
+    { "name": "speakerDistance", "key": "sd", "label": "Distance", "kind": "float",
+      "min": 0.5, "max": 6, "step": 0.05, "default": 1.8, "unit": "m" },
+    { "name": "speakerElevation", "key": "se", "label": "Elevation", "kind": "float",
+      "min": -30, "max": 30, "step": 1, "default": 0, "unit": "deg" },
+
+    { "name": "roomAmount", "key": "rm", "label": "Room Amount", "kind": "float",
+      "min": 0, "max": 200, "step": 1, "default": 100, "unit": "%" },
+    { "name": "decayScale", "key": "ds", "label": "Decay", "kind": "float",
+      "min": 0.25, "max": 4, "step": 0.01, "default": 1, "unit": "x" },
+
+    { "name": "sideMaterial", "key": "sm", "label": "Side Walls", "kind": "enum",
+      "values": ["Concrete", "Painted Wall", "Drywall", "Wood", "Glass",
+                 "Heavy Curtain", "Carpet", "Acoustic Panel"],
+      "default": "Drywall" },
+    { "name": "frontMaterial", "key": "fm", "label": "Front Wall", "kind": "enum",
+      "values": ["Concrete", "Painted Wall", "Drywall", "Wood", "Glass",
+                 "Heavy Curtain", "Carpet", "Acoustic Panel"],
+      "default": "Drywall" },
+    { "name": "rearMaterial", "key": "bm", "label": "Rear Wall", "kind": "enum",
+      "values": ["Concrete", "Painted Wall", "Drywall", "Wood", "Glass",
+                 "Heavy Curtain", "Carpet", "Acoustic Panel"],
+      "default": "Drywall" },
+    { "name": "floorMaterial", "key": "fl", "label": "Floor", "kind": "enum",
+      "values": ["Concrete", "Painted Wall", "Drywall", "Wood", "Glass",
+                 "Heavy Curtain", "Carpet", "Acoustic Panel"],
+      "default": "Carpet" },
+    { "name": "ceilingMaterial", "key": "ce", "label": "Ceiling", "kind": "enum",
+      "values": ["Concrete", "Painted Wall", "Drywall", "Wood", "Glass",
+                 "Heavy Curtain", "Carpet", "Acoustic Panel"],
+      "default": "Drywall" },
+
+    { "name": "earlyOrder", "key": "eo", "label": "Early Reflections", "kind": "enum",
+      "values": ["First Order", "Second Order"], "default": "Second Order" },
+
+    { "name": "headRadius", "key": "hr", "label": "Head Size", "kind": "float",
+      "min": 7, "max": 11, "step": 0.05, "default": 8.75, "unit": "cm" },
+    { "name": "pinnaAmount", "key": "pa", "label": "Pinna", "kind": "float",
+      "min": 0, "max": 150, "step": 1, "default": 100, "unit": "%" },
+    { "name": "headShadowAmount", "key": "hs", "label": "Head Shadow", "kind": "float",
+      "min": 0, "max": 150, "step": 1, "default": 100, "unit": "%" },
+
+    { "name": "outputGain", "key": "og", "label": "Output Gain", "kind": "float",
+      "min": -24, "max": 12, "step": 0.1, "default": 0, "unit": "dB" },
+
+    { "name": "modelVersion", "key": "mv", "label": "Model Version", "kind": "int",
+      "min": 1, "max": 16, "step": 1, "default": 1, "unit": "" },
+    { "name": "seedLow", "key": "s0", "label": "Diffusion Seed Low", "kind": "int",
+      "min": 0, "max": 65535, "step": 1, "default": 31777, "unit": "" },
+    { "name": "seedHigh", "key": "s1", "label": "Diffusion Seed High", "kind": "int",
+      "min": 0, "max": 65535, "step": 1, "default": 41887, "unit": "" }
+  ]
+}
