@@ -1258,3 +1258,119 @@ if (_MXSessionSetProperty && kMXSessionProperty_IsPlayingVideoOutput)
 「iOS 27 のこの `MediaPlaybackCore` では MediaExperience 宛の直接 `BL` が
 観測されず、GOT / auth pointer → `BLRAA` 型だった」まで。
 ARM64 の `BL` は ±128MiB へ直接飛べるので、ISA が禁じているわけではない。
+
+---
+
+# 決着: `IsPlayingVideoOutput` を書いているのは誰で、何を見ているか
+
+## 書き手
+
+`MediaToolbox` の `sub_1973150c8`（382 命令）。
+`ipsw dyld patches --image MediaToolbox --sym kMXSessionProperty_IsPlayingVideoOutput`
+が返した GOT slot `0x1e0137f78` を、実効アドレス走査（`mde_slotref.py`）で
+参照元まで戻して特定した。`__weak_auth_got` はファイル上の値が 0 なので
+バイト列の検索では見つからない。patch table を使うのが唯一の道だった。
+
+setter 呼び出しは関数内に 1 箇所だけ。
+
+```asm
+0x1973152e4:  adrp  x8, 0x1e0137000
+0x1973152e8:  ldr   x8, [x8, #0xf78]     ; GOT slot
+0x1973152ec:  ldr   x22, [x8]            ; x22 = kMXSessionProperty_IsPlayingVideoOutput
+0x1973152f0:  adrp  x8, 0x1e00e6000
+0x1973152f4:  ldr   x8, [x8, #0x540]     ; &kCFBooleanFalse
+0x1973152f8:  cmp   w26, #0
+0x1973152fc:  csel  x24, x8, x24, ne     ; w26 != 0 → False / == 0 → True
+...
+0x197315368:  ldr   x2, [x24]            ; value
+0x19731536c:  mov   x0, x21              ; session
+0x197315370:  mov   x1, x22              ; key
+0x197315374:  blraa x9, x8               ; MXSessionSetProperty
+```
+
+## 判定式
+
+`w26` はこの関数の中だけで作られる。書き込みは 2 箇所しかない。
+
+```asm
+0x19731511c:  mov   w26, #1              ; 速い経路
+0x1973152b0:  eor   w26, w22, #1         ; 計算経路
+```
+
+`w22` も 0/1 に正規化済み（`cset w22, eq`）なので `w26 = !w22` と書いてよい。
+`csel` の向きと合わせると、**設定される値はそのまま `w22`** になる。
+
+```c
+uint8_t suppress = *(*(self + 0x20) + 8);
+
+if (suppress) {
+    playing = false;                       // 速い経路
+} else {
+    item = fig->CopyCurrentItem(x21, 0, &item);
+    if (!item) {
+        playing = false;                   // 取れなければ NO
+    } else {
+        CFTypeRef v = NULL;
+        figObj->CopyProperty(figObj,
+                             CFSTR("HasEnabledVideo"),
+                             kCFAllocatorDefault,
+                             &v);
+        playing = (v == kCFBooleanTrue);
+    }
+}
+
+MXSessionSetProperty(session,
+                     kMXSessionProperty_IsPlayingVideoOutput,
+                     playing ? kCFBooleanTrue : kCFBooleanFalse);
+```
+
+vtable が取れない・item が nil の経路は全部 `false` に落ちる。安全側。
+
+### 定数の解決
+
+`__AUTH_CONST` の生値は arm64e の chained pointer なので、
+`target(43) / high8(8) / next(11) / bind(1) / auth(1)` を剥いて
+cache base `0x180000000` を足す。
+
+| slot | 解いた先 | 名前 |
+|---|---|---|
+| `0x1e0bdf1a8` | `0x1ea90ece8` | `CFSTR` 本体（`__AUTH_CONST.__cfstring`）|
+| `0x1e00e6510` | `0x1807dd348` | `kCFAllocatorDefault` |
+| `0x1e00e6540` | `0x1e053a5a8` | `kCFBooleanFalse` |
+| `0x1e00e6548` | `0x1e053a5a0` | `kCFBooleanTrue` |
+
+CFString の +0x10 が文字列ポインタ、+0x18 が長さ。
+
+```
+0x197605ac1:  48 61 73 45 6e 61 62 6c 65 64 56 69 64 65 6f 00
+              H  a  s  E  n  a  b  l  e  d  V  i  d  e  o
+```
+
+## 意味
+
+`IsPlayingVideoOutput` は名前に反して **稼働基準ではなく存在基準**。
+「いま映像を出しているか」ではなく **「有効な映像トラックを持っているか」** を
+`HasEnabledVideo` からそのまま写しているだけ。
+
+- 画面に出ているかは見ていない
+- 再生中かどうかも見ていない（`rate` は `w25` 側で別に取るが、値には使われない）
+- 一度 YES を書いた後、player が消えても NO を書き直す経路が無い
+
+## これで #3 と #4 が同じ 1 本に落ちる
+
+| | 上流 | なぜ YES のままか |
+|---|---|---|
+| #3 YouTube | `mediaplaybackd(295)` の FigPlayer が生きている | 映像トラックが有効なので `HasEnabledVideo = true`。音だけ聴いていても関係ない |
+| #4 Spotify Canvas | Canvas 用 FigPlayer sub-session（`MXSession(45a)`, `DoesntActuallyPlayAudio=YES`）| Canvas が消えても書き直されない。古い YES が残る |
+
+下流は共通、上流の事故だけが違う。#3 は生きている player、#4 は死んだ player の残骸。
+
+## EffectDeck 側でできること
+
+無い。`longFormVideo` の判定関数は `MediaOutputDevice` を読んでいないので、
+route sharing policy をどう名乗っても結果は変わらない。
+
+回避は利用者側の操作だけ。
+
+- YouTube: 動画を止めて音だけにする（player が畳まれる）か、アプリを終了する
+- Spotify: Canvas のあるトラックを 1 度再生した後は、アプリを再起動する
