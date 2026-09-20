@@ -191,3 +191,83 @@ Apple の公式文書（`docs/apple/README.md` に写しの要点）:
 #3 を「映像だから蹴られた」と決める前に、こちらを外す必要がある
 （今回のログでは映像の枝が実際に走っているので #3 は映像で確定だが、
 他の "Unable to Connect" 報告にそのまま当てはめてはいけない）。
+
+---
+
+# 実際に効いているのは MusicVAD（2026-09-21 実測）
+
+判定木を起こしたあとに実機で撮った。**`docs/connect-log.md` の A-10 が
+9 月 16 日にほぼ同じ結論へ到達していた**（先に読むべきだった）。
+ただし A-10 の 1 点は逆アセンブルで訂正できる。
+
+## A-10 の訂正
+
+> A-10:「`isPlayingVideoOutput` は文言を変えるだけで、どちらでも同じ結末に落ちる」
+
+**違う。**`YES` のときは MusicVAD の枝に到達しない
+（`1ae8bddc0: tbz w26,#0` が唯一の入口）。A-10 のデータで `YES` の 3 回が
+全部落ちているのは偶然ではなく、構造的にそうなる。
+
+## 数え合わせ
+
+A-10 の 20 回と今回の観測を合わせると:
+
+| `isPlayingVideoOutput` | 結果 | 効いていたもの |
+|---|---|---|
+| `YES` | 全部失敗 | MusicVAD の枝に到達しない |
+| `NO` | 通る 17 / 切られる 3 | **MusicVAD が居るかどうか** |
+
+**レバーは MusicVAD 1 本。**
+
+## MusicVAD の生き死にを実測した
+
+```
+04:11:49.446  vaemVADRouteChangeListener: … MusicVAD: NO …
+04:11:53.182  CreateMusicVADIfNeeded: Checking if we should create MusicVAD with ports (
+04:11:53.182  CreateMusicVADIfNeeded: Creating MusicVAD with port: 396!!!!
+04:11:53.443  vaemVADRouteChangeListener: … MusicVAD: YES …
+04:11:53.592  Allow … because there is a MusicVAD.
+```
+
+**EffectDeck を選んだ「あと」に作られている。**無い状態から、経路の切り替えを
+きっかけに作られ、その 0.4 秒後に判定が通っている。
+
+**そのときの経路は内蔵スピーカー**（`tick out=Speaker ports=Speaker`）。
+issue #1 の「検出器は特定のポート型でしか作られず、繋がっている無線ポートに依る」は
+そのままでは合わない。
+
+## 生成の条件（`_CMSMVAUtility_CreateMusicVADIfNeeded` @ `0x1aea26cdc`）
+
+```
+if (vaemMusicVADExists())         → "MusicVAD already exists, nothing to do here."
+portType == 'papl' (0x7061706c)   → "Dealing with LL Port, using all wireless ports %@"
+                                  → "Checking if we should create MusicVAD with ports %@"
+                                  → "Creating MusicVAD with port: %d!!!!"
+```
+
+`_vaemMusicVADExists` は 1 行の意味しかない:
+`[[MXSessionManager sharedInstance] musicVADID] != 0`。
+
+## いま立っている仮説
+
+**失敗は競争条件ではないか。**判定が VAD の生成より先に走った回が切られている。
+上の並びでは生成の 0.4 秒後に判定が来て通った。順が逆なら切られる。
+「20% くらいで失敗する」という頻度とも矛盾しない。
+
+**確かめ方**: 失敗した回のログを撮って、`Creating MusicVAD` が
+判定より後に来ているか、そもそも出ていないかを見る。
+見張り（Mac の `~/mde_watch.sh` → `~/mde-watch.log`）を置いてあるので、
+次に失敗したときに自動で残る。
+
+## 静的に追えなかったもの
+
+`isPlayingVideoOutput` を立てているのは MediaToolbox（AVPlayer の中身）で、
+`_kMXSessionProperty_IsPlayingVideoOutput` と `_MXSessionSetProperty` を
+MediaExperience から輸入している（symtab の undefined external で確認）。
+ただし**共有キャッシュから抜いた dylib は GOT が解決されていない**ので、
+参照箇所を番地で辿れなかった（`MediaToolbox.asm` 328 万行に 1 件も無い）。
+追うなら別の取り出し方が要る。
+
+実測では、ytlite が動画を再生していても `IsPlayingVideoOutput = NO` だった
+（`MXSession` の状態ダンプ、`clientType = 4`, `PiP = NO`）。
+**「画面に動画が出ているか」という単純な話ではない。**
