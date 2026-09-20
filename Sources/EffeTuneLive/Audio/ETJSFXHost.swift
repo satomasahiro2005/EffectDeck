@@ -135,6 +135,25 @@ final class ETJSFXHost: ObservableObject {
         }
     }
 
+    /// 取り込んだソースを消す。
+    ///
+    /// **消せる口が無かった。**IR には在るのに（IRLibraryView の swipe）、JSFX は
+    /// 一覧に並ぶだけで消せず、置き場は Application Support なので Files からも見えない。
+    /// 一度入れたものが恒久に残る形だった。取り込みの門を緩める前にここを開ける。
+    ///
+    /// 同梱の見本（isDebugFixture）は消さない。鎖に載っている段については何もしない。
+    /// 既に建った instance は残るので鳴っている音は止まらず、表に出るのは鎖を
+    /// 読み直したとき（restore が entry を引けずに instance を作らない経路）。
+    @discardableResult
+    func removeEntry(_ entry: Entry) -> Bool {
+        guard !entry.isDebugFixture else { return false }
+        // 消せなかったら一覧はそのまま。押しても消えない形になるが、
+        // 消えたふりをして次の refresh で戻ってくるより分かりやすい。
+        guard (try? FileManager.default.removeItem(at: entry.url)) != nil else { return false }
+        refresh()
+        return true
+    }
+
     func refresh() {
         let debugRoot = try? Self.storageURL("JSFX/DebugFactory")
         if let debugRoot { try? FileManager.default.removeItem(at: debugRoot) }
@@ -164,10 +183,28 @@ final class ETJSFXHost: ObservableObject {
     func importFile(_ source: URL) throws -> Entry {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-        guard source.pathExtension.lowercased() == "jsfx" || source.pathExtension.isEmpty else {
-            throw NSError(domain: "ETJSFX", code: 10,
-                          userInfo: [NSLocalizedDescriptionKey: "Choose a single-file JSFX source."])
+
+        // **中身で判定する。拡張子で弾かない。**
+        // JSFX には拡張子が無いことがあり、メールや Files が付けた `.txt` も来る。
+        // 前は `.jsfx` か拡張子なししか通さず、理由も分からずに弾いていた。
+        //
+        // **順番が肝。合格してから初めてディスクへ写す。**前は写してから
+        // entry() で落としていたので、弾いたファイルが置き場に残り、
+        // 置き場は名前で掃除しない（sha256 が同一性そのもの）ので恒久のゴミになっていた。
+        //
+        // 1 MB の判定を先に置くのは、それを超える物を String へ起こさないため。
+        // importFile は @MainActor なので、鳴っている最中に画面が止まる。
+        let data = try Data(contentsOf: source, options: .mappedIfSafe)
+        guard data.count <= 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "ETJSFX", code: 11,
+                          userInfo: [NSLocalizedDescriptionKey: "The JSFX source is not valid UTF-8."])
         }
+        guard Self.looksLikeJSFX(text) else {
+            throw NSError(domain: "ETJSFX", code: 10,
+                          userInfo: [NSLocalizedDescriptionKey: "That file does not look like a JSFX source."])
+        }
+
         let owned = try Self.ownedCopy(of: source)
         guard let entry = Self.entry(for: owned,
                                      fallbackName: source.deletingPathExtension().lastPathComponent,
@@ -627,6 +664,25 @@ final class ETJSFXHost: ObservableObject {
             if let entry = debug.first(where: { $0.name == name }) { aliases[oldID] = entry }
         }
         return aliases
+    }
+
+    /// JSFX のソースらしいか。**コンパイルはしない。**
+    ///
+    /// ETJSFX_Create のコンパイル上限は 2 秒で、importFile は @MainActor なので
+    /// ここで試すと鳴っている最中に画面が止まる。コンパイルの失敗は段に置いた時点で
+    /// status() が出すので、報告の口は足りている。
+    ///
+    /// **`desc:` だけを必須にしない。**@init しか持たない実物を弾いてしまう。
+    /// セクション記号との or を必ず残す。頭 80 行だけ見る。
+    private static func looksLikeJSFX(_ text: String) -> Bool {
+        let sections = ["@init", "@slider", "@block", "@sample", "@serialize", "@gfx"]
+        for line in text.split(separator: "
+", omittingEmptySubsequences: false).prefix(80) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("desc:") { return true }
+            if sections.contains(where: { t.hasPrefix($0) }) { return true }
+        }
+        return false
     }
 
     private static func ownedCopy(of source: URL) throws -> URL {

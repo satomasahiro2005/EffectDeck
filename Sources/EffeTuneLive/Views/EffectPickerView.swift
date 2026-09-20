@@ -29,6 +29,8 @@ struct EffectPickerView: View {
     @StateObject private var jsfx = ETJSFXHost.shared
     @State private var query = ""
     @State private var importingJSFX = false
+    /// 消そうとしている JSFX。取り消せないので一度確かめる（IR と同じ形）。
+    @State private var pendingDeleteJSFX: ETJSFXHost.Entry?
     @State private var importError: String?
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
@@ -173,6 +175,21 @@ struct EffectPickerView: View {
                 get: { importError != nil }, set: { if !$0 { importError = nil } })) {
                     Button("OK", role: .cancel) { importError = nil }
                 } message: { Text(importError ?? "Unknown error") }
+            // 一覧と検索結果の両方を覆う階層に 1 つ置く。行ごとに持たせると
+            // 検索から払ったときに出ない。
+            .confirmationDialog(pendingDeleteJSFX.map { "Remove “\($0.name)”?" } ?? "",
+                                isPresented: Binding(
+                                    get: { pendingDeleteJSFX != nil },
+                                    set: { if !$0 { pendingDeleteJSFX = nil } }),
+                                titleVisibility: .visible) {
+                Button("Remove", role: .destructive) {
+                    if let entry = pendingDeleteJSFX { jsfx.removeEntry(entry) }
+                    pendingDeleteJSFX = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDeleteJSFX = nil }
+            } message: {
+                Text("A chain built around it will not find it here again. This cannot be undone.")
+            }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
             .presentationDetents([Self.opened, .large], selection: $detent)
@@ -322,6 +339,16 @@ struct EffectPickerView: View {
                                             .id(entries.isEmpty && offset == 0
                                                 ? Self.jumpTarget(vendor)
                                                 : "jsfx-entry-" + entry.id)
+                                    }
+                                    // **消す口。**行は Button で onDrag も付いているので、
+                                    // 自前のスワイプを重ねるとタップ・ドラッグ・払いの 3 つが
+                                    // 同じ行で競合する。List の onDelete なら List 側の
+                                    // 仕組みなので競合しない。
+                                    // 同梱の見本は消させない（removeEntry が弾く）。
+                                    .onDelete { offsets in
+                                        pendingDeleteJSFX = offsets
+                                            .compactMap { scripts.indices.contains($0) ? scripts[$0] : nil }
+                                            .first { !$0.isDebugFixture }
                                     }
                                 } header: {
                                     Text(vendor)
