@@ -1149,3 +1149,112 @@ MediaToolbox       332 万行 / 69 秒
 ```
 
 **`xref` と違って落ちない。**参照を逆に辿れないだけで、読むぶんには十分速い。
+
+---
+
+# 壁が破れた: `ipsw dyld patches`（2026-09-21）
+
+**解析問題の大きさが変わった。**
+
+```
+129 万行 × 複数 image
+    ↓
+3 個の pointer slot
+```
+
+## 決め手
+
+DSC には「どの export が、どの client image のどこへ差し込まれるか」の表が在る。
+**weak 輸入で枠の中身が 0 でも、patch 表には載っている。**
+
+```bash
+ipsw dyld patches <DSC> --image <MediaExperience> --sym _MXSessionSetProperty
+```
+
+```
+_MXSessionSetProperty                      → 0x1efc91148  (GOT, auth, weak_import)
+                                           → 0x2777d5ea0  (GOT, auth)
+_kMXSessionProperty_IsPlayingVideoOutput   → 0x1e0137f78  (GOT, weak_import)
+```
+
+**setter を輸入している image は 2 つ、鍵は 1 つだけ。**
+
+## 前の 2 つの訂正
+
+**1. `xref` が効かないのは RAM 以前の問題。**
+現行の `ipsw dyld xref` は `ResolveIndirect` も `Reader` も渡していないので、
+`GOT → BLRAA` 型の呼び出しを **sink の番地からは拾わない**。
+メモリが足りても 0 件になる。
+
+`xref` が重い理由も違った。全命令を載せるのではなく、
+`OpenOrCreateA2SCache()` が**全 image の symbol と ObjC を解析**し、
+`img.Analyze()` が GOT/stub の解決で**他 image へ再帰**する。
+`--image` を指定しても境界がそこで破れる。
+
+**2. 枠の中身を読む方式（`mde_slotscan2.py`）の前提が外れていた。**
+bind で解決されるものには効かない（枠は 0 のまま）。
+`ipsw` が名前を付けられるのは bind / patch 情報を読んでいるから。
+**正しくは patch 表を引く。**
+
+## 持ち主は MediaToolbox でも MediaPlaybackCore でもない
+
+GOT の範囲で挟むと、3 つとも外だった。
+
+```
+MediaToolbox       __got 0x1e0bfc800 +0x4938   __auth_got 0x1ea957c28 +0x5c88
+MediaPlaybackCore  __got 0x1e1a95cc8 +0x3458   __auth_got 0x1ee7459f0 +0x3448
+
+鍵  0x1e0137f78  … MediaToolbox の __got より低い     → index < 130
+sink 0x1efc91148 … MediaPlaybackCore の __auth_got より高い → index > 494
+```
+
+**鍵と sink の持ち主が違う。**
+`MediaToolbox` には鍵の頁（`0x1e0137000`）への `adrp` が 10 件以上あるが、
+**下駄 `0xf78` ちょうどを指すものは 0 件**だった。
+
+## 探し方（次はこれ）
+
+slot そのものは命令中に 1 個の即値として出ない。**式で探す。**
+
+```asm
+adrp x16, PAGE
+ldr  x17, [x16, OFF]            ; PAGE + OFF = slot
+```
+
+```asm
+adrp x16, PAGE
+add  x16, x16, OFF1
+ldr  x17, [x16, OFF2]           ; PAGE + OFF1 + OFF2 = slot
+```
+
+sink 側は `LDR` から `BLR` / `BLRAA` まで register を追う。
+key 側は `LDR` から property 引数へ流れるかを見る。
+
+**`value` を raw BOOL と仮定しない。**実機ログが `value: [0.0] / [1.0]` なので、
+callsite では CF / NS の値オブジェクトへ boxing されている可能性がある。
+
+## `weak_import` 自体が手掛かり
+
+```
+0x1efc91148  _MXSessionSetProperty                    auth + weak_import
+0x1e0137f78  kMXSessionProperty_IsPlayingVideoOutput  weak_import
+```
+
+**この 2 つが同じ image に属していれば**、その image は両方を optional import
+している＝
+
+```c
+if (_MXSessionSetProperty && kMXSessionProperty_IsPlayingVideoOutput)
+    _MXSessionSetProperty(...);
+```
+
+系の利用者。一方 `0x2777d5ea0` は setter だけなので、
+別 image の generic な property setter 用途かもしれない。
+**持ち主を確認するまでは仮説。**
+
+## 「arm64e は全部間接」は一般化しない
+
+今回確定したのは
+「iOS 27 のこの `MediaPlaybackCore` では MediaExperience 宛の直接 `BL` が
+観測されず、GOT / auth pointer → `BLRAA` 型だった」まで。
+ARM64 の `BL` は ±128MiB へ直接飛べるので、ISA が禁じているわけではない。
