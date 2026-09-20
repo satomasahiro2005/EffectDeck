@@ -11,11 +11,8 @@
 //      横に並べられない幅なので、ここだけ変えてある
 
 import Combine
-import OSLog
 import SwiftUI
 import UIKit
-
-private let dragLog = Logger(subsystem: "ai.nemut.effetune", category: "drag")
 
 enum ETLayout {
     /// 鎖に許す横幅。
@@ -685,7 +682,6 @@ struct PipelineView: View {
         dragging = row.node.id
         anchorRect = rowRects[row.node.id] ?? .zero
         dragShift = .zero
-        dragLog.notice("掴む at=\(row.visible, privacy: .public) rect=\(Int(anchorRect.minY), privacy: .public)..\(Int(anchorRect.maxY), privacy: .public)")
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
 
@@ -703,11 +699,10 @@ struct PipelineView: View {
     /// 来ないことがある。来ないと層が出たままになり、その行は
     /// `.opacity(0)` で消えたまま、代わりに出ている層は
     /// `.allowsHitTesting(false)` の絵なので、カードごと操作できなくなる。
-    /// 実機で Bit Crusher がそうなった（2026-09-17、`離す` はログに出ていた）。
+    /// 実機で Bit Crusher がそうなった。
     /// 時間で必ず畳む。
     private func endDrag() {
         guard let id = dragging else { return }
-        dragLog.notice("離す")
         let slot = rowRects[id] ?? anchorRect
         withAnimation(.snappy(duration: Self.returnDuration)) {
             anchorRect = slot
@@ -719,7 +714,6 @@ struct PipelineView: View {
             if dragging == id {
                 dragging = nil
                 dragExternalSnapshot = nil
-                dragLog.notice("畳む")
             }
         }
     }
@@ -819,7 +813,6 @@ struct PipelineView: View {
     /// 移動量」で決まりきっていて、下の並びがどう動こうと関係ない。
     /// 補正そのものが要らなかった。
     private func swap(_ at: Int, to destination: Int) {
-        dragLog.notice("入替 \(at, privacy: .public)->\(destination, privacy: .public) shift=\(Int(dragShift.height), privacy: .public)")
         withAnimation(.snappy(duration: 0.22)) { moveRow(at, to: destination) }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }

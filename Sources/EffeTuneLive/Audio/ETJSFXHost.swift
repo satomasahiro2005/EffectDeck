@@ -1,9 +1,6 @@
 import CryptoKit
 import Foundation
-import OSLog
 import UIKit
-
-private let jsfxMenuLog = Logger(subsystem: "ai.nemut.effetune", category: "jsfxmenu")
 
 private final class ETJSFXMenuResult: @unchecked Sendable {
     let semaphore = DispatchSemaphore(value: 0)
@@ -24,13 +21,11 @@ private let etJSFXMenuCallback: @convention(c)
     (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { _, menu, _, _ in
         guard let menu else { return 0 }
         let spec = String(cString: menu)
-        jsfxMenuLog.notice("menu 呼ばれた 項目=\(spec.split(separator: "|").count, privacy: .public)")
         let result = ETJSFXMenuResult()
         DispatchQueue.main.async {
             guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                     .first(where: { $0.activationState == .foregroundActive }),
                   let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else {
-                jsfxMenuLog.notice("menu 出せない 面が見つからない")
                 result.finish(0); return
             }
             var presenter = root
@@ -62,11 +57,9 @@ private let etJSFXMenuCallback: @convention(c)
                 popover.sourceRect = CGRect(x: presenter.view.bounds.midX,
                                             y: presenter.view.bounds.midY, width: 1, height: 1)
             }
-            jsfxMenuLog.notice("menu 出す 上=\(String(describing: type(of: presenter)), privacy: .public) 札=\(alert.actions.count, privacy: .public)")
             presenter.present(alert, animated: true)
         }
-        let waited = result.semaphore.wait(timeout: .now() + 30)
-        jsfxMenuLog.notice("menu 終わり \(waited == .success ? "選ばれた" : "時間切れ", privacy: .public) 値=\(result.read(), privacy: .public)")
+        _ = result.semaphore.wait(timeout: .now() + 30)
         return result.read()
     }
 
@@ -606,7 +599,6 @@ final class ETJSFXHost: ObservableObject {
                 do {
                     let index = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
                     ETJSFX_SetGFXMenuCallback(host, etJSFXMenuCallback, nil)
-                    jsfxMenuLog.notice("menu 口を付けた id=\(id, privacy: .public) gfx=\(ETJSFX_HasGFX(host), privacy: .public)")
                     current.host = host; current.parameters = Self.readParameters(host); current.error = nil
                     self.snapshotState(current)
                     current.ready?(.success(index)); current.ready = nil

@@ -946,7 +946,7 @@ Compatibility 文書上、保証対象外だからである。
 
 現在、ドキュメントと実装に不一致がある。
 
-`Documentation/JSFXCompatibility.md`:
+`JSFX.md`:
 
 ```text
 EEL RAM:
@@ -1969,7 +1969,7 @@ Sources/Shared/ETPipeline.c
 Sources/EffeTuneLive/DSP/EffeTuneDSP.swift
 Sources/EffeTuneLive/DSP/PipelineStore.swift
 Sources/EffeTuneLive/DSP/ETShareLink.swift
-Documentation/JSFXCompatibility.md
+JSFX.md
 Patches/ysfx-effectdeck-ios.diff
 Debug/JSFXFactory/EffectDeck JSFX Conformance.jsfx
 Tests/Native/external_processor.c

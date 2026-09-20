@@ -496,16 +496,19 @@ final class DynamicProbe: XCTestCase {
             print("PROBE details opened rows=\(app.staticTexts.count)")
         }
 
-        // ライセンス。
-        let lic = app.buttons["Open source licenses"].firstMatch
-        XCTAssertTrue(reveal(lic, "licenses"), "ライセンスの項目が無い")
+        // 謝辞とライセンス。
+        let lic = app.buttons["Acknowledgements"].firstMatch
+        XCTAssertTrue(reveal(lic, "acknowledgements"), "謝辞の項目が無い")
         lic.tap()
         Thread.sleep(forTimeInterval: 2.5)
-        let bar = app.navigationBars["Licenses"]
+        let bar = app.navigationBars["Acknowledgements"]
         print("PROBE licenses bar=\(bar.exists) cells=\(app.cells.count)")
-        XCTAssertTrue(bar.waitForExistence(timeout: 15), "Licenses が開かない")
-        let first = app.cells.firstMatch
-        XCTAssertTrue(first.waitForExistence(timeout: 10), "ライセンスの一覧が空")
+        XCTAssertTrue(bar.waitForExistence(timeout: 15), "Acknowledgements が開かない")
+        // **謝辞の行を叩かない。**先頭の節は礼の文で、開く口を持たない。
+        // 条文は下の Licenses 節にあるので、そちらにしか無い名前で探す
+        // （EffectDeck は ETLicenses だけに在り、ETCredits には無い）。
+        let first = app.staticTexts["EffectDeck"].firstMatch
+        XCTAssertTrue(reveal(first, "license row"), "ライセンスの一覧が空")
         let textsBefore = app.staticTexts.count
         first.tap()
         Thread.sleep(forTimeInterval: 2.5)
@@ -513,7 +516,7 @@ final class DynamicProbe: XCTestCase {
         XCTAssertGreaterThan(app.staticTexts.count, textsBefore, "本文が開かない")
 
         // 戻って閉じる。
-        app.navigationBars["Licenses"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Acknowledgements"].buttons.element(boundBy: 0).tap()
         Thread.sleep(forTimeInterval: 2)
         let done = app.navigationBars["Settings"].buttons["Done"]
         XCTAssertTrue(done.waitForExistence(timeout: 10), "Settings へ戻れない")

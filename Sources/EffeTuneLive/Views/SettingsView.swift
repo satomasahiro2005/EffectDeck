@@ -50,14 +50,14 @@ struct SettingsView: View {
                 switch pane {
                 case .audio:
                     StatusSection(io: io, dsp: dsp)
+                    // **音 → 電池 → 見た目 → 数字の順に並べる。**
+                    // 以前は Processing と Power のあいだに見た目の設定
+                    // （Sync Visuals・JSFX canvas）が挟まっていて、音の話が
+                    // 2 つに割れていた。種類ごとに固めて、読むだけの数字を末尾に置く。
                     processing
-                    Section {
-                        Toggle("Sync Visuals to Audio", isOn: $prefs.syncVisualsToAudio)
-                    } footer: {
-                        Text("Delay graphs to match the audio output latency.")
-                    }
-                    plugins
                     power
+                    graphs
+                    plugins
                     // **音の数字は Audio に置く。**レート・バッファ・遅延の内訳・
                     // 出力先なので、探しに来るのはこの面。報告に貼る値でもあるが、
                     // 貼る前に読むのは音の話として読む。畳んであるので 1 行で済む。
@@ -80,6 +80,19 @@ struct SettingsView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+        }
+    }
+
+    /// **絵の話。**音そのものは変わらない。見出しの無い節だったので、
+    /// 上の Power とも下の Plug-ins とも切れておらず、どこまでが何の設定か
+    /// 読めなかった。名前を付けて、同じ見た目の設定である Plug-ins と並べる。
+    private var graphs: some View {
+        Section {
+            Toggle("Sync Visuals to Audio", isOn: $prefs.syncVisualsToAudio)
+        } header: {
+            Text("Graphs")
+        } footer: {
+            Text("Delay graphs to match the audio output latency.")
         }
     }
 
@@ -204,15 +217,22 @@ struct SettingsView: View {
             // 揃えてあるが（Tools/gen_version.py）、指しているものが違う。
             // 効果の本数は出さない。増えても減っても使う人の判断は変わらない。
             LabeledContent("EffeTune DSP", value: ETUpstreamVersion)
-            NavigationLink("Open source licenses") { LicensesView() }
+            // **礼を先に、一覧をその中へ。**Open source licenses は機械が吐いた
+            // 条文で、読みに来る人はほとんど居ない。名前で礼を言う相手を上に出し、
+            // 条文はその画面の末尾へ畳む。
+            NavigationLink("Acknowledgements") { AcknowledgementsView() }
         } header: {
             Text("About")
         } footer: {
+            // **権利の話はここで終える。**Privacy policy を押せる行にすると、
+            // 版と並んで「設定の項目」に見える。読む物なので、同じ段落の続きに
+            // リンクとして置く（Text の markdown リンクはそのまま開く）。
             Text("""
                  The effects are EffeTune's own DSP by Yoshiyuki Kobayashi, running \
                  unmodified under the MIT license. This app is a separate project by \
                  nemut.ai. It is not affiliated with, endorsed by, or supported by \
-                 EffeTune or its author.
+                 EffeTune or its author. \
+                 [Privacy policy](https://nemut.ai/effetune-live/privacy.html)
                  """)
         }
 
@@ -220,49 +240,78 @@ struct SettingsView: View {
         // 置かないと、困った人は EffeTune の作者に聞きに行く。
         // 向こうはこのアプリを作っていないので答えようがない。
         //
-        // **診断を貼る札を同じ節に置く。**数字は Audio の Details にも在るが、
-        // 報告する人はここに居る。別のペインへ取りに行かせると、たいてい何も付かない
-        // 報告が来る。Details 節はそのまま残す（音の数字は Audio に置く、の判断は
-        // 壊さない）。押した瞬間に作るので、ここで io を観測する必要は無い。
+        // **道具をこの節に並べない。**以前は Contact という見出しの下に
+        // 報告先 2 つ・Attach log・Copy details・Privacy policy の 5 行が
+        // 並んでいた。連絡先はそのうち 2 行だけで、残りは連絡ではない。
+        // 見出しと中身が合っていないので、何をさせたい節なのか読めなかった。
         //
-        // **並びを手順の順にする。**やることは「報告先を選ぶ → 必要ならログを添える」
-        // なので、報告先を上に、道具を下に置く。以前は Copy details と Attach log が
-        // 先頭に並んでいて、報告する口はその下に隠れていた。道具が先に来ると、
-        // 何をさせたい画面なのか読めない。
-        //
-        // **Copy details を先に押させない。**本文には診断もログの末尾も
-        // ETReportLink が既に詰めている。貼り直しは要らないので、Copy details は
-        // 本文に入りきらなかったぶんを自分で足したい人のための道具として下に置く。
+        // いまは「報告する」という 1 つの用に対して 1 行。行き先の選択も
+        // ログの添え方も、報告すると決めた人だけが入る画面（ETReportView）へ
+        // 送る。押す手数は 1 つ増えるが、増えるのは本気で報告する人だけ。
         Section {
+            NavigationLink("Report a problem") {
+                ETReportView(io: io, dsp: dsp, prefs: prefs)
+            }
+        } header: {
+            Text("Feedback")
+        } footer: {
+            Text("Found a bug, or something that does not sound right? The report comes with the diagnostics already filled in.")
+        }
+    }
+}
+
+// MARK: - 報告する
+
+/// 報告すると決めた人だけが入る画面。
+///
+/// **行き先を先に、道具を後に。**やることは「報告先を選ぶ → 必要ならログを添える」
+/// なので、報告先を上に、道具を下に置く。以前は Copy details と Attach log が
+/// 先頭に並んでいて、報告する口はその下に隠れていた。道具が先に来ると、
+/// 何をさせたい画面なのか読めない。
+///
+/// **Copy details を先に押させない。**本文には診断もログの末尾も
+/// ETReportLink が既に詰めている。貼り直しは要らないので、Copy details は
+/// 本文に入りきらなかったぶんを自分で足したい人のための道具として下に置く。
+///
+/// io は観測しない。押した瞬間に ETDiagnostics を作るので要らない。
+private struct ETReportView: View {
+    let io: AudioIO
+    let dsp: EffeTuneDSP
+    let prefs: Preferences
+
+    var body: some View {
+        List {
             // **本文を先に詰めて開く。**押してから診断を貼らせると、たいてい
             // 何も付かない報告が来る。1 MB のログは URL に載らないので、
             // 入るだけの直近ぶんと「添付してほしい」の 1 行を入れる。
-            ETReportDestinationButton(title: "Report a problem", detail: "GitHub") {
-                ETReportLink.github(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
-            }
-            ETReportDestinationButton(title: "Email", detail: "support@nemut.ai") {
-                ETReportLink.mail(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
+            Section {
+                ETReportDestinationButton(title: "Open an issue", detail: "GitHub") {
+                    ETReportLink.github(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
+                }
+                ETReportDestinationButton(title: "Email", detail: "support@nemut.ai") {
+                    ETReportLink.mail(ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs).text)
+                }
+            } header: {
+                Text("Where to send it")
+            } footer: {
+                Text("Either one opens with the diagnostics and the end of the log already written in.")
             }
 
             // ここから下は道具。報告先を開いたあと、本文に入らなかったぶんを
             // 足すためのもの。
-            // **節は割らない。**行の間は List が既に区切っている。見出しの無い節を
-            // もう 1 つ足しても、間が空くだけで名前の無い箱が増える。
-            ETShareLogButton()
-            ETCopyDiagnosticsButton {
-                ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
+            Section {
+                ETShareLogButton()
+                ETCopyDiagnosticsButton {
+                    ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
+                }
+            } header: {
+                Text("Add to it")
+            } footer: {
+                Text("Only a few kilobytes fit in a link, so use Attach log to send the whole log.")
             }
-            Link(destination: URL(string: "https://nemut.ai/effetune-live/privacy.html")!) {
-                Text("Privacy policy")
-            }
-        } header: {
-            Text("Contact")
-        } footer: {
-            // **実装のとおりに書く。**以前は「先に Copy details を押して報告に貼れ」で、
-            // ETReportLink が本文を詰めるようになった後もその文面が残っていた。
-            // 要らない手作業を指示している状態だった。
-            Text("Opening a report fills in the diagnostics and the end of the log. Only a few kilobytes fit in a link, so use Attach log to send the whole log.")
         }
+        .navigationTitle("Report a problem")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

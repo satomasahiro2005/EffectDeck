@@ -1,5 +1,4 @@
 #include "ETJSFXHost.h"
-#include <os/log.h>
 #include "ysfx.h"
 #include "WDL/eel2/ns-eel.h"
 
@@ -388,14 +387,11 @@ bool ETJSFX_GFXWantsRetina(ETJSFX *h){return h&&h->effect&&ysfx_gfx_wants_retina
 static int32_t showMenu(void *opaque,const char *menu,int32_t x,int32_t y)
 {
     auto *h=static_cast<ETJSFX *>(opaque);
-    // **どこで落ちたかを残す。**呼ばれてすらいないのか、口が無いのか、
-    // 札が長すぎるのかを外から見分けられないと追えない。
-    if(!h){os_log_error(OS_LOG_DEFAULT,"ET menu: host なし");return 0;}
-    if(!menu){os_log_error(OS_LOG_DEFAULT,"ET menu: 札なし");return 0;}
-    if(!h->menuCallback){os_log_error(OS_LOG_DEFAULT,"ET menu: 口が付いていない");return 0;}
+    if(!h){return 0;}
+    if(!menu){return 0;}
+    if(!h->menuCallback){return 0;}
     size_t n=strnlen(menu,kMaxMenuPayload+1);
-    if(n>kMaxMenuPayload){os_log_error(OS_LOG_DEFAULT,"ET menu: 札が長い %zu",n);return 0;}
-    os_log_error(OS_LOG_DEFAULT,"ET menu: 渡す %zu 文字",n);
+    if(n>kMaxMenuPayload){return 0;}
     return h->menuCallback(h->menuContext,menu,x,y);
 }
 void ETJSFX_SetGFXMenuCallback(ETJSFX *h,ETJSFXMenuCallback callback,void *context)
@@ -416,10 +412,6 @@ bool ETJSFX_RunGFX(ETJSFX *h,uint32_t width,uint32_t height,double scale)
         h->gfxWidth=width;h->gfxHeight=height;h->gfxStride=(uint32_t)stride;}
     ysfx_gfx_config_t c{};c.user_data=h;c.pixel_width=width;c.pixel_height=height;c.pixel_stride=h->gfxStride;c.pixels=h->framebuffer.data();c.scale_factor=std::max(1.0,scale);c.show_menu=showMenu;
     ysfx_gfx_setup(h->effect,&c);if(applySliders(h))h->sliderComputePending.store(true,std::memory_order_release);
-    // **押しが gfx から見えているかを追う。**スクリプトの多くは
-    // 「押していない状態から押した瞬間」で動く（down && !last_down）ので、
-    // buttons=1 を 1 度も走らせないまま 0 へ戻すと何も起きない。
-    os_log_error(OS_LOG_DEFAULT,"ET gfx: 回す %ux%u",width,height);
     bool dirty=ysfx_gfx_run(h->effect);cacheSliders(h);cacheSliderNotifications(h);h->gfxActive.store(false);return dirty;
 }
 bool ETJSFX_CopyGFX(ETJSFX *h,uint8_t *bgra,size_t cap,uint32_t *w,uint32_t *height,uint32_t *stride)
