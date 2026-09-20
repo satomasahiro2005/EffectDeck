@@ -217,10 +217,16 @@ struct SettingsView: View {
             // 揃えてあるが（Tools/gen_version.py）、指しているものが違う。
             // 効果の本数は出さない。増えても減っても使う人の判断は変わらない。
             LabeledContent("EffeTune DSP", value: ETUpstreamVersion)
-            // **礼を先に、一覧をその中へ。**Open source licenses は機械が吐いた
-            // 条文で、読みに来る人はほとんど居ない。名前で礼を言う相手を上に出し、
-            // 条文はその画面の末尾へ畳む。
-            NavigationLink("Acknowledgements") { AcknowledgementsView() }
+            // **Special Thanks はまだ置かない。**一度 4 件（EffeTune / ysfx /
+            // JSFX・WDL・EEL2 / PFFFT）を並べたが、全部ライブラリで、下の
+            // Licenses が作者名つきで既に出しているものだった。EffeTune は
+            // この節の footer でも名指ししている。名前が重なるだけで、
+            // 読んで増えるものが無い。
+            //
+            // 載せたいのは**人**（Twitter で不具合を知らせてくれた人）。
+            // その人がライブラリの下に並ぶのは性質が違う。最初の 1 人が
+            // 出たときに、人だけのページとして作る。
+            NavigationLink("Licenses") { LicensesView() }
         } header: {
             Text("About")
         } footer: {
@@ -259,14 +265,64 @@ struct SettingsView: View {
             // Where to send it に並べると、いちばん押しやすい口がいちばん
             // 情報の付かない口になる。報告すると決めた人は上の行へ入るので、
             // こちらはその下に 1 行だけ置く。
-            ETReportDestinationButton(title: "Ask on X", detail: "@ainemut") {
-                URL(string: "https://x.com/ainemut")
+            ETReportDestinationButton(title: "Ask on Twitter", detail: "@ainemut") {
+                URL(string: "https://twitter.com/ainemut")
             }
         } header: {
             Text("Feedback")
         } footer: {
             Text("Report a problem opens with the diagnostics already filled in.")
         }
+
+        // 名前が 1 つも無いうちは節ごと出さない。
+        if !ETReporterThanks.isEmpty {
+            Section {
+            } footer: {
+                Text(ETReporterThanks.line)
+            }
+        }
+    }
+}
+
+/// **知らせてくれた人への礼。**
+///
+/// **コントリビューターは載せない。**線は「GitHub が記録するか」で引いている。
+/// PR を送った人は commit とコントリビューターの一覧に名前が永久に残るので、
+/// アプリに重ねて出す必要が無い。Twitter で知らせてくれた人はどこにも残らない
+/// （#3 も #5 も本文は "A user reported…" で、issue を立てたのはこちら）。
+/// あとから PR が来ても、この規則なら迷わない。
+///
+/// **画面を作らない。**2 人のために 1 枚作ると、名前より器のほうが大きくなる。
+/// 一覧のいちばん下に小さい 1 行だけ置く。増えたら節へ昇格させればよい。
+///
+/// 番号は押せる。名前だけだと何を見つけた人なのか分からないが、文で説明すると
+/// 1 行に収まらない。issue を開かせれば、こちらが書く字は増えない。
+enum ETReporterThanks {
+
+    /// 載せる前に**本人の了解を取る。**報告した時点では、公開アプリに名前が
+    /// 出ることを想定していない。
+    static let people: [(handle: String, issue: Int)] = [
+    ]
+
+    static var isEmpty: Bool { people.isEmpty }
+
+    private static let issues = "https://github.com/satomasahiro2005/EffectDeck/issues/"
+
+    /// markdown を自分で組んで `AttributedString` にする。
+    /// **`Text` の markdown は文字列リテラルのときだけ効く。**組み立てた字を
+    /// `LocalizedStringKey` に入れてもリンクにならない。
+    static var line: AttributedString {
+        let names = people.map {
+            "[@\($0.handle)](https://twitter.com/\($0.handle)) ([#\($0.issue)](\(issues)\($0.issue)))"
+        }
+        let joined: String
+        switch names.count {
+        case 0:  return AttributedString("")
+        case 1:  joined = names[0]
+        default: joined = names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        }
+        let text = "Thanks to \(joined) for the detailed bug reports."
+        return (try? AttributedString(markdown: text)) ?? AttributedString(text)
     }
 }
 
