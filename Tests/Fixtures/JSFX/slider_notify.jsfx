@@ -1,0 +1,15 @@
+desc:Slider Notify
+author:nemut.ai
+slider1:0<0,2,1>Arm
+slider2:0<0,100,1>Reported
+
+@block
+slider1 == 1 ? (
+  slider2 = 42;
+  sliderchange(slider2);
+);
+slider1 == 2 ? (
+  slider_show(slider2, 0);
+);
+
+@sample

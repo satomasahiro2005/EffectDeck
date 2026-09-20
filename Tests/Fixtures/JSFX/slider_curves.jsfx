@@ -1,0 +1,8 @@
+desc:Slider Curves
+author:nemut.ai
+slider1:1000<20,20000,1:log=1000>Log frequency
+slider3:0.5<0,1,0.001:sqr>Square curve
+slider5:0<0,1,1>-Hidden state
+slider8:2<0,3,1{Off,Low,Mid,High}>Enum
+
+@sample

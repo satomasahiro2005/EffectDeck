@@ -1,0 +1,12 @@
+desc:PDC Slider
+author:nemut.ai
+slider1:0<-4096,4096,0.1>Delay
+
+@init
+pdc_bot_ch = 0;
+pdc_top_ch = 2;
+
+@slider
+pdc_delay = slider1;
+
+@sample

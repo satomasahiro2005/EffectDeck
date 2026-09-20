@@ -1,0 +1,7 @@
+desc:String Include
+author:nemut.ai
+
+@init
+#text = "include(other.jsfx-inc)";
+
+@sample

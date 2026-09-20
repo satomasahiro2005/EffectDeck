@@ -101,14 +101,27 @@ fixture はなるべく 1 つの仕様だけを検証する。
 
 # 4. L1 — JSFX Core Tests
 
-推奨配置:
+当初の推奨配置は `Tests/Native/jsfx_host.cpp` だったが、**実際は Xcode の
+`EffeTuneLiveUnitTests`（scheme `Logic`）へ入れた。**
 
 ```text
-Tests/Native/jsfx_host.cpp
-Tests/Native/jsfx_fixtures/
+Tests/Unit/JSFXHostSupport.swift   足場（fixture の在り処・host の持ち主）
+Tests/Unit/JSFXSourceTests.swift   §4.1 / §22
+Tests/Unit/JSFXAudioTests.swift    §5 / §6
+Tests/Unit/JSFXSliderTests.swift   §8
+Tests/Unit/JSFXTriggerTests.swift  §9
+Tests/Unit/JSFXStateTests.swift    §10 / §14
+Tests/Unit/JSFXLatencyTests.swift  §11
+Tests/Unit/JSFXDeadlineTests.swift §13
+Tests/Unit/JSFXRaceTests.swift     §15
+Tests/Fixtures/JSFX/               fixture（テストバンドルの resources）
 ```
 
-`ETJSFXHost.h` の public API を直接叩く。
+`Tests/Native/CMakeLists.txt` は ysfx を知らず、`Vendor/ysfx` は submodule
+なので、あちらへ足すとビルド系の持ち主が 2 つになる。代わりに `project.yml` の
+`EffeTuneLiveUnitTests` へ `YSFX` 依存と `Sources/Shared/ETJSFXHost.cpp`
+（＋ LICE の字を外へ出している `ETLICEFont.mm`）を足し、Swift から
+`ETJSFXHost.h` の public C API を直接叩く。`bash Scripts/test.sh` がそのまま回る。
 
 ---
 
