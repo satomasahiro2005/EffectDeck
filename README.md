@@ -98,7 +98,7 @@ ITMS-91183.
 ## Writing a JSFX for it
 
 EffectDeck hosts single-file audio JSFX through the portable EEL2 interpreter.
-`Documentation/JSFXCompatibility.md` is the contract: what is supported, what is
+[`JSFX.md`](JSFX.md) is the contract: what is supported, what is
 deliberately absent, the rules that reject a file outright, and the resource
 limits. It is written to be handed to a language model as-is — the top section
 states the requirements in the order they are usually violated, and there is a
