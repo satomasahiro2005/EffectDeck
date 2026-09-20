@@ -83,10 +83,15 @@ enum ETShareLink {
     /// An upstream-compatible projection of an EffectDeck chain.
     /// The sound will necessarily differ where an external processor was used,
     /// but native effects and bus topology remain loadable by EffeTune.
+    ///
+    /// EffectDeck-only built-ins (Virtual Room) are projected out the same way:
+    /// EffeTune has no kernel for them, so sending the name would only produce
+    /// an unknown effect on the other side.
     static func effeTuneForm(_ chain: [EffeTuneDSP.Node]) -> [[String: Any]] {
         let encoded = PipelineStore.shortForm(chain)
         return zip(chain, encoded).compactMap { node, entry in
-            guard node.isExternal else { return entry }
+            let deckOnly = ETDeckEffect.isDeckOnly(node.spec.type)
+            guard node.isExternal || deckOnly else { return entry }
 
             // With no bus crossing, bypassing the processor is deletion.
             guard node.inputBus != node.outputBus else { return nil }

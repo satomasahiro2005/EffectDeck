@@ -126,7 +126,11 @@ struct RoutingRow: View {
                         get: { node.channelSpec },
                         set: { dsp.setRouting(at: index, channelSpec: $0) })
                     ) {
-                        ForEach(ETRouting.channelOptions, id: \.0) { value, name in
+                        // §52。幅を要求するエフェクトでは満たすものだけ出す。
+                        ForEach(ETRoutingConstraint.options(ETRouting.channelOptions,
+                                                            type: node.spec.type,
+                                                            current: node.channelSpec),
+                                id: \.0) { value, name in
                             Text(name).tag(value)
                         }
                     }

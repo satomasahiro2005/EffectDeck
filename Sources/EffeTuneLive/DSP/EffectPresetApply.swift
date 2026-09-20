@@ -96,7 +96,7 @@ enum EffectPresetApply {
     ///     decode は知らない鍵を黙って飛ばすので、外す相手がそもそも居ない。
     static func matchingPresetId(for spec: ETEffect, current: [Float]) -> String {
         let skip = excludedOffsets(for: spec)
-        for preset in ETEffectPresets[spec.name] ?? [] {
+        for preset in ETPresetCatalog.presets(for: spec.name) {
             let applied = values(for: spec, params: preset.params, current: current)
             guard applied.count == current.count else { continue }
             var same = true
