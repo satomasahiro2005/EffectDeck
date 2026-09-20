@@ -577,3 +577,33 @@ EffectDeck 側から消す手は無い（他のアプリのセッションの pr
 `YES` を立て、アプリを作り直すと `NO` から始まる。
 「同じ動画でも通ったり通らなかったり」「再起動で直る」と合う。
 **ただし #3 でこの並びを撮ったわけではない。**見張りは置いてある。
+
+## 訂正: 「部分キャッシュのせいで壊れていた」は誤り
+
+上で「抜き出した MediaToolbox が壊れていたから GOT が見えなかった」と書いたが、
+**誤り。**完全なキャッシュから抜き直したものと **md5 が一致した。**
+
+```
+/root/aud/bin/MediaToolbox   809aaebcd8217f0432d8f7e9be600816  … 535MB の部分キャッシュ由来
+/root/aud/good/MediaToolbox  809aaebcd8217f0432d8f7e9be600816  … 6.7G の完全キャッシュ由来
+```
+
+GOT の参照が出ないのは**抜き出した dylib の性質**で、破損ではない。
+GOT の中身はキャッシュ側に在るので、抜き出した単体のファイルには入らない。
+`macho info -l` の `failed to read … EOF` も、破損ではなく
+**抜き出し物に対する道具の限界**。
+
+`.77.dyldlinkedit`（678MB）が旧セット全体（535MB）より大きいのは事実だが、
+**MediaToolbox を抜くぶんには足りていた。**大きさの比較から破損を推したのは
+飛躍だった。
+
+**ただし DSC を取り直したこと自体は要る。**部分キャッシュでは `xref` も
+`dyld info` もそもそも動かない（`invalid magic at byte 0x0`）。
+いまは `info` が 5537 dylib を認識し、sink の番地も両方解決する。
+
+**image のパスは `Frameworks` が正。**`PrivateFrameworks` ではない。
+
+```
+/System/Library/Frameworks/MediaToolbox.framework/MediaToolbox
+/System/Library/PrivateFrameworks/MediaExperience.framework/MediaExperience
+```
