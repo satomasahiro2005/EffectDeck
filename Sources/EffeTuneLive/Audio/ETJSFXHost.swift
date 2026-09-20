@@ -130,6 +130,19 @@ final class ETJSFXHost: ObservableObject {
 
     private init() {
         refresh()
+        // **init では張らない。**この型は singleton で、ピッカーを開くだけで
+        // 生成される（EffectPickerView が生成式で shared を読む）。init から張ると、
+        // JSFX を 1 つも読んでいなくても 10 回/秒でメインスレッドを起こし、
+        // そのたびに Task を 1 つ作り続ける。止める口はどこにも無かった。
+        // 生きたホストが在る間だけ回す。
+    }
+
+    /// 生きたホストが在る間だけ 10Hz で回す。
+    ///
+    /// 背景で止めるのは筋が悪い。つまみの変化は音のスレッド由来なので、
+    /// 取りこぼすと PDC が合わなくなる。
+    private func startLatencyTimerIfNeeded() {
+        guard latencyTimer == nil else { return }
         latencyTimer = .scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in ETJSFXHost.shared.pollRuntimeChanges() }
         }
@@ -264,6 +277,7 @@ final class ETJSFXHost: ObservableObject {
         let instance = Instance(id: instanceID, entry: entry, state: state, channels: channels)
         instance.ready = ready
         instances[instanceID] = instance
+        startLatencyTimerIfNeeded()
         do { _ = try ETAUExternalBridge.shared.reserve(instanceID: instanceID) }
         catch {
             instance.error = error.localizedDescription
@@ -351,6 +365,24 @@ final class ETJSFXHost: ObservableObject {
         guard let host = instances[instanceID]?.host else { return }
         setParameter(instanceID: instanceID, parameterID: parameterID,
                      value: ETJSFX_SliderFromNormalized(host, parameterID, value))
+    }
+
+    /// 自動バイパスの診断。**空なら nil。**
+    ///
+    /// status(instanceID:) は host が在れば常に非空（"Ready"）を返すので、
+    /// あれを条件に使うと全カードの頭に "Ready" が並ぶ。診断だけを別の口で出す。
+    func diagnostic(instanceID: String) -> String? {
+        guard let host = instances[instanceID]?.host else { return nil }
+        let text = String(cString: ETJSFX_Diagnostic(host))
+        return text.isEmpty ? nil : text
+    }
+
+    /// 自動バイパスを解く。解けたら true。
+    /// 再設定や状態復元の最中（maintenance）は解かない。
+    @discardableResult
+    func clearDiagnostic(instanceID: String) -> Bool {
+        guard let host = instances[instanceID]?.host else { return false }
+        return ETJSFX_ClearDiagnostic(host)
     }
 
     /// いま音を通しているか。trigger の札を出すかどうかに使う。
@@ -573,6 +605,13 @@ final class ETJSFXHost: ObservableObject {
     }
 
     private func pollRuntimeChanges() {
+        // 生きたホストが 1 つも無ければ止める。**instances.isEmpty では足りない**
+        // （ビルドに失敗した instance は host が nil のまま残る）。
+        guard instances.values.contains(where: { $0.host != nil }) else {
+            latencyTimer?.invalidate()
+            latencyTimer = nil
+            return
+        }
         var pdcChanged = false
         var parametersChanged = false
         for instance in instances.values where instance.host != nil {

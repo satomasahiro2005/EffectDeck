@@ -40,6 +40,10 @@ bool ETJSFX_SendTrigger(ETJSFX *host, uint32_t index);
 uint32_t ETJSFX_MaxTriggers(void);
 /// いま音を通しているか。false のあいだ SendTrigger は捨てる。
 bool ETJSFX_IsRunning(const ETJSFX *host);
+/// 自動バイパスを解く。診断を消し、締切の回数を 0 に戻し、
+/// **automaticBypass のときだけ** running へ戻す（maintenance は触らない）。
+/// 戻せたら true。
+bool ETJSFX_ClearDiagnostic(ETJSFX *host);
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);
 bool ETJSFX_HasGFX(const ETJSFX *host);

@@ -101,6 +101,9 @@ struct ETJSFX {
     std::atomic<bool> audioActive{}, gfxActive{};
     std::atomic<uint64_t> processedFrames{};
     std::atomic<uint32_t> latency{}, deadlineOverruns{};
+    /// 次の process で @slider が走る見込み。締切の判定から外すのに使う。
+    /// 立てるのは GFX スレッドの applySliders と、ysfx_init / ysfx_load_state の直後。
+    std::atomic<bool> sliderComputePending{};
     std::atomic<uint32_t> pendingTriggers{};
     std::atomic<bool> latencyChanged{};
     std::atomic<bool> sliderChanged{};
@@ -152,11 +155,23 @@ static void cacheSliderNotifications(ETJSFX *h)
                   ysfx_fetch_slider_automations(h->effect,group))!=0;
     if(changed)h->sliderChanged.store(true,std::memory_order_release);
 }
-static void applySliders(ETJSFX *h)
+/// つまみの値を渡す。**1 本でも書いたら true。**
+///
+/// notify=true なので ysfx は must_compute_slider を立て、同じ process の中で
+/// @slider を走らせる。@slider の中身は人が書いたコード（係数表の作り直し、
+/// バッファのクリア、FFT 窓の再計算）で、長さに上限が無い。
+/// ysfx 自身がその場所に「@slider は @sample/@block と同時に走ってはいけない」と
+/// TODO を残している＝上流も未解決。
+/// だから、走ったブロックは締切の判定から外す（下の process を読むこと）。
+static bool applySliders(ETJSFX *h)
 {
+    bool wrote = false;
     for (uint32_t i : h->sliders)
-        if (h->pendingSliders[i].exchange(false, std::memory_order_acq_rel))
+        if (h->pendingSliders[i].exchange(false, std::memory_order_acq_rel)) {
             ysfx_slider_set_value(h->effect, i, fromBits(h->pendingValues[i].load()), true);
+            wrote = true;
+        }
+    return wrote;
 }
 
 static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t frames,
@@ -172,7 +187,12 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
         h->audioActive.store(false, std::memory_order_release); return 0;
     }
     auto began = std::chrono::steady_clock::now();
-    applySliders(h);
+    // **@slider が走ったブロックは締切で測らない。**
+    // 立てる経路は 3 本ある: ここ、GFX スレッドの applySliders（フラグだけ立って
+    // 実行は次の process）、ysfx_init / ysfx_load_state の直後（再設定・状態復元）。
+    // 自前のフラグで 2 本目と 3 本目も拾う。
+    bool slidersRan = applySliders(h) ||
+        h->sliderComputePending.exchange(false, std::memory_order_acq_rel);
     uint32_t triggers = h->pendingTriggers.exchange(0, std::memory_order_acq_rel);
     for (uint32_t i = 0; i < ysfx_max_triggers; ++i)
         if (triggers & (1u << i)) ysfx_send_trigger(h->effect, i);
@@ -188,7 +208,11 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
     uint32_t latency = (uint32_t)std::max(0.0, std::ceil(ysfx_get_pdc_delay(h->effect)));
     if (latency != h->latency.exchange(latency)) h->latencyChanged.store(true);
     double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
-    if (elapsed > (double)frames / sampleRate) {
+    // **カウンタに触らない。**0 に戻すと、つまみを 1 ブロックおきに動かすだけで
+    // 本当に重いスクリプトでも判定が永久に成立しなくなる。
+    if (slidersRan) {
+        // 何もしない。このブロックは測らない。
+    } else if (elapsed > (double)frames / sampleRate) {
         if (h->deadlineOverruns.fetch_add(1) + 1 >= 3) {
             h->diagnostic.store((uint8_t)Diagnostic::deadlineOverrun, std::memory_order_release);
             h->mode.store((uint8_t)Mode::automaticBypass, std::memory_order_release);
@@ -228,6 +252,7 @@ ETJSFX *ETJSFX_Create(const char *path, double rate, uint32_t maxFrames, char *e
     }
     ysfx_set_midi_capacity(h->effect, 0, false); ysfx_set_sample_rate(h->effect, rate);
     ysfx_set_block_size(h->effect, maxFrames); ysfx_init(h->effect); cacheSliders(h);
+    h->sliderComputePending.store(true, std::memory_order_release);
     h->latency.store((uint32_t)std::max(0.0, std::ceil(ysfx_get_pdc_delay(h->effect))));
     h->mode.store((uint8_t)Mode::running, std::memory_order_release); return h;
 }
@@ -242,6 +267,7 @@ bool ETJSFX_Reconfigure(ETJSFX *h, double rate, uint32_t maxFrames)
     if (!h || !h->effect || !maxFrames) return false; bool healthy=beginMaintenance(h);
     h->sampleRate=rate; h->maxFrames=maxFrames; ysfx_set_sample_rate(h->effect,rate);
     ysfx_set_block_size(h->effect,maxFrames); ysfx_init(h->effect); h->processedFrames.store(0);
+    h->sliderComputePending.store(true,std::memory_order_release);
     cacheSliders(h); endMaintenance(h,healthy); return true;
 }
 
@@ -267,6 +293,7 @@ bool ETJSFX_LoadState(ETJSFX *h,const uint8_t *bytes,size_t size)
     for(uint32_t i=0;i<n;++i,p+=12){values[i].index=get32(p);values[i].value=fromBits(get64(p+4));}
     ysfx_state_t s{};s.sliders=values.data();s.slider_count=n;s.data=const_cast<uint8_t*>(p);s.data_size=payload;
     bool healthy=beginMaintenance(h);bool ok=ysfx_load_state(h->effect,&s);if(ok)ysfx_init(h->effect);
+    if(ok)h->sliderComputePending.store(true,std::memory_order_release);
     cacheSliders(h);endMaintenance(h,healthy);return ok;
 }
 void ETJSFX_FreeBytes(void *p){std::free(p);}
@@ -319,6 +346,23 @@ bool ETJSFX_SendTrigger(ETJSFX *h,uint32_t i)
     h->pendingTriggers.fetch_or(1u<<i,std::memory_order_release);return true;
 }
 uint32_t ETJSFX_MaxTriggers(void){return ysfx_max_triggers;}
+bool ETJSFX_ClearDiagnostic(ETJSFX *h)
+{
+    if(!h)return false;
+    // 順序が要る。診断を消す → 回数を 0 に戻す → automaticBypass だけを running へ。
+    //
+    // **回数を戻さないと 1 ブロックで元に戻る。**0 に戻すのは process の else だけで、
+    // automaticBypass 中は頭の早期 return で process が走らないので 3 のまま凍っている。
+    // 戻した直後に 1 回超えれば 4 >= 3 が即成立する。
+    //
+    // **maintenance を running に書き換えてはいけない。**再設定や状態復元の最中に
+    // process が入って ysfx_init と同時に走る。CAS が外れたら false を返すだけにする。
+    h->diagnostic.store((uint8_t)Diagnostic::none,std::memory_order_release);
+    h->deadlineOverruns.store(0,std::memory_order_release);
+    uint8_t expected=(uint8_t)Mode::automaticBypass;
+    return h->mode.compare_exchange_strong(expected,(uint8_t)Mode::running,
+                                           std::memory_order_acq_rel);
+}
 bool ETJSFX_IsRunning(const ETJSFX *h){return h&&h->mode.load(std::memory_order_acquire)==(uint8_t)Mode::running;}
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange(false);}
 bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
@@ -348,7 +392,7 @@ bool ETJSFX_RunGFX(ETJSFX *h,uint32_t width,uint32_t height,double scale)
         if(old>bytes)gFramebufferBytes.fetch_sub(old-bytes);h->gfxAccounted=bytes;
         h->gfxWidth=width;h->gfxHeight=height;h->gfxStride=(uint32_t)stride;}
     ysfx_gfx_config_t c{};c.user_data=h;c.pixel_width=width;c.pixel_height=height;c.pixel_stride=h->gfxStride;c.pixels=h->framebuffer.data();c.scale_factor=std::max(1.0,scale);c.show_menu=showMenu;
-    ysfx_gfx_setup(h->effect,&c);applySliders(h);bool dirty=ysfx_gfx_run(h->effect);cacheSliders(h);cacheSliderNotifications(h);h->gfxActive.store(false);return dirty;
+    ysfx_gfx_setup(h->effect,&c);if(applySliders(h))h->sliderComputePending.store(true,std::memory_order_release);bool dirty=ysfx_gfx_run(h->effect);cacheSliders(h);cacheSliderNotifications(h);h->gfxActive.store(false);return dirty;
 }
 bool ETJSFX_CopyGFX(ETJSFX *h,uint8_t *bgra,size_t cap,uint32_t *w,uint32_t *height,uint32_t *stride)
 {if(!h||!bgra||h->gfxActive.load()||cap<h->framebuffer.size())return false;std::memcpy(bgra,h->framebuffer.data(),h->framebuffer.size());if(w)*w=h->gfxWidth;if(height)*height=h->gfxHeight;if(stride)*stride=h->gfxStride;return true;}

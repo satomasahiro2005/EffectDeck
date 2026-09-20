@@ -422,10 +422,39 @@ private struct ExternalProcessorView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(minHeight: 180, idealHeight: 300, maxHeight: 520)
             } else {
-                Color.black.frame(height: 180)
+                // **黒い板を出さない。**JSFX の canvas を二重に mount しないための
+                // 措置だが、自前 UI を持たない AU（パラメータだけのもの）や、
+                // まだビューが立ち上がっていない AU では snapshot が必ず nil になるので、
+                // 掴んだ瞬間にカードの中身が真っ黒な板になっていた。
+                // 掴んでいる間だけの絵なので、名前が出ていれば足りる。
+                Text(node.spec.name)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 72)
             }
         } else if externalID.hasPrefix("jsfx:") {
             let jsfxParameters = jsfx.parameters(instanceID: instanceID)
+            // **3 つの枝の共通の頭に出す。**
+            // 診断（締切超過での自動バイパス）を出していたのは「@gfx が無く、かつ
+            // 可視パラメータも空」の枝だけだった。つまみを持つものや @gfx を持つものでは、
+            // 音だけ素通りに変わって画面は何も変わらない。
+            // status(instanceID:) は host が在れば常に "Ready" を返すので条件に使えない。
+            if let diagnostic = jsfx.diagnostic(instanceID: instanceID) {
+                HStack(spacing: 8) {
+                    Text(diagnostic)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Re-enable") { jsfx.clearDiagnostic(instanceID: instanceID) }
+                        .font(.system(size: 12))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            // **画面に入っているかを見るのは JSFX の canvas だけ。**
+            // body ぜんぶ（Group の外）に付けていたので、AU のカードでも端を
+            // よぎるたびに body が評価し直されていた。要るのはこの枝だけ。
             if jsfx.hasGFX(instanceID: instanceID) {
                 VStack(alignment: .leading, spacing: 12) {
                     ZStack(alignment: .topTrailing) {
@@ -470,6 +499,7 @@ private struct ExternalProcessorView: View {
                     jsfxParameterRows(jsfxParameters)
                     jsfxTriggers
                 }
+                .onScrollVisibilityChange(threshold: 0.01) { isOnScreen = $0 }
             } else if jsfxParameters.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(jsfx.status(instanceID: instanceID))
@@ -551,7 +581,6 @@ private struct ExternalProcessorView: View {
             }
         }
         }
-        .onScrollVisibilityChange(threshold: 0.01) { isOnScreen = $0 }
         .task(id: au.revision) {
             // The card normally opens before asynchronous AU instantiation has
             // finished. Retry when the host revision changes; the old one-shot
@@ -801,12 +830,42 @@ private struct JSFXSourceView: View {
     }
 }
 
+/// いま誰かが字を打っているか。
+///
+/// UIKit に「現在の first responder」を直に返す API は無いので、nil 宛ての
+/// sendAction が first responder にだけ届く性質を使う。
+private final class ETFirstResponderProbe {
+    static weak var found: UIResponder?
+}
+
+private extension UIResponder {
+    @objc func et_findFirstResponder(_ sender: Any?) {
+        ETFirstResponderProbe.found = self
+    }
+}
+
 private struct JSFXKeyboardCapture: UIViewRepresentable {
     let instanceID: String
+
+    /// 打ち込み中の欄が first responder を持っているか。
+    static var someoneIsTyping: Bool {
+        ETFirstResponderProbe.found = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.et_findFirstResponder(_:)),
+                                        to: nil, from: nil, for: nil)
+        return ETFirstResponderProbe.found is UITextInput
+    }
     func makeUIView(context: Context) -> ETJSFXKeyboardView {
         let view = ETJSFXKeyboardView()
         view.instanceID = instanceID
-        DispatchQueue.main.async { _ = view.becomeFirstResponder() }
+        // **打ち込み中の欄から first responder を奪わない。**
+        // この面は @gfx の枝が mount されるたびに立つ（開いた瞬間だけでなく、
+        // script の読み込みが終わって hasGFX が変わったとき、canvas の描き方を
+        // 切り替えたとき、全画面へ出入りしたとき）。数値を打っている最中に
+        // 重なると、キーボードが降りて入力が切れる。
+        DispatchQueue.main.async {
+            guard !Self.someoneIsTyping else { return }
+            _ = view.becomeFirstResponder()
+        }
         return view
     }
     func updateUIView(_ view: ETJSFXKeyboardView, context: Context) {
