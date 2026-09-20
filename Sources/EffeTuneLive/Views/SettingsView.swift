@@ -252,10 +252,20 @@ struct SettingsView: View {
             NavigationLink("Report a problem") {
                 ETReportView(io: io, dsp: dsp, prefs: prefs)
             }
+            // **軽いほうの口。**GitHub の口座を持っていない人と、
+            // 「なんか変」までしか言えない段階の話はここへ来る。
+            //
+            // **上の報告先と同じ節には入れない。**診断もログも付かないので、
+            // Where to send it に並べると、いちばん押しやすい口がいちばん
+            // 情報の付かない口になる。報告すると決めた人は上の行へ入るので、
+            // こちらはその下に 1 行だけ置く。
+            ETReportDestinationButton(title: "Ask on X", detail: "@ainemut") {
+                URL(string: "https://x.com/ainemut")
+            }
         } header: {
             Text("Feedback")
         } footer: {
-            Text("Found a bug, or something that does not sound right? The report comes with the diagnostics already filled in.")
+            Text("Report a problem opens with the diagnostics already filled in.")
         }
     }
 }
@@ -297,17 +307,17 @@ private struct ETReportView: View {
                 Text("Either one opens with the diagnostics and the end of the log already written in.")
             }
 
-            // ここから下は道具。報告先を開いたあと、本文に入らなかったぶんを
-            // 足すためのもの。
+            // **Copy details をここに置かない。**診断は上の 2 つが本文へ
+            // 丸ごと詰めているので、貼り直しても足されるものが無い。
+            // 並べると Attach log との違いが読めず、どちらを押す場面なのか
+            // 決められなくなる（数字を自分で持ち出したい人のための Copy details は
+            // Audio の Details に在る。数字が並んでいるのもあちら）。
+            //
+            // ここに残るのは、本文に入りきらないもの＝ログの全体だけ。
             Section {
                 ETShareLogButton()
-                ETCopyDiagnosticsButton {
-                    ETDiagnostics.current(io: io, dsp: dsp, prefs: prefs)
-                }
-            } header: {
-                Text("Add to it")
             } footer: {
-                Text("Only a few kilobytes fit in a link, so use Attach log to send the whole log.")
+                Text("Only a few kilobytes of the log fit in a link.")
             }
         }
         .navigationTitle("Report a problem")
