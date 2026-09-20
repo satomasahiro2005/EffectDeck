@@ -44,6 +44,10 @@ bool ETJSFX_IsRunning(const ETJSFX *host);
 /// **automaticBypass のときだけ** running へ戻す（maintenance は触らない）。
 /// 戻せたら true。
 bool ETJSFX_ClearDiagnostic(ETJSFX *host);
+/// 締切を超えたブロックの累計。**測るためだけ。**
+uint32_t ETJSFX_DeadlineTrips(const ETJSFX *host);
+/// 1 ブロックの持ち時間に対して使った割合の最大値（1/1000）。1000 で使い切り。
+uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *host);
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);
 bool ETJSFX_HasGFX(const ETJSFX *host);

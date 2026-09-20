@@ -385,6 +385,14 @@ final class ETJSFXHost: ObservableObject {
         return ETJSFX_ClearDiagnostic(host)
     }
 
+    /// 締切まわりの数。**閾値を決めるための計測器**で、画面には Details から出す。
+    /// worst は 1 ブロックの持ち時間に対して使った割合（1.0 で使い切り）。
+    func deadlineReading(instanceID: String) -> (trips: UInt32, worst: Double)? {
+        guard let host = instances[instanceID]?.host else { return nil }
+        return (ETJSFX_DeadlineTrips(host),
+                Double(ETJSFX_DeadlineWorstPermille(host)) / 1000)
+    }
+
     /// いま音を通しているか。trigger の札を出すかどうかに使う。
     func isRunning(instanceID: String) -> Bool {
         guard let host = instances[instanceID]?.host else { return false }

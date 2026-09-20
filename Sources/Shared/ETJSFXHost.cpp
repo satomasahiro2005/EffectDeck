@@ -104,6 +104,10 @@ struct ETJSFX {
     /// 次の process で @slider が走る見込み。締切の判定から外すのに使う。
     /// 立てるのは GFX スレッドの applySliders と、ysfx_init / ysfx_load_state の直後。
     std::atomic<bool> sliderComputePending{};
+    /// 測るためだけの数。**閾値は動かさない。**実機の数字が無いうちに 0.5 や 32 を
+    /// 決めても測り直しになるので、まず採れる状態にする。
+    /// deadlineWorst は「1 ブロックの持ち時間に対する割合」の最大値を 1/1000 で持つ。
+    std::atomic<uint32_t> deadlineTrips{}, deadlineWorst{};
     std::atomic<uint32_t> pendingTriggers{};
     std::atomic<bool> latencyChanged{};
     std::atomic<bool> sliderChanged{};
@@ -208,11 +212,20 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
     uint32_t latency = (uint32_t)std::max(0.0, std::ceil(ysfx_get_pdc_delay(h->effect)));
     if (latency != h->latency.exchange(latency)) h->latencyChanged.store(true);
     double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
+    {   // 最大値を残す。使ったのは持ち時間の何割か。
+        double budget = (double)frames / sampleRate;
+        uint32_t ratio = budget > 0 ? (uint32_t)(elapsed / budget * 1000.0) : 0;
+        uint32_t seen = h->deadlineWorst.load(std::memory_order_relaxed);
+        while (ratio > seen &&
+               !h->deadlineWorst.compare_exchange_weak(seen, ratio,
+                                                       std::memory_order_relaxed)) {}
+    }
     // **カウンタに触らない。**0 に戻すと、つまみを 1 ブロックおきに動かすだけで
     // 本当に重いスクリプトでも判定が永久に成立しなくなる。
     if (slidersRan) {
         // 何もしない。このブロックは測らない。
     } else if (elapsed > (double)frames / sampleRate) {
+        h->deadlineTrips.fetch_add(1, std::memory_order_relaxed);
         if (h->deadlineOverruns.fetch_add(1) + 1 >= 3) {
             h->diagnostic.store((uint8_t)Diagnostic::deadlineOverrun, std::memory_order_release);
             h->mode.store((uint8_t)Mode::automaticBypass, std::memory_order_release);
@@ -364,6 +377,8 @@ bool ETJSFX_ClearDiagnostic(ETJSFX *h)
                                            std::memory_order_acq_rel);
 }
 bool ETJSFX_IsRunning(const ETJSFX *h){return h&&h->mode.load(std::memory_order_acquire)==(uint8_t)Mode::running;}
+uint32_t ETJSFX_DeadlineTrips(const ETJSFX *h){return h?h->deadlineTrips.load(std::memory_order_relaxed):0;}
+uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *h){return h?h->deadlineWorst.load(std::memory_order_relaxed):0;}
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange(false);}
 bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
 

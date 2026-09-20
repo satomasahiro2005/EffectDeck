@@ -441,7 +441,12 @@ private struct ExternalProcessorView: View {
             // status(instanceID:) は host が在れば常に "Ready" を返すので条件に使えない。
             if let diagnostic = jsfx.diagnostic(instanceID: instanceID) {
                 HStack(spacing: 8) {
-                    Text(diagnostic)
+                    // 数字も一緒に出す。閾値（3 回連続・持ち時間まるごと）に根拠が無く、
+                    // 実機の数字が無いうちは動かさないと決めたので、まず採れる形にする。
+                    Text(jsfx.deadlineReading(instanceID: instanceID).map {
+                        diagnostic + String(format: " (worst %.0f%% of the block, %u over)",
+                                            $0.worst * 100, $0.trips)
+                    } ?? diagnostic)
                         .font(.system(size: 11))
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
