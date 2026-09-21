@@ -171,24 +171,43 @@ final class ETJSFXHost: ObservableObject {
         return true
     }
 
+    /// 同梱の見本を出すか。**TestFlight と開発ビルドだけ。**
+    ///
+    /// **TestFlight と App Store は同じバイナリ。**構成では分けられないので、
+    /// 実行時に受領書の名前で見る。TestFlight と開発は `sandboxReceipt`、
+    /// App Store は `receipt`。見本は配る相手が JSFX を試すための手がかりで、
+    /// 店で売る版に並べるものではない。
+    static var showsBundledSamples: Bool {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }
+
     func refresh() {
-        // 同梱の見本。**Debug だけではない。**自前の 3 本は Release にも積んでいて
-        // （Scripts/embed_debug_jsfx.sh）、配った相手が JSFX を試す手がかりになる。
-        // 第三者の実物はあちらで Debug のときしか写していない（再配布しない）。
+        // 同梱の見本。**TestFlight と開発ビルドだけに出す**（showsBundledSamples）。
+        // 積んであるのは自前の 3 本だけで、第三者の実物は Debug のときしか
+        // 写していない（Scripts/embed_debug_jsfx.sh。再配布しない）。
         // 毎回消してから写し直すのは、同梱の側を直したときに古いものが残らないため。
         let bundledRoot = try? Self.storageURL("JSFX/DebugFactory")
         if let bundledRoot { try? FileManager.default.removeItem(at: bundledRoot) }
-        if let bundledRoot { try? FileManager.default.createDirectory(at: bundledRoot, withIntermediateDirectories: true) }
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
-           let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
-                                                       options: [.skipsHiddenFiles]) {
-            for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
-                _ = try? Self.debugCopy(of: source, root: bundledRoot)
+        let showsBundled = Self.showsBundledSamples
+        if showsBundled {
+            if let bundledRoot { try? FileManager.default.createDirectory(at: bundledRoot, withIntermediateDirectories: true) }
+            if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
+               let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
+                                                           options: [.skipsHiddenFiles]) {
+                for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
+                    _ = try? Self.debugCopy(of: source, root: bundledRoot)
+                }
             }
         }
         Self.removeLegacyDebugCopies()
         var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"), debug: false)
-        discovered += Self.ownedEntries(at: bundledRoot, debug: true)
+        if showsBundled {
+            discovered += Self.ownedEntries(at: bundledRoot, debug: true)
+        }
         entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         entryAliases = Self.debugAliases(for: entries)
