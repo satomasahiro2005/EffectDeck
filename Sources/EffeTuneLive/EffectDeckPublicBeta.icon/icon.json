@@ -6,7 +6,7 @@
         {
           "blend-mode-specializations" : [
             {
-              "value" : "overlay"
+              "value" : "screen"
             },
             {
               "appearance" : "dark",
@@ -15,16 +15,36 @@
           ],
           "fill-specializations" : [
             {
-              "value" : "system-light"
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:1.00000,0.98898,0.58697,1.00000",
+                  "srgb:0.28869,1.00000,0.68095,1.00000"
+                ]
+              }
             },
             {
               "appearance" : "dark",
-              "value" : "system-light"
+              "value" : {
+                "automatic-gradient" : "srgb:0.93652,0.84774,1.00000,1.00000"
+              }
             }
           ],
           "glass" : true,
           "image-name" : "cross.svg",
           "name" : "cross",
+          "opacity-specializations" : [
+            {
+              "value" : 0.8
+            },
+            {
+              "appearance" : "dark",
+              "value" : 1
+            },
+            {
+              "appearance" : "tinted",
+              "value" : 1
+            }
+          ],
           "position" : {
             "scale" : 2,
             "translation-in-points" : [
@@ -43,13 +63,13 @@
           "fill-specializations" : [
             {
               "value" : {
-                "automatic-gradient" : "extended-srgb:0.68627,0.32157,0.87059,1.00000"
+                "automatic-gradient" : "srgb:0.57585,0.09271,1.00000,1.00000"
               }
             },
             {
               "appearance" : "dark",
               "value" : {
-                "automatic-gradient" : "extended-srgb:0.68627,0.32157,0.87059,1.00000"
+                "automatic-gradient" : "srgb:0.59775,0.22485,0.89394,1.00000"
               }
             }
           ],
@@ -80,7 +100,7 @@
           "fill-specializations" : [
             {
               "value" : {
-                "automatic-gradient" : "display-p3:0.28000,0.09000,0.48000,1.00000",
+                "automatic-gradient" : "display-p3:0.15681,0.00000,0.40906,1.00000",
                 "orientation" : {
                   "start" : {
                     "x" : 0.8682207809645596,
@@ -96,7 +116,7 @@
             {
               "appearance" : "dark",
               "value" : {
-                "automatic-gradient" : "display-p3:0.46000,0.24000,0.78000,1.00000",
+                "automatic-gradient" : "display-p3:0.28884,0.17596,0.53479,1.00000",
                 "orientation" : {
                   "start" : {
                     "x" : 0.8682207809645596,

@@ -4,13 +4,13 @@ set -u
 export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")/.." || exit 1
 SCHEME="${1:-EffeTuneLive}"
-# アイコン。**既定は紫**（EffeTuneLiveBeta）。ここから出る書庫は TestFlight 行きで、
-# 端末に青と紫が並ぶと、いまどちらを触っているか分かる。
+# アイコン。**既定は紫**（EffectDeckPublicBeta）。ここから出る書庫は TestFlight 行きで、
+# 端末で青と紫を見分けられると、いまどちらを触っているか分かる。
 #
 # 店へ出すときだけ第 2 引数に EffeTuneLive を渡して青にする。
 # 起動時に setAlternateIconName で差し替える形にしないのは、系が毎回
 # 「アイコンを変えました」の確認を出すから。
-APPICON="${2:-EffeTuneLiveBeta}"
+APPICON="${2:-EffectDeckPublicBeta}"
 LOG="$PWD/archive.log"
 {
   echo "=== start $(date) === icon=$APPICON"

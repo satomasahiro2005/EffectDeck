@@ -14,7 +14,7 @@ settings:
     CLANG_ENABLE_OBJC_ARC: YES
     TARGETED_DEVICE_FAMILY: "1,2"
     MARKETING_VERSION: "2026.09.21"
-    CURRENT_PROJECT_VERSION: "22"
+    CURRENT_PROJECT_VERSION: "23"
 
 # EffeTune の DSP コアは host-neutral な C++20 なので、そのまま arm64 で建つ。
 # WASM を経由しない。include の場所だけ揃えれば通る（実機向けに 75/75 確認済み）。
@@ -55,7 +55,7 @@ targets:
         buildPhase: resources
       # TestFlight へ出すときの紫版。**同じバイナリでは分けられない**ので、
       # 起動時に差し替えるのではなく、書庫を作るときに ET_APPICON で選ぶ。
-      - path: Sources/EffeTuneLive/EffeTuneLiveBeta.icon
+      - path: Sources/EffeTuneLive/EffectDeckPublicBeta.icon
         type: file
         buildPhase: resources
       - path: Sources/Shared
@@ -82,7 +82,7 @@ targets:
         PRODUCT_NAME: EffectDeck
         INFOPLIST_FILE: Sources/EffeTuneLive/Info.plist
         # 既定は青。書庫を作るときに Scripts/archive.sh が
-        # ET_APPICON=EffeTuneLiveBeta を渡すと紫になる。
+        # ET_APPICON=EffectDeckPublicBeta を渡すと紫になる。
         ET_APPICON: EffeTuneLive
         ASSETCATALOG_COMPILER_APPICON_NAME: $(ET_APPICON)
         CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLive/EffeTuneLive.entitlements
