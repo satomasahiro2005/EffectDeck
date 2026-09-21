@@ -172,23 +172,23 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func refresh() {
-        let debugRoot = try? Self.storageURL("JSFX/DebugFactory")
-        if let debugRoot { try? FileManager.default.removeItem(at: debugRoot) }
-        #if DEBUG
-        if let debugRoot { try? FileManager.default.createDirectory(at: debugRoot, withIntermediateDirectories: true) }
+        // 同梱の見本。**Debug だけではない。**自前の 3 本は Release にも積んでいて
+        // （Scripts/embed_debug_jsfx.sh）、配った相手が JSFX を試す手がかりになる。
+        // 第三者の実物はあちらで Debug のときしか写していない（再配布しない）。
+        // 毎回消してから写し直すのは、同梱の側を直したときに古いものが残らないため。
+        let bundledRoot = try? Self.storageURL("JSFX/DebugFactory")
+        if let bundledRoot { try? FileManager.default.removeItem(at: bundledRoot) }
+        if let bundledRoot { try? FileManager.default.createDirectory(at: bundledRoot, withIntermediateDirectories: true) }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
            let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
                                                        options: [.skipsHiddenFiles]) {
             for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
-                _ = try? Self.debugCopy(of: source, root: debugRoot)
+                _ = try? Self.debugCopy(of: source, root: bundledRoot)
             }
         }
-        #endif
         Self.removeLegacyDebugCopies()
         var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"), debug: false)
-        #if DEBUG
-        discovered += Self.ownedEntries(at: debugRoot, debug: true)
-        #endif
+        discovered += Self.ownedEntries(at: bundledRoot, debug: true)
         entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         entryAliases = Self.debugAliases(for: entries)
