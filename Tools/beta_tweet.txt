@@ -1,0 +1,16 @@
+EffectDeck v2026.09.21をPublic BetaとしてTestFlightで公開しました！
+
+AppStore版と比べて動作が不安定な場合があります。ご了承のうえご利用ください。
+
+- JSFXホスト対応
+　REAPERでおなじみのJSFXプラグインを使えます！
+　ChatGPT（Plusプラン以上推奨）に、satomasahiro2005/EffectDeckのJSFX.mdに準拠したエフェクトを作ってもらう使い方がおすすめです
+- UIの改善
+- バックグラウンドでのバッテリー消費を下げる変更
+- バグ修正等
+
+などが含まれます！
+
+バグや電池の持ちについてフィードバックいただけると助かります！
+
+https://github.com/satomasahiro2005/EffectDeck/releases/tag/v2026.09.21-beta

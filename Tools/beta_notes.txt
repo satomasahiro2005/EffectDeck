@@ -1,0 +1,69 @@
+Everything new since 2026.09.20, the version on the App Store.
+
+JSFX
+The big one. EffectDeck now hosts JSFX, the script format REAPER uses, so an
+effect can be a text file you wrote or downloaded rather than something we
+shipped.
+- Import a .jsfx from Files or the share sheet. Files are judged by what is
+  inside them, not by the extension, so a .txt holding a script is taken.
+- Sliders come through with their real ranges and curves (linear, log, sqr),
+  enums and hidden sliders. Values are typed in plainly, never as 1e-05.
+- Scripts that draw (@gfx) get their canvas, full screen, Retina, touch and
+  keyboard, and gfx_showmenu.
+- State (@serialize) is saved with the preset and comes back with it.
+- A script that reports latency (PDC) has it compensated in the chain.
+- A script that overruns its time budget is bypassed automatically and says so
+  on the card. Re-enable puts it back.
+- Details shows how close to the deadline each script is running.
+- Imported scripts can be deleted again.
+- Settings has Adaptive and Pixel Perfect for how a canvas is sized.
+Three sample scripts are bundled with this beta so there is something to try
+without hunting for one. They do not ship in the App Store version.
+
+Audio Units
+AU plug-ins run in the position where you put them in the chain, not tacked on
+at the end. Several at once. The vendor is shown separately in the picker.
+
+Graphs
+- Full-screen spectrogram.
+- The spectrogram grid is drawn over the image instead of under it, and the
+  colours were corrected.
+- FIR PEQ points can be dragged, and it has the same band header as the other
+  band strips.
+- Phase Select EQ no longer collapses its graph.
+- The 1/60 hairlines and the Note Spectrogram background were fixed.
+
+The chain
+- Reordering is decided by how the cards actually overlap, so a card no longer
+  runs away from your finger. You can scroll while reordering.
+- Sections were rebuilt. The terminator is its own thing now, an unnamed
+  section collapses, and a section imported from EffeTune is read as written
+  rather than guessed at.
+- Collapsed cards, numeric entry and display settings all survive a round trip.
+- Search covers every pane.
+
+Presets and files
+- IRs referenced by a preset are reloaded when the preset is.
+- Audio files can be sent in from the share sheet.
+- Pasted links are taken on import.
+
+Power
+- The audio path costs much less while nothing is playing.
+- While no app is routed in, the bridge polls far less often: the receiver
+  woke 1000 times a second and now wakes 50, the sender 500 and now 5.
+- EffectDeck no longer tells the system the device is gone every time
+  discovery stops.
+
+Settings
+- Reporting a problem prefills the diagnostics and the last 1 MB of the log.
+- Twitter (@ainemut) was added as a lighter way to report something.
+- Licenses moved to their own page.
+- The text about picking EffectDeck when it will not stick was rewritten from
+  what actually happens on the device: pick it while audio is playing, and if
+  it drops back to the speaker a moment later, try again.
+
+Known
+- YouTube and Spotify can refuse to hand audio over. That is iOS deciding a
+  video track exists, and nothing EffectDeck sets changes it. Stopping the
+  video, or quitting the app, releases it. See issues #3 and #4.
+- Battery while left routed overnight is still being measured. Issue #5.
