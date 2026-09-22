@@ -1,0 +1,21 @@
+Fixes effects that could not load their data.
+
+IR Reverb, FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ,
+Room EQ and Crosstalk Cancellation all failed with "This build cannot reach the
+effect's staging buffer." and could not be used at all. This affected every
+release since 2026.09.17. They work again.
+
+Also in this version:
+
+- Reordering effects is decided by how the cards actually overlap, so a card no
+  longer runs away from your finger, and you can scroll while reordering.
+- Full-screen spectrogram, with the grid drawn over the image and corrected
+  colours.
+- FIR PEQ points can be dragged, and the band header matches the other band
+  strips.
+- Sections were rebuilt: an unnamed section collapses, and a section imported
+  from EffeTune is read as written.
+- Audio files can be sent in from the share sheet.
+- Reporting a problem fills in the diagnostics and the last part of the log for
+  you.
+- Less work while nothing is routed in.
