@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""同梱している EffeTune の版を Swift から読めるようにする。
+"""同梱している EffeTune の dsp/ の版を Swift から読めるようにする。
 
 **アプリの版は上流に追従しない。**以前は上流の `major.minor` に合わせていたが、
 やめた。理由は 2 つ。
@@ -22,25 +22,46 @@
 「どの EffeTune を積んだか」は UpstreamVersion.swift に別の事実として残る。
 """
 import datetime
-import json
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SRC = ROOT / "Vendor" / "effetune" / "package.json"
+DSP = ROOT / "Vendor" / "effetune"
 DST = ROOT / "project.yml"
 # 上流の版を Swift からも読めるようにする。
 # **アプリの版とは別の事実。**あちらは「このアプリを出した日」で、
-# こちらは「どの EffeTune の dsp を積んだか」。
+# こちらは「積んでいる dsp/ 自体の版」。
+#
+# **package.json の version ではない。**あれは EffeTune アプリ全体（web/js 側）の
+# 版で、dsp/ の版とは別に動く。実際 2.10.0 のときの dsp/ は 0.10.0 だった。
+# dsp/ 単体には package.json が無く、上流が打っている `dsp-v*` の git タグが
+# 唯一の正本（Vendor/effetune 側で `git tag | grep ^dsp-` すれば見える）。
 SWIFT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "UpstreamVersion.swift"
 
 
+def dsp_version() -> str:
+    """`dsp/` の版。直近の dsp-v* タグから取る。"""
+    out = subprocess.run(
+        ["git", "-C", str(DSP), "describe", "--tags", "--match", "dsp-v*"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    # dsp-v0.10.0 か、タグから外れていれば dsp-v0.10.0-3-gabca7ff9 のような形。
+    # 後者はコミットのぶら下がりまで版に含めると README のバッジが荒れるので、
+    # タグそのものの数字だけ使う。
+    return out.removeprefix("dsp-v").split("-")[0]
+
+
 def main() -> int:
-    if not SRC.is_file():
-        print("!! package.json が無い", SRC, file=sys.stderr)
+    if not DSP.is_dir():
+        print("!! Vendor/effetune が無い", DSP, file=sys.stderr)
         return 1
-    version = json.loads(SRC.read_text(encoding="utf-8")).get("version")
+    try:
+        version = dsp_version()
+    except subprocess.CalledProcessError as e:
+        print("!! dsp-v* タグが見つからない（Vendor/effetune の submodule を確かめる）",
+              e, file=sys.stderr)
+        return 1
     if not version:
         print("!! version が無い", file=sys.stderr)
         return 1
@@ -66,9 +87,9 @@ def main() -> int:
         "//  UpstreamVersion.swift",
         "//  Tools/gen_version.py が作る。手で直さないこと。",
         "//",
-        "//  同梱している EffeTune の版（Vendor/effetune/package.json）。",
+        "//  積んでいる EffeTune の dsp/ 自体の版（Vendor/effetune の dsp-v* タグ）。",
         "//  **アプリの版とは別の事実。**あちらは出した日で、",
-        "//  こちらは積んだ EffeTune の dsp の版。",
+        "//  EffeTune アプリ全体の版（package.json）とも別。",
         "",
         'let ETUpstreamVersion = "%s"' % version,
         "",

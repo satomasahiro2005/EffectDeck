@@ -11,6 +11,12 @@ The one thing I do ask: **run it on a device first.** The extension needs iOS 27
 no audio flows in the simulator, so a change can look right in the diff and still pass
 silence through. Say which device and which iOS version you tried it on.
 
+Running it on a device means you need a paid Apple Developer Program membership.
+A free Apple ID (Personal Team) is not enough: the extension needs the
+`com.apple.developer.media-device-extension` entitlement (see
+`Sources/Extension/Extension.entitlements`), and Apple gates that behind a paid
+account. `Scripts/build.sh` will not get past code signing without one.
+
 ## Issues
 
 Say what you were playing from (Spotify, Safari, a podcast app), what was in the chain,
