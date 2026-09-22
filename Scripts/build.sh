@@ -34,10 +34,20 @@ find_device() {
 # 下の grep に errSec と CodeSign failed を足したのは、一度これを取りこぼして
 # 「BUILD FAILED」としか出ず、原因を見失ったため
 # （codesign の失敗行は "error:" の形を取らない）。
+# **構成を選べる。既定は Debug。**
+#
+# ここが Debug 固定だったせいで、実機で触るものが常に strip されていない形になり、
+# Release でしか出ない不具合を取りこぼした（dlsym が自分のバイナリのシンボルを
+# 引けず、資産を使う 7 種が出荷版で全部動かなかった。
+# Sources/EffeTuneLive/DSP/AssetUpload.swift の canStage を読むこと）。
+#
+#   CONFIG=Release bash Scripts/build.sh
+#
+# **出す前に一度は Release で入れて触ること。**
 build_one() {
-  echo "================ build $1 ================"
+  echo "================ build $1 (${CONFIG:-Debug}) ================"
   /usr/bin/xcodebuild -project EffeTuneLive.xcodeproj \
-    -scheme "$1" -configuration Debug \
+    -scheme "$1" -configuration "${CONFIG:-Debug}" \
     -jobs "$BUILD_JOBS" \
     -sdk iphoneos -arch arm64 -allowProvisioningUpdates \
     CONFIGURATION_BUILD_DIR="$ROOT/out" build 2>&1 \

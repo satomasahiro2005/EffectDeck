@@ -613,62 +613,37 @@ enum AssetUpload {
     //
     // 別の形で通したいときは stagingAddressProvider に入れる。
 
-    private typealias BeginPointerFunction = @convention(c) (
-        UInt32, UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
-        UInt32, UInt32, UInt32, UInt32, UInt32, UInt32
-    ) -> UnsafeMutableRawPointer?
-
     /// 呼び出し側が自前で書き込み先を用意したいときの差し込み口。
-    /// nil のあいだは下の dlsym → 32bit の口、の順に探す。
+    /// nil のあいだは abi.h の 64bit の口を直に呼ぶ。
     static var stagingAddressProvider: ((BeginRequest) -> UnsafeMutableRawPointer?)?
 
-    private static let beginPointer: BeginPointerFunction? = {
-        // RTLD_DEFAULT。同じ実行ファイルに入っているので、これで見つかる。
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
-                                 "et_instance_asset_begin_ptr") else { return nil }
-        return unsafeBitCast(symbol, to: BeginPointerFunction.self)
-    }()
-
     /// 資産を送り込める build かどうか。画面に出す前の判断に使える。
-    static var canStage: Bool {
-        stagingAddressProvider != nil
-            || beginPointer != nil
-            || MemoryLayout<UnsafeRawPointer>.size == 4
-    }
+    ///
+    /// **dlsym で探さない。**以前は `et_instance_asset_begin_ptr` を
+    /// `dlsym(RTLD_DEFAULT, ...)` で引いていたが、**Release は実行ファイルの
+    /// シンボルを strip する**ので、Debug では見つかって TestFlight と App Store
+    /// では見つからない。出荷した ipa を `nm` で見ると `asset_begin` は 0 件だった。
+    /// 宣言は abi.h に ET_EXPORT 付きで在るので、直に呼べばリンク時に解決される。
+    /// パッチが当たっていない木では**ビルドが止まる**が、利用者の手元で
+    /// 「IR を入れられない」になるより、そちらのほうが早く気づける。
+    static var canStage: Bool { true }
 
     private static func beginStaging(_ request: BeginRequest) throws -> UnsafeMutableRawPointer {
         if let provider = stagingAddressProvider {
             guard let staging = provider(request) else { throw ETAssetUploadError.beginRejected }
             return staging
         }
-        if let begin = beginPointer {
-            guard let staging = begin(request.engine, request.instance, request.slot,
-                                      request.channels, request.frames, request.topology,
-                                      request.headBlock, request.rateDivider,
-                                      request.pathCount, request.inputCount,
-                                      request.processingChannels, request.footprintBytes,
-                                      request.byteSize) else {
-                throw ETAssetUploadError.beginRejected
-            }
-            return staging
+        guard let staging = et_instance_asset_begin_ptr(
+            request.engine, request.instance, request.slot,
+            request.channels, request.frames, request.topology,
+            request.headBlock, request.rateDivider,
+            request.pathCount, request.inputCount,
+            request.processingChannels, request.footprintBytes,
+            request.byteSize
+        ) else {
+            throw ETAssetUploadError.beginRejected
         }
-        // ポインタが 32bit の環境（WASM）でだけ、abi.h の口がそのまま使える。
-        if MemoryLayout<UnsafeRawPointer>.size == 4 {
-            let address = et_instance_asset_begin(
-                request.engine, request.instance, request.slot,
-                request.channels, request.frames, request.topology,
-                request.headBlock, request.rateDivider,
-                request.pathCount, request.inputCount,
-                request.processingChannels, request.footprintBytes,
-                request.byteSize
-            )
-            guard let staging = UnsafeMutableRawPointer(bitPattern: UInt(address)) else {
-                throw ETAssetUploadError.beginRejected
-            }
-            return staging
-        }
-        log.error("et_instance_asset_begin は番地を uint32 に切り落とす。64bit では使えない")
-        throw ETAssetUploadError.stagingAddressUnavailable
+        return UnsafeMutableRawPointer(staging)
     }
 
     // MARK: - 音のスレッドを締め出す
