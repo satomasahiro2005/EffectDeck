@@ -264,7 +264,7 @@ struct EffectPickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                if pane == .plugins {
+                if pane == .plugins && ETJSFXHost.isEnabled {
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
                             Button("From Files", systemImage: "folder") {
@@ -449,10 +449,14 @@ struct EffectPickerView: View {
                 ContentUnavailableView {
                     Label("No Plugins", systemImage: "waveform")
                 } description: {
-                    Text("Install an AUv3 plug-in or import a single-file JSFX.")
+                    Text(ETJSFXHost.isEnabled
+                         ? "Install an AUv3 plug-in or import a single-file JSFX."
+                         : "Install an AUv3 plug-in.")
                 } actions: {
-                    Button("Import JSFX", systemImage: "square.and.arrow.down") {
-                        importingJSFX = true
+                    if ETJSFXHost.isEnabled {
+                        Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                            importingJSFX = true
+                        }
                     }
                 }
             } else {
@@ -461,8 +465,10 @@ struct EffectPickerView: View {
                         jumpStrip(pluginVendors)
                         Divider()
                         List {
-                            Button("Import JSFX", systemImage: "square.and.arrow.down") {
-                                importingJSFX = true
+                            if ETJSFXHost.isEnabled {
+                                Button("Import JSFX", systemImage: "square.and.arrow.down") {
+                                    importingJSFX = true
+                                }
                             }
                             ForEach(pluginVendors, id: \.self) { vendor in
                                 Section {

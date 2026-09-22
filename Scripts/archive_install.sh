@@ -14,7 +14,7 @@ OUT="$PWD/archive-install.log"
 
 security unlock-keychain -p "$(cat ~/signing/kc.pw)" >> "$OUT" 2>&1
 
-bash Scripts/archive.sh EffeTuneLive >> "$OUT" 2>&1
+bash Scripts/archive.sh EffeTuneLive "${APPICON:-EffectDeckPublicBeta}" >> "$OUT" 2>&1
 tail -5 archive.log >> "$OUT" 2>&1
 
 APP=/tmp/EffeTuneLive.xcarchive/Products/Applications/EffectDeck.app

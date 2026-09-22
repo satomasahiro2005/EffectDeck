@@ -96,7 +96,16 @@ struct SettingsView: View {
         }
     }
 
+    // JSFX が無い版ではこの節ごと消える（ETJSFXHost.isEnabled）。
+    // 節の中身が JSFX の設定 1 つしか無いので、空の見出しだけが残らないようにする。
+    @ViewBuilder
     private var plugins: some View {
+        if ETJSFXHost.isEnabled {
+            pluginsSection
+        }
+    }
+
+    private var pluginsSection: some View {
         Section {
             ETSegmentedChoice(title: "JSFX canvas",
                               values: ETJSFXCanvasMode.allCases,
