@@ -45,14 +45,34 @@ else
   # 目印が無いのに木が変わっている＝前の版のパッチが当たっている。
   # 新しい版はその上には当たらないので、固定した版へ戻してから当てる。
   # 手を入れているのはこのパッチだけなので、戻して失うものは無い。
-  # （diff が 1 を返したときだけ。git が開けない写しでは 128 なので触らない）
   git -C Vendor/ysfx diff --quiet 2>/dev/null
-  if [ $? -eq 1 ]; then
+  YSFX_DIFF=$?
+  if [ $YSFX_DIFF -eq 1 ]; then
     echo "--- Vendor/ysfx を $YSFX_REV に戻す（前の版のパッチが当たっている） ---"
     git -C Vendor/ysfx checkout -- . || {
       echo "!! Vendor/ysfx を戻せない。git -C Vendor/ysfx status を確かめること"
       exit 1
     }
+  elif [ $YSFX_DIFF -ne 0 ] \
+      && grep -q "YSFX_EFFECTDECK_SANDBOX" Vendor/ysfx/sources/ysfx_api_file.cpp 2>/dev/null; then
+    # **git が開けない写しでは、前の版の差分を逆に当てて外す。**Mac へ送った木は
+    # .git が無いか Windows を指したままの gitlink で、diff は 128／129 を返す。
+    # 前の版の印（sandbox の分岐）が居て新しい目印が無いのがその木。
+    # --ignore-whitespace は Windows から写した CRLF の木のため。-F 0 は別の版を
+    # 半端に外さないため。
+    echo "--- Vendor/ysfx から前の版のパッチを外す（git が開けない写し） ---"
+    if patch --batch --forward --ignore-whitespace -F 0 -R -p1 -d Vendor/ysfx --dry-run \
+        <Patches/ysfx-effectdeck-ios.old.diff >/dev/null 2>&1; then
+      patch --batch --forward --ignore-whitespace -F 0 -R -p1 -d Vendor/ysfx \
+        <Patches/ysfx-effectdeck-ios.old.diff >/dev/null || {
+        echo "!! 前の版のパッチを外しきれない。Vendor/ysfx を送り直すこと"
+        exit 1
+      }
+    else
+      echo "!! 前の版のパッチを外せない（ysfx-effectdeck-ios.old.diff と版が違う）。"
+      echo "   Vendor/ysfx を固定した版 $YSFX_REV で送り直すこと"
+      exit 1
+    fi
   fi
 fi
 if [ "$YSFX_PATCHED" = 1 ]; then
@@ -62,6 +82,12 @@ elif git -C Vendor/ysfx apply --check ../../Patches/ysfx-effectdeck-ios.diff 2>/
     && echo "当てた: ysfx-effectdeck-ios.diff"
 elif git -C Vendor/ysfx apply --reverse --check ../../Patches/ysfx-effectdeck-ios.diff 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
+elif patch --batch --forward --ignore-whitespace -F 0 -p1 -d Vendor/ysfx --dry-run \
+    <Patches/ysfx-effectdeck-ios.diff >/dev/null 2>&1; then
+  # git が開けない写し用の逃げ道。当てる中身は同じ。
+  patch --batch --forward --ignore-whitespace -F 0 -p1 -d Vendor/ysfx \
+    <Patches/ysfx-effectdeck-ios.diff >/dev/null \
+    && echo "当てた: ysfx-effectdeck-ios.diff (patch)"
 else
   echo "!! ysfx-effectdeck-ios.diff が当たらない。Vendor/ysfx の版を確かめること"
   exit 1
