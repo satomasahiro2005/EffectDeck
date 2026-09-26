@@ -637,25 +637,8 @@ struct EffectPickerView: View {
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)
         }
-        // **渡す口。**`https://effectdeck.nemut.ai/j#…` にソースごと載せる（ETFXDLink）。
-        // スワイプは onDelete が持っているので長押しに置く。行に .swipeActions を
-        // 足すと、onDelete が出していた削除が消える。
-        // 同梱の見本は出さない（shareURL が nil を返し、メニューが空になる）。
-        // 大きすぎるものも口は出し、押したら理由を出す。黙って消すと在るはずの口が無い形になる。
-        .contextMenu {
-            switch jsfx.shareURL(for: entry) {
-            case .success(let url)?:
-                ShareLink(item: url, preview: SharePreview(entry.name)) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            case .failure(let why)?:
-                Button("Share", systemImage: "square.and.arrow.up") {
-                    alert = .shareFailed(why.localizedDescription)
-                }
-            case nil:
-                EmptyView()
-            }
-        }
+        // **長押しに口を置かない。**行の長押しは鎖へのドラッグ（.onDrag）が持っている。
+        // 共有（jsfx.shareURL）は JSFX の詳細画面から出す。
     }
 
     /// 自分で保存したプリセット。`/` で仕切るとフォルダに束ねる。
