@@ -270,20 +270,30 @@ final class ETJSFXHost: ObservableObject {
     }
     private var shareURLs: [String: Result<URL, ETFXDLink.Failure>] = [:]
 
-    /// JSFX の口を開けるか。**TestFlight と開発ビルドだけ。**
+    /// JSFX の口を開けるか。**いまは全部の版で開けている（店に出す版も）。**
     ///
-    /// 店に出す版では閉じる。**審査のためではなく、中身が足りていないから。**
-    /// テストは通っているが実機で長く回していないし、締切の閾値も実測から
-    /// 決めていない。`ETJSFX_LoadState` が `ysfx_load_state` の後に
-    /// `ysfx_init` を呼ぶので、`@init` と `@serialize` を両方使うスクリプトは
-    /// 復元した値を即座に失う（REAPER と順序が逆）。そこを直してから開ける。
+    /// 閉じる形は残す。また閉じるときは false を返せば、ツールバー・空のときの案内・
+    /// 一覧の頭の行・設定の JSFX canvas の節・importFile（共有シートもここへ来る）が
+    /// まとめて閉じる。
     ///
-    /// **建てるときに決まる。**受領書で見る形にしていたが、
-    /// `appStoreReceiptURL` は**開発ビルドでも `sandboxReceipt` を返す**ので、
-    /// 手元では店に出す側の挙動を一度も確かめられなかった。
-    /// いまは Scripts/archive.sh がアイコンと同じ引数で ET_BETA を立てる。
-    /// **紫のアイコンなら JSFX が在る**、が必ず成り立つ。
-    static var isEnabled: Bool {
+    /// 店の版で閉じていた理由は中身で、開ける前に要ると書いていたのは次の 3 つ。
+    /// - `ETJSFX_LoadState` が `ysfx_load_state` の後に `ysfx_init` を呼び、
+    ///   `@init` と `@serialize` を両方使うスクリプトが復元した値を即座に失っていた。
+    ///   **直した**（つまみ → @init → @serialize 読み → @slider。JSFXStateTests の
+    ///   testInitDoesNotOverwriteSerializedStateOnLoad）。
+    /// - 実機で長く回すこと。開けた時点で長時間運転の記録はリポジトリに無い。
+    /// - **締切の閾値（続けて 3 回で自動バイパス）はまだ実測から決めていない。**
+    ///   測る器具（deadlineReading、Details に出る）は在るが、数字は採っていない。
+    static var isEnabled: Bool { true }
+
+    /// 同梱の見本を出すか。**TestFlight と開発ビルドだけ。**
+    ///
+    /// 見本は配った相手が JSFX を試すための手がかりで、店で売る版に並べるものではない。
+    /// **建てるときに決まる。**受領書（`appStoreReceiptURL`）は開発ビルドでも
+    /// `sandboxReceipt` を返すので、店に出す側の挙動を手元で確かめられない。
+    /// Scripts/archive.sh がアイコンと同じ引数で ET_BETA を立てる。
+    /// **紫のアイコンなら見本が在る**、が必ず成り立つ。
+    static var showsBundledSamples: Bool {
         #if DEBUG || ET_BETA
         return true
         #else
@@ -291,25 +301,23 @@ final class ETJSFXHost: ObservableObject {
         #endif
     }
 
-    /// 同梱の見本を出すか。**TestFlight と開発ビルドだけ。**
-    ///
-    /// **TestFlight と App Store は同じバイナリ。**構成では分けられないので、
-    /// 実行時に受領書の名前で見る。TestFlight と開発は `sandboxReceipt`、
     func refresh() {
-        // 店に出す版では JSFX を出さない（isEnabled）。一覧が空なら、
+        // 閉じた版では JSFX を出さない（isEnabled）。一覧が空なら、
         // 取り込みの口も検索も vendor の段もまとめて消える。
         guard Self.isEnabled else {
             entries = []
             entryAliases = [:]
             return
         }
-        // 同梱の見本。ここへ来るのは isEnabled が真のときだけ。
+        // 同梱の見本。**TestFlight と開発ビルドだけに出す**（showsBundledSamples）。
         // 積んであるのは自前の 3 本だけで、第三者の実物は Debug のときしか
         // 写していない（Scripts/embed_debug_jsfx.sh。再配布しない）。
         // 毎回消してから写し直すのは、同梱の側を直したときに古いものが残らないため。
+        // 出さない版でも消すのは、ベータから店の版へ入れ替えた端末に残さないため。
         let bundledRoot = try? Self.storageURL("JSFX/DebugFactory")
         if let bundledRoot { try? FileManager.default.removeItem(at: bundledRoot) }
-        do {
+        let showsBundled = Self.showsBundledSamples
+        if showsBundled {
             if let bundledRoot { try? FileManager.default.createDirectory(at: bundledRoot, withIntermediateDirectories: true) }
             if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
                let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
@@ -321,7 +329,9 @@ final class ETJSFXHost: ObservableObject {
         }
         Self.removeLegacyDebugCopies()
         var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"), debug: false)
-        discovered += Self.ownedEntries(at: bundledRoot, debug: true)
+        if showsBundled {
+            discovered += Self.ownedEntries(at: bundledRoot, debug: true)
+        }
         entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         entryAliases = Self.debugAliases(for: entries)
@@ -331,7 +341,7 @@ final class ETJSFXHost: ObservableObject {
     /// Runtime code never retains or reopens the original URL.
     @discardableResult
     func importFile(_ source: URL) throws -> Entry {
-        // 店に出す版では受けない（isEnabled）。画面の口は閉じてあるが、
+        // 閉じた版では受けない（isEnabled）。画面の口は閉じてあるが、
         // 共有シートからも同じ関数へ来るので、ここでも止める。
         guard Self.isEnabled else {
             throw NSError(domain: "ETJSFX", code: 12, userInfo: [

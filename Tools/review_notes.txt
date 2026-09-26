@@ -1,0 +1,73 @@
+App Review notes: JSFX scripts
+
+What it is
+EffectDeck can host JSFX, the single-file audio effect script format used by the
+REAPER audio software. A JSFX script is a plain text file that the user brings
+into the app. It becomes an effect in the user's audio chain, with its own
+sliders and, if it draws, a canvas inside the app.
+
+Where scripts come from
+Only from the user. Scripts are imported by the user through:
+- Available Effects > Plugins > Import JSFX > From Files (document picker)
+- Available Effects > Plugins > Import JSFX > From Link (a URL the user types or
+  pastes; the field is pre-filled from the clipboard)
+- Available Effects > Plugins > Import JSFX > From Clipboard (script text the
+  user copied)
+- Open in / share sheet from another app
+- A share link (https://effectdeck.nemut.ai/j#...) that the user taps. The
+  script is carried inside the link itself; it is added to the Plugins list, not
+  to the chain, and does not run until the user adds it.
+Import JSFX > Write JSFX with ChatGPT only opens https://effectdeck.nemut.ai/write
+in the browser. The app sends nothing to ChatGPT; the user copies the script it
+returns and uses From Clipboard.
+The app does not offer a catalog, store or directory of scripts, and it does not
+download scripts on its own. A link is fetched only when the user taps Import.
+The App Store build ships no scripts, so no JSFX appears in the list until the
+user imports one.
+
+How scripts run
+- Scripts run in a portable EEL2 interpreter (the WDL/EEL2 engine through the
+  open-source ysfx library), built for its portable target: no JIT, no
+  executable memory is allocated.
+- A script can only process the audio passed to it, draw into its own canvas,
+  and read touch and keyboard input on that canvas.
+- Scripts have no filesystem access (file_open and file-backed sliders are
+  disabled, and import, include(), filename: and data: lines are rejected when
+  the script is loaded), no MIDI output, and no network access. EEL2 has no
+  networking functions.
+- Limits: source up to 1 MB, saved state up to 16 MB, bounded memory. A script
+  that repeatedly runs past its real-time deadline is bypassed automatically.
+- Scripts cannot change or add features of the app itself. They are content
+  processed by a fixed interpreter shipped in the binary.
+
+Relevant guidelines: 2.5.2 (software is self-contained; the interpreter ships in
+the binary and user-supplied scripts do not change the app's features) and 4.7
+(plug-ins).
+
+How to test
+1. Tap Add Effect (the + button), switch to Plugins, and tap Import JSFX in the
+   top-right corner of the toolbar. (The Import JSFX button in the middle of the
+   empty list opens Files directly, without the From Link choice.)
+2. Either:
+   a. Choose From Link and enter
+      https://github.com/satomasahiro2005/EffectDeck/blob/main/Tests/Fixtures/JSFX/gain.jsfx
+      then tap Import, or
+   b. Save the script below as a text file (for example gain.jsfx) in Files
+      and choose From Files.
+3. "Gain" appears in the Plugins list. Tap it to add it to the chain. With audio
+   playing through EffectDeck, move its Gain slider (0 to 2) to change the
+   volume.
+
+desc:Gain
+author:nemut.ai
+slider1:1<0,2,0.001>Gain
+
+@init
+g = 1;
+
+@slider
+g = slider1;
+
+@sample
+spl0 *= g;
+spl1 *= g;

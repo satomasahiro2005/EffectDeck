@@ -1,0 +1,24 @@
+desc:State Init Order
+author:nemut.ai
+slider1:0<0,100,1>Step
+slider2:0<0,100000,1>-Seen by @slider
+slider3:0<0,100000,1>-After @block
+
+@init
+// **@init でも x に書く。**state_payload.jsfx と違って踏みに行く形。
+// 復元の順序が @init → @serialize 読み なら、ここで書いた 1 は読んだ値に上書きされる。
+// 逆なら、復元した値がここで 1 に戻る。
+x = 1;
+
+@slider
+step = slider1;
+slider2 = x;
+
+@block
+x += step;
+slider3 = x;
+
+@serialize
+file_var(0, x);
+
+@sample

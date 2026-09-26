@@ -46,14 +46,8 @@ final class JSFXStateTests: XCTestCase {
     /// つまみから復元できない値（ブロックごとに増える数）を payload へ書く。
     /// payload が落ちていれば、復元後の 1 ブロックで 5 になる（20 + 5 = 25 ではなく）。
     ///
-    /// **fixture の @init が `kept` に触っていないのは意図的。**
-    /// ETJSFX_LoadState は ysfx_load_state（＝つまみの復元と @serialize 読み）の
-    /// あとに ysfx_init を呼ぶ。ysfx_init は @serialize を持つ script でも @init の
-    /// コード自体は実行するので、`@init x = 0;` と `@serialize file_var(0, x);` を
-    /// 両方持つ JSFX は、復元した値がその場で 0 に戻る。REAPER の順序は
-    /// @init → @serialize 読み で、こちらは逆になっている。
-    /// Debug/JSFXFactory の Conformance がまさにこの形（frames_processed）なので、
-    /// **直すなら production の変更**として別に扱うこと。ここでは踏まない形で測る。
+    /// fixture の @init は `kept` に触らない。payload だけを測る形。
+    /// @init でも書く形は testInitDoesNotOverwriteSerializedStateOnLoad が見る。
     func testSerializedPayloadSurvivesSaveAndLoad() throws {
         let host = try JSFX.load("state_payload")
         host.set(0, 5)
@@ -66,6 +60,54 @@ final class JSFXStateTests: XCTestCase {
         XCTAssertEqual(other.get(1), 20, "つまみの側は戻っている")
         other.run(blocks: 1)
         XCTAssertEqual(other.get(1), 25, "payload の値が戻っていない")
+    }
+
+    /// **@init と @serialize の両方で書く変数が、復元で @init に消されない。**
+    ///
+    /// 復元の順序は つまみ → @init → @serialize 読み → @slider（ETJSFX_LoadState）。
+    /// 以前は @serialize 読みの後に ysfx_init を呼んでいて、@init の `x = 1` が
+    /// 読んだ値をその場で潰していた（Debug/JSFXFactory の Conformance の
+    /// frames_processed がこの形）。
+    /// 別の host へ入れた直後の Save が元と同じバイト列になること、次の 1 ブロックで
+    /// @slider が戻した値を読み、@block がそこから続けることを見る。
+    func testInitDoesNotOverwriteSerializedStateOnLoad() throws {
+        let host = try JSFX.load("state_init")
+        host.set(0, 5)
+        host.run(blocks: 4)
+        XCTAssertEqual(host.get(2), 21, "@init の 1 から 5 ずつ 4 ブロック")
+        let saved = try XCTUnwrap(host.save())
+
+        let other = try JSFX.load("state_init")
+        XCTAssertTrue(other.load(saved))
+        XCTAssertEqual(other.save(), saved, "復元した x が @init で 1 に戻っている")
+        other.run(blocks: 1)
+        XCTAssertEqual(other.get(1), 21, "@slider が戻した x を見ていない")
+        XCTAssertEqual(other.get(2), 26, "@block が戻した x から続いていない")
+
+        // 動かした後の同じ host へ戻しても同じ。
+        host.run(blocks: 3)
+        XCTAssertTrue(host.load(saved))
+        host.run(blocks: 1)
+        XCTAssertEqual(host.get(1), 21)
+        XCTAssertEqual(host.get(2), 26)
+    }
+
+    /// **状態に無いつまみは、復元の @init でも既定値で見える。**
+    ///
+    /// script につまみを足した後で古い状態を戻す形。@init を先に回すので、
+    /// 既定値へ戻すのを ysfx_load_state に任せると @init だけが動かした後の値（7）を読む。
+    func testMissingSliderIsDefaultDuringInitOnLoad() throws {
+        let old = try JSFX.load("state_grow_old")
+        old.run()
+        let saved = try XCTUnwrap(old.save())
+
+        let host = try JSFX.load("state_grow_new")
+        host.set(0, 7)
+        host.run()
+        XCTAssertTrue(host.load(saved))
+        host.run()
+        XCTAssertEqual(host.get(0), 3, "状態に無いつまみが既定値へ戻っていない")
+        XCTAssertEqual(host.get(1), 6, "@init が既定値ではなく動かした後の値を読んだ")
     }
 
     /// Save → Load → Save。同じ状態からは同じバイト列が出る。
