@@ -859,30 +859,6 @@ private struct JSFXFullScreenEditor: View {
     }
 }
 
-private struct JSFXSourceView: View {
-    @Environment(\.dismiss) private var dismiss
-    let instanceID: String
-
-    var body: some View {
-        NavigationStack {
-            ScrollView([.horizontal, .vertical]) {
-                Text(ETJSFXHost.shared.sourceText(instanceID: instanceID) ?? "Source unavailable")
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(16)
-            }
-            .navigationTitle("JSFX Source")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
 /// いま誰かが字を打っているか。
 ///
 /// UIKit に「現在の first responder」を直に返す API は無いので、nil 宛ての
