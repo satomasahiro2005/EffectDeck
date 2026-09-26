@@ -222,6 +222,7 @@ private struct SpectrogramGraph: View {
             readout: readout,
             caption: caption(column),
             clipsContent: true,
+            previewsFrequency: true,
             draw: { context, plot in
                 // **地を配色表の 0 番で塗る。**上流 spectrogram.js:1111-1112 と同じ順。
                 // 透かすと表の下半分（黒〜青）が薄れて、色を入れた意味が消える。
