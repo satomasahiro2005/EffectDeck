@@ -50,6 +50,8 @@ struct EffectPickerView: View {
     @State private var importingJSFX = false
     /// 消そうとしている JSFX。取り消せないので一度確かめる（IR と同じ形）。
     @State private var pendingDeleteJSFX: ETJSFXHost.Entry?
+    /// ソースを開いているJSFX（行の…のView Source）。
+    @State private var viewingSource: ETJSFXHost.Entry?
 
     /// 上の段階の切り替え。効果 / 自分のプリセット / 同梱のプリセット。
     enum Pane: String, CaseIterable, Identifiable {
@@ -320,18 +322,22 @@ struct EffectPickerView: View {
                 }
             // 一覧と検索結果の両方を覆う階層に 1 つ置く。行ごとに持たせると
             // 検索から払ったときに出ない。
-            .confirmationDialog(pendingDeleteJSFX.map { "Remove “\($0.name)”?" } ?? "",
+            .confirmationDialog(pendingDeleteJSFX.map { "Delete “\($0.name)”?" } ?? "",
                                 isPresented: Binding(
                                     get: { pendingDeleteJSFX != nil },
                                     set: { if !$0 { pendingDeleteJSFX = nil } }),
                                 titleVisibility: .visible) {
-                Button("Remove", role: .destructive) {
+                Button("Delete", role: .destructive) {
                     if let entry = pendingDeleteJSFX { jsfx.removeEntry(entry) }
                     pendingDeleteJSFX = nil
                 }
                 Button("Cancel", role: .cancel) { pendingDeleteJSFX = nil }
             } message: {
                 Text("This cannot be undone.")
+            }
+            // 確かめと同じ理由でここに置く（一覧・検索結果のどちらの行の…からも出る）。
+            .sheet(item: $viewingSource) { entry in
+                JSFXSourceView(entry: entry)
             }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
@@ -597,7 +603,23 @@ struct EffectPickerView: View {
         }
     }
 
+    /// JSFXの1行。取り込んだものは右に…を置く。同梱の見本には出さない。
+    @ViewBuilder
     private func jsfxRow(_ entry: ETJSFXHost.Entry) -> some View {
+        if entry.isDebugFixture {
+            jsfxPickButton(entry)
+        } else {
+            HStack(spacing: 0) {
+                jsfxPickButton(entry)
+                jsfxMenu(entry)
+            }
+            // **両方borderlessにする。**Listは行の中の既定スタイルのボタンを行1つの当たりに
+            // まとめるので、そのままだと…を押しても鎖へ足す側まで走りうる。
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private func jsfxPickButton(_ entry: ETJSFXHost.Entry) -> some View {
         Button {
             searching = false
             Task { @MainActor in onPickJSFX(entry) }
@@ -627,7 +649,48 @@ struct EffectPickerView: View {
                 .background(.thickMaterial, in: .capsule)
         }
         // **長押しに口を置かない。**行の長押しは鎖へのドラッグ（.onDrag）が持っている。
-        // 共有（jsfx.shareURL）は JSFX の詳細画面から出す。
+        // 見る・写す・共有・消すは右の…から出す（jsfxMenu）。
+    }
+
+    /// 取り込んだ1本の…。見る・写す・共有・消す。
+    private func jsfxMenu(_ entry: ETJSFXHost.Entry) -> some View {
+        Menu {
+            Button("View Source", systemImage: "doc.text.magnifyingglass") {
+                viewingSource = entry
+            }
+            Button("Copy Source", systemImage: "doc.on.doc") {
+                // 読めなかったらクリップボードは触らない（前に写したものを消さない）。
+                if let text = ETJSFXHost.sourceText(for: entry) {
+                    UIPasteboard.general.string = text
+                }
+            }
+            switch jsfx.shareURL(for: entry) {
+            case .success(let url)?:
+                ShareLink(item: url) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            case .failure(let error)?:
+                // 大きすぎる・読めないときも口は残し、押したら理由を出す。
+                Button("Share", systemImage: "square.and.arrow.up") {
+                    alert = .shareFailed(error.localizedDescription)
+                }
+            case nil:
+                EmptyView()
+            }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                pendingDeleteJSFX = entry
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+                .labelStyle(.iconOnly)
+                .foregroundStyle(.secondary)
+                // 横だけ広げる。縦に広げるとAUの行より背が高くなる。
+                .frame(minWidth: ETMetrics.hitTarget, alignment: .trailing)
+                .contentShape(Rectangle())
+        }
+        // buttonStyle(.borderless)を効かせるため（jsfxRow）。
+        .menuStyle(.button)
     }
 
     /// 自分で保存したプリセット。`/` で仕切るとフォルダに束ねる。

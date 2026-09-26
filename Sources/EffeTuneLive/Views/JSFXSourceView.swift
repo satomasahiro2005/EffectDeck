@@ -9,7 +9,17 @@ import UniformTypeIdentifiers
 
 struct JSFXSourceView: View {
     @Environment(\.dismiss) private var dismiss
-    let instanceID: String
+
+    /// どこから読むか。鎖の段（EffectCardView）か、取り込んだ1本（EffectPickerViewの…）。
+    private enum Origin {
+        case instance(String)
+        case entry(ETJSFXHost.Entry)
+    }
+    private let origin: Origin
+
+    init(instanceID: String) { origin = .instance(instanceID) }
+
+    init(entry: ETJSFXHost.Entry) { origin = .entry(entry) }
 
     @State private var source: String?
     @State private var rendered: JSFXRenderedSource?
@@ -20,6 +30,8 @@ struct JSFXSourceView: View {
     @State private var matches: [Int] = []
     @State private var matchSet: Set<Int> = []
     @State private var current = 0
+    /// 飛ぶ前に慣性を止める。**流れている間はscrollToが効かない。**
+    @State private var brake = ETScrollBrake()
     @ScaledMetric(relativeTo: .caption) private var fontSize: CGFloat = 12
 
     var body: some View {
@@ -51,6 +63,8 @@ struct JSFXSourceView: View {
                     }
                 }
                 .padding(.vertical, 12)
+                // ScrollViewの中に付ける（ETScrollBrake）。行ではなくLazyVStackに付けるので、流れても画面から外れない。
+                .etScrollBrake(brake)
             }
             .font(.system(size: fontSize, design: .monospaced))
         } else if unavailable {
@@ -142,7 +156,17 @@ struct JSFXSourceView: View {
 
     private func load() async {
         guard rendered == nil, !unavailable else { return }
-        guard let text = ETJSFXHost.shared.sourceText(instanceID: instanceID) else {
+        let found: String?
+        switch origin {
+        case .instance(let id):
+            found = ETJSFXHost.shared.sourceText(instanceID: id)
+        case .entry(let entry):
+            // 段が無いのでファイルから読む。1 MBまであるので裏で。
+            found = await Task.detached(priority: .userInitiated) {
+                ETJSFXHost.sourceText(for: entry)
+            }.value
+        }
+        guard let text = found else {
             unavailable = true
             return
         }
@@ -175,8 +199,11 @@ struct JSFXSourceView: View {
     }
 
     private func scroll(_ proxy: ScrollViewProxy, to line: Int) {
-        // **横は頭へ戻す。**anchorのxを中央にすると長い行の真ん中へ飛ぶ。
-        proxy.scrollTo(line, anchor: UnitPoint(x: 0, y: 0.4))
+        // 節・検索の最初の当たり・前後の当たりは全部ここを通る。慣性はbrakeが止める。
+        brake.jump {
+            // **横は頭へ戻す。**anchorのxを中央にすると長い行の真ん中へ飛ぶ。
+            proxy.scrollTo(line, anchor: UnitPoint(x: 0, y: 0.4))
+        }
     }
 
     private static func charWidth(_ size: CGFloat) -> CGFloat {

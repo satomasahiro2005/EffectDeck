@@ -425,7 +425,15 @@ final class ETJSFXHost: ObservableObject {
 
     func sourceText(instanceID: String) -> String? {
         guard let entry = instances[instanceID]?.entry else { return nil }
-        return try? String(contentsOf: entry.url, encoding: .utf8)
+        return Self.sourceText(for: entry)
+    }
+
+    /// 1本のソースを字にする。**Latin-1も読む**（entry(for:)・shareURL(for:)と同じ）。
+    /// UTF-8だけで読むと、取り込めたものが見る画面では「Source Unavailable」になる。
+    /// ファイルを読むだけなので、どのスレッドからでも呼べる。
+    nonisolated static func sourceText(for entry: Entry) -> String? {
+        guard let data = try? Data(contentsOf: entry.url) else { return nil }
+        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
     }
 
     func debugPresetItems() -> [PipelineStore.Loaded] {
