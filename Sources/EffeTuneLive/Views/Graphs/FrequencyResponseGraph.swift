@@ -132,6 +132,9 @@ struct FrequencyResponseGraph: View {
     /// 印から指を離したとき。**設計をやり直す型はここで 1 回だけ書く。**
     var onMarkerReleased: ((Int) -> Void)?
 
+    /// 畳んだカードの図。**印を描かない。**触れない図に掴む印が見えると、
+    /// 動かせそうに見えて指を置いてしまう（面は allowsHitTesting(false) で死んでいる）。
+    @Environment(\.etGraphOnly) private var graphOnly
     @State private var dragging: Int?
     @State private var dragged: ETFreqPoint?
 
@@ -206,13 +209,13 @@ struct FrequencyResponseGraph: View {
 
                     // 指を受ける面。印より下に置く（印は当たり判定を持たない）。
                     // 印が無いときは面を置かない。置くと一覧の縦スクロールを食う。
-                    if !markers.isEmpty {
+                    if !markers.isEmpty && !graphOnly {
                         Color.clear
                             .contentShape(Rectangle())
                             .gesture(drag(in: plot))
                     }
 
-                    ForEach(markers) { marker in
+                    ForEach(graphOnly ? [] : markers) { marker in
                         markerBadge(marker)
                             .position(plot.clampedPoint(marker.hz, marker.db))
                             .allowsHitTesting(false)

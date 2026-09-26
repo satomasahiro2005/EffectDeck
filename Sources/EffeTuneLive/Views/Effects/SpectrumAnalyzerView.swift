@@ -260,6 +260,7 @@ private struct SpectrumAnalyzerGraph: View {
             readout: readout,
             caption: reading?.caption ?? "Waiting for audio",
             clipsContent: true,
+            previewsFrequency: true,
             draw: { context, plot in
                 // 枠が来ていない。値が無いことと -inf は違うので、線は描かない。
                 guard let r = reading else { return }

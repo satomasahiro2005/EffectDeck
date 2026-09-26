@@ -528,7 +528,8 @@ struct PhaseSelectEqView: View {
                     drawRegion(&context, plot, slot, selected: false)
                 }
                 drawRegion(&context, plot, band, selected: true)
-                drawHandles(&context, plot)
+                // 畳んだカードでは取っ手を描かない（FrequencyResponseGraph の印と同じ理由）。
+                if !graphOnly { drawHandles(&context, plot) }
             },
             overlay: { plot in
                 // バンドが切ってあるときは面を置かない。置くと一覧の縦スクロールを食う。

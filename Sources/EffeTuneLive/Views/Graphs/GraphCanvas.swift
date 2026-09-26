@@ -261,6 +261,10 @@ struct GraphCanvas<Overlay: View>: View {
     var badge: String?
     /// 中身を枠で切るか。PEQ の曲線のように外へ出したいものは false。
     var clipsContent: Bool
+    /// なぞった周波数をプレビュー音で鳴らすか。**解析の図だけが立てる。**
+    /// 周波数軸の図すべてで鳴らしていたら、EQ の印を動かすたびに鳴った
+    /// （FrequencyResponseGraph は図のどこを触っても最寄りの印を掴む）。
+    var previewsFrequency: Bool
     var draw: (inout GraphicsContext, ETPlot) -> Void
     var overlay: (ETPlot) -> Overlay
 
@@ -272,6 +276,7 @@ struct GraphCanvas<Overlay: View>: View {
          caption: String? = nil,
          badge: String? = nil,
          clipsContent: Bool = true,
+         previewsFrequency: Bool = false,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void,
          @ViewBuilder overlay: @escaping (ETPlot) -> Overlay) {
         self.x = x
@@ -282,6 +287,7 @@ struct GraphCanvas<Overlay: View>: View {
         self.caption = caption
         self.badge = badge
         self.clipsContent = clipsContent
+        self.previewsFrequency = previewsFrequency
         self.draw = draw
         self.overlay = overlay
     }
@@ -316,7 +322,9 @@ struct GraphCanvas<Overlay: View>: View {
                         }
                         ETPreviewTone_SetFrequency(x.isFrequency ? plot.xValue(at: touch.location.x) : plot.yValue(at: touch.location.y))
                     }
-                    .onEnded { _ in ETPreviewTone_SetFrequency(0) })
+                    .onEnded { _ in ETPreviewTone_SetFrequency(0) },
+                    // 立てない図ではジェスチャごと外す。子の印を掴むジェスチャは残る。
+                    including: previewsFrequency ? .all : .subviews)
             }
             .frame(height: min(height, maxHeight ?? height))
         }
@@ -434,9 +442,11 @@ extension GraphCanvas where Overlay == EmptyView {
          caption: String? = nil,
          badge: String? = nil,
          clipsContent: Bool = true,
+         previewsFrequency: Bool = false,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void) {
         self.init(x: x, y: y, height: height, insets: insets, readout: readout,
-                  caption: caption, badge: badge, clipsContent: clipsContent, draw: draw,
+                  caption: caption, badge: badge, clipsContent: clipsContent,
+                  previewsFrequency: previewsFrequency, draw: draw,
                   overlay: { _ in EmptyView() })
     }
 }
