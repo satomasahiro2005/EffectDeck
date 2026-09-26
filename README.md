@@ -44,9 +44,9 @@
 
 **Effects for any player on your phone.** Anything with a transport in Control Center,
 the Now Playing kind, goes through the chain: it takes that audio, runs it through
-EffeTune's effects, and sends it to the built-in speaker. No virtual cable, no input
-device to configure. Pick **EffectDeck** as the output in Control Center and that is the
-whole setup.
+EffeTune's effects, and plays it on whatever was the output before you picked EffectDeck:
+the speaker, wired headphones, AirPods. No virtual cable, no input device to configure.
+Pick **EffectDeck** as the output in Control Center and that is the whole setup.
 
 ```
 Spotify / a podcast app / Safari
@@ -55,7 +55,7 @@ extension (Media Device Extension)   ← receives
   ↓ 127.0.0.1:47101
 app                                  ← runs EffeTune's DSP
   ↓
-built-in speaker
+the output you had before (speaker / headphones / AirPods)
 ```
 
 ## If it says Unable to Connect
@@ -73,7 +73,7 @@ system's music voice-activity detector, which is only up while music plays. The 
 in are `MDESupportedProtocols` (no third-party app lists us) and
 `MDESupportsUniversalURLPlayback` (Safari sets it, which is why audio from a page gets
 through). When the decision goes the other way the system spends 1.5 seconds looking for
-an AirPlay receiver, finds none, and puts the route back on the speaker.
+an AirPlay receiver, finds none, and puts the route back where it was.
 
 None of the arguments `MediaOutputDevice` takes are read when that decision is made, so
 there is nothing on this side to set.
