@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import { decodeFXD } from "./src/fxd.js";
 import * as parse from "./src/parse.js";
-import { DECK_HOST, APP_STORE, TESTFLIGHT, GITHUB, RELEASES, JSFX_MD } from "./src/links.js";
+import { DECK_HOST, APP_STORE, TESTFLIGHT, GITHUB, RELEASES, JSFX_MD, CHATGPT, CHATGPT_Q } from "./src/links.js";
 import { TEXT, FAQ, LLMS_TXT } from "./src/text.js";
 import { homeLd, plainText } from "./src/seo.js";
 
@@ -132,6 +132,22 @@ await test("no release status in the text: no TestFlight or beta outside the foo
   assert.match(TEXT.jsfx[0], /^EffectDeck loads JSFX/);
   assert.ok(FAQ.some((f) => f.a.includes(JSFX_MD)), "FAQ links JSFX.md");
   assert.ok(FAQ.some((f) => /free and open source under the MIT license/.test(f.a)), "FAQ says FOSS");
+});
+
+// アプリの EffectPickerView.writeWithChatGPT と同じ字（links.js の頭）。/write はこれを見せる。
+await test("/write text: the app's request, linked from home and llms.txt", async () => {
+  assert.equal(decodeURIComponent(CHATGPT.slice("https://chatgpt.com/?q=".length)), CHATGPT_Q);
+  assert.ok(CHATGPT_Q.startsWith("Write a JSFX effect for EffectDeck, an iOS app that runs single-file JSFX. First read "));
+  assert.ok(CHATGPT_Q.includes(JSFX_MD));
+  assert.ok(CHATGPT_Q.endsWith("reply with the complete script in one code block."));
+  assert.ok(!/\s{2}|\n/.test(CHATGPT_Q), "joined lines");
+  assert.equal(TEXT.writeTitle, "Write a JSFX effect with ChatGPT");
+  assert.match(TEXT.writePlan, /^A paid ChatGPT plan is recommended/);
+  assert.ok(TEXT.writePlan.includes(`href="${JSFX_MD}"`));
+  assert.match(TEXT.writeReturn, /Import JSFX → From Clipboard/);
+  assert.ok(TEXT.jsfxLinks.some((l) => l.includes('href="/write"')));
+  assert.ok(!TEXT.jsfxLinks.some((l) => l.includes("chatgpt.com")), "home goes through /write");
+  assert.ok(LLMS_TXT.includes("https://effectdeck.nemut.ai/write"));
 });
 
 await test("chain preview reads the share-link p", async () => {

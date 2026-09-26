@@ -20,6 +20,7 @@ import { TEXT, FAQ, PRIVACY, LLMS_TXT } from "./text.js";
 import { ORIGIN, homeLd } from "./seo.js";
 import {
   DECK_HOST, LINK_HOST, APP_ID, APP_STORE, APP_STORE_ID, GITHUB, RELEASES, TESTFLIGHT, TWITTER,
+  CHATGPT, CHATGPT_Q,
 } from "./links.js";
 import badgeEn from "../assets/app-store-en.svg";
 import ogImage from "../assets/og.png";
@@ -103,6 +104,9 @@ async function deck(url) {
     case "/j":
     case "/j/":
       return jsfxPage();
+    case "/write":
+    case "/write/":
+      return writePage();
     case "/privacy":
     case "/privacy/":
       return privacyPage();
@@ -236,6 +240,7 @@ code{font:.9em var(--mono)}
 pre{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:12px;margin:0 0 12px;overflow:auto;max-height:60vh;font:13px/1.5 var(--mono);white-space:pre;tab-size:4}
 .src-head{display:flex;justify-content:flex-end;margin:24px 0 0;padding:6px 8px;background:var(--surface);border:1px solid var(--rule);border-bottom:0;border-radius:8px 8px 0 0}
 .src-head+pre{border-radius:0 0 8px 8px}
+pre.prompt{white-space:pre-wrap;overflow-wrap:anywhere;max-height:none;font-size:14px;line-height:1.6}
 footer.site{margin-top:56px;border-top:1px solid var(--rule);color:var(--muted);font-size:.88rem}
 footer.site .wrap{padding-block:28px 40px}
 footer.site a{color:inherit}
@@ -431,6 +436,20 @@ function chainPage(url) {
   return page({ title: `${t.chainTitle} — EffectDeck`, body, banner, description });
 }
 
+// MARK: - Copy
+
+// Copy ボタン。/j と /write で同じ書き方。**書けなければ中身を選択しておく**（手でコピーできる）。
+const copyJS = (t, id) => `$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($(${JSON.stringify(id)}).textContent); $("copy").textContent = ${JSON.stringify(t.copied)}; }
+  catch { const r = document.createRange(); r.selectNodeContents($(${JSON.stringify(id)})); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+});`;
+
+// インラインの script は </script を含まないこと。
+function inline(js) {
+  if (/<\/script/i.test(js)) throw new Error("inline script must not contain </script");
+  return js;
+}
+
 // MARK: - /j
 
 // head の apple-itunes-app の直後で走る（page を見ること）。
@@ -450,15 +469,11 @@ const desc = /^desc:\\s*(.+)$/m.exec(src);
 if (desc) { $("title").textContent = desc[1].trim(); document.title = desc[1].trim() + " — EffectDeck"; }
 $("src").textContent = src;
 $("ok").hidden = false;
-$("copy").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(src); $("copy").textContent = ${JSON.stringify(t.copied)}; }
-  catch { const r = document.createRange(); r.selectNodeContents($("src")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
-});
+${copyJS(t, "src")}
 };
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run); else run();
 })();`;
-  if (/<\/script/i.test(js)) throw new Error("inline script must not contain </script");
-  return js;
+  return inline(js);
 }
 
 function jsfxPage() {
@@ -478,6 +493,36 @@ function jsfxPage() {
   return page({
     title: "JSFX — EffectDeck", body, script: jsfxScript(t), width: "code",
     description: "A JSFX script shared from EffectDeck.",
+  });
+}
+
+// MARK: - /write
+
+// アプリの「Write with ChatGPT」と同じ依頼文を見せる。**字は links.js の CHATGPT_Q 1 か所から。**
+// JS が無くても字は選べるし、Open ChatGPT はただのリンク。
+function writeScript(t) {
+  return inline(`(() => {
+const $ = (id) => document.getElementById(id);
+const run = () => {
+${copyJS(t, "prompt")}
+};
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run); else run();
+})();`);
+}
+
+function writePage() {
+  const t = TEXT;
+  const body = `
+<h1>${t.writeTitle}</h1>
+<p class="muted">${t.writePlan}</p>
+<div class="src-head"><button class="btn quiet" id="copy" type="button">${t.copy}</button></div>
+<pre class="prompt" id="prompt">${esc(CHATGPT_Q)}</pre>
+<div class="actions"><a class="btn" href="${esc(CHATGPT)}">${t.openChatGPT}</a></div>
+<p class="muted">${t.writeOther}</p>
+<p>${t.writeReturn}</p>`;
+  return page({
+    title: `${t.writeTitle} — EffectDeck`, body, script: writeScript(t), canonical: `${ORIGIN}/write`,
+    description: "A request to paste into ChatGPT so that it writes a JSFX effect for EffectDeck.",
   });
 }
 

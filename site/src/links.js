@@ -24,8 +24,8 @@ export const APPLE_PRIVACY = "https://www.apple.com/legal/privacy/";
 export const CLOUDFLARE_PRIVACY = "https://www.cloudflare.com/privacypolicy/";
 
 // アプリの「Write with ChatGPT」と同じ依頼文（EffectPickerView.writeWithChatGPT）。
-// **文面を変えるときは両方変える。**
-const CHATGPT_Q =
+// **文面を変えるときは両方変える。**/write はこの字をそのまま見せる。
+export const CHATGPT_Q =
   "Write a JSFX effect for EffectDeck, an iOS app that runs single-file JSFX. " +
   "First read https://github.com/satomasahiro2005/EffectDeck/blob/main/JSFX.md " +
   "and follow its authoring contract exactly. If you cannot open it, at least: " +

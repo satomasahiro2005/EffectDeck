@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import { Miniflare } from "miniflare";
+import { CHATGPT, CHATGPT_Q } from "./src/links.js";
 
 const here = new URL(".", import.meta.url);
 const vector = JSON.parse(readFileSync(new URL("test-vector.json", here), "utf8"));
@@ -71,6 +72,7 @@ try {
       `/?p=${p}`,
       `/?p=${encodeURIComponent(p)}&lang=ja`,
       "/privacy",
+      "/write",
       "/nope?x=1",
     ]) {
       const r = await get(FXD, path);
@@ -132,7 +134,7 @@ try {
   });
 
   await test("Open Graph and Twitter card tags on every page, image from our origin", async () => {
-    for (const path of ["/", "/privacy", `/?p=${p}`, "/j"]) {
+    for (const path of ["/", "/privacy", `/?p=${p}`, "/j", "/write"]) {
       const r = await get(DECK, path);
       const meta = (attr, key) => new RegExp(`<meta ${attr}="${key.replace(/[:.]/g, "\\$&")}" content="([^"]*)">`).exec(r.body)?.[1];
       assert.equal(meta("property", "og:image"), `https://${DECK}/og.png`, path);
@@ -168,7 +170,7 @@ try {
       assert.equal(r.headers.get("content-language"), null);
       assert.equal(r.headers.get("vary"), null);
     }
-    for (const path of ["/", "/privacy", "/j?lang=ja", `/?p=${p}&lang=ja`, "/nope"]) {
+    for (const path of ["/", "/privacy", "/j?lang=ja", "/write", `/?p=${p}&lang=ja`, "/nope"]) {
       const r = await get(DECK, path, { lang: "ja" });
       assert.ok(r.body.includes('<html lang="en">'), path);
       assert.ok(!/[぀-ヿ一-鿿]/.test(r.body), `Japanese in ${path}`);
@@ -192,7 +194,7 @@ try {
   // リリースごとに変わることはページに書かない。TestFlight はフッターの名札 1 本だけ。
   await test("TestFlight only as one footer link on each page; hero is App Store + GitHub + FOSS", async () => {
     const footer = (body) => /<footer class="site">[\s\S]*<\/footer>/.exec(body)[0];
-    for (const path of ["/", "/privacy", "/j", `/?p=${p}`, "/nope"]) {
+    for (const path of ["/", "/privacy", "/j", "/write", `/?p=${p}`, "/nope"]) {
       const r = await get(DECK, path);
       const f = footer(r.body);
       const outside = r.body.replace(f, "");
@@ -290,6 +292,65 @@ try {
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(meta.content, `app-id=${APP}`);
     assert.equal(els.bad.hidden, false);
+  });
+
+  // /write。依頼文は links.js の CHATGPT_Q そのもの（アプリと同じ字）。
+  let writeJS;
+  await test("/write: the request in a read-only box, Copy, Open ChatGPT, CSP hash, linked from home", async () => {
+    const r = await get(DECK, "/write");
+    assert.equal(r.status, 200);
+    assert.ok(r.body.includes("<h1>Write a JSFX effect with ChatGPT</h1>"));
+    const box = /<pre class="prompt" id="prompt">([^<]*)<\/pre>/.exec(r.body);
+    assert.ok(box, "prompt box");
+    assert.equal(box[1], CHATGPT_Q);
+    assert.ok(!/contenteditable|<textarea/.test(r.body), "box is read-only");
+    assert.ok(r.body.includes('<button class="btn quiet" id="copy" type="button">Copy</button>'));
+    const open = /<a class="btn" href="([^"]+)">Open ChatGPT<\/a>/.exec(r.body);
+    assert.ok(open, "Open ChatGPT");
+    assert.equal(open[1], CHATGPT);
+    assert.equal(new URL(open[1]).searchParams.get("q"), CHATGPT_Q);
+    assert.match(r.body, /A paid ChatGPT plan is recommended/);
+    assert.ok(r.body.includes("The same text works in other assistants."));
+    assert.ok(r.body.includes("Import JSFX → From Clipboard"));
+    assert.ok(r.body.includes(`<link rel="canonical" href="https://${DECK}/write">`));
+    assert.ok(r.body.includes(`<meta name="apple-itunes-app" content="app-id=${APP}">`));
+    const m = new RegExp(`<meta name="apple-itunes-app" content="app-id=${APP}">\\n<script>([\\s\\S]*?)</script>`).exec(r.body);
+    assert.ok(m, "script");
+    assert.equal(r.body.match(/<script/g).length, 1);
+    writeJS = m[1];
+    assert.ok(r.headers.get("content-security-policy").includes(`script-src '${sha(writeJS)}'`));
+    assert.equal((await get(DECK, "/write/")).status, 200);
+    const home = (await get(DECK, "/")).body;
+    const jsfx = /<section id="jsfx">[\s\S]*?<\/section>/.exec(home)[0];
+    assert.ok(jsfx.includes('<a href="/write">Write with ChatGPT</a>'));
+    assert.ok((await get(DECK, "/llms.txt")).body.includes(`https://${DECK}/write`));
+  });
+
+  await test("/write script: Copy writes the box's text, and selects it when the clipboard refuses", async () => {
+    for (const refuse of [false, true]) {
+      const els = {};
+      let written = null;
+      let selected = null;
+      const document = {
+        readyState: "complete",
+        getElementById: (id) => (els[id] ??= {
+          textContent: id === "prompt" ? CHATGPT_Q : "Copy",
+          addEventListener(ev, fn) { this[ev] = fn; },
+        }),
+        createRange: () => ({ selectNodeContents(n) { this.n = n; } }),
+      };
+      const navigator = { clipboard: { writeText: async (s) => { if (refuse) throw new Error("no"); written = s; } } };
+      const getSelection = () => ({ removeAllRanges() {}, addRange(r) { selected = r.n; } });
+      new Function("document", "navigator", "getSelection", writeJS)(document, navigator, getSelection);
+      await els.copy.click();
+      if (refuse) {
+        assert.equal(selected, els.prompt);
+        assert.equal(els.copy.textContent, "Copy");
+      } else {
+        assert.equal(written, CHATGPT_Q);
+        assert.equal(els.copy.textContent, "Copied");
+      }
+    }
   });
 
   await test("other effectdeck paths", async () => {

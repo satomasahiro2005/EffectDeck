@@ -10,7 +10,7 @@
 // FOSS（無料・MIT）はリリースで変わらないので書いてよい（トップにも出す）。
 
 import {
-  APP_STORE, RELEASES, GITHUB, LICENSE, ISSUES, JSFX_MD, CHATGPT, TWITTER, EMAIL,
+  APP_STORE, RELEASES, GITHUB, LICENSE, ISSUES, JSFX_MD, TWITTER, EMAIL,
   EFFETUNE, APPLE_PRIVACY, CLOUDFLARE_PRIVACY,
 } from "./links.js";
 
@@ -42,7 +42,8 @@ export const TEXT = {
     `${a(JSFX_MD, "JSFX.md")} sets out what EffectDeck supports and what it rejects. It is written to be handed to a language model as it is.`,
     "In the app, <strong>Write with ChatGPT</strong> (under Plugins) opens ChatGPT with a request that points it at JSFX.md. Copy the script it returns and use <strong>Import JSFX → From Clipboard</strong>. A paid ChatGPT plan works better, since the free tier may skip the linked file and miss the rules.",
   ],
-  jsfxLinks: [a(JSFX_MD, "JSFX.md"), a(CHATGPT, "Write with ChatGPT")],
+  // **ChatGPT へは /write を挟む。**依頼文を見せてコピーもでき、有料版を勧める 1 行もそこに置く。
+  jsfxLinks: [a(JSFX_MD, "JSFX.md"), a("/write", "Write with ChatGPT")],
   shareTitle: "Share links",
   share: [
     "Chains and JSFX scripts shared from EffectDeck are links on effectdeck.nemut.ai. With the app installed, they open in the app.",
@@ -65,6 +66,12 @@ export const TEXT = {
   // ページからアプリへ渡すボタンは無い（worker.js の頭）。Safari のバナーか、アプリの貼り付けで渡す。
   chainHowTo: "If EffectDeck is installed, Safari shows a banner with <strong>Open</strong> at the top of this page. In another browser, copy this page's address and open EffectDeck. It offers to paste the link.",
   jsfxHowTo: "If EffectDeck is installed, Safari shows a banner with <strong>Open</strong> at the top of this page. Otherwise, copy the script below and use <strong>Import JSFX → From Clipboard</strong> in the app.",
+  // /write。依頼文（links.js の CHATGPT_Q）の前後に 1 行ずつ。説明を増やさない。
+  writeTitle: "Write a JSFX effect with ChatGPT",
+  writePlan: `A paid ChatGPT plan is recommended: it reads the linked ${a(JSFX_MD, "JSFX.md")} and reasons through the code. The free plan often gives scripts that do not load.`,
+  openChatGPT: "Open ChatGPT",
+  writeOther: "The same text works in other assistants.",
+  writeReturn: "Copy the script it returns, then in EffectDeck use <strong>Import JSFX → From Clipboard</strong>.",
   off: "Off",
   unreadable: "This link could not be read.",
   copy: "Copy",
@@ -232,6 +239,7 @@ export const LLMS_TXT = `# EffectDeck
 - Audio is processed on the device. It is not recorded and not sent over the network.
 - The effects are EffeTune's DSP (MIT license), including EQ, dynamics, saturation, reverb, spatial effects and analyzers.
 - EffectDeck also loads JSFX, the script format REAPER uses. One text file is one effect. JSFX.md describes what is supported and is written to be given to a language model.
+- https://effectdeck.nemut.ai/write has a request to paste into ChatGPT or another assistant to have it write a JSFX effect. The returned script is imported with Import JSFX → From Clipboard.
 - EffectDeck is free on the App Store and its source is on GitHub under the MIT license.
 - Chains and JSFX scripts are shared as links on https://effectdeck.nemut.ai/ . A JSFX link carries the script after the #.
 
@@ -243,6 +251,7 @@ export const LLMS_TXT = `# EffectDeck
 - README: ${GITHUB}#readme
 - Release notes: ${RELEASES}
 - JSFX.md: ${JSFX_MD}
+- Write a JSFX effect with ChatGPT: https://effectdeck.nemut.ai/write
 - Issues: ${ISSUES}
 - Privacy policy: https://effectdeck.nemut.ai/privacy
 - Contact: ${EMAIL}
