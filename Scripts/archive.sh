@@ -13,7 +13,9 @@ SCHEME="${1:-EffeTuneLive}"
 APPICON="${2:-EffectDeckPublicBeta}"
 # **アイコンと中身を 1 つの引数で決める。**別々にすると噛み合わなくなる
 # （紫なのに JSFX が無い形を一度作った）。
-# ベータ側だけ ET_BETA を立てて、まだ出せない機能を開ける。
+# ベータ側だけ ET_BETA を立てる。いま ET_BETA で変わるのは同梱の JSFX の見本
+# （ETJSFXHost.showsBundledSamples）だけ。JSFX 本体は店の版でも開いている
+# （ETJSFXHost.isEnabled）。店に出さない機能を足すときはここで開ける。
 if [ "$APPICON" = "EffectDeckPublicBeta" ]; then
   SWIFT_FLAGS='$(inherited) ET_BETA'
 else
