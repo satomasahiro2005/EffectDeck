@@ -4,10 +4,8 @@ slider1:0<0,100,1>Step
 slider2:0<0,100000,1>-Counter readback
 
 @init
-// **kept をここで初期化しない。**
-// ETJSFX_LoadState は ysfx_load_state（@serialize 読み）のあとに ysfx_init を
-// 呼ぶので、@init で 0 を書くと復元した値がその場で消える。
-// つまみ経由ではなく payload が戻っていることを見たいので、ここでは触らない。
+// **kept にはここで触らない。**payload だけで戻ることを見る fixture。
+// @init でも書く形は state_init.jsfx が見る。
 step = 0;
 
 @slider
