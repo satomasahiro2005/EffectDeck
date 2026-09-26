@@ -277,7 +277,10 @@ struct PipelineView: View {
         .onReceive(slow) { _ in io.tick() }
         // 図は画面の描き直しに合わせて汲む。タイマーで回すと面と揃わず、
         // DSP が出した 60Hz の枠も半分捨てていた（DisplayPump.swift の頭）。
-        .onAppear { ETDisplayPump.shared.start { io.pollTelemetry() } }
+        .onAppear {
+            ETDisplayPump.shared.start { io.pollTelemetry() }
+            drainShared()
+        }
         .onDisappear { ETDisplayPump.shared.stop() }
         // **背景に回ったら汲むのをやめる。**
         // stop を呼ぶ口は onDisappear だけだったが、これは根のビューなので
@@ -290,19 +293,13 @@ struct PipelineView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { ETDisplayPump.shared.stop() }
             else { ETDisplayPump.shared.start { io.pollTelemetry() } }
+            if phase == .active { drainShared() }
         }
         // **共有シートや「このアプリで開く」から来たファイルを受ける。**
         // 宣言（Info.plist の CFBundleDocumentTypes）だけ足すと、候補には出るのに
-        // 押しても何も起きない。受け口はここ 1 か所だけにしてある。
+        // 押しても何も起きない。受け口はここと drainShared の 2 か所。
         .onOpenURL { url in
-            switch ETInbox.receive(url) {
-            case .ir: sheet = .ir
-            // 取り込んだ JSFX は一覧に入る。そこから鎖へ足してもらう。
-            case .jsfx: sheet = .picker
-            // **黙って落とさない。**押しても何も起きないのと見分けが付かない。
-            case .failed(let why): pluginError = why
-            case .unsupported: break
-            }
+            show(ETInbox.receive(url))
         }
         // 鎖から外れた段ぶんの「畳んでも消えない選択」を捨てる。
         // MatrixRouting が MatrixView の onAppear でやっているのと同じ掃除。
@@ -313,6 +310,32 @@ struct PipelineView: View {
         .onReceive(io.$running) { running = $0 }
         .onReceive(io.$hasPeer) { hasPeer = $0 }
         .onReceive(io.$processingRate) { processingRate = $0 }
+    }
+
+    /// 取り込んだ結果を出す。「このアプリで開く」と共有の拡張で同じ出し方にする。
+    private func show(_ received: ETInbox.Received, unsupported: String? = nil) {
+        switch received {
+        case .ir: sheet = .ir
+        // 取り込んだ JSFX は一覧に入る。そこから鎖へ足してもらう。
+        case .jsfx: sheet = .picker
+        // **黙って落とさない。**押しても何も起きないのと見分けが付かない。
+        case .failed(let why): pluginError = why
+        case .unsupported: if let unsupported { pluginError = unsupported }
+        }
+    }
+
+    /// 共有の拡張（EffectDeckShare）が App Group に置いたものを拾う。
+    /// 起動時と、前へ出るたびに呼ぶ。拡張は判定できないので、ここで
+    /// 「このアプリで開く」と同じ ETInbox.receive に通す。
+    ///
+    /// **音でも JSFX でもなかったときも出す。**「このアプリで開く」は OS が
+    /// 型で候補を絞っているが、共有はリンクなので何でも来る。黙ると Add を
+    /// 押したのに何も起きない形になる。
+    private func drainShared() {
+        guard let root = ETShareInbox.root else { return }
+        for received in ETShareInbox.drain(in: root, { ETInbox.receive($0) }) {
+            show(received, unsupported: ETInbox.unsupportedLink)
+        }
     }
 
     private var chainList: some View {

@@ -90,6 +90,20 @@ enum ETRemoteFile {
     /// 落として、端末の一時置き場へ書く。**名前は向こうが言うものを使う。**
     /// 拡張子で振り分けてはいないが、取り込み先が複製の名前に使う。
     static func fetch(_ address: URL) async throws -> URL {
+        let (data, name) = try await download(address)
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: file)
+        try data.write(to: file, options: .atomic)
+        log.notice("取ってきた \(name, privacy: .public) \(data.count) bytes")
+        return file
+    }
+
+    /// 落とすだけ。書く場所は呼ぶ側が決める（共有の拡張は App Group へ書く）。
+    static func download(_ address: URL) async throws -> (data: Data, name: String) {
         var request = URLRequest(url: address)
         // GitHub は User-Agent が無いと断ることがある。
         request.setValue("EffectDeck", forHTTPHeaderField: "User-Agent")
@@ -103,16 +117,13 @@ enum ETRemoteFile {
 
         // 名前は URL の末尾。無ければ付ける（取り込み先は中身で判じるので、
         // 名前が当てにならなくても困らない）。
-        var name = address.lastPathComponent
-        if name.isEmpty || name == "/" || name == "raw" { name = "download" }
-
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("inbox", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent(name)
-        try? FileManager.default.removeItem(at: file)
-        try data.write(to: file, options: .atomic)
-        log.notice("取ってきた \(name, privacy: .public) \(data.count) bytes")
-        return file
+        // **飛ばされた先の末尾を先に見る。**gist の `/raw` は
+        // `gist.githubusercontent.com/.../raw/<sha>/<名前>` へ飛ぶので、
+        // 元の URL だと名前が "raw" になり IR の一覧に download.bin で並ぶ。
+        for candidate in [response.url, address].compactMap({ $0 }) {
+            let name = candidate.lastPathComponent
+            if !name.isEmpty, name != "/", name != "raw" { return (data, name) }
+        }
+        return (data, "download")
     }
 }

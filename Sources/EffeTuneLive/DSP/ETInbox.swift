@@ -2,7 +2,8 @@
 //  外から渡されたファイルの振り分け。
 //
 //  共有シートや他のアプリの「このアプリで開く」から来る URL を、どこへ入れるかだけ決める。
-//  View は持たない。呼ぶのは PipelineView の `.onOpenURL` 1 か所だけにしてある。
+//  View は持たない。呼ぶのは PipelineView の `.onOpenURL` と drainShared
+//  （共有の拡張が App Group に置いたもの。ETShareInbox）、EffectPickerView のリンク取り込み。
 //
 //  **宣言（Info.plist の CFBundleDocumentTypes）と受け口は組でしか入れられない。**
 //  宣言だけ足すと共有シートに出るのに押しても何も起きない、という新しい症状になる。
@@ -29,6 +30,10 @@ enum ETInbox {
         case failed(String)
         case unsupported
     }
+
+    /// リンクから来たものが音でも JSFX でもなかったときの字。
+    /// 「Import → From Link」と共有の拡張の両方で出す。
+    static let unsupportedLink = "That link is neither a JSFX source nor an impulse response."
 
     /// 1 本受ける。
     ///
