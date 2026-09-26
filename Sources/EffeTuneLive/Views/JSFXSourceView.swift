@@ -193,9 +193,13 @@ private struct JSFXRenderedSource: @unchecked Sendable {
     init(source: String) {
         let document = JSFXSourceDocument(source: source)
         self.document = document
-        attributed = document.highlighted
-            ? zip(document.lines, document.tokens).map { Self.attributed($0, $1) }
-            : nil
+        guard document.highlighted else {
+            attributed = nil
+            return
+        }
+        // 種類ごとの属性は1回だけ作って使い回す。
+        let styles = Dictionary(uniqueKeysWithValues: JSFXSyntaxTheme.Role.allCases.map { ($0, JSFXSyntaxTheme.attributes($0)) })
+        attributed = zip(document.lines, document.tokens).map { Self.attributed($0, $1, styles) }
     }
 
     func text(_ i: Int) -> Text {
@@ -205,34 +209,119 @@ private struct JSFXRenderedSource: @unchecked Sendable {
         return Text(verbatim: line.isEmpty ? " " : line)
     }
 
-    private static func attributed(_ line: String, _ tokens: [JSFXToken]) -> AttributedString {
+    /// **同じ見た目が続く字句は1本の区間にまとめる。**`);`や`] = `で区間が細切れになるのを防ぐ。
+    private static func attributed(_ line: String, _ tokens: [JSFXToken],
+                                   _ styles: [JSFXSyntaxTheme.Role: AttributeContainer]) -> AttributedString {
         guard !tokens.isEmpty else { return AttributedString(line) }
         let bytes = Array(line.utf8)
         var out = AttributedString()
+        var runStart = 0
+        var runStyle: JSFXSyntaxTheme.Role?
+        func flush(to end: Int) {
+            guard end > runStart else { return }
+            let text = String(decoding: bytes[runStart..<end], as: UTF8.self)
+            if let runStyle, let attributes = styles[runStyle] {
+                out += AttributedString(text, attributes: attributes)
+            } else {
+                out += AttributedString(text)
+            }
+            runStart = end
+        }
         var pos = 0
         for token in tokens {
+            let role = JSFXSyntaxTheme.role(token.kind)
+            // 間の空白は前の区間に付ける。色の無い字があるときだけ区切る。
             if token.range.lowerBound > pos {
-                out += AttributedString(String(decoding: bytes[pos..<token.range.lowerBound], as: UTF8.self))
+                let gap = bytes[pos..<token.range.lowerBound]
+                if runStyle != nil && !gap.allSatisfy({ $0 == 0x20 }) {
+                    flush(to: pos)
+                    runStyle = nil
+                }
             }
-            var piece = AttributedString(String(decoding: bytes[token.range], as: UTF8.self))
-            switch token.kind {
-            case .section:
-                piece.foregroundColor = Color.accentColor
-                piece.inlinePresentationIntent = .stronglyEmphasized
-            case .slider, .number:
-                piece.foregroundColor = Color.accentColor
-            case .comment:
-                piece.foregroundColor = Color.secondary
-            case .string:
-                piece.foregroundColor = Color.orange
+            if role != runStyle {
+                flush(to: token.range.lowerBound)
+                runStyle = role
             }
-            out += piece
             pos = token.range.upperBound
         }
-        if pos < bytes.count {
-            out += AttributedString(String(decoding: bytes[pos...], as: UTF8.self))
-        }
+        flush(to: pos)
+        runStyle = nil
+        flush(to: bytes.count)
         return out
+    }
+}
+
+/// 字句の色。**色の対応はここだけ。**XcodeのDefaultテーマに寄せる。
+/// 色はシステムの意味色だけ。**明るい画面では高コントラスト版に替える**（白地に細い等幅の字でも読めるように）。
+enum JSFXSyntaxTheme {
+    /// 見た目の種類。字句の種類より少ない。
+    enum Role: Hashable, CaseIterable {
+        case keyword, directive, section, string, number, range, enumItem, stringName
+        case builtinFunction, builtinVariable, declaration, call, muted, comment
+    }
+
+    static func role(_ kind: JSFXTokenKind) -> Role {
+        switch kind {
+        case .keyword: .keyword
+        case .headerKey, .sliderKey: .directive
+        case .section: .section
+        case .headerValue, .string, .sliderLabel, .sliderPath: .string
+        case .number, .constant, .character, .sliderDefault: .number
+        case .sliderRange: .range
+        case .sliderEnum: .enumItem
+        case .stringName: .stringName
+        case .builtinFunction: .builtinFunction
+        case .builtinVariable, .sliderVariable: .builtinVariable
+        case .functionDefinition: .declaration
+        case .functionCall: .call
+        case .operator, .punctuation: .muted
+        case .comment: .comment
+        }
+    }
+
+    static func attributes(_ role: Role) -> AttributeContainer {
+        var a = AttributeContainer()
+        switch role {
+        case .keyword:
+            a.foregroundColor = system(.systemPink)
+            a.inlinePresentationIntent = .stronglyEmphasized
+        case .directive:
+            a.foregroundColor = system(.systemOrange)
+        case .section:
+            a.foregroundColor = system(.systemOrange)
+            a.inlinePresentationIntent = .stronglyEmphasized
+        case .string:
+            a.foregroundColor = system(.systemRed)
+        case .number:
+            a.foregroundColor = system(.systemBlue)
+        case .range:
+            a.foregroundColor = system(.systemCyan)
+        case .enumItem, .stringName:
+            a.foregroundColor = system(.systemBrown)
+        case .builtinFunction:
+            a.foregroundColor = system(.systemPurple)
+        case .builtinVariable:
+            a.foregroundColor = system(.systemTeal)
+        case .declaration:
+            a.foregroundColor = system(.systemGreen)
+            a.inlinePresentationIntent = .stronglyEmphasized
+        case .call:
+            a.foregroundColor = system(.systemGreen)
+        case .muted:
+            a.foregroundColor = Color.secondary
+        case .comment:
+            a.foregroundColor = Color.secondary
+            a.inlinePresentationIntent = .emphasized
+        }
+        return a
+    }
+
+    private static func system(_ base: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? base.resolvedColor(with: traits)
+                : base.resolvedColor(with: traits.modifyingTraits { $0.accessibilityContrast = .high })
+        })
     }
 }
 
