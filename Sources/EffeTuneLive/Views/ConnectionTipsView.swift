@@ -7,8 +7,9 @@
 //  **日英はこのファイルの中だけで持つ。**アプリの残りは英語のまま。
 //  String Catalog も Localizable.strings も作らない。
 //
-//  **言語は頭のセグメントで選ばせる。**選んだ側を "tips.language"（"en" / "ja"）に
-//  残す。一度も選んでいなければ Locale.preferredLanguages の先頭で決める。
+//  **言語はバーの真ん中のセグメントで選ばせる。**Settings の面の切り替えと同じ部品。
+//  選んだ側を "tips.language"（"en" / "ja"）に残す。一度も選んでいなければ
+//  Locale.preferredLanguages の先頭で決める。
 //  先頭だけで決めていたころは、端末を英語のまま使っている日本の人（en-JP）が
 //  日本語に辿り着けなかった。Bundle.main.preferredLocalizations は
 //  バンドルに en しか無いので常に en を返す。
@@ -29,20 +30,6 @@ struct ConnectionTipsView: View {
 
     var body: some View {
         List {
-            // **バーに置かない。**principal に置くと題が消える。
-            // 行にしておけば、Settings から押したときもシートの中でも同じ場所に出る。
-            // セグメントは UISegmentedControl で Menu ではない（SettingsRows.swift の頭）。
-            Section {
-                Picker(selection: Binding(get: { chosen ?? ETTips.defaultLanguage },
-                                          set: { chosen = $0 })) {
-                    Text(verbatim: "English").tag(ETTips.Language.en)
-                    Text(verbatim: "日本語").tag(ETTips.Language.ja)
-                } label: {
-                    Text(verbatim: ja ? "言語" : "Language")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
             ForEach(ETTips.all) { tip in
                 let c = ja ? tip.ja : tip.en
                 Section {
@@ -70,8 +57,23 @@ struct ConnectionTipsView: View {
                 }
             }
         }
-        .navigationTitle(Text(verbatim: ja ? ETTips.pageTitle.ja : ETTips.pageTitle.en))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // **Settings の面の切り替えと同じ部品を同じ場所に置く**（SettingsView の toolbar）。
+            // 行の頭に置いていたころは、同じアプリの中で切り替えが 2 通りの見た目になっていた。
+            // principal は題の場所なので題は持たない。Settings も持っていない。
+            // Done はシートを出す側（PipelineView）が足す。Settings から押したときは戻るだけ。
+            // セグメントは UISegmentedControl で Menu ではない（SettingsRows.swift の頭）。
+            ToolbarItem(placement: .principal) {
+                Picker("", selection: Binding(get: { chosen ?? ETTips.defaultLanguage },
+                                              set: { chosen = $0 })) {
+                    Text(verbatim: "English").tag(ETTips.Language.en)
+                    Text(verbatim: "日本語").tag(ETTips.Language.ja)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+        }
     }
 }
 
@@ -95,13 +97,12 @@ private enum ETTips {
     enum Language: String { case en, ja }
 
     /// **既定を広げない。**地域（JP）や 2 番目以降の言語は見ない。
-    /// 外れても頭のセグメントで 1 回選べば直る。
+    /// 外れてもバーのセグメントで 1 回選べば直る。
     static var defaultLanguage: Language {
         (Locale.preferredLanguages.first?.hasPrefix("ja") ?? false) ? .ja : .en
     }
 
     /// **口語にしない。**題も本文も落ち着いた語で書く（真面目な道具として出している）。
-    static let pageTitle = (en: "Known limitations", ja: "接続に関する既知の制限")
     static let linkLabel = (en: "Details (GitHub)", ja: "詳細（GitHub・英語）")
 
     /// **よく当たる順。**#2 は 2026.09.17 から上げた人にしか起きないので最後。
