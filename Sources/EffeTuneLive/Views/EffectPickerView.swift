@@ -25,6 +25,7 @@ struct EffectPickerView: View {
     @StateObject private var presets = PresetStore.shared
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @StateObject private var dsp = EffeTuneDSP.shared
     @StateObject private var au = ETAUHost.shared
     @StateObject private var jsfx = ETJSFXHost.shared
@@ -269,6 +270,14 @@ struct EffectPickerView: View {
                                 linkText = UIPasteboard.general.string ?? ""
                                 alert = .link
                             }
+                            // ChatGPTが書いたものをコピーして戻ってきたとき。
+                            Button("From Clipboard", systemImage: "doc.on.clipboard") {
+                                importClipboard()
+                            }
+                            Divider()
+                            Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
+                                openURL(Self.writeJSFX)
+                            }
                         } label: {
                             Label("Import JSFX", systemImage: "square.and.arrow.down")
                         }
@@ -428,6 +437,9 @@ struct EffectPickerView: View {
                         Button("Import JSFX", systemImage: "square.and.arrow.down") {
                             importingJSFX = true
                         }
+                        Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
+                            openURL(Self.writeJSFX)
+                        }
                     }
                 }
             } else {
@@ -439,6 +451,12 @@ struct EffectPickerView: View {
                             if ETJSFXHost.isEnabled {
                                 Button("Import JSFX", systemImage: "square.and.arrow.down") {
                                     importingJSFX = true
+                                }
+                                // **書かせる道があることを、一覧の頭で見せる。**
+                                // JSFXは1枚のテキストなので、ChatGPTにJSFX.mdを
+                                // 読ませれば通るものが返ってくる。説明は足さず、札だけ置く。
+                                Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
+                                    openURL(Self.writeJSFX)
                                 }
                             }
                             ForEach(pluginVendors, id: \.self) { vendor in
@@ -818,6 +836,27 @@ struct EffectPickerView: View {
 
     private func effects(in category: String) -> [ETEffect] {
         catalog.filter { $0.category == category }.sorted { $0.name < $1.name }
+    }
+
+    /// JSFXをChatGPTに書かせるページ。
+    ///
+    /// **依頼の文面と有料版の案内はページ側に置く。**アプリには札だけ置き、
+    /// 説明を持ち込まない。文面を直すのにアプリを出し直さなくて済む。
+    static let writeJSFX = URL(string: "https://effectdeck.nemut.ai/write")!
+
+    /// クリップボードの字をJSFXとして入れる。ChatGPTの返事をコピーして戻ってきたとき。
+    /// 読むのは押したときだけ（貼り付けの許可はこの操作に対して出る）。
+    private func importClipboard() {
+        guard let text = UIPasteboard.general.string, !text.isEmpty else {
+            alert = .failed("The clipboard has no text.")
+            return
+        }
+        do {
+            _ = try jsfx.importText(text)
+            pane = .plugins
+        } catch {
+            alert = .failed(error.localizedDescription)
+        }
     }
 
     /// リンクから取ってきて入れる。
