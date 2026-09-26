@@ -28,6 +28,8 @@ Unable to Connect** in the README first — it is usually Spotify's Canvas.
 `bash Scripts/build.sh` builds and installs on the attached device. `bash Scripts/setup.sh`
 generates the Xcode project. Both are in the README under **Building**.
 
+`site/` is the official website (a Cloudflare Worker). You do not need it to build the app.
+
 ## About the DSP under `Vendor/effetune`
 
 That code is EffeTune's, not this project's. If something looks wrong in there, raise it

@@ -1,0 +1,6 @@
+{
+  "comment": "Shared vector for the /j link. payload = base64url (no padding) of raw DEFLATE (RFC 1951) of the UTF-8 source. Decoders must reproduce source exactly. Encoders may produce different bytes.",
+  "source": "desc:FXD Test Gain\n//author: EffectDeck\nslider1:0<-24,24,0.1>Gain (dB)\n\n@init\ng = 1;\n\n@slider\ng = 10^(slider1/20);\n\n@sample\nspl0 *= g;\nspl1 *= g;\n// 音量 ±24 dB\n",
+  "payload": "S0ktTrZyi3BRCEktLlFwT8zM49LXTywtycgvslJwTUtLTS5xSU3O5irOyUxJLTK0MrDRNTLRMTLRMdAztAMpV9BIcdLk4nLIzMss4UpXsFUwtObicoAoh_AN4jSguvWNDDTBsom5BTmpXMUFOQYKWrYK6dYgpiGUqa-v8HL-5pft_QqHNhqZKKQ4cQEA",
+  "url": "https://effectdeck.nemut.ai/j#S0ktTrZyi3BRCEktLlFwT8zM49LXTywtycgvslJwTUtLTS5xSU3O5irOyUxJLTK0MrDRNTLRMTLRMdAztAMpV9BIcdLk4nLIzMss4UpXsFUwtObicoAoh_AN4jSguvWNDDTBsom5BTmpXMUFOQYKWrYK6dYgpiGUqa-v8HL-5pft_QqHNhqZKKQ4cQEA"
+}

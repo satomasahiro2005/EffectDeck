@@ -171,6 +171,33 @@ final class ETJSFXHost: ObservableObject {
         return true
     }
 
+    /// 取り込んだ 1 本を `https://effectdeck.nemut.ai/j#…` にする（ETFXDLink）。
+    /// **同梱の見本は出さない（nil）。**人が自分で入れたものだけを渡せる。
+    ///
+    /// 一覧の行を描くたびに呼ばれるので覚えておく。id はソースの sha256
+    /// （ownedCopy の置き場の名前）なので、id が同じなら中身も同じ。
+    func shareURL(for entry: Entry) -> Result<URL, ETFXDLink.Failure>? {
+        guard !entry.isDebugFixture else { return nil }
+        if let known = shareURLs[entry.id] { return known }
+        let result: Result<URL, ETFXDLink.Failure>
+        // 大きさは読む前に見る。置き場には 1 MB まで入る。
+        let size = (try? entry.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if size > ETFXDLink.sourceLimit {
+            result = .failure(.tooLarge)
+        } else if let data = try? Data(contentsOf: entry.url),
+                  // entry(for:) と同じく Latin-1 も読む。載せるときは UTF-8 になる。
+                  let text = String(data: data, encoding: .utf8)
+                    ?? String(data: data, encoding: .isoLatin1) {
+            do { result = .success(try ETFXDLink.jsfxURL(source: text)) }
+            catch { result = .failure(error as? ETFXDLink.Failure ?? .unreadableSource) }
+        } else {
+            result = .failure(.unreadableSource)
+        }
+        shareURLs[entry.id] = result
+        return result
+    }
+    private var shareURLs: [String: Result<URL, ETFXDLink.Failure>] = [:]
+
     /// JSFX の口を開けるか。**TestFlight と開発ビルドだけ。**
     ///
     /// 店に出す版では閉じる。**審査のためではなく、中身が足りていないから。**
@@ -275,6 +302,39 @@ final class ETJSFXHost: ObservableObject {
         }
         refresh()
         return entry
+    }
+
+    /// 貼られた字から取り込む。ChatGPT などに書かせたものをコピーして戻ってきたとき用。
+    /// 判定も写し方も importFile と同じ道を通すため、一度ファイルに書いてから渡す。
+    @discardableResult
+    func importText(_ text: String) throws -> Entry {
+        try importSource(Self.codeBlock(in: text) ?? text)
+    }
+
+    /// ソースそのものを取り込む。**囲いは外さない。**
+    /// 共有リンク（ETFXDLink）の中身は送り手のソースそのままで、コメントに ``` があっても
+    /// そこで切ると送り手のものと違う 1 本になる（ページの表示とも食い違う）。
+    @discardableResult
+    func importSource(_ source: String) throws -> Entry {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("pasted.jsfx")
+        try? FileManager.default.removeItem(at: file)
+        try Data(source.utf8).write(to: file, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: file) }
+        return try importFile(file)
+    }
+
+    /// 最初の ``` 囲いの中身。囲いが無ければ nil。
+    /// **囲いは外す。**返事ごとコピーすると付いてくる（「Copy code」なら付かない）。
+    static func codeBlock(in text: String) -> String? {
+        guard let open = text.range(of: "```"),
+              let lineEnd = text[open.upperBound...].firstIndex(of: "\n") else { return nil }
+        // 開きの行の残り（```jsfx など）は飛ばす。
+        let body = text[text.index(after: lineEnd)...]
+        guard let close = body.range(of: "```") else { return String(body) }
+        return String(body[..<close.lowerBound])
     }
 
     func entry(id: String) -> Entry? { entries.first { $0.id == id } ?? entryAliases[id] }

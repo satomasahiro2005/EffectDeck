@@ -33,15 +33,17 @@ struct EffectPickerView: View {
     private enum Alert: Equatable {
         case link
         case failed(String)
+        case shareFailed(String)
     }
     @State private var alert: Alert?
     @State private var linkText = ""
 
     private var alertTitle: String {
         switch alert {
-        case .link:   return "Import from Link"
-        case .failed: return "Could Not Import"
-        case nil:     return ""
+        case .link:        return "Import from Link"
+        case .failed:      return "Could Not Import"
+        case .shareFailed: return "Could Not Share"
+        case nil:          return ""
         }
     }
     @State private var importingJSFX = false
@@ -310,7 +312,7 @@ struct EffectPickerView: View {
                     switch alert {
                     case .link:
                         Text("A link to a JSFX source. A GitHub page works as well as a raw link.")
-                    case .failed(let why):
+                    case .failed(let why), .shareFailed(let why):
                         Text(why)
                     case nil:
                         EmptyView()
@@ -634,6 +636,25 @@ struct EffectPickerView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)
+        }
+        // **渡す口。**`https://effectdeck.nemut.ai/j#…` にソースごと載せる（ETFXDLink）。
+        // スワイプは onDelete が持っているので長押しに置く。行に .swipeActions を
+        // 足すと、onDelete が出していた削除が消える。
+        // 同梱の見本は出さない（shareURL が nil を返し、メニューが空になる）。
+        // 大きすぎるものも口は出し、押したら理由を出す。黙って消すと在るはずの口が無い形になる。
+        .contextMenu {
+            switch jsfx.shareURL(for: entry) {
+            case .success(let url)?:
+                ShareLink(item: url, preview: SharePreview(entry.name)) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            case .failure(let why)?:
+                Button("Share", systemImage: "square.and.arrow.up") {
+                    alert = .shareFailed(why.localizedDescription)
+                }
+            case nil:
+                EmptyView()
+            }
         }
     }
 

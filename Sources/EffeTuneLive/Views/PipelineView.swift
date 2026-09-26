@@ -56,6 +56,14 @@ struct PipelineView: View {
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
     @State private var confirmingReset = false
     @State private var pluginError: String?
+    /// 開いたリンクが読めなかった（鎖が空、/j の中身が壊れている）。pluginError と同じ .alert で出す
+    /// （同じ View に .alert を 2 枚積むと先に付いたほうが出なくなる）。
+    @State private var linkError: String?
+    /// 開いたリンクの鎖。**入れ替えは取り消せないので一度確かめる**（Reset と同じ形）。
+    /// タップ 1 回で今の鎖が消えると、押し間違いで積み上げたものを失う。
+    @State private var pendingChain: [PipelineStore.Loaded]?
+    /// シートを畳み終えてから出すもの（afterClosingSheet）。
+    @State private var afterSheet: (() -> Void)?
 
     /// 切ってある Section を消そうとしている行。消すと配下がその場で鳴り出すので、
     /// 一度だけ確かめる。配下の ON/OFF は書き換えない（about がそう約束している）。
@@ -162,7 +170,7 @@ struct PipelineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { PipelineToolbar(sheet: $sheet, confirmingReset: $confirmingReset,
                                        dsp: dsp, io: io, hasPeer: hasPeer) }
-            .sheet(item: $sheet) { which in
+            .sheet(item: $sheet, onDismiss: runAfterSheet) { which in
                 switch which {
                 case .picker:
                     EffectPickerView(onPick: { spec in
@@ -225,10 +233,22 @@ struct PipelineView: View {
             } message: {
                 Text("Removes every effect and leaves a single Level Meter.")
             }
-            .alert("Could Not Add JSFX", isPresented: Binding(
-                get: { pluginError != nil }, set: { if !$0 { pluginError = nil } })) {
-                    Button("OK", role: .cancel) { pluginError = nil }
-                } message: { Text(pluginError ?? "Unknown error") }
+            .confirmationDialog("Replace chain?",
+                                isPresented: Binding(
+                                    get: { pendingChain != nil },
+                                    set: { if !$0 { pendingChain = nil } }),
+                                titleVisibility: .visible) {
+                Button("Replace chain", role: .destructive) {
+                    if let items = pendingChain { dsp.replaceChain(with: items) }
+                    pendingChain = nil
+                }
+                Button("Cancel", role: .cancel) { pendingChain = nil }
+            }
+            .alert(linkError != nil ? "Could Not Open Link" : "Could Not Add JSFX", isPresented: Binding(
+                get: { pluginError != nil || linkError != nil },
+                set: { if !$0 { pluginError = nil; linkError = nil } })) {
+                    Button("OK", role: .cancel) { pluginError = nil; linkError = nil }
+                } message: { Text(linkError ?? pluginError ?? "Unknown error") }
             // 切ってある Section を外すと、止まっていた段がその場で鳴り出す。
             // 配下の ON/OFF は書き換えないので（about が保つと言っている）、
             // 起きることを先に出しておく。
@@ -294,7 +314,17 @@ struct PipelineView: View {
         // **共有シートや「このアプリで開く」から来たファイルを受ける。**
         // 宣言（Info.plist の CFBundleDocumentTypes）だけ足すと、候補には出るのに
         // 押しても何も起きない。受け口はここ 1 か所だけにしてある。
+        //
+        // **共有リンク（effectdeck.nemut.ai。別名の fxd.nemut.ai も読む）も同じ口に来る。**
+        // Universal Link は SwiftUI では onOpenURL に届く。ファイルより先に見る。
         .onOpenURL { url in
+            if let route = ETFXDLink.route(url) {
+                openLink(route)
+                return
+            }
+            // **ファイル以外は ETInbox へ渡さない。**https の URL を渡すと
+            // IRLibrary が Data(contentsOf:) で画面を止めたまま取りに行く。
+            guard url.isFileURL else { return }
             switch ETInbox.receive(url) {
             case .ir: sheet = .ir
             // 取り込んだ JSFX は一覧に入る。そこから鎖へ足してもらう。
@@ -987,6 +1017,54 @@ struct PipelineView: View {
             return
         }
         dsp.remove(at: IndexSet(integer: i))
+    }
+
+    /// 開いたリンクを振り分ける（ETFXDLink.route）。
+    ///
+    /// 鎖はクリップボードの帯と同じ ETShareLink.parse で読む。**すぐには入れ替えない。**
+    /// JSFX は一覧へ入れてピッカーを開く。ファイルで受けたときと同じ（ETInbox の .jsfx）。
+    private func openLink(_ route: ETFXDLink.Route) {
+        switch route {
+        case .chain(let text):
+            let loaded = ETShareLink.parse(text, catalog: ETCatalog)
+            if loaded.isEmpty {
+                afterClosingSheet { linkError = "That link had no chain in it." }
+            } else {
+                afterClosingSheet { pendingChain = loaded }
+            }
+        case .jsfx(let source):
+            do {
+                // **importText ではなく importSource。**リンクの中身は送り手のソースそのもので、
+                // ``` の囲いを探して切ると別の 1 本になる。
+                try ETJSFXHost.shared.importSource(source)
+                sheet = .picker
+            } catch {
+                // 読めた上で取り込めなかった（この版では JSFX を閉じている、など）。
+                let why = error.localizedDescription
+                afterClosingSheet { pluginError = why }
+            }
+        case .failed(let why):
+            // リンクそのものが読めない。鎖が空のときと同じ題で出す。
+            afterClosingSheet { linkError = why.localizedDescription }
+        case .ignored:
+            break
+        }
+    }
+
+    /// **シートの上には確認も警告も出ない。畳み終えてから出す。**
+    /// sheet = nil と出す側を同じ更新で立てると、畳む途中で出す側が落ちても
+    /// 気づけない（鎖の確認なら、押したリンクが何もしなかった形になる）。
+    /// 続きは .sheet の onDismiss（runAfterSheet）が走らせる。
+    private func afterClosingSheet(_ show: @escaping () -> Void) {
+        guard sheet != nil else { show(); return }
+        afterSheet = show
+        sheet = nil
+    }
+
+    private func runAfterSheet() {
+        let next = afterSheet
+        afterSheet = nil
+        next?()
     }
 
     /// 確かめたあとに消す。配下は連れない。
