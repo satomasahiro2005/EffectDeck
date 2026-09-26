@@ -603,20 +603,15 @@ struct EffectPickerView: View {
         }
     }
 
-    /// JSFXの1行。取り込んだものは右に…を置く。同梱の見本には出さない。
-    @ViewBuilder
+    /// JSFXの1行。右に…を置く。**同梱の見本にも置く**（JSFXの行だと一目でわかるように）。
     private func jsfxRow(_ entry: ETJSFXHost.Entry) -> some View {
-        if entry.isDebugFixture {
+        HStack(spacing: 0) {
             jsfxPickButton(entry)
-        } else {
-            HStack(spacing: 0) {
-                jsfxPickButton(entry)
-                jsfxMenu(entry)
-            }
-            // **両方borderlessにする。**Listは行の中の既定スタイルのボタンを行1つの当たりに
-            // まとめるので、そのままだと…を押しても鎖へ足す側まで走りうる。
-            .buttonStyle(.borderless)
+            jsfxMenu(entry)
         }
+        // **両方borderlessにする。**Listは行の中の既定スタイルのボタンを行1つの当たりに
+        // まとめるので、そのままだと…を押しても鎖へ足す側まで走りうる。
+        .buttonStyle(.borderless)
     }
 
     private func jsfxPickButton(_ entry: ETJSFXHost.Entry) -> some View {
@@ -652,7 +647,7 @@ struct EffectPickerView: View {
         // 見る・写す・共有・消すは右の…から出す（jsfxMenu）。
     }
 
-    /// 取り込んだ1本の…。見る・写す・共有・消す。
+    /// JSFX1本の…。見る・写す・共有・消す。
     private func jsfxMenu(_ entry: ETJSFXHost.Entry) -> some View {
         Menu {
             Button("View Source", systemImage: "doc.text.magnifyingglass") {
@@ -677,9 +672,12 @@ struct EffectPickerView: View {
             case nil:
                 EmptyView()
             }
-            Divider()
-            Button("Delete", systemImage: "trash", role: .destructive) {
-                pendingDeleteJSFX = entry
+            // 同梱の見本は消せない（removeEntryが弾く）。共有もshareURLがnilを返して出ない。
+            if !entry.isDebugFixture {
+                Divider()
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    pendingDeleteJSFX = entry
+                }
             }
         } label: {
             Label("More", systemImage: "ellipsis.circle")
