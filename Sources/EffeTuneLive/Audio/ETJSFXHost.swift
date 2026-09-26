@@ -277,8 +277,8 @@ final class ETJSFXHost: ObservableObject {
         return entry
     }
 
-    /// 貼られた字から取り込む。ChatGPT などに書かせたものをコピーして戻ってきたとき用。
-    /// 判定も写し方も importFile と同じ道を通すため、一度ファイルに書いてから渡す。
+    /// 貼られた字から取り込む。ChatGPTなどに書かせたものをコピーして戻ってきたとき用。
+    /// 判定も写し方もimportFileと同じ道を通すため、一度ファイルに書いてから渡す。
     @discardableResult
     func importText(_ text: String) throws -> Entry {
         let source = Self.codeBlock(in: text) ?? text
@@ -292,12 +292,12 @@ final class ETJSFXHost: ObservableObject {
         return try importFile(file)
     }
 
-    /// 最初の ``` 囲いの中身。囲いが無ければ nil。
+    /// 最初の```囲いの中身。囲いが無ければnil。
     /// **囲いは外す。**返事ごとコピーすると付いてくる（「Copy code」なら付かない）。
     static func codeBlock(in text: String) -> String? {
         guard let open = text.range(of: "```"),
               let lineEnd = text[open.upperBound...].firstIndex(of: "\n") else { return nil }
-        // 開きの行の残り（```jsfx など）は飛ばす。
+        // 開きの行の残り（```jsfxなど）は飛ばす。
         let body = text[text.index(after: lineEnd)...]
         guard let close = body.range(of: "```") else { return String(body) }
         return String(body[..<close.lowerBound])

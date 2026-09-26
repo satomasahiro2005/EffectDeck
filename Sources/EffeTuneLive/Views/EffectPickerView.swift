@@ -277,7 +277,7 @@ struct EffectPickerView: View {
                                 linkText = UIPasteboard.general.string ?? ""
                                 alert = .link
                             }
-                            // ChatGPT が書いたものをコピーして戻ってきたとき。
+                            // ChatGPTが書いたものをコピーして戻ってきたとき。
                             Button("From Clipboard", systemImage: "doc.on.clipboard") {
                                 importClipboard()
                             }
