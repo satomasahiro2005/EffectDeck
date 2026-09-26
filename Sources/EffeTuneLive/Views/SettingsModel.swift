@@ -134,7 +134,7 @@ enum ETRunState {
         case .interrupted:
             return "A call or another app took the audio device. Play something again to restart."
         // **「少し鳴らしてから選ぶ」を先に書く。**ここがいちばん効く条件で、
-        // 外すと 1.5 秒後に黙ってスピーカーへ戻る（#1 / #3）。
+        // 外すと 1.5 秒後に元の出力へ戻る（#1 / #3）。
         //
         // iOS は、こちらの protocolID を支持していないアプリの音を回してよいかを
         // 選ぶたびに判定する。実際に通しているのは「MusicVAD が居る」の 1 本で
@@ -148,13 +148,11 @@ enum ETRunState {
         //
         // **時機だけが条件ではない。**検出器が既に居れば早く選んでも通るし、
         // MediaToolbox が `isPlayingVideoOutput = YES` と分類した回は
-        // 待っても通らない（そちらは #3 / #4）。だから断定せず "may" にする。
-        // こちらから直せる所ではないので、手順で外す。
+        // 待っても通らない（そちらは #3 / #4）。
+        // 選び直しと動画の話は ConnectionTipsView に置いて、ここは手順だけにする。
         case .waiting:
             return "Start playback and let it run for a few seconds, then open Control Center, "
-                 + "press and hold the audio card, and choose EffectDeck. Picking it too early "
-                 + "may not stick — iOS can drop back to the speaker a moment later. Try again "
-                 + "if that happens."
+                 + "press and hold the audio card, and pick EffectDeck."
         case .idle:
             return "The input has been silent, so the effects are paused. They start again "
                  + "the moment sound returns."

@@ -1,7 +1,7 @@
 //  SettingsView.swift
 //  右上の ⋯ から出す 1 枚。EffeTune も設定は右上に置いてある。
 //
-//  **画面は 1 枚。押して進むのはライセンス本文の 1 回だけ。**
+//  **画面は 1 枚。押して進むのは 1 段だけ（Licenses・Report a problem・Known limitations）。**
 //  以前はシート（Settings）→ Status →（戻って）About → Licenses → 本文 と、
 //  シートの中で 3 回潜っていた。Status も About も読むだけの画面で、
 //  行数が足りないものを画面に昇格させた結果そうなっていた。
@@ -50,6 +50,12 @@ struct SettingsView: View {
                 switch pane {
                 case .audio:
                     StatusSection(io: io, dsp: dsp)
+                    // **Status の中に入れない。**あちらは 3.3Hz で作り直されるので、
+                    // 押して進む行を置くと提示の途中で作り直すことになる。
+                    // 説明は開いた先にだけ書く。ここは札 1 行。
+                    Section {
+                        NavigationLink("Known limitations") { ConnectionTipsView() }
+                    }
                     // **音 → 電池 → 見た目 → 数字の順に並べる。**
                     // 以前は Processing と Power のあいだに見た目の設定
                     // （Sync Visuals・JSFX canvas）が挟まっていて、音の話が
