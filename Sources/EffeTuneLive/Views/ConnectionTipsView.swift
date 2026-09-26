@@ -1,5 +1,8 @@
 //  ConnectionTipsView.swift
-//  こちらから直せない iOS 側の制約と、その外し方。issue 1 本につき 1 節。
+//  こちらから直せない iOS 側の制約と、その外し方。
+//  issue 1 本につき 1 節、最後に共通の手順（番号付き 3 段）。
+//
+//  **手順の節にはリンクを付けない。**どの issue にも属さない。
 //
 //  **説明はこの画面にだけ置く。**他の画面には入口の札が 1 つずつあるだけ
 //  （Settings の Known limitations と ConnectBanner の Help）。footer や注記は足さない。
@@ -38,6 +41,7 @@ struct ConnectionTipsView: View {
                         Text(verbatim: c.title)
                             .font(.system(size: 15, weight: .semibold))
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
                         Text(verbatim: c.act)
                             .font(.subheadline)
                             .fixedSize(horizontal: false, vertical: true)
@@ -51,10 +55,34 @@ struct ConnectionTipsView: View {
                         Text(verbatim: ja ? ETTips.linkLabel.ja : ETTips.linkLabel.en)
                     }
                     .font(.footnote)
-                    // **読み上げでは題を付ける。**見た目の字だけだと同じリンクが 4 本並ぶ。
-                    .accessibilityLabel(Text(verbatim: ja ? "\(c.title)。GitHub の説明（英語）"
+                    // **読み上げでは題を付ける。**見た目の字だけでは同じリンクが 3 本並ぶ。
+                    // 見た目の字も残す（音声コントロールはその字で押す）。
+                    .accessibilityLabel(Text(verbatim: ja ? "\(c.title)。\(ETTips.linkLabel.ja)"
                                                           : "\(c.title), details on GitHub"))
                 }
+            }
+            // **最後に共通の手順。**どの節にも当てはまらないときに上から順に試す。
+            // Canvas の曲はこの手順では直らないので、節より先に置かない。
+            Section {
+                let p = ja ? ETTips.procedure.ja : ETTips.procedure.en
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: p.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    ForEach(Array(p.steps.enumerated()), id: \.offset) { i, step in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(verbatim: "\(i + 1).")
+                                .monospacedDigit()
+                            Text(verbatim: step)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.subheadline)
+                        // 番号と本文を 1 回で読ませる。
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .padding(.vertical, 4)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -105,44 +133,50 @@ private enum ETTips {
     /// **口語にしない。**題も本文も落ち着いた語で書く（真面目な道具として出している）。
     static let linkLabel = (en: "Details (GitHub)", ja: "詳細（GitHub・英語）")
 
-    /// **よく当たる順。**#2 は 2026.09.17 から上げた人にしか起きないので最後。
-    /// 09.17 のままの人がいなくなったら消してよい。
+    /// 題と手順。**軽い順に並べる。**先の段で直れば次へ進まない。
+    /// 2026.09.17 から上げた後に音声が届かない件（#2）は 3 段目で直るので節を持たない。
+    static let procedure = (
+        en: (title: "If none of the above applies",
+             steps: ["Restart the app that is playing: close it in the App Switcher and open it again.",
+                     "Restart EffectDeck.",
+                     "Restart the iPhone."]),
+        ja: (title: "上記のいずれにも当てはまらない場合",
+             steps: ["再生しているアプリを再起動する（アプリスイッチャーで終了して再度開く）",
+                     "EffectDeck を再起動する",
+                     "iPhone を再起動する"])
+    )
+
+    /// **よく当たる順。**Canvas の 2 件は続けて置く。
+    /// **止めている間に選んだら戻る、という節は置かない**（#1 の訂正）。
+    /// 止めている間や何も鳴らしていない間に選んでも基本的に戻されない。
+    /// 一時停止が原因と確かめた失敗は無い（A-10 の非動画の切断も mediaIsPlaying=YES だった）。
+    /// **#1 でも Spotify の再起動まで書く。**Canvas の曲を鳴らした後は #4 の状態が残る。
     static let all: [ETTip] = [
         ETTip(issue: 1,
-              en: .init(title: "Output reverts right after selection",
-                        act: "Keep playback running for a few seconds, then select EffectDeck again. "
-                           + "The same applies if it reverts after pausing and resuming.",
-                        why: "iOS may not accept a switch to EffectDeck until playback has run "
-                           + "for a few seconds."),
-              ja: .init(title: "選択直後に元の出力先へ戻る",
-                        act: "再生を数秒続けてからもう一度 EffectDeck を選択してください。一時停止から再開した際に外れた場合も同様です。",
-                        why: "iOS は再生開始から数秒が経過するまで EffectDeck への切り替えを受け付けない場合があります。")),
+              en: .init(title: "Spotify tracks with a Canvas do not play through EffectDeck",
+                        act: "Turn Canvas off in Spotify's settings, then close Spotify in the "
+                           + "App Switcher and open it again.",
+                        why: "iOS treats a track with a Canvas (the short video behind the player) "
+                           + "as video."),
+              ja: .init(title: "Canvas のある Spotify の曲は EffectDeck で再生されない",
+                        act: "Spotify の設定で Canvas をオフにしてから、アプリスイッチャーで Spotify を終了して再度開いてください。",
+                        why: "iOS は Canvas（再生画面の背景に表示される短い動画）のある曲を動画として扱います。")),
         ETTip(issue: 4,
-              en: .init(title: "Spotify does not stay connected",
-                        act: "Close Spotify in the App Switcher and reopen it, then select "
-                           + "EffectDeck while a track without a Canvas is playing.",
-                        why: "After a track with a Canvas (the short video behind the player) has "
-                           + "played, iOS treats Spotify's playback as video until Spotify is restarted."),
-              ja: .init(title: "Spotify で接続が維持されない",
-                        act: "アプリスイッチャーで Spotify を終了して再度起動し、Canvas のない曲を再生している間に EffectDeck を選択してください。",
-                        why: "Canvas（再生画面の背景に表示される短い動画）のある曲を一度再生すると、Spotify を再起動するまで iOS はその再生を動画として扱います。")),
+              en: .init(title: "After a track with a Canvas, other Spotify tracks do not play "
+                             + "through EffectDeck either",
+                        act: "Close Spotify in the App Switcher and open it again.",
+                        why: "Once a track with a Canvas has played, iOS treats Spotify's playback "
+                           + "as video until Spotify is restarted."),
+              ja: .init(title: "Canvas のある曲を再生した後は Spotify の他の曲も EffectDeck で再生されない",
+                        act: "アプリスイッチャーで Spotify を終了して再度開いてください。",
+                        why: "Canvas のある曲を一度再生すると、iOS は Spotify を再起動するまでその後の再生も動画として扱います。")),
         ETTip(issue: 3,
-              en: .init(title: "YouTube video playback does not connect",
-                        act: "Play music in YouTube Music with Song selected. For video, closing "
-                           + "YouTube and reopening it before selecting EffectDeck may allow a "
-                           + "temporary connection.",
-                        why: "When iOS treats YouTube's playback as video, it returns the output "
-                           + "to the previous device."),
-              ja: .init(title: "YouTube の動画再生中に接続できない",
-                        act: "音楽は YouTube Music の「曲」表示で再生してください。動画の場合は YouTube を終了して再度起動してから選択すると、一時的に接続できることがあります。",
-                        why: "iOS は YouTube の再生を動画として扱うと出力先を元に戻します。")),
-        ETTip(issue: 2,
-              en: .init(title: "No audio after updating from 2026.09.17",
-                        act: "If EffectDeck can be selected but no audio arrives, restart the iPhone once.",
-                        why: "EffectDeck's registration details changed in 2026.09.18, and iOS "
-                           + "reads them only at startup."),
-              ja: .init(title: "2026.09.17 からの更新後に音声が届かない",
-                        act: "EffectDeck を選択できるのに音声が届かない場合は、iPhone を一度再起動してください。",
-                        why: "2026.09.18 で変更された EffectDeck の登録情報は、iPhone の起動時にのみ読み込まれます。")),
+              en: .init(title: "YouTube video does not play through EffectDeck",
+                        act: "For music, use YouTube Music with Song selected. For video, "
+                           + "restarting YouTube may allow a temporary connection.",
+                        why: "iOS does not hand video playback to EffectDeck."),
+              ja: .init(title: "YouTube の動画は EffectDeck で再生されない",
+                        act: "音楽は YouTube Music で「曲」を選択して再生してください。動画は YouTube を再起動すると一時的に接続できる場合があります。",
+                        why: "iOS は動画の再生を EffectDeck へ渡しません。")),
     ]
 }

@@ -133,26 +133,17 @@ enum ETRunState {
             return "Close any other app that is holding the audio device, then try again."
         case .interrupted:
             return "A call or another app took the audio device. Play something again to restart."
-        // **「少し鳴らしてから選ぶ」を先に書く。**ここがいちばん効く条件で、
-        // 外すと 1.5 秒後に元の出力へ戻る（#1 / #3）。
+        // **「少し鳴らしてから選ぶ」は書かない**（#1 の訂正）。
+        // 何も鳴らしていない間や一時停止中に選んでも基本的に戻されない。
+        // 一時停止が原因と確かめた失敗は無い（A-10 の非動画の切断 3 回も
+        // `mediaIsPlaying=YES` だった）。続けて通らないのは MediaToolbox が
+        // `isPlayingVideoOutput = YES` と分類した回（Canvas は #1 / #4、YouTube は #3）。
+        // 外し方は ConnectionTipsView に置いて、ここは手順だけにする。
         //
-        // iOS は、こちらの protocolID を支持していないアプリの音を回してよいかを
-        // 選ぶたびに判定する。実際に通しているのは「MusicVAD が居る」の 1 本で
-        // （20 回中 17 回。`docs/connect-log.md` A-10）、**その検出器は
-        // 鳴り始めてから数秒おいて作られる**。2026-09-21 に生成の瞬間を実機で
-        // 撮った（経路が動いてから約 4 秒後。`docs/mde-routing-answer.md`）。
-        //
-        // **「止めていると駄目」ではない。**落ちた回のログにも
-        // `mediaIsPlaying=YES` が出ている。鳴ってはいたが検出器がまだ無かった。
-        // 同じ操作を 9 秒後にやり直すと通っている。だから文面は「少し待つ」。
-        //
-        // **時機だけが条件ではない。**検出器が既に居れば早く選んでも通るし、
-        // MediaToolbox が `isPlayingVideoOutput = YES` と分類した回は
-        // 待っても通らない（そちらは #3 / #4）。
-        // 選び直しと動画の話は ConnectionTipsView に置いて、ここは手順だけにする。
+        // **ConnectBanner と同じ字にする。**同じ「まだ音が来ていない」間に出る。
+        // 長押しの手順は実機で確かめていないので書かない。
         case .waiting:
-            return "Start playback and let it run for a few seconds, then open Control Center, "
-                 + "press and hold the audio card, and pick EffectDeck."
+            return "Pick EffectDeck as the output in Control Center."
         case .idle:
             return "The input has been silent, so the effects are paused. They start again "
                  + "the moment sound returns."

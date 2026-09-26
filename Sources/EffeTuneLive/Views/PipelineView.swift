@@ -259,8 +259,8 @@ struct PipelineView: View {
                 // **案内の画面は持たない。**
                 // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
                 // と思って 1 枚置いていた。いまは鎖の頭の帯（ConnectBanner）が
-                // 「別のアプリで鳴らしてから、コントロールセンターで EffeTune を
-                // 選ぶ」と言っていて、音が来ていないあいだ出たままになる。
+                // 「コントロールセンターで EffectDeck を選ぶ」と言っていて、
+                // 音が来ていないあいだ出たままになる。
                 // 読む場所が 2 つあっても片方しか読まれない。
                 //
                 // ConnectionTipsView は案内ではない。選んでも繋がらなかったときに
@@ -1229,12 +1229,9 @@ private struct ConnectBanner: View {
                     // （Sources/Extension の displayName）。一覧に出る字と
                     // 揃えないと、どれを押せばよいのか分からない。
                     //
-                    // 鳴らしてから選ぶ順も落とさない。MusicVAD は経路が動いてから
-                    // 数秒おいてできる（#1）。選び直せば通ることが多い。
-                    Text("""
-                         Play something in another app first, then pick EffectDeck as \
-                         the output in Control Center.
-                         """)
+                    // **鳴らしてから選ぶ順は書かない**（#1 の訂正）。止めている間に選んでも
+                    // 基本的に戻されない。一時停止が原因と確かめた失敗は無い。
+                    Text("Pick EffectDeck as the output in Control Center.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
