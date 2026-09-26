@@ -31,7 +31,8 @@ import UIKit
 @MainActor
 final class ETScrollBrake {
     /// 止める相手。`etScrollBrake`を付けた面がwindowに入ったときに覚える。
-    fileprivate weak var scrollView: UIScrollView?
+    /// 読むだけなら外からもできる（2列の右で読んでいる位置を保つETReadingKeeperが使う）。
+    fileprivate(set) weak var scrollView: UIScrollView?
 
     /// **流れていれば止めて、飛ぶのは次の回に回す。**止まっていればその場で`scroll`を呼ぶ。
     ///

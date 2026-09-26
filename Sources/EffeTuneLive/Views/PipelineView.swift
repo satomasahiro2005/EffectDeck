@@ -55,6 +55,11 @@ struct PipelineView: View {
     }
 
     @State private var sheet: Sheet?
+    /// 2列の+（popoverの付け先）がもう画面に居るか。PipelineToolbarが立てる。
+    @State private var pickerAnchored = false
+    /// 2列で、ピッカーをpopoverでなく根のシートで出しているか。
+    /// **出すときに決め、閉じるまで変えない**（openPicker）。
+    @State private var pickerInSheet = false
     /// 「Reset chain」の確認を出しているか。
     /// ツールバーは ToolbarContent で View ではないから .confirmationDialog を
     /// 持てない。押されたことだけ Binding で受け取り、出すのは下の List 側。
@@ -113,6 +118,8 @@ struct PipelineView: View {
     @State private var geometry = ETRowGeometry()
     /// 左の一覧で押したときに、慣性で流れている右を止めてから飛ぶ。
     @State private var brake = ETScrollBrake()
+    /// 2列の右で、上のカードの高さが変わっても読んでいる位置を保つ（ChainViewport.swift）。観測しない。
+    @State private var keeper = ETReadingKeeper()
 
     /// 2列にしたい状態か。
     ///
@@ -293,8 +300,9 @@ struct PipelineView: View {
             // 開く画面で、始め方は書いていない。
             //
             // 撮るシートを指定されていればそれを出す。
+            // ピッカーはpresentPickerを通す。2列ではまだ+が無いので、popoverにすると落ちる。
             if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name) {
-                sheet = which
+                if which == .picker { presentPicker() } else { sheet = which }
             }
             // 動きを撮るために、しばらくしてから自分で開く。
             // **4 秒待つ。**シミュレータは画面が出るまで 3 秒以上かかることが
@@ -418,26 +426,43 @@ struct PipelineView: View {
         PipelineToolbar(sheet: $sheet, confirmingReset: $confirmingReset,
                         dsp: dsp, io: io, hasPeer: hasPeer,
                         pickerAsPopover: pickerAsPopover,
+                        pickerAnchored: $pickerAnchored, pickerInSheet: $pickerInSheet,
                         pluginError: $pluginError, afterSheet: $afterSheet)
     }
 
-    /// 根の.sheetに渡すもの。**2列ではピッカーをここへ出さない。**+に付けたpopoverが出す。
+    /// 根の.sheetに渡すもの。**2列ではピッカーを普通はここへ出さない。**+に付けたpopoverが出す。
+    /// +がまだ居ないうちに開いたときだけ、ここへ出す（pickerInSheet）。
     /// 1列では$sheetそのものと同じ。
     private var presentedSheet: Binding<Sheet?> {
-        Binding(get: { usesSplit && sheet == .picker ? nil : sheet },
+        Binding(get: { usesSplit && sheet == .picker && !pickerInSheet ? nil : sheet },
                 set: { sheet = $0 })
     }
 
-    /// ピッカーを出す。空の鎖のAdd Effect、取り込んだJSFX、JSFXのリンクはここを通す。
+    /// ピッカーを出す。空の鎖のAdd Effect、取り込んだJSFX、JSFXのリンク、撮影の-ETSheetはここを通す。
     ///
     /// 2列ではpopoverなので、**別のシートが出ていたら先に畳む。**シートが出ている上に
     /// popoverは出せない。1列は今までどおり、出ているシートと入れ替える。
     private func presentPicker() {
         guard usesSplit, let open = sheet, open != .picker else {
-            sheet = .picker
+            openPicker()
             return
         }
-        afterClosingSheet { sheet = .picker }
+        afterClosingSheet { openPicker() }
+    }
+
+    /// ピッカーを立てる。**2列で+がまだ画面に居なければ、popoverでなくシートで出す。**
+    ///
+    /// popoverは+を付け先にする。付け先が無いうちに出すと、UIKitが
+    /// 「sourceViewかbarButtonItemが要る」（NSGenericException）で落とす。
+    /// 起きた直後に共有の拡張がJSFXを置いていた（onAppearのdrainShared）、
+    /// JSFXのリンクで起こされた（onOpenURL）、-ETSheet pickerで起こした、のどれもここへ来る。
+    /// どちらで出すかは開くときに決め、閉じるまで変えない。途中で+が現れても、
+    /// 出ているシートを畳んでpopoverへ出し直すことはしない。
+    /// 既に出ているなら何もしない。
+    private func openPicker() {
+        guard sheet != .picker else { return }
+        pickerInSheet = usesSplit && !pickerAnchored
+        sheet = .picker
     }
 
     /// シートを出す。2列でピッカーのpopoverが出ていたら、先に畳んでから出す。
@@ -483,9 +508,13 @@ struct PipelineView: View {
             swiping = nil
         }
         if sheet == .picker { sheet = nil }
+        // 新しい並べ方の+が出るまでは付け先が無い。出れば+の側が立て直す。
+        pickerAnchored = false
         let showing = usesSplit
         viewport.arm(split: showing)
         viewport.forget(split: showing)
+        // 覚えた位置は前の並べ方のもの。新しい並べ方では選び直す。
+        keeper.follow(nil, top: nil, offset: 0, order: [])
         geometry.reset()
         rowsHeight = 0
         layoutSplit = split
@@ -512,7 +541,8 @@ struct PipelineView: View {
         }
     }
 
-    /// 行が測れた。並べ替えの判定と最後の帯の高さ、足したカードの確かめに使う。
+    /// 行が測れた。並べ替えの判定と最後の帯の高さ、足したカードの確かめ、
+    /// 2列で読んでいる位置を保つのに使う。
     private func measured(_ id: UUID, _ rect: CGRect) {
         geometry.record(id, rect)
         let height = geometry.contentHeight
@@ -521,6 +551,54 @@ struct PipelineView: View {
             geometry.pendingReveal = nil
             reveal(id, rect)
         }
+        if id == keeper.id { keepReading(rect) }
+    }
+
+    /// 読んでいるカードが、送っていないのに動いた。動いたぶん送り直す（ETReadingKeeper）。
+    ///
+    /// **測れたその場で直す。**次の回へ回すと、その間はずれた位置のまま描かれうる。
+    private func keepReading(_ rect: CGRect) {
+        guard usesSplit, let scroll = brake.scrollView else { return }
+        let top = -scroll.adjustedContentInset.top
+        let offset = scroll.contentOffset.y
+        let touched = scroll.isTracking || scroll.isDragging || scroll.isDecelerating
+        let keeps = !touched && viewport.anchor == nil && offset > top + 0.5
+        let moved = keeper.measured(top: rect.minY, offset: offset,
+                                    order: dsp.chain.map(\.id), keeps: keeps)
+        guard moved != 0 else { return }
+        // 上が縮んだときは一番上より上へは送らない。
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: max(top, offset + moved)),
+                                animated: false)
+    }
+
+    /// 読んでいるカードを選び直す。**2列のときだけ。**止まったときと、左の一覧で飛んだときに呼ぶ。
+    ///
+    /// `id`を渡せばそのカード。渡さなければ、上端が画面に入っている一番上のカード
+    /// （無ければ、画面の上端にかかっているカード）。
+    /// 上端にかかっているだけのカードは、見えていない上の部分が伸びても読む位置は動かないので、
+    /// 上端が見えているカードのほうを選ぶ。
+    private func followReading(_ id: UUID? = nil) {
+        guard usesSplit, let scroll = brake.scrollView else { return }
+        let order = dsp.chain.map(\.id)
+        var chosen = id
+        if chosen == nil {
+            let visibleTop = scroll.adjustedContentInset.top
+            let present = Set(order)
+            var below: (id: UUID, y: CGFloat)?
+            var above: (id: UUID, y: CGFloat)?
+            for (row, rect) in geometry.rects where present.contains(row) {
+                if rect.minY >= visibleTop - 1 {
+                    if rect.minY < listHeight, rect.minY < (below?.y ?? .infinity) {
+                        below = (row, rect.minY)
+                    }
+                } else if rect.minY > (above?.y ?? -.infinity) {
+                    above = (row, rect.minY)
+                }
+            }
+            chosen = below?.id ?? above?.id
+        }
+        keeper.follow(chosen, top: chosen.flatMap { geometry[$0]?.minY },
+                      offset: scroll.contentOffset.y, order: order)
     }
 
     /// 足したカードが画面の外なら、そこへ飛ぶ。
@@ -534,6 +612,8 @@ struct PipelineView: View {
     /// 慣性で流れているとscrollToが効かないので、先に止める（ETScrollBrake）。
     private func jumpTo(_ jump: ETJump, _ proxy: ScrollViewProxy) {
         guard let id = jump.id else { return }
+        // 飛んだ先を読んでいるカードにする。この後で上のカードが伸びても、そこに留まる。
+        followReading(id)
         brake.jump {
             var t = Transaction()
             t.disablesAnimations = true
@@ -765,6 +845,8 @@ struct PipelineView: View {
         // 触れたら戻す先の覚えを外す。そこから先は人が読む位置を決める。
         .onScrollPhaseChange { _, phase in
             if phase == .tracking || phase == .interacting { viewport.anchor = nil }
+            // 止まったところで、読んでいるカードを選び直す（2列だけ）。
+            if split, phase == .idle { followReading() }
         }
         // 覚えている間は、中身の高さが変わるたびに戻す（遅れて大きさを決めるAUの画面）。
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
@@ -1488,13 +1570,18 @@ private struct PipelineToolbar: ToolbarContent {
     /// 2列のとき。+はシートではなく、自分に付けたpopoverでピッカーを出す。
     /// 閉じた後の続き（afterSheet）もこちらで走らせる。popoverはonDismissを持たないので。
     let pickerAsPopover: Bool
+    /// +が画面に居るか。**立てるのはこちら**、読むのは親のopenPicker。
+    @Binding var pickerAnchored: Bool
+    /// 親がピッカーを根のシートで出したか。そのあいだpopoverは出さない。
+    @Binding var pickerInSheet: Bool
     @Binding var pluginError: String?
     @Binding var afterSheet: (() -> Void)?
 
     /// popoverを出しているか。中身はsheetの.pickerで、根の.sheetはそれを見ない（presentedSheet）。
+    /// 親がシートで出したときは偽のまま。
     private var pickerShown: Binding<Bool> {
-        Binding(get: { sheet == .picker },
-                set: { if !$0, sheet == .picker { sheet = nil } })
+        Binding(get: { sheet == .picker && !pickerInSheet },
+                set: { if !$0, sheet == .picker, !pickerInSheet { sheet = nil } })
     }
 
     /// マスターの読み上げ。入切と、沈めている理由の両方を言う。
@@ -1566,7 +1653,11 @@ private struct PipelineToolbar: ToolbarContent {
             if pickerAsPopover {
                 // **+から出す。**選ぶたびに閉じる。つまんで運ぶと自分で閉じ、
                 // 右のカード・余白、左の一覧の行の間のどれへでも落とせる。
-                Button("Add Effect", systemImage: "plus") { sheet = .picker }
+                // 押せたなら+は画面に居る。popoverで出す。
+                Button("Add Effect", systemImage: "plus") {
+                    pickerInSheet = false
+                    sheet = .picker
+                }
                     .popover(isPresented: pickerShown) {
                         ETPickerHost(dsp: dsp, sheet: $sheet, pluginError: $pluginError,
                                      waitsForDismissal: true)
@@ -1574,6 +1665,14 @@ private struct PipelineToolbar: ToolbarContent {
                                    minHeight: 520, idealHeight: 720)
                             .onDisappear { runAfterPopover() }
                     }
+                    // **付け先ができたことを親へ知らせる。1回遅らせる。**
+                    // 出てきた同じ回ではツールバーの項目がまだ組み上がっていないことがあり、
+                    // 起きた直後のonAppear（drainSharedなど）もその回に走る。
+                    // それより前に開いたものは親がシートで出す（openPicker）。
+                    .onAppear {
+                        Task { @MainActor in pickerAnchored = true }
+                    }
+                    .onDisappear { pickerAnchored = false }
             } else {
                 Button("Add Effect", systemImage: "plus") { sheet = .picker }
             }

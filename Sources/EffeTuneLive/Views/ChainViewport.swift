@@ -132,6 +132,63 @@ final class ETRowGeometry {
     }
 }
 
+/// 2列の右で、読んでいる位置を保つ。**上のカードの高さが変わっても、読んでいるカードを画面の同じ所に置いておく。**
+///
+/// 画面の外のカードは図の枠をほとんど受け取らない（ETLiveRow、ETTelemetryFeed）。
+/// GateやCompressorのGRの棒は枠が来て初めて出るので、一度も画面に入っていないカードは
+/// 短いまま並び、別の理由で描き直されたときに伸びる。左の一覧で電源を押すと鎖ぜんぶが
+/// 描き直され、上の2枚が71ptずつ伸びて、読んでいたカードが142pt下へずれたまま戻らなかった。
+/// AUの画面が遅れて大きさを決めるのも、上の帯（No audio yetなど）が出入りするのも同じ形。
+///
+/// 読んでいるカードの「中身の中での位置」を覚える。画面の中の位置に送った量を足したもので、
+/// 送るだけなら変わらない。送っていないのに変わったら上で何かの高さが変わったので、
+/// 同じ量だけ送り直して、画面の中の位置を元に戻す（PipelineView.keepReading）。
+///
+/// 送り直さないとき（覚え直すだけ）:
+///   - 人が触っている、または慣性で流れている。送りを取り合わない
+///   - 一番上に居る。上の帯が出たら見えるように、一番上に居たままにする
+///   - 鎖の並びが変わった。足す・消す・並べ替えには、それぞれの見せ方がある（revealNewなど）
+///   - 並べ方の切り替えや幅の変化で、覚えたカードを上端へ戻している最中（restoreAnchor）
+///
+/// **観測しない。**送るたびに書くので、@Stateに置くとbodyが走り直す。
+@MainActor
+final class ETReadingKeeper {
+    /// 読んでいるカード。
+    private(set) var id: UUID?
+    /// そのカードの中身の中での位置。nilならまだ測っていない。
+    private var position: CGFloat?
+    /// 覚えたときの鎖の並び。
+    private var order: [UUID] = []
+
+    /// 読むカードを決め直す。
+    ///   - top: そのカードのいまの上端（右の鎖の座標）。測れていなければnil
+    ///   - offset: いまの送った量（UIScrollViewのcontentOffset.y）
+    ///
+    /// **位置はここで取る。**次に測れたときに取ると、止まったまま上が伸びた回の
+    /// 位置を覚えることになり、最初のずれを直せない（電源を押したときがまさにそれ）。
+    func follow(_ id: UUID?, top: CGFloat?, offset: CGFloat, order: [UUID]) {
+        self.id = id
+        position = top.map { $0 + offset }
+        self.order = order
+    }
+
+    /// 読んでいるカードが測れた。送り直す量を返す（0なら送らない）。
+    ///   - top: 画面の中での上端（右の鎖の座標）
+    ///   - offset: その回の送った量
+    ///   - order: いまの鎖の並び
+    ///   - keeps: 送り直してよいか
+    func measured(top: CGFloat, offset: CGFloat, order now: [UUID], keeps: Bool) -> CGFloat {
+        let current = top + offset
+        defer {
+            position = current
+            order = now
+        }
+        guard let position, keeps, now == order else { return 0 }
+        let moved = current - position
+        return abs(moved) < 0.5 ? 0 : moved
+    }
+}
+
 /// 右の鎖の1行を包む。見えているかを左の一覧へ知らせ、見えていない図を止める。
 ///
 /// **1列でも2列でも包む。**1列では図を止めない（etGraphLiveは常に真）。

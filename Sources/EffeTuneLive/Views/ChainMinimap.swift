@@ -1,15 +1,15 @@
 //  ChainMinimap.swift
 //  2列のときの左の一覧。REAPERのFX chainの左の欄にあたる。
 //
-//  鎖の1行（エフェクトかSection）につき1行。高さは全部同じで、名前だけを出す。
-//  右は鎖を全部開いて並べているので、ここは「どこに何があるか」と「動かす」の場所。
+//  鎖の1行（エフェクトかSection）につき1行。**高さは全部同じ44pt**（Listの詰めた行の高さ）で、
+//  名前だけを出す。右は鎖を全部開いて並べているので、ここは「どこに何があるか」と「動かす」の場所。
 //
 //    - 行を押すと、右がそのカードへその場で飛ぶ（動かさない。動かすと通り道の図が全部起きる）
 //    - 右で見えているカードの行は地に色が付く
 //    - 並べ替えはここだけ（ListのonMove。長押しで掴む）。右の長押しは2列では切ってある
 //    - ピッカーからつまんだものは行の間へ落とせる（onInsert）
 //    - 頭の電源はカードの電源と同じもの。別の入切を持たない
-//    - Level Meterの行だけ、名前の下に棒を出す（カードと同じテレメトリ）
+//    - Level Meterの行だけ、行の右端に棒を出す（カードと同じテレメトリ）
 //
 //  行の並びは右と同じrowsから作る（PipelineView.minimapItems）。
 //  onMoveの数え方がそのままmove(_:to:)の数え方になる。
@@ -70,7 +70,7 @@ struct ChainMinimap: View {
                 }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, ETMetrics.hitTarget)
+            .environment(\.defaultMinListRowHeight, ETMinimapRow.height)
             .onScrollPhaseChange { _, phase in tracker.phase = phase }
             .background {
                 ETMinimapFollow(viewport: viewport, tracker: tracker, proxy: proxy)
@@ -109,6 +109,10 @@ private struct ETMinimapFollow: View {
 }
 
 private struct ETMinimapRow: View {
+    /// 行の高さ。**全部の行で同じ。**Listの詰めた行の高さで、頭の電源の押し所と同じ。
+    /// Level Meterの棒もこの中に収める。
+    static let height = ETMetrics.hitTarget
+
     let item: ETMinimapItem
     let dsp: EffeTuneDSP
     let viewport: ETChainViewport
@@ -128,7 +132,7 @@ private struct ETMinimapRow: View {
             Button {
                 viewport.request(item.id)
             } label: {
-                VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
                     if item.isSection {
                         Text(item.name)
                             .font(.system(size: 15, weight: .semibold))
@@ -140,32 +144,50 @@ private struct ETMinimapRow: View {
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                     }
+                    Spacer(minLength: 0)
+                    // **棒は名前の下ではなく右端に置く。**名前（15pt）の下に2本積むと44ptに
+                    // 収まらず、名前が上へ押し出され、Rの棒が次の行へはみ出していた。
+                    // 右端なら名前はどの行とも同じ高さに並ぶ。
                     if let tap = item.levelTap {
                         ETMinimapLevel(tap: tap)
+                            .frame(width: ETMinimapLevel.width)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .contentShape(.rect)
             }
         }
-        .padding(.leading, item.indented ? 14 : 0)
-        // 行の高さは全部同じ。Level Meterの棒もこの中に収める。
-        .frame(height: ETMetrics.hitTarget)
+        .padding(.leading, (item.indented ? 14 : 0) + 6)
+        .padding(.trailing, 14)
+        .frame(height: Self.height)
         .opacity(item.muted ? 0.55 : 1)
-        .listRowBackground(viewport.onScreen.contains(item.id)
-                           ? Color.accentColor.opacity(0.14) : nil)
         .onScrollVisibilityChange(threshold: 0.9) { visible in
             if visible { tracker.shown.insert(item.id) } else { tracker.shown.remove(item.id) }
         }
+        // **行の指定（listRow〜）は一番外に付ける。**onScrollVisibilityChangeより内側に
+        // 付けると、Listまで届かずに黙って捨てられる（iPadOS 27のシミュレータで、付ける順を
+        // 変えて確かめた。.sidebarでも.plainでも、.idの有無でも同じ）。
+        // 地の色が見えているカードの行にも付かず、上下に11ptずつの既定の余白が残って
+        // 行が66ptになっていたのはこれ。
+        //
+        // 余白は上下左右とも0にし、中身の側（上のpadding）で持つ。行は中身の44ptになり、
+        // 地の色は行いっぱいに敷かれて、続く行と繋がって1本の帯になる。
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(viewport.onScreen.contains(item.id)
+                           ? Color.accentColor.opacity(0.14) : nil)
     }
 }
 
 /// Level Meterの行の棒。1チャンネル1本、標準のGauge（.linearCapacity）で出す。
+/// 行の右端に、上からL、Rの順で積む。
 ///
 /// **テレメトリを観測するのはこのViewだけ。**一覧ぜんぶが枠ごとに組み直されないように。
 /// 読み方と落ちる速さはカード（LevelMeterView）と同じ。
 /// 3チャンネル以上は2段に振り分ける。行の高さを変えないため。
 private struct ETMinimapLevel: View {
+    /// 棒の幅。名前の取り分を残す（一覧は最小220pt）。
+    static let width: CGFloat = 64
+
     let tap: UInt32
 
     @ObservedObject private var telemetry = Telemetry.shared
@@ -178,15 +200,18 @@ private struct ETMinimapLevel: View {
         let count = reading?.peaks.count ?? 0
         let lines = min(count, 2)
         let perLine = lines == 0 ? 0 : (count + lines - 1) / lines
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             ForEach(0..<lines, id: \.self) { line in
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     ForEach(line * perLine ..< min(count, (line + 1) * perLine), id: \.self) { ch in
+                        // **名札はGaugeに渡さない。**labelsHiddenを付けても.linearCapacityは
+                        // 名札（L、R）を棒の上に描き、1本ぶん背が伸びていた。
+                        // 何のチャンネルかは読み上げにだけ出す。
                         Gauge(value: level(ch, reading), in: LevelMeterView.floorDB...0) {
-                            Text(LevelMeterView.label(ch, of: count))
+                            EmptyView()
                         }
                         .gaugeStyle(.linearCapacity)
-                        .labelsHidden()
+                        .accessibilityLabel(LevelMeterView.label(ch, of: count))
                     }
                 }
             }
