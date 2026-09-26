@@ -319,7 +319,9 @@ enum ETNumberText {
         guard v.isFinite else { return "—" }
         let value = abs(v) < 1e-9 ? 0 : v   // -0 と 1e-17 を 0 に寄せる
         let decimals: Int
-        if step > 0 {
+        // **無限の刻みを通さない。**inc は strtod そのままで、`inf` や 1e999 が来る。
+        // -log10(inf) は -inf で、Int() がメインスレッドで落ちる。
+        if step > 0, step.isFinite {
             // -1e-9 は境界対策。step=1 で -log10(1) が -0.0 側に転ぶと 1 桁になる。
             decimals = min(6, max(0, Int(ceil(-log10(step) - 1e-9))))
         } else if value == value.rounded() {

@@ -148,6 +148,24 @@ final class JSFXSliderTests: XCTestCase {
         XCTAssertEqual(host.sliders()[0].value, 0.25)
     }
 
+    /// **音が止まっているあいだの @gfx が、動かしたつまみを戻さない。**
+    /// RunGFX はつまみを渡さないので VM は古い値のまま。前は 1 枚描くたびに
+    /// その古い値で控えを上書きし、保存されるまでカードの表示が戻っていた。
+    /// 音が 1 ブロック通れば VM にも届き、@gfx もその値を読む。
+    func testGFXFrameInSilenceKeepsTheHostValue() throws {
+        let host = try JSFX.load("gfx_slider")
+        XCTAssertTrue(ETJSFX_HasGFX(host.raw))
+        host.set(0, 5)
+        for _ in 0..<3 { _ = ETJSFX_RunGFX(host.raw, 100, 100, 1) }
+        XCTAssertEqual(host.get(0), 5)
+        XCTAssertEqual(host.sliders()[0].value, 5)
+
+        host.run()
+        _ = ETJSFX_RunGFX(host.raw, 100, 100, 1)
+        XCTAssertEqual(host.get(0), 5)
+        XCTAssertEqual(host.get(1), 5, "@gfx が渡した値を読んでいない")
+    }
+
     /// **C の口は範囲を見ない。**min/max の丸めは ETJSFXHost.swift の
     /// setParameter が持っている（あちらは実機側なのでここでは測れない）。
     /// 役割の境目を固定しておく。

@@ -33,8 +33,30 @@ if [ -n "$YSFX_ACTUAL" ] && [ "$YSFX_ACTUAL" != "$YSFX_REV" ]; then
   echo "   run: git submodule update --init --recursive Vendor/ysfx"
   exit 1
 fi
-if grep -q "g_effectdeck_lice_image_bytes" Vendor/ysfx/sources/ysfx_api_gfx_lice.hpp 2>/dev/null; then
+# **目印はこの版のパッチが初めて足すものにする。**前の版にもある印だと、
+# 前の版が当たった木（一度でも build.sh を通した Mac）を「当たっている」と
+# 見て黙って飛ばし、新しく足した分（@serialize の上限など）が建たない。
+# パッチを変えたら、目印もその版で足したものに替えること。
+if grep -q "k_effectdeck_serialize_limit" Vendor/ysfx/sources/ysfx_api_file.cpp 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
+  YSFX_PATCHED=1
+else
+  YSFX_PATCHED=0
+  # 目印が無いのに木が変わっている＝前の版のパッチが当たっている。
+  # 新しい版はその上には当たらないので、固定した版へ戻してから当てる。
+  # 手を入れているのはこのパッチだけなので、戻して失うものは無い。
+  # （diff が 1 を返したときだけ。git が開けない写しでは 128 なので触らない）
+  git -C Vendor/ysfx diff --quiet 2>/dev/null
+  if [ $? -eq 1 ]; then
+    echo "--- Vendor/ysfx を $YSFX_REV に戻す（前の版のパッチが当たっている） ---"
+    git -C Vendor/ysfx checkout -- . || {
+      echo "!! Vendor/ysfx を戻せない。git -C Vendor/ysfx status を確かめること"
+      exit 1
+    }
+  fi
+fi
+if [ "$YSFX_PATCHED" = 1 ]; then
+  :
 elif git -C Vendor/ysfx apply --check ../../Patches/ysfx-effectdeck-ios.diff 2>/dev/null; then
   git -C Vendor/ysfx apply ../../Patches/ysfx-effectdeck-ios.diff \
     && echo "当てた: ysfx-effectdeck-ios.diff"

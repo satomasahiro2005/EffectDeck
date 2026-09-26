@@ -909,20 +909,15 @@ final class BandFIRPEQDesigner: ObservableObject {
 
     // MARK: 鎖
 
-    /// 遅延が変わったことを et_pipeline_configure に教える。
-    /// EffeTuneDSP.publish() と同じ並びを作り直しているだけで、鎖は変えていない。
+    /// 遅延が変わったことを et_pipeline_configure に教える。鎖は変えていない。
+    ///
+    /// **並びを自前で組まない。EffeTuneDSP.republish() を通す。**
+    /// 前は chain から `instance != 0` だけを拾って NATIVE で出していた。
+    /// JSFX / AU の段は instance を持たないのでそこで落ち、探りも chain に
+    /// 居ないので落ちた。この descriptor が最後に出るので、次に誰かが
+    /// publish するまで JSFX / AU が音から外れ、図の重ねも止まっていた。
     private func republishForLatencyChange() {
-        let nodes = EffeTuneDSP.shared.chain.filter { $0.instance != 0 }.map { node in
-            ETPipeNode(instance: node.instance,
-                       enabled: node.enabled ? 1 : 0,
-                       inputBus: node.inputBus,
-                       outputBus: node.outputBus,
-                       channelSpec: node.channelSpec,
-                       sectionGate: node.sectionGate,
-                       kind: UInt8(ET_PIPE_NODE_NATIVE),
-                       externalIndex: 0)
-        }
-        nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
+        EffeTuneDSP.shared.republish(reason: "FIR PEQ の遅延が変わった")
     }
 
     // MARK: チャンネル

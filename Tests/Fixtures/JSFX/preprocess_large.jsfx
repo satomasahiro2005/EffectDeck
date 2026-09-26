@@ -1,0 +1,7 @@
+desc:Preprocess Large
+author:nemut.ai
+
+@init
+<? loop(1000, loop(1000, printf("x = 1;\n"))) ?>
+
+@sample

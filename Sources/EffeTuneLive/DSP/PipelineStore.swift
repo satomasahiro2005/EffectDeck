@@ -238,33 +238,50 @@ enum PipelineStore {
     /// 綴りを 2 か所に書くと、片方だけ直したときに黙って別の鍵になる。
     static let lastKey = "pipeline.last"
 
+    /// 鎖を書く列。**JSON にするのと UserDefaults へ書くのはメインでやらない。**
+    ///
+    /// JSFX の @serialize は 16 MB まで来る。base64 で 21 MB になった鎖を
+    /// JSON にし、前の中身と比べ、UserDefaults へ書くのを、つまみを離すたびに
+    /// メインで回していた。直列なので書く順は呼んだ順のまま。
+    private static let writer = DispatchQueue(label: "ai.nemut.effectdeck.store.last", qos: .utility)
+    /// 書くよう頼んだことがあるか。列の先で書き終える前に hasSaved が偽を返さないため。
+    /// saveLast と hasSaved はメインからしか呼ばれない。
+    private static var requested = false
+
     static func saveLast(_ chain: [EffeTuneDSP.Node]) {
-        // **鍵の並びを固定する。**下の「同じなら書かない」が字面の比較なので、
-        // 起動ごとに並びが変わると毎回「違う」と出る。
-        guard let data = try? JSONSerialization.data(withJSONObject: shortForm(chain),
-                                                     options: [.sortedKeys]) else { return }
+        // Node は鎖の型なのでここで辞書へ降ろす。重い所（JSON・比較・書き込み）は列の先。
+        let form = shortForm(chain)
+        requested = true
+        writer.async {
+            // **鍵の並びを固定する。**下の「同じなら書かない」が字面の比較なので、
+            // 起動ごとに並びが変わると毎回「違う」と出る。
+            guard let data = try? JSONSerialization.data(withJSONObject: form,
+                                                         options: [.sortedKeys]) else { return }
 
-        // **同じ中身なら書かない。**
-        // restore() も rebuildAll() も publish() を通り、publish() の末尾は
-        // persist() なので、読んだままの鎖がそのまま書き戻される。手元では
-        // 何も変わらないが、iCloud では「最後に編集した端末」ではなく
-        // 「最後に起動した端末」が勝つ形になる。半年触っていない端末を
-        // 1 度開くだけで、別の端末のその日の編集が消える。
-        guard UserDefaults.standard.data(forKey: lastKey) != data else { return }
+            // **同じ中身なら書かない。**
+            // restore() も rebuildAll() も publish() を通り、publish() の末尾は
+            // persist() なので、読んだままの鎖がそのまま書き戻される。手元では
+            // 何も変わらないが、iCloud では「最後に編集した端末」ではなく
+            // 「最後に起動した端末」が勝つ形になる。半年触っていない端末を
+            // 1 度開くだけで、別の端末のその日の編集が消える。
+            guard UserDefaults.standard.data(forKey: lastKey) != data else { return }
 
-        UserDefaults.standard.set(data, forKey: lastKey)
-        // 正はいま書いた UserDefaults の側。iCloud へは写すだけ（CloudMirror）。
-        CloudMirror.mirror(data, forKey: lastKey)
+            UserDefaults.standard.set(data, forKey: lastKey)
+            // 正はいま書いた UserDefaults の側。iCloud へは写すだけ（CloudMirror）。
+            CloudMirror.mirror(data, forKey: lastKey)
+        }
     }
 
     static func loadLast(catalog: [ETEffect]) -> [Loaded]? {
+        // 書きかけが在れば待つ。読むのは起動と iCloud から降りてきたときだけ。
+        writer.sync {}
         guard let data = UserDefaults.standard.data(forKey: lastKey),
               let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
         return parse(json, catalog: catalog)
     }
 
     static var hasSaved: Bool {
-        UserDefaults.standard.data(forKey: lastKey) != nil
+        requested || UserDefaults.standard.data(forKey: lastKey) != nil
     }
 
     // MARK: - 開いている段

@@ -1,6 +1,10 @@
-warning: in the working copy of 'sources/ysfx_api_gfx_lice.hpp', LF will be replaced by CRLF the next time Git touches it
+EffectDeck が ysfx 5c3452f に当てる差分（Scripts/setup.sh が当てる）。
+上流 WDL から取り込んだもの:
+  f9d7b1b3f, 0e7e5bfd0  LICE_ScaledBlit の桁あふれと負の元座標。WDL_NOT_NORMALLY は素の比較にした
+                        （この版の lice.cpp は wdltypes.h を読まない。n<0 は起きない分岐）
+  f31b13bfc             引数の数を間違えた tan(x,y) で関数表の外を読む
 diff --git a/sources/ysfx.cpp b/sources/ysfx.cpp
-index 740d1dd..2da13b2 100644
+index 740d1dd..f802bd2 100644
 --- a/sources/ysfx.cpp
 +++ b/sources/ysfx.cpp
 @@ -186,6 +186,7 @@ ysfx_t *ysfx_new(ysfx_config_t *config)
@@ -39,6 +43,29 @@ index 740d1dd..2da13b2 100644
              )
          ) {
              found = true;
+@@ -1700,6 +1704,7 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+         return nullptr;
+ 
+     std::string buffer;
++    bool overflow = false;
+ 
+     // invoke @serialize
+     {
+@@ -1710,9 +1715,14 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+         lock.unlock();
+         ysfx_serialize(fx);
+         lock.lock();
++        overflow = serializer->m_overflow;
+         serializer->end();
+     }
+ 
++    // EffectDeck: a truncated @serialize is not a state; do not hand it out.
++    if (overflow)
++        return nullptr;
++
+     // save the sliders
+     ysfx_state_u state{new ysfx_state_t};
+     uint32_t slider_count = 0;
 diff --git a/sources/ysfx.hpp b/sources/ysfx.hpp
 index a7f2a24..51c3c49 100644
 --- a/sources/ysfx.hpp
@@ -75,10 +102,41 @@ index 592f1f4..5799177 100644
 +    g_wdl_internal_mutex.unlock();
  }
 diff --git a/sources/ysfx_api_file.cpp b/sources/ysfx_api_file.cpp
-index d4305e5..fcac364 100644
+index d4305e5..80df998 100644
 --- a/sources/ysfx_api_file.cpp
 +++ b/sources/ysfx_api_file.cpp
-@@ -361,14 +361,37 @@ uint32_t ysfx_serializer_t::mem(uint32_t offset, uint32_t length)
+@@ -294,6 +294,7 @@ void ysfx_serializer_t::begin(bool write, std::string &buffer)
+     m_write = (int)write;
+     m_buffer = &buffer;
+     m_pos = 0;
++    m_overflow = false;
+ }
+ 
+ void ysfx_serializer_t::end()
+@@ -314,9 +315,22 @@ void ysfx_serializer_t::rewind()
+ {
+ }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++// EffectDeck: bound @serialize while it is written, not after it returns.
++// The host rejects states above 16 MiB anyway, but only once the whole blob
++// exists; one file_mem(0, 0, 1e9) would grow this buffer until jetsam.
++static constexpr size_t k_effectdeck_serialize_limit = 16u * 1024u * 1024u;
++#endif
++
+ bool ysfx_serializer_t::var(ysfx_real *var)
+ {
+     if (m_write == 1) {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++        if (m_overflow || m_buffer->size() + 4 > k_effectdeck_serialize_limit) {
++            m_overflow = true;
++            return false;
++        }
++#endif
+         uint8_t buf[4];
+         ysfx::pack_f32le((float)*var, buf);
+         m_buffer->append((char *)buf, 4);
+@@ -361,14 +375,43 @@ uint32_t ysfx_serializer_t::mem(uint32_t offset, uint32_t length)
  
  uint32_t ysfx_serializer_t::string(std::string &str)
  {
@@ -86,6 +144,12 @@ index d4305e5..fcac364 100644
 -    //   non-working (as of Reaper 6.40)
 +    if (m_write == 1) {
 +        const uint32_t length = (uint32_t)std::min<size_t>(str.size(), 1024 * 1024);
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++        if (m_overflow || m_buffer->size() + 4 + length > k_effectdeck_serialize_limit) {
++            m_overflow = true;
++            return 0;
++        }
++#endif
 +        uint8_t size[4];
 +        ysfx::pack_u32le(length, size);
 +        m_buffer->append((char *)size, sizeof(size));
@@ -118,7 +182,7 @@ index d4305e5..fcac364 100644
      ysfx_t *fx = (ysfx_t *)opaque;
  
      std::string filepath;
-@@ -405,6 +428,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_open(void *opaque, EEL_F *file_)
+@@ -405,6 +448,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_open(void *opaque, EEL_F *file_)
      }
  
      return -1;
@@ -126,6 +190,18 @@ index d4305e5..fcac364 100644
  }
  
  static EEL_F NSEEL_CGEN_CALL ysfx_api_file_close(void *opaque, EEL_F *handle_)
+diff --git a/sources/ysfx_api_file.hpp b/sources/ysfx_api_file.hpp
+index f94e7eb..f039411 100644
+--- a/sources/ysfx_api_file.hpp
++++ b/sources/ysfx_api_file.hpp
+@@ -119,6 +119,7 @@ struct ysfx_serializer_t final : ysfx_file_t {
+     int m_write = -1;
+     std::string *m_buffer = nullptr;
+     size_t m_pos = 0;
++    bool m_overflow = false;
+ };
+ 
+ using ysfx_serializer_u = std::unique_ptr<ysfx_serializer_t>;
 diff --git a/sources/ysfx_api_gfx.cpp b/sources/ysfx_api_gfx.cpp
 index 7a115e7..954e4de 100644
 --- a/sources/ysfx_api_gfx.cpp
@@ -169,7 +245,7 @@ index 7a115e7..954e4de 100644
  
      NSEEL_addfunc_retptr("gfx_lineto", 3, NSEEL_PProc_THIS, &ysfx_api_gfx_lineto);
 diff --git a/sources/ysfx_api_gfx_lice.hpp b/sources/ysfx_api_gfx_lice.hpp
-index 94252e1..35f7e00 100644
+index 94252e1..a262ee9 100644
 --- a/sources/ysfx_api_gfx_lice.hpp
 +++ b/sources/ysfx_api_gfx_lice.hpp
 @@ -36,6 +36,7 @@
@@ -195,8 +271,23 @@ index 94252e1..35f7e00 100644
  static void LICE__DestroyFont(LICE_IFont *bm)
  {
    delete bm;
-@@ -111,10 +112,18 @@ static bool LICE__resize(LICE_IBitmap *bm, int w, int h)
+@@ -109,12 +110,33 @@ static bool LICE__resize(LICE_IBitmap *bm, int w, int h)
+   return bm->resize(w,h);
+ }
  
++// **座標は int にする前に ±2^28 へ収める。** 範囲外の double から int への変換は未定義で、
++// arm64 では INT_MIN/INT_MAX に張り付く。LICE はその値の差や +1 を int のまま取るので
++// 符号付きの桁あふれになり、範囲の検査が最適化で消えて画面の外を読み書きする
++// (gfx_blurto → LICE_Blur、gfx_triangle → FillClippedTrapezoid)。
++// 画像は 2048 px までなので、この幅の中なら切り取られる結果は同じ。NaN は今までどおり 0。
++static const EEL_F k_effectdeck_gfx_coord_limit = (EEL_F)(1<<28);
++static EEL_F effectdeck_gfx_coord(EEL_F v)
++{
++  if (v != v) return 0.0;
++  return v < -k_effectdeck_gfx_coord_limit ? -k_effectdeck_gfx_coord_limit :
++         v > k_effectdeck_gfx_coord_limit ? k_effectdeck_gfx_coord_limit : v;
++}
++
  static LICE_IBitmap *__LICE_CreateBitmap(int mode, int w, int h)
  {
 -  if (mode==1) return new LICE_SysBitmap(w,h);
@@ -215,7 +306,7 @@ index 94252e1..35f7e00 100644
  class eel_lice_state
  {
  public:
-@@ -123,8 +132,12 @@ public:
+@@ -123,8 +145,12 @@ public:
    ~eel_lice_state();
  
    LICE_IBitmap *m_framebuffer, *m_framebuffer_extra;
@@ -228,7 +319,7 @@ index 94252e1..35f7e00 100644
    struct gfxFontStruct {
      LICE_IFont *font;
      char last_fontname[128];
-@@ -143,7 +156,7 @@ public:
+@@ -143,7 +169,7 @@ public:
    };
  
    int m_gfx_font_active; // -1 for default, otherwise index into gfx_fonts (NOTE: this differs from the exposed API, which defines 0 as default, 1-n)
@@ -237,7 +328,7 @@ index 94252e1..35f7e00 100644
  
    LICE_IBitmap *GetImageForIndex(EEL_F idx, const char *callername) 
    { 
-@@ -222,6 +235,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+@@ -222,6 +248,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
    m_gfx_images.Resize(image_slots);
    memset(m_gfx_images.Get(),0,m_gfx_images.GetSize()*sizeof(m_gfx_images.Get()[0]));
    m_framebuffer=m_framebuffer_extra=0;
@@ -250,7 +341,7 @@ index 94252e1..35f7e00 100644
    m_framebuffer_dirty=0;
  
    m_gfx_r = NSEEL_VM_regvar(vm,"gfx_r");
-@@ -250,6 +269,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+@@ -250,6 +282,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
  }
  eel_lice_state::~eel_lice_state()
  {
@@ -260,7 +351,7 @@ index 94252e1..35f7e00 100644
    if (LICE_FUNCTION_VALID(LICE__Destroy)) 
    {
      LICE__Destroy(m_framebuffer_extra);
-@@ -262,6 +284,7 @@ eel_lice_state::~eel_lice_state()
+@@ -262,6 +297,7 @@ eel_lice_state::~eel_lice_state()
    }
    if (LICE_FUNCTION_VALID(LICE__DestroyFont))
    {
@@ -268,7 +359,56 @@ index 94252e1..35f7e00 100644
      int x;
      for (x=0;x<m_gfx_fonts.GetSize();x++)
      {
-@@ -857,13 +880,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+@@ -386,9 +422,13 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
+   if (ctx) 
+   {
+ #ifndef EEL_LICE_NO_RAM
+-    const int divw = (int) (parms[5][0]+0.5);
+-    const int divh = (int) (parms[6][0]+0.5);
+-    if (divw < 1 || divh < 1) return 0.0;
++    // **表の大きさは double で測ってから int にする。** divw*divh*2 が int で折り返すと
++    // 下の連続性の検査は小さな表しか見ず、LICE_TransformBlit2 は本来の div_w*div_h*2 個を
++    // RAM の外まで読む(46341x46341 で 9266 個に化ける)。NaN は今までどおり 0 扱いで弾く。
++    const EEL_F divw_f = parms[5][0]+0.5, divh_f = parms[6][0]+0.5;
++    if (!(divw_f >= 1.0 && divh_f >= 1.0 && divw_f*divh_f*2.0 < 2147483648.0)) return 0.0;
++    const int divw = (int) divw_f;
++    const int divh = (int) divh_f;
+     const int sz = divw*divh*2;
+ 
+ #ifdef EEL_LICE_RAMFUNC
+@@ -398,6 +438,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
+     EEL_F **blocks = ctx->m_vmref ? ((compileContext*)ctx->m_vmref)->ram_state->blocks : 0;
+     if (!blocks || np < 8) return 0.0;
+ 
++    if (parms[7][0]+0.5 >= 2147483648.0 - sz) return 0.0; // addr1+sz-1 も int に収める
+     const int addr1= (int) (parms[7][0]+0.5);
+     EEL_F *d=__NSEEL_RAMAlloc(blocks,addr1);
+     if (sz>NSEEL_RAM_ITEMSPERBLOCK)
+@@ -658,8 +699,10 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
+     {        
+       if (!LICE_FUNCTION_VALID(LICE_FillTriangle)) return;
+ 
+-      LICE_FillTriangle(dest, (int)parms[0][0], (int)parms[1][0], (int)parms[2][0], (int)parms[3][0], 
+-          (int)parms[4][0], (int)parms[5][0], getCurColor(), (float)*m_gfx_a, getCurMode());
++      LICE_FillTriangle(dest, (int)effectdeck_gfx_coord(parms[0][0]), (int)effectdeck_gfx_coord(parms[1][0]),
++          (int)effectdeck_gfx_coord(parms[2][0]), (int)effectdeck_gfx_coord(parms[3][0]),
++          (int)effectdeck_gfx_coord(parms[4][0]), (int)effectdeck_gfx_coord(parms[5][0]),
++          getCurColor(), (float)*m_gfx_a, getCurMode());
+     }
+     else
+     {
+@@ -671,8 +714,8 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
+       int x[maxpt], y[maxpt];
+       for (i=0; i < n; i++)
+       {
+-        x[i]=(int)parms[rdi++][0];
+-        y[i]=(int)parms[rdi++][0];
++        x[i]=(int)effectdeck_gfx_coord(parms[rdi++][0]);
++        y[i]=(int)effectdeck_gfx_coord(parms[rdi++][0]);
+       }
+ 
+       LICE_FillConvexPolygon(dest, x, y, n, getCurColor(), (float)*m_gfx_a, getCurMode());
+@@ -857,13 +900,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
    int use_w = (int)*w;
    int use_h = (int)*h;
    if (use_w<1 || use_h < 1) use_w=use_h=0;
@@ -297,7 +437,7 @@ index 94252e1..35f7e00 100644
      if (!bm) 
      {
        m_gfx_images.Get()[img] = bm = __LICE_CreateBitmap(1,use_w,use_h);
-@@ -873,6 +909,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+@@ -873,6 +929,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
      {
        rv=LICE__resize(bm,use_w,use_h);
      }
@@ -313,7 +453,32 @@ index 94252e1..35f7e00 100644
    }
  
    return rv?1.0:0.0;
-@@ -1006,58 +1051,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
+@@ -889,13 +954,17 @@ void eel_lice_state::gfx_blurto(EEL_F x, EEL_F y)
+ 
+   SetImageDirty(dest);
+   
+-  int srcx = (int)x;
+-  int srcy = (int)y;
+-  int srcw=(int) (*m_gfx_x-x);
+-  int srch=(int) (*m_gfx_y-y);
+-  if (srch < 0) { srch=-srch; srcy = (int)*m_gfx_y; }
+-  if (srcw < 0) { srcw=-srcw; srcx = (int)*m_gfx_x; }
+-  LICE_Blur(dest,dest,srcx,srcy,srcx,srcy,srcw,srch);
++  const EEL_F bx=effectdeck_gfx_coord(x), by=effectdeck_gfx_coord(y);
++  const EEL_F gx=effectdeck_gfx_coord(*m_gfx_x), gy=effectdeck_gfx_coord(*m_gfx_y);
++  int srcx = (int)bx;
++  int srcy = (int)by;
++  int srcw=(int) (gx-bx);
++  int srch=(int) (gy-by);
++  if (srch < 0) { srch=-srch; srcy = (int)gy; }
++  if (srcw < 0) { srcw=-srcw; srcx = (int)gx; }
++  // NaN を含むときは今までどおり何もしない(arm64 では幅 0 になっていた)。
++  if (x==x && y==y && *m_gfx_x==*m_gfx_x && *m_gfx_y==*m_gfx_y)
++    LICE_Blur(dest,dest,srcx,srcy,srcx,srcy,srcw,srch);
+   *m_gfx_x = x;
+   *m_gfx_y = y;
+ }
+@@ -1006,58 +1075,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
          if (!s->font) s->font=LICE_CreateFont();
          if (s->font)
          {
@@ -440,11 +605,69 @@ index 35552de..e98b54a 100644
  }
  
  void ysfx_set_log_reporter(ysfx_config_t *config, ysfx_log_reporter_t *reporter)
+diff --git a/sources/ysfx_preprocess.cpp b/sources/ysfx_preprocess.cpp
+index a2bd76b..208f664 100644
+--- a/sources/ysfx_preprocess.cpp
++++ b/sources/ysfx_preprocess.cpp
+@@ -39,7 +39,15 @@ bool ysfx_preprocess(ysfx::text_reader &reader, ysfx_parse_error *error, std::st
+         file_str.Append(linep);
+     }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    // EffectDeck: the host holds the raw source to 1 MiB. Hold the expanded
++    // text to the same budget; a short <? loop(...) printf(...) ?> block would
++    // otherwise hand the compiler up to the 64 MiB default.
++    const int max_size = 1024 * 1024;
++    EEL2_PreProcessor pproc(max_size + 1);
++#else
+     EEL2_PreProcessor pproc;
++#endif
+ 
+     for (auto it = preprocessor_values.begin(); it != preprocessor_values.end(); ++it) {
+         pproc.define(it->first.c_str(), it->second);
+@@ -52,6 +60,15 @@ bool ysfx_preprocess(ysfx::text_reader &reader, ysfx_parse_error *error, std::st
+         return false;
+     }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    // printf stops appending past the limit, so anything longer is truncated.
++    if (pp_str.GetLength() > max_size) {
++        error->line = 0;
++        error->message = "Preprocessed source exceeds the 1 MB limit.";
++        return false;
++    }
++#endif
++
+     in_str.append(pp_str.Get(), pp_str.GetLength());
+     return true;
+ }
 diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
-index 5dee9a7..23de2ce 100644
+index 5dee9a7..cc277ce 100644
 --- a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
 +++ b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
-@@ -2783,7 +2783,7 @@ unsigned char *compileCodeBlockWithRet(compileContext *ctx, opcodeRec *rec, int
+@@ -672,7 +672,11 @@ functionType *nseel_getFunctionByName(compileContext *ctx, const char *name, int
+     NSEEL_HOSTSTUB_LeaveMutex();
+   }
+   idx=functable_lowerbound(fnTable1,fn1size,name,&match);
+-  if (match) return fnTable1+idx;
++  if (match)
++  {
++    if (mchk) *mchk = 0;
++    return fnTable1+idx;
++  }
+ 
+   if ((!ctx || !(ctx->current_compile_flags&NSEEL_CODE_COMPILE_FLAG_ONLY_BUILTIN_FUNCTIONS)) && tab->list)
+   {
+@@ -1347,7 +1351,7 @@ opcodeRec *nseel_resolve_named_symbol(compileContext *ctx, opcodeRec *rec, int p
+       }
+       if (match_parmcnt_pos < 3) match_parmcnt[match_parmcnt_pos++] = (f->nParams&FUNCTIONTYPE_PARAMETERCOUNTMASK);
+       f++;
+-      if (stricmp(f->name,sname)) break;
++      if (chkamt < 0 || stricmp(f->name,sname)) break;
+     }
+   }
+   if (ctx->last_error_string[0]) lstrcatn(ctx->last_error_string, ", ", sizeof(ctx->last_error_string));
+@@ -2783,7 +2787,7 @@ unsigned char *compileCodeBlockWithRet(compileContext *ctx, opcodeRec *rec, int
      p+=GLUE_FUNC_LEAVE_SIZE;
    #endif
    memcpy(p,&GLUE_RET,sizeof(GLUE_RET)); p+=sizeof(GLUE_RET);
@@ -453,7 +676,7 @@ index 5dee9a7..23de2ce 100644
    __clear_cache(newblock2,p);
  #endif
    
-@@ -5130,7 +5130,7 @@ had_error:
+@@ -5130,7 +5134,7 @@ had_error:
        memcpy(writeptr,&GLUE_RET,sizeof(GLUE_RET)); writeptr += sizeof(GLUE_RET);
        ctx->l_stats[1]=size;
        handle->code_size = (int) (writeptr - (unsigned char *)handle->code);
@@ -462,4 +685,72 @@ index 5dee9a7..23de2ce 100644
        __clear_cache(handle->code,writeptr);
  #endif
      }
-
+@@ -5708,7 +5712,7 @@ opcodeRec *nseel_createFunctionByName(compileContext *ctx, const char *name, int
+       return o;
+     }
+     f++;
+-    if (stricmp(f->name,name)) break;
++    if (chkamt < 0 || stricmp(f->name,name)) break;
+   }
+   return NULL;
+ }
+diff --git a/thirdparty/WDL/source/WDL/lice/lice.cpp b/thirdparty/WDL/source/WDL/lice/lice.cpp
+index d1a7c30..682ec27 100644
+--- a/thirdparty/WDL/source/WDL/lice/lice.cpp
++++ b/thirdparty/WDL/source/WDL/lice/lice.cpp
+@@ -1329,12 +1329,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+   {
+     if (ficurx < 0) // increase dstx, decrease dstw
+     {
+-      int n = (int)((fidx-1-ficurx)/fidx);
+-      dstw-=n;
+-      dstx+=n;
+-      ficurx+=fidx*n;
+-    }
+-    if ((ficurx + fidx*(dstw-1)) >= srcbm_w*65536.0)
++      double n = ceil( - (ficurx/(double)fidx));
++      if (n<0) return;
++      if (n >= dstw) return;
++      dstw-=(int)n;
++      dstx+=(int)n;
++      ficurx+=fidx*(int)n;
++    }
++    if ((ficurx + fidx*(double)(dstw-1)) >= srcbm_w*65536.0)
+     {
+       int neww = (int)(((srcbm_w-1)*65536.0 - ficurx)/fidx);
+       if (neww < dstw) dstw=neww;
+@@ -1349,12 +1351,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+   {
+     if (ficury < 0) // increase dsty, decrease dsth
+     {
+-      int n = (int) ((fidy-1-ficury)/fidy);
+-      dsth-=n;
+-      dsty+=n;
+-      ficury+=fidy*n;
+-    }
+-    if ((ficury + fidy*(dsth-1)) >= srcbm_h*65536.0)
++      double n = ceil( - (ficury / (double) fidy));
++      if (n<0) return;
++      if (n >= dsth) return;
++      dsth-=(int)n;
++      dsty+=(int)n;
++      ficury+=fidy*(int)n;
++    }
++    if ((ficury + fidy*(double)(dsth-1)) >= srcbm_h*65536.0)
+     {
+       int newh = (int)(((srcbm_h-1)*65536.0 - ficury)/fidy);
+       if (newh < dsth) dsth=newh;
+@@ -1373,8 +1377,11 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+   LICE_pixel_chan *pdest = (LICE_pixel_chan *)dest->getBits();
+   if (!psrc || !pdest) return;
+ 
+-  const int srcoffs_x = (int)((ficurx + (fidx<0 ? fidx*dstw : 0))*(1.0/65536.0));
+-  const int srcoffs_y = (int)((ficury + (fidy<0 ? fidy*dsth : 0))*(1.0/65536.0));
++  int srcoffs_x = (int)((ficurx + (fidx<0 ? fidx*dstw : 0))*(1.0/65536.0));
++  int srcoffs_y = (int)((ficury + (fidy<0 ? fidy*dsth : 0))*(1.0/65536.0));
++
++  if (srcoffs_x < 0) { if (fidx>=0) return; srcoffs_x=0; }
++  if (srcoffs_y < 0) { if (fidy>=0) return; srcoffs_y=0; }
+ 
+   if (src->isFlipped())
+   {
