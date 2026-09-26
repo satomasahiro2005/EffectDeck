@@ -73,20 +73,32 @@ final class ShareModel: ObservableObject {
         }
     }
 
+    /// 落としている最中の仕事。Cancel で止める。
+    private var work: Task<Void, Never>?
+
     func load(_ providers: [NSItemProvider]) {
         Task {
-            item = await Self.resolve(providers)
-            if item == nil { error = ETRemoteFile.Failure.empty.localizedDescription }
+            do {
+                item = try await Self.resolve(providers)
+                if item == nil { error = ETRemoteFile.Failure.empty.localizedDescription }
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 
-    func cancel() { finish(false) }
+    /// **落としている最中でも止める。**止めずに閉じると、拡張が片付けられる前に
+    /// 落とし終えて Inbox へ置き、取り消したものが本体に入る。
+    func cancel() {
+        work?.cancel()
+        finish(false)
+    }
 
     func add() {
         guard let item, !busy else { return }
         busy = true
         error = nil
-        Task {
+        work = Task {
             do {
                 guard let root = ETShareInbox.root else { throw CocoaError(.fileWriteNoPermission) }
                 switch item {
@@ -94,28 +106,46 @@ final class ShareModel: ObservableObject {
                     guard let address = ETRemoteFile.address(from: url.absoluteString) else {
                         throw ETRemoteFile.Failure.notAnAddress
                     }
-                    let (data, name) = try await ETRemoteFile.download(address)
-                    try ETShareInbox.deposit(data, named: name, in: root)
+                    let (part, name) = try await ETRemoteFile.download(address)
+                    do {
+                        try Task.checkCancellation()
+                        try ETShareInbox.deposit(moving: part, named: name, in: root)
+                    } catch {
+                        try? FileManager.default.removeItem(at: part)
+                        throw error
+                    }
                 case .file(let url):
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                    guard size <= ETRemoteFile.limit else { throw ETRemoteFile.Failure.tooLarge }
+                    try Self.checkSize(of: url)
+                    try Task.checkCancellation()
                     try ETShareInbox.deposit(copying: url, in: root)
                 case .text(let text):
+                    try Task.checkCancellation()
                     try ETShareInbox.deposit(Data(text.utf8), named: "pasted.jsfx", in: root)
                 }
                 finish(true)
             } catch {
+                if Task.isCancelled { return }
                 self.error = error.localizedDescription
                 busy = false
             }
         }
     }
 
+    /// 置く前に見る。**ファイルだけ、上限まで。**フォルダや大きさの分からない
+    /// ものは写し始めると止まらない。
+    nonisolated private static func checkSize(of url: URL) throws {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, let size = values.fileSize else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        guard size <= ETRemoteFile.limit else { throw ETRemoteFile.Failure.tooLarge }
+    }
+
     /// 渡されたものから 1 つ選ぶ。**URL を先に見る。**Safari は URL と字の両方を
     /// 載せてくることがあり、字を先に取るとページの題名を JSFX として置いてしまう。
-    private static func resolve(_ providers: [NSItemProvider]) async -> Item? {
+    private static func resolve(_ providers: [NSItemProvider]) async throws -> Item? {
         for p in providers where p.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
             if let url = try? await p.loadItem(forTypeIdentifier: UTType.url.identifier) as? URL {
                 return url.isFileURL ? .file(url) : .web(url)
@@ -135,16 +165,18 @@ final class ShareModel: ObservableObject {
             return .text(text)
         }
         for p in providers where p.hasItemConformingToTypeIdentifier(UTType.data.identifier) {
-            if let copy = await copyFile(from: p) { return .file(copy) }
+            if let copy = try await copyFile(from: p) { return .file(copy) }
         }
         return nil
     }
 
     /// **渡された一時ファイルは受け取りの関数を抜けると消える。**その中で写しておく。
-    private static func copyFile(from provider: NSItemProvider) async -> URL? {
-        await withCheckedContinuation { done in
+    /// 上限を超えるものは写さない（写してから断ると、その間ずっと書き続ける）。
+    private static func copyFile(from provider: NSItemProvider) async throws -> URL? {
+        try await withCheckedThrowingContinuation { done in
             _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.data.identifier) { url, _ in
                 guard let url else { done.resume(returning: nil); return }
+                do { try checkSize(of: url) } catch { done.resume(throwing: error); return }
                 let fm = FileManager.default
                 let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
                 let name = provider.suggestedName.map { name -> String in

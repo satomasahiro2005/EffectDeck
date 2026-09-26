@@ -101,6 +101,18 @@ final class ShareInboxTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
     }
 
+    func testDepositMovesDownloadedFile() throws {
+        let part = root.appendingPathComponent("part")
+        try Data([4, 5]).write(to: part)
+        let file = try ETShareInbox.deposit(moving: part, named: "../../x.wav", in: root)
+        // 置き場の外へ出ない名前になる。
+        XCTAssertEqual(file.lastPathComponent, "-..-x.wav")
+        XCTAssertEqual(try Data(contentsOf: file), Data([4, 5]))
+        // 移すので元は残らない。
+        XCTAssertFalse(FileManager.default.fileExists(atPath: part.path))
+        XCTAssertEqual(ETShareInbox.pending(in: root).map(\.lastPathComponent), ["-..-x.wav"])
+    }
+
     func testSafeName() {
         XCTAssertEqual(ETShareInbox.safeName("BRIR 01.wav"), "BRIR 01.wav")
         XCTAssertEqual(ETShareInbox.safeName("a/b.wav"), "a-b.wav")

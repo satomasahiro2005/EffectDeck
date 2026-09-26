@@ -90,40 +90,84 @@ enum ETRemoteFile {
     /// 落として、端末の一時置き場へ書く。**名前は向こうが言うものを使う。**
     /// 拡張子で振り分けてはいないが、取り込み先が複製の名前に使う。
     static func fetch(_ address: URL) async throws -> URL {
-        let (data, name) = try await download(address)
+        let (part, name) = try await download(address)
 
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("inbox", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent(name)
         try? FileManager.default.removeItem(at: file)
-        try data.write(to: file, options: .atomic)
-        log.notice("取ってきた \(name, privacy: .public) \(data.count) bytes")
+        try FileManager.default.moveItem(at: part, to: file)
+        log.notice("取ってきた \(name, privacy: .public)")
         return file
     }
 
-    /// 落とすだけ。書く場所は呼ぶ側が決める（共有の拡張は App Group へ書く）。
-    static func download(_ address: URL) async throws -> (data: Data, name: String) {
+    /// 落とすだけ。戻りは一時置き場のファイルと名前。置く場所は呼ぶ側が決める
+    /// （共有の拡張は App Group へ移す）。
+    ///
+    /// **溜めずにファイルへ流す。上限は届いている途中で切る。**
+    /// 共有の拡張は 120 MB ほどで OS に落とされる。全部を Data に溜めてから
+    /// 大きさを見る形だと、上限を超えるものを渡されたときに判定の前に落ちる。
+    static func download(_ address: URL) async throws -> (file: URL, name: String) {
         var request = URLRequest(url: address)
         // GitHub は User-Agent が無いと断ることがある。
         request.setValue("EffectDeck", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            bytes.task.cancel()
             throw Failure.http(http.statusCode)
         }
-        guard !data.isEmpty else { throw Failure.empty }
-        guard data.count <= limit else { throw Failure.tooLarge }
+        // 向こうが大きさを言っているなら、本文を受ける前に断る。
+        if response.expectedContentLength > Int64(limit) {
+            bytes.task.cancel()
+            throw Failure.tooLarge
+        }
+
+        let fm = FileManager.default
+        let part = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        guard fm.createFile(atPath: part.path, contents: nil) else {
+            bytes.task.cancel()
+            throw CocoaError(.fileWriteUnknown)
+        }
+        do {
+            let handle = try FileHandle(forWritingTo: part)
+            defer { try? handle.close() }
+            let chunk = 64 * 1024
+            var buffer = Data()
+            buffer.reserveCapacity(chunk)
+            var total = 0
+            for try await byte in bytes {
+                buffer.append(byte)
+                guard buffer.count == chunk else { continue }
+                total += buffer.count
+                guard total <= limit else { throw Failure.tooLarge }
+                try handle.write(contentsOf: buffer)
+                buffer.removeAll(keepingCapacity: true)
+            }
+            total += buffer.count
+            guard total <= limit else { throw Failure.tooLarge }
+            guard total > 0 else { throw Failure.empty }
+            try handle.write(contentsOf: buffer)
+        } catch {
+            bytes.task.cancel()
+            try? fm.removeItem(at: part)
+            throw error
+        }
 
         // 名前は URL の末尾。無ければ付ける（取り込み先は中身で判じるので、
         // 名前が当てにならなくても困らない）。
         // **飛ばされた先の末尾を先に見る。**gist の `/raw` は
         // `gist.githubusercontent.com/.../raw/<sha>/<名前>` へ飛ぶので、
         // 元の URL だと名前が "raw" になり IR の一覧に download.bin で並ぶ。
+        // **飛ばす先は向こうが決める。**末尾は `..` や（%2F が解かれて）`/` を
+        // 含みうるので、ETShareInbox.safeName で置き場の外へ出ない名前にする。
         for candidate in [response.url, address].compactMap({ $0 }) {
             let name = candidate.lastPathComponent
-            if !name.isEmpty, name != "/", name != "raw" { return (data, name) }
+            if !name.isEmpty, name != "/", name != "raw" {
+                return (part, ETShareInbox.safeName(name))
+            }
         }
-        return (data, "download")
+        return (part, "download")
     }
 }

@@ -44,6 +44,14 @@ enum ETShareInbox {
         }
     }
 
+    /// 一時置き場のファイルを移して置く（落としたもの。写すと 2 倍書く）。
+    @discardableResult
+    static func deposit(moving file: URL, named name: String, in root: URL) throws -> URL {
+        try stage(named: name, in: root) {
+            try FileManager.default.moveItem(at: file, to: $0)
+        }
+    }
+
     /// 置き場で使う名前。**IR の一覧に出るのはこの名前**なので、元の名前はなるべく残す。
     /// パスの区切りと頭の `.`（書きかけの印と区別が付かなくなる）だけ落とす。
     static func safeName(_ raw: String) -> String {
