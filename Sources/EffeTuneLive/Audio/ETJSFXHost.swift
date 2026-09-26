@@ -7,23 +7,83 @@ private final class ETJSFXMenuResult: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int32 = 0
     private var finished = false
+    /// 出した action sheet。畳むときに閉じる。main からしか触らない。
+    weak var alert: UIAlertController?
     func finish(_ newValue: Int32) {
         lock.lock(); defer { lock.unlock() }
         guard !finished else { return }
         finished = true; value = newValue; semaphore.signal()
     }
     func read() -> Int32 { lock.withLock { value } }
+    var isFinished: Bool { lock.withLock { finished } }
+    /// 0 で返して、出ていれば閉じる。
+    func cancel() {
+        finish(0)
+        DispatchQueue.main.async { [self] in alert?.presentingViewController?.dismiss(animated: true) }
+    }
+}
+
+/// 保守の前に `gfx_showmenu` を畳む。
+///
+/// **開いている間 GFX スレッドは gfxActive を立てたまま待つ。**beginMaintenance は
+/// それが降りるまで回り続けるので、状態保存・再設定・破棄が最長 30 秒止まり、
+/// その間このスクリプトは素通しになっていた。保守に入る側が先にここを閉じる。
+/// 閉じている間に開こうとした menu は即 0 を返す。
+///
+/// **畳むのは止められない保守（再設定・破棄）だけ。**状態保存は holdIfIdle で入り、
+/// 出ている menu は畳まずに閉じるのを待つ（snapshotState を読むこと）。
+final class ETJSFXMenuGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var holds = 0
+    private var shown: ETJSFXMenuResult?
+
+    fileprivate func open(_ result: ETJSFXMenuResult) -> Bool {
+        lock.withLock {
+            guard holds == 0 else { return false }
+            shown = result
+            return true
+        }
+    }
+    fileprivate func close(_ result: ETJSFXMenuResult) {
+        lock.withLock { if shown === result { shown = nil } }
+    }
+    func hold() {
+        let current: ETJSFXMenuResult? = lock.withLock { holds += 1; return shown }
+        current?.cancel()
+    }
+    /// menu が出ていなければ閉じて true。出ていれば何もせず false。
+    func holdIfIdle() -> Bool {
+        lock.withLock {
+            guard shown == nil else { return false }
+            holds += 1
+            return true
+        }
+    }
+    var isShowing: Bool { lock.withLock { shown != nil } }
+    func release() { lock.withLock { holds -= 1 } }
+}
+
+/// 状態保存の結果。menuShown は書かずに戻った（menu が出ていた）。
+private enum Snapshot: Sendable {
+    case menuShown
+    case saved(Data?)
 }
 
 /// `gfx_showmenu` is synchronous by definition. Only the calling instance's
 /// private GFX queue waits; audio and other JSFX instances keep running.
+/// context は instance の ETJSFXMenuGate（host より長く生かしてある）。
 private let etJSFXMenuCallback: @convention(c)
-    (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { _, menu, _, _ in
-        guard let menu else { return 0 }
+    (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { context, menu, _, _ in
+        guard let menu, let context else { return 0 }
+        let gate = Unmanaged<ETJSFXMenuGate>.fromOpaque(context).takeUnretainedValue()
         let spec = String(cString: menu)
         let result = ETJSFXMenuResult()
+        guard gate.open(result) else { return 0 }
+        defer { gate.close(result) }
         DispatchQueue.main.async {
-            guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            // 出す前に畳まれていたら出さない。
+            guard !result.isFinished,
+                  let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                     .first(where: { $0.activationState == .foregroundActive }),
                   let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else {
                 result.finish(0); return
@@ -57,9 +117,14 @@ private let etJSFXMenuCallback: @convention(c)
                 popover.sourceRect = CGRect(x: presenter.view.bounds.midX,
                                             y: presenter.view.bounds.midY, width: 1, height: 1)
             }
-            presenter.present(alert, animated: true)
+            result.alert = alert
+            // 出している途中で畳まれたら、出し終えてから閉じる（途中の dismiss は効かない）。
+            presenter.present(alert, animated: true) {
+                if result.isFinished { alert.presentingViewController?.dismiss(animated: true) }
+            }
         }
-        _ = result.semaphore.wait(timeout: .now() + 30)
+        // 時間切れのときも閉じる。残すと、押しても何も起きない sheet が居座る。
+        if result.semaphore.wait(timeout: .now() + 30) == .timedOut { result.cancel() }
         return result.read()
     }
 
@@ -91,7 +156,7 @@ final class ETJSFXHost: ObservableObject {
         var isEnumeration: Bool { !enumNames.isEmpty }
     }
 
-    private struct RenderConfiguration: Sendable {
+    private struct RenderConfiguration: Sendable, Equatable {
         let sampleRate: Double
         let outputChannels: Int
         let maxFrames: Int
@@ -107,6 +172,13 @@ final class ETJSFXHost: ObservableObject {
         var error: String?
         var loadTask: Task<Void, Never>?
         var stateTask: Task<Void, Never>?
+        /// 人の操作で保存を頼まれてから、まだ書いていない最初の時刻。snapshotState を読むこと。
+        var snapshotSince: ContinuousClock.Instant?
+        /// 最後の保存のあとに @gfx へ指か鍵が来た。そのあとの sliderchange は人の操作として扱う。
+        var userTouched = false
+        /// 保守（状態保存・再設定）の列の最後尾。enqueue を読むこと。
+        var nativeTail: Task<Void, Never>?
+        let menuGate = ETJSFXMenuGate()
         var ready: ((Result<UInt8, Error>) -> Void)?
         let gfxQueue: DispatchQueue
         var lastGFXImage: CGImage?
@@ -128,7 +200,6 @@ final class ETJSFXHost: ObservableObject {
     @Published private(set) var revision = 0
     private var entryAliases: [String: Entry] = [:]
     private var instances: [String: Instance] = [:]
-    private var retired: [OpaquePointer] = []
     private var renderConfiguration: RenderConfiguration?
     private var latencyTimer: Timer?
 
@@ -167,6 +238,7 @@ final class ETJSFXHost: ObservableObject {
         // 消せなかったら一覧はそのまま。押しても消えない形になるが、
         // 消えたふりをして次の refresh で戻ってくるより分かりやすい。
         guard (try? FileManager.default.removeItem(at: entry.url)) != nil else { return false }
+        Self.setStalled(entry.id, false)
         refresh()
         return true
     }
@@ -273,6 +345,8 @@ final class ETJSFXHost: ObservableObject {
             throw NSError(domain: "ETJSFX", code: 11,
                           userInfo: [NSLocalizedDescriptionKey: "The JSFX source is not valid UTF-8."])
         }
+        // 取り込み直したら 1 度は試す（同じ中身なら id も同じ）。
+        Self.setStalled(entry.id, false)
         refresh()
         return entry
     }
@@ -344,10 +418,11 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func remove(instanceID: String) {
+        // 先に slot を空ける。retire の「音のスレッドが読み終えた」はここから数える。
         ETAUExternalBridge.shared.remove(instanceID: instanceID)
         if let instance = instances.removeValue(forKey: instanceID) {
             instance.loadTask?.cancel(); instance.stateTask?.cancel()
-            if let host = instance.host { retired.append(host) }
+            retire(instance)
         }
         revision &+= 1
     }
@@ -355,12 +430,41 @@ final class ETJSFXHost: ObservableObject {
     func removeAll() { for id in Array(instances.keys) { remove(instanceID: id) } }
     func suspend() {
         renderConfiguration = nil
-        // AudioIO stops AVAudioEngine before this call, so descriptors retired
-        // after graph swaps can finally be destroyed without an RT reader.
-        let garbage = retired
-        retired.removeAll(keepingCapacity: true)
+    }
+
+    /// 外した host を、誰も触らなくなった時点で壊す。
+    ///
+    /// **音が止まるまで待たない。**前は suspend() でしか壊さず、AudioIO は
+    /// 起動中ずっと回っているので、消した段もプリセットで入れ替えた段も
+    /// 生き残っていた。EEL の RAM は全体 64 MiB（NSEEL_RAM_limitmem）で数えるので、
+    /// 重いスクリプトを 4 回入れ替えると上限に届き、以後の確保は全部
+    /// 1 つの共有セル（nseel_ramalloc_onfail）へ落ちて音が壊れた（診断なし）。
+    ///
+    /// 壊してよいのは次の 3 つが済んでから:
+    /// 1. 走っている状態保存・再設定（nativeTail）。途中で壊すと解放後に読む。
+    /// 2. 音のスレッドが 2 周（EffeTuneDSP.retire と同じ数え方）。slot は
+    ///    remove() で空けてあるので、その後に始まった周は古い descriptor を読まない。
+    ///    鳴っていなければ周は進まないので 0.5 秒で諦める（鳴っていない＝誰も読んでいない）。
+    /// 3. GFX の列に積まれた描画・マウス・鍵。**壊すのもその列で行う**ので、順番で済む。
+    /// menu は先に畳む（開いたままだと 3 が最長 30 秒詰まる）。
+    ///
+    /// host がまだ無い（建てている最中）なら、建て終えた側が壊す（build を読むこと）。
+    private func retire(_ instance: Instance) {
+        guard let host = instance.host else { return }
+        let gate = instance.menuGate, queue = instance.gfxQueue
+        let pending = instance.nativeTail
+        let mark = ETPipeline_ProcessCount()
+        gate.hold()   // 戻さない。以後この host で menu は開かない。
         Task.detached(priority: .utility) {
-            for host in garbage { ETJSFX_Destroy(host) }
+            await pending?.value
+            let deadline = Date().addingTimeInterval(0.5)
+            while ETPipeline_ProcessCount() < mark + 2 && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            queue.async {
+                ETJSFX_Destroy(host)
+                withExtendedLifetime(gate) {}
+            }
         }
     }
 
@@ -394,19 +498,23 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func setParameter(instanceID: String, parameterID: UInt32, value: Double) {
-        guard let instance = instances[instanceID], let host = instance.host,
+        // **NaN と無限は受けない。**Double("nan") は通り、min/max は NaN を素通しする。
+        // 渡すと次の描画で列挙つまみの Int() が落ちていた。
+        guard value.isFinite, let instance = instances[instanceID], let host = instance.host,
               let offset = instance.parameters.firstIndex(where: { $0.id == parameterID }) else { return }
         let p = instance.parameters[offset]
         let clamped = min(max(value, p.minimum), p.maximum)
         ETJSFX_SetSlider(host, parameterID, clamped)
         instance.parameters[offset].value = clamped
         revision &+= 1
-        snapshotState(instance)
+        snapshotState(instance, user: true)
     }
 
     func normalizedValue(instanceID: String, parameterID: UInt32, value: Double) -> Double {
         guard let host = instances[instanceID]?.host else { return 0 }
-        return ETJSFX_SliderToNormalized(host, parameterID, value)
+        // 値はスクリプトが NaN や無限を書ける。Slider へは 0...1 の有限値だけ渡す。
+        let normalized = ETJSFX_SliderToNormalized(host, parameterID, value)
+        return normalized.isFinite ? min(max(normalized, 0), 1) : 0
     }
 
     func setNormalizedParameter(instanceID: String, parameterID: UInt32, value: Double) {
@@ -575,6 +683,7 @@ final class ETJSFXHost: ObservableObject {
     /// （`down && !last_down`）を要る**ので、そこだけが落ちていた。
     func updateMouse(instanceID: String, point: CGPoint, buttons: UInt32) {
         guard let instance = instances[instanceID], let host = instance.host else { return }
+        instance.userTouched = true
         let x = Int32(point.x), y = Int32(point.y)
         guard buttons == 0 else {
             instance.pressSeen = false
@@ -603,6 +712,7 @@ final class ETJSFXHost: ObservableObject {
 
     func updateKey(instanceID: String, modifiers: UInt32, key: UInt32, pressed: Bool) {
         guard let instance = instances[instanceID], let host = instance.host else { return }
+        instance.userTouched = true
         instance.gfxQueue.async { ETJSFX_GFXKey(host, modifiers, key, pressed) }
     }
 
@@ -621,95 +731,250 @@ final class ETJSFXHost: ObservableObject {
         instance.gfxQueue.async { ETJSFX_GFXWindowState(host, anyFocused, anyVisible, false) }
     }
 
+    /// 建てきるまでの上限。**コンパイルと @init と状態の復元の合計。**
+    ///
+    /// コンパイルは C 側が 2 秒で切るが、測るのは終わった後で、@init には門が無い。
+    /// EEL の実行を途中で切る口も無いので、REAPER 向けに書かれた重い @init は
+    /// 帰ってこない。そのたびに段は "Compiling…" のまま、鎖は保存済みなので
+    /// 次の起動でまた建て、スレッドを 1 本ずつ塞いでいた。
+    /// 越えたら印（stalled）を付けて表示に出す。外さずに待ち、帰ってきたら載せて印を消す。
+    /// 印が残ったまま終わった（帰ってこなかった）ものは、次の起動で建てない。
+    /// スレッドは止められないので残るが、専用スレッドなので他の仕事は塞がない。
+    private static let loadLimit: Duration = .seconds(10)
+    private static let stalledMessage = "JSFX did not finish loading."
+
     private func build(_ instance: Instance, configuration: RenderConfiguration) {
         guard instance.loadTask == nil else { return }
         let path = instance.entry.url.path, state = instance.state, id = instance.id
-        instance.loadTask = Task.detached(priority: .userInitiated) {
-            var message = [CChar](repeating: 0, count: 4096)
-            var host = path.withCString {
-                ETJSFX_Create($0, configuration.sampleRate, UInt32(configuration.maxFrames),
-                              &message, message.count)
+        let entryID = instance.entry.id
+        // 前に建ちきらなかったものは建てない。建てるたびに 1 本回り続ける。
+        guard !Self.isStalled(entryID) else { fail(instance, Self.loadError(Self.stalledMessage)); return }
+        // **時間切れでも外さない。**印と表示だけにして、帰ってきたら普通に載せる。
+        // 外すと、PORTABLE で @init が重いだけのスクリプトが毎回ここで捨てられ、
+        // 印も完了で消えるので、起動のたびに建てては捨てて二度と載らない。
+        // 印は「建ちきらないまま終わった」ときだけ残り、次の起動で建てない理由になる。
+        // 数えるのは起きている間だけ（SuspendingClock）。裏に回った間は数えない。
+        let limit = Task { @MainActor [weak self] in
+            try? await Task.sleep(until: .now + Self.loadLimit, clock: .suspending)
+            guard !Task.isCancelled, let self,
+                  let current = self.instances[id], current === instance, current.host == nil else { return }
+            Self.setStalled(entryID, true)
+            current.error = Self.stalledMessage
+            // 足すのを待っている picker には段を出させる。建ち終われば同じ slot に入る
+            // （restore と同じ、段はあって中身がまだの形）。
+            if let ready = current.ready, let index = ETAUExternalBridge.shared.index(for: id) {
+                current.ready = nil
+                ready(.success(index))
             }
-            var restoreFailed = false
-            if let created = host, let state {
-                restoreFailed = !state.withUnsafeBytes { raw in
-                    if let base = raw.bindMemory(to: UInt8.self).baseAddress {
-                        return ETJSFX_LoadState(created, base, state.count)
+            self.revision &+= 1
+        }
+        instance.loadTask = Task { @MainActor in
+            // **協調プールで回さない。**ETJSFXLoader を読むこと（スタックと、帰ってこない @init）。
+            let (created, failure) = await ETJSFXLoader.run { () -> (OpaquePointer?, String?) in
+                var message = [CChar](repeating: 0, count: 4096)
+                var host = path.withCString {
+                    ETJSFX_Create($0, configuration.sampleRate, UInt32(configuration.maxFrames),
+                                  &message, message.count)
+                }
+                var restoreFailed = false
+                if let created = host, let state {
+                    restoreFailed = !state.withUnsafeBytes { raw in
+                        if let base = raw.bindMemory(to: UInt8.self).baseAddress {
+                            return ETJSFX_LoadState(created, base, state.count)
+                        }
+                        return false
                     }
-                    return false
+                    if restoreFailed { ETJSFX_Destroy(created); host = nil }
                 }
-                if restoreFailed { ETJSFX_Destroy(created); host = nil }
+                let error = restoreFailed ? "Could not restore JSFX state."
+                    : (host == nil ? String(cString: message) : nil)
+                return (host, error)
             }
-            let error = restoreFailed ? "Could not restore JSFX state."
-                : (host == nil ? String(cString: message) : nil)
-            await MainActor.run {
-                guard let current = self.instances[id], current === instance else {
-                    if let host { ETJSFX_Destroy(host) }; return
-                }
-                current.loadTask = nil
-                guard let host else {
-                    let failure = NSError(domain: "ETJSFX", code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: error ?? "Could not load JSFX."])
-                    current.error = failure.localizedDescription
-                    current.ready?(.failure(failure)); current.ready = nil
-                    ETAUExternalBridge.shared.remove(instanceID: id)
-                    self.instances.removeValue(forKey: id)
-                    self.revision &+= 1; return
-                }
-                do {
-                    let index = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
-                    ETJSFX_SetGFXMenuCallback(host, etJSFXMenuCallback, nil)
-                    current.host = host; current.parameters = Self.readParameters(host); current.error = nil
-                    self.snapshotState(current)
-                    current.ready?(.success(index)); current.ready = nil
-                } catch {
-                    current.error = error.localizedDescription; self.retired.append(host)
-                    current.ready?(.failure(error)); current.ready = nil
-                    ETAUExternalBridge.shared.remove(instanceID: id)
-                    self.instances.removeValue(forKey: id)
-                }
+            limit.cancel()
+            // 遅れてでも帰ってきたなら、止まらないスクリプトではない。
+            Self.setStalled(entryID, false)
+            guard let current = self.instances[id], current === instance else {
+                // 外された。slot にも載せていないのでそのまま壊す。
+                if let created { Task.detached(priority: .utility) { ETJSFX_Destroy(created) } }
+                return
+            }
+            current.loadTask = nil
+            guard let host = created else {
+                self.fail(current, Self.loadError(failure ?? "Could not load JSFX.")); return
+            }
+            do {
+                let index = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
+                ETJSFX_SetGFXMenuCallback(host, etJSFXMenuCallback,
+                                          Unmanaged.passUnretained(current.menuGate).toOpaque())
+                current.host = host; current.parameters = Self.readParameters(host); current.error = nil
+                self.snapshotState(current)
+                current.ready?(.success(index)); current.ready = nil
                 self.revision &+= 1
+                self.followRenderConfiguration(current, built: configuration)
+            } catch {
+                // install は slot を取る前に投げる。音のスレッドは読んでいない。
+                Task.detached(priority: .utility) { ETJSFX_Destroy(host) }
+                self.fail(current, error)
             }
         }
+    }
+
+    /// 建てられなかった instance を外す。鎖の段は残る（status は "JSFX unavailable"）。
+    private func fail(_ instance: Instance, _ error: Error) {
+        instance.error = error.localizedDescription
+        instance.ready?(.failure(error)); instance.ready = nil
+        ETAUExternalBridge.shared.remove(instanceID: instance.id)
+        instances.removeValue(forKey: instance.id)
+        revision &+= 1
+    }
+
+    private static func loadError(_ message: String) -> Error {
+        NSError(domain: "ETJSFX", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func reconfigure(_ host: OpaquePointer, instance: Instance,
                              configuration: RenderConfiguration) {
         guard instance.loadTask == nil else { return }
-        let id = instance.id
-        instance.loadTask = Task.detached(priority: .userInitiated) {
-            let ok = ETJSFX_Reconfigure(host, configuration.sampleRate, UInt32(configuration.maxFrames))
-            await MainActor.run {
-                guard let current = self.instances[id], current === instance else { return }
-                current.loadTask = nil
-                do {
-                    guard ok else { throw NSError(domain: "ETJSFX", code: 2,
-                                                  userInfo: [NSLocalizedDescriptionKey: "JSFX reconfiguration failed."]) }
-                    _ = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
-                    current.parameters = Self.readParameters(host); current.error = nil
-                } catch { current.error = error.localizedDescription }
-                self.revision &+= 1
+        let id = instance.id, entryID = instance.entry.id
+        // ysfx_init が @init を回し直すので、建てるときと同じく帰ってこないことがある。
+        // host は @init の途中なので壊せない。印と表示だけにして、loadTask は残す
+        // （残せば resume が重ねない）。
+        let limit = Task { @MainActor [weak self] in
+            try? await Task.sleep(until: .now + Self.loadLimit, clock: .suspending)
+            guard !Task.isCancelled, let self,
+                  let current = self.instances[id], current === instance else { return }
+            Self.setStalled(entryID, true)
+            current.error = Self.stalledMessage
+            self.revision &+= 1
+        }
+        let operation = enqueue(instance, onLoader: true) {
+            ETJSFX_Reconfigure(host, configuration.sampleRate, UInt32(configuration.maxFrames))
+        }
+        instance.loadTask = Task { @MainActor in
+            let ok = await operation.value
+            limit.cancel()
+            Self.setStalled(entryID, false)
+            guard let current = self.instances[id], current === instance else { return }
+            current.loadTask = nil
+            do {
+                guard ok else { throw NSError(domain: "ETJSFX", code: 2,
+                                              userInfo: [NSLocalizedDescriptionKey: "JSFX reconfiguration failed."]) }
+                _ = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
+                current.parameters = Self.readParameters(host); current.error = nil
+            } catch { current.error = error.localizedDescription }
+            self.revision &+= 1
+            if ok { self.followRenderConfiguration(current, built: configuration) }
+        }
+    }
+
+    /// 建てた・組み直した設定が、いまの設定と違えば組み直す。
+    ///
+    /// **走っている間に来た resume は捨てられる**（build / reconfigure の頭の
+    /// loadTask の門）。そのままだと古い srate / maxFrames で回り、ブロックが
+    /// maxFrames を超えると ETExternalProcessor_Process が -2 を返して鎖ごと落ちる。
+    /// 違わなければ何もしないので、繰り返しは設定が変わった回数で止まる。
+    private func followRenderConfiguration(_ instance: Instance, built: RenderConfiguration) {
+        guard let current = renderConfiguration, current != built, let host = instance.host else { return }
+        reconfigure(host, instance: instance, configuration: current)
+    }
+
+    /// 保守を instance ごとの列に並べる。**頼んだ順に 1 本ずつ流す。**
+    ///
+    /// 状態保存と再設定は別々の Task から来る。C 側は入口を通ったものを 1 本ずつ
+    /// 通すが、ETJSFX_Destroy が守れるのは「もう入口を通ったもの」だけで、
+    /// これから呼ばれるものは守れない（ETJSFXHost.h）。retire はこの列の最後尾を
+    /// 待ってから壊すので、頼んだのに走っていないものを置き去りにしない。
+    /// 順番が決まるので、古い保存が新しい保存の後に書き戻すこともない。
+    /// 入る前に menu を畳む（ETJSFXMenuGate）。onLoader は @init を回すもの。
+    /// holdsMenu が false なら gate に触らない（状態保存。work の側で holdIfIdle する）。
+    /// **並べるのは呼んだその場で**（await の後にすると、間に来た remove が取りこぼす）。
+    private func enqueue<T: Sendable>(_ instance: Instance, onLoader: Bool = false,
+                                      holdsMenu: Bool = true,
+                                      _ work: @escaping @Sendable () -> T) -> Task<T, Never> {
+        let previous = instance.nativeTail, gate = instance.menuGate
+        let operation = Task.detached(priority: .utility) { () -> T in
+            await previous?.value
+            if holdsMenu { gate.hold() }
+            defer { if holdsMenu { gate.release() } }
+            if onLoader { return await ETJSFXLoader.run(work) }
+            return work()
+        }
+        instance.nativeTail = Task.detached(priority: .utility) { _ = await operation.value }
+        return operation
+    }
+
+    /// 状態を控える。つまみの連打をまとめるため 250 ms 待つ。
+    ///
+    /// **人の操作（user）には上限がある（最初に頼まれてから 2 秒）。**前は頼まれるたびに
+    /// 待ちを捨てて測り直していた。毎ブロック sliderchange() を撃つメーター型の
+    /// スクリプトでは 10Hz の見回りが 100 ms ごとに頼むので 250 ms が満ちず、
+    /// つまみを動かしても保存されなかった（起動し直すと戻る）。
+    /// **スクリプトからの頼みには上限を掛けない。**掛けるとメーター型が鳴っている間
+    /// 2 秒ごとに保存し（そのたび素通し）、値が動くので persist と iCloud まで毎回走る。
+    /// 人の操作が待っていれば、その期限を後ろへずらさないだけ。
+    /// @gfx の中のつまみは sliderchange でしか分からないので、指か鍵が来たあと
+    /// （userTouched）の頼みを人の操作として扱う。
+    ///
+    /// **menu を畳まない。**出ていれば閉じるまで待ってから書く。状態保存は急ぐものではなく、
+    /// 開いたまま書けば SaveState は gfxActive を待って素通しが続く。
+    ///
+    /// 書き始めたら取り消さない。後から来た頼みは次の保存として後ろに並ぶ。
+    private func snapshotState(_ instance: Instance, user: Bool = false) {
+        guard instance.host != nil else { return }
+        let now = ContinuousClock.now
+        if user || instance.userTouched { instance.snapshotSince = instance.snapshotSince ?? now }
+        var due = now + .milliseconds(250)
+        if let since = instance.snapshotSince { due = min(due, since + .seconds(2)) }
+        let id = instance.id, gate = instance.menuGate
+        instance.stateTask?.cancel()
+        instance.stateTask = Task { @MainActor in
+            try? await Task.sleep(until: due, clock: .continuous)
+            while true {
+                guard !Task.isCancelled, let host = instance.host,
+                      self.instances[id] === instance else { return }
+                if !gate.isShowing {
+                    let since = instance.snapshotSince, touched = instance.userTouched
+                    instance.snapshotSince = nil; instance.userTouched = false
+                    let result = await self.enqueue(instance, holdsMenu: false) { () -> Snapshot in
+                        // 並んでいる間に開いたら書かない（畳まない）。
+                        guard gate.holdIfIdle() else { return .menuShown }
+                        defer { gate.release() }
+                        var bytes: UnsafeMutablePointer<UInt8>?, size = 0
+                        guard ETJSFX_SaveState(host, &bytes, &size), let bytes else { return .saved(nil) }
+                        defer { ETJSFX_FreeBytes(bytes) }
+                        return .saved(Data(bytes: bytes, count: size))
+                    }.value
+                    if case .saved(let data) = result {
+                        // 同じ中身なら鎖を書き直さない（メーター型は値が動かなくても頼んでくる）。
+                        guard let current = self.instances[id], current === instance,
+                              let data, data != current.state else { return }
+                        current.state = data
+                        EffeTuneDSP.shared.externalStateDidChange(instanceID: id)
+                        return
+                    }
+                    // 書けなかったので、人の操作の期限を戻す。
+                    instance.snapshotSince = instance.snapshotSince ?? since
+                    instance.userTouched = instance.userTouched || touched
+                }
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
     }
 
-    private func snapshotState(_ instance: Instance) {
-        instance.stateTask?.cancel()
-        guard let host = instance.host else { return }
-        let id = instance.id
-        instance.stateTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            let data = await Task.detached(priority: .utility) { () -> Data? in
-                var bytes: UnsafeMutablePointer<UInt8>?, size = 0
-                guard ETJSFX_SaveState(host, &bytes, &size), let bytes else { return nil }
-                defer { ETJSFX_FreeBytes(bytes) }
-                return Data(bytes: bytes, count: size)
-            }.value
-            guard let current = self.instances[id], current === instance else { return }
-            current.stateTask = nil
-            if let data { current.state = data; EffeTuneDSP.shared.externalStateDidChange(instanceID: id) }
-        }
+    // MARK: - 建ちきらなかったもの
+
+    /// 時間切れになった source の id（中身の sha256 から作るので、直せば別の id になる）。
+    private static let stalledKey = "jsfx.stalled"
+
+    private static func isStalled(_ entryID: String) -> Bool {
+        (UserDefaults.standard.stringArray(forKey: stalledKey) ?? []).contains(entryID)
+    }
+
+    private static func setStalled(_ entryID: String, _ stalled: Bool) {
+        var list = UserDefaults.standard.stringArray(forKey: stalledKey) ?? []
+        guard list.contains(entryID) != stalled else { return }
+        if stalled { list.append(entryID) } else { list.removeAll { $0 == entryID } }
+        UserDefaults.standard.set(list, forKey: stalledKey)
     }
 
     private func pollRuntimeChanges() {

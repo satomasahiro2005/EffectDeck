@@ -614,14 +614,19 @@ private struct ExternalProcessorView: View {
                                                                 step: parameter.step),
                                      label: parameter.name,
                                      editText: { ETNumberText.draft(parameter.value) }) { typed in
+                            // "nan" や "inf" は Double() を通る。min/max は NaN を素通しする。
+                            guard typed.isFinite else { return }
                             let clamped = min(max(typed, parameter.minimum), parameter.maximum)
                             jsfx.setParameter(instanceID: instanceID,
                                               parameterID: parameter.id, value: clamped)
                         }
                     }
                     if parameter.isEnumeration {
+                        // **Int(Double) を直に使わない。**スクリプトは NaN も 1e30 も書ける
+                        // （ETJSFXLoader.enumIndex を読むこと）。
                         Picker(parameter.name, selection: Binding(
-                            get: { Int(parameter.value.rounded()) },
+                            get: { ETJSFXLoader.enumIndex(parameter.value,
+                                                          count: parameter.enumNames.count) },
                             set: { jsfx.setParameter(instanceID: instanceID,
                                                      parameterID: parameter.id, value: Double($0)) })) {
                             ForEach(Array(parameter.enumNames.enumerated()), id: \.offset) {

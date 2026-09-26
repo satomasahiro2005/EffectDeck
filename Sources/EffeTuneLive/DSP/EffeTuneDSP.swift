@@ -424,8 +424,16 @@ final class EffeTuneDSP: ObservableObject {
         // 何も触らずに終了した場合は次の起動でまた既定が並ぶ。見え方は同じ。
         guard !(isDefaultChain && !PipelineStore.hasSaved) else { return }
 
+        // **host に生きた instance が無いときは、読み込んだ state を残す。**
+        // 元のファイルが無い端末（消した・iCloud で鎖だけ来た）や、組み立てに
+        // 失敗した段では stateData が nil を返す。そのまま書くと shortForm が
+        // 鍵ごと落とし、保存と iCloud から slider と @serialize が消える。
+        // 同じファイルを入れ直しても段は戻るが値は戻らない。
+        // 生きていれば host は読み込んだ state から始めて上書きしていくので、
+        // 普通の段の結果は変わらない。
         for index in chain.indices where chain[index].isExternal {
             chain[index].externalState = externalState(for: chain[index])
+                ?? chain[index].externalState
         }
         PipelineStore.saveLast(chain)
         persistExpanded()
@@ -1025,9 +1033,15 @@ final class EffeTuneDSP: ObservableObject {
         return probes[chain[index].id]?.tapId
     }
 
-    /// 要る探りを作り、要らなくなったものを捨てる。publish のたびに呼ぶ。
-    private func syncProbes() {
-        guard engine != 0, ready else { return }
+    /// 要る探りを作り、要らなくなったものを外す。publish のたびに呼ぶ。
+    ///
+    /// **外した探りはここで壊さない。番号を返す。**
+    /// 走っている descriptor にはまだ探りが enabled: 2 で載っていて、
+    /// 音のスレッドはその kernel の中に居ることがある。ここで壊すと
+    /// Spectrum Analyzer の FFT の器を解放後に書く（ASan で再現した）。
+    /// 呼び手は Publish のあとで retire() へ渡す。native の段と同じ扱い。
+    private func syncProbes() -> [UInt32] {
+        guard engine != 0, ready else { return [] }
 
         // バスを分けている段は、engine.cpp:978-990 が出口で足し込む＝他の音と混ざる。
         // 「その段に入る音」と呼べるのは入口と出口が同じバスのときだけ。
@@ -1037,19 +1051,24 @@ final class EffeTuneDSP: ObservableObject {
                 && $0.inputBus == $0.outputBus
         }.map(\.id))
 
+        var doomed: [UInt32] = []
         for id in Array(probes.keys) where !want.contains(id) {
-            if let probe = probes[id] { et_instance_destroy(engine, probe.instance) }
+            if let probe = probes[id] { doomed.append(probe.instance) }
             probes[id] = nil
         }
 
-        guard let spec = ETCatalog.first(where: { $0.type == Self.probeType }) else { return }
+        guard let spec = ETCatalog.first(where: { $0.type == Self.probeType }) else { return doomed }
         for id in want where probes[id] == nil {
             let inst = Self.probeType.withCString { et_instance_create(engine, $0) }
             guard inst != 0 else { continue }
             let tap = nextTap
             nextTap &+= 1
             guard et_instance_set_tap(engine, inst, tap) == ET_OK else {
-                et_instance_destroy(engine, inst)
+                // どの descriptor にも載っていないが、壊すと鎖ごと作り直される
+                // （invalidatePipeline）ので、外した探りと一緒に retire() へ回す。
+                // ここ（publish の中・メイン）で音のスレッドを待つと、JSFX の長い
+                // ブロックの間ずっと画面が止まる。
+                doomed.append(inst)
                 continue
             }
             // **Points を落とす。** 既定は 12（FFT 4096）で、枠が
@@ -1070,6 +1089,7 @@ final class EffeTuneDSP: ObservableObject {
             }
             probes[id] = Probe(instance: inst, tapId: tap)
         }
+        return doomed
     }
 
     private func pushParams(_ node: Node) {
@@ -1089,8 +1109,8 @@ final class EffeTuneDSP: ObservableObject {
     /// 段ごとに持たせる設定ではない。
     ///
     /// chain に書き戻すのは、descriptor を組み直す口がここだけではないため。
-    /// BandFIRPEQDesigner.republishForLatencyChange が chain から ETPipeNode を
-    /// 作り直していて、そこは node.sectionGate をそのまま読む。
+    /// republish()（retire や各 designer の遅延変更から呼ばれる）は chain から
+    /// ETPipeNode を作り直していて、そこは node.sectionGate をそのまま読む。
     private func applySectionGates() {
         // **答えを出すのは ETPipelineAnalysis だけ。**ここは書き戻すだけで、
         // 数え方をここにも持たない（持つと二重管理になる。前は ETSection.gates が
@@ -1112,7 +1132,7 @@ final class EffeTuneDSP: ObservableObject {
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
         applySectionGates()
-        syncProbes()
+        let retiredProbes = syncProbes()
         // Section は instance を持たないのでここで落ちる。上流も同じく
         // descriptor に入れない（dsp-pipeline-descriptor.js:194-198）。
         var nodes: [ETPipeNode] = []
@@ -1143,6 +1163,8 @@ final class EffeTuneDSP: ObservableObject {
                                     externalIndex: n.externalIndex))
         }
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
+        // 外した探りは、探りの無い descriptor を出したあとで壊す。
+        retire(retiredProbes)
         // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
         // ノードが混ざっている＝画面の本数だけ音が通っていない。
         // Section は必ず descriptor から外れるので、先に引いて dead と分ける。
@@ -1215,6 +1237,15 @@ final class EffeTuneDSP: ObservableObject {
     }
 
     /// 外した instance を、音のスレッドが読み終えてから壊す。
+    ///
+    /// **壊すのは ETPipeline_DestroyInstances、それもメインで。**
+    /// ProcessCount を 2 つ待って守れるのは壊す instance だけで、
+    /// et_instance_destroy が一緒に作り直す pipeline_ と遅延補正の線
+    /// （engine.cpp:119-129）は守れない。音のスレッドがその線を読んでいる最中に
+    /// 解放すると落ちる（ASan で % 0 と解放後の書き込みを再現した）。
+    /// メインに寄せるのは et_instance_create と同じスレッドにするため。
+    /// createInstance は kernel が空いた枠を拾うので、別のスレッドで壊している
+    /// 途中の枠を掴みうる。
     private func retire(_ instances: [UInt32]) {
         guard !instances.isEmpty, engine != 0 else { return }
         let engine = self.engine
@@ -1226,8 +1257,6 @@ final class EffeTuneDSP: ObservableObject {
             while ETPipeline_ProcessCount() < mark + 2 && Date() < deadline {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
-            for i in instances { et_instance_destroy(engine, i) }
-
             // **壊すと鎖ごと無効になるので、必ず組み直す。**
             //
             //   void Engine::destroyInstance(et_instance instance) noexcept {
@@ -1249,9 +1278,24 @@ final class EffeTuneDSP: ObservableObject {
             // 順番として必ずこうなる。段の入切で直っていたのは、
             // setEnabled が publish() を呼んで configure がやり直されるから。
             //
-            // 呼び出し元は remove / clear / resetToDefault / replaceChain の 4 つで、
-            // どれも同じ経路を通る。ここで 1 回組み直せば全部に効く。
-            await MainActor.run { EffeTuneDSP.shared.republish() }
+            // 呼び出し元は remove / clear / resetToDefault / replaceChain と
+            // publish（外した探り）で、どれも同じ経路を通る。ここで 1 回組み直せば全部に効く。
+            // 壊すのと同じメインの 1 回で組み直すので、素通しになるのは多くて 1 ブロック。
+            //
+            // **音のスレッドが JSFX の長いブロックから戻らなければ、メインで待ち続けない。**
+            // DestroyInstances は 50 ms で諦めて何も壊さずに戻る。ここで間を置いて
+            // 呼び直す。待ち切ると、そのブロックが終わるまで画面が止まる。
+            while true {
+                let done = await MainActor.run { () -> Bool in
+                    let ok = instances.withUnsafeBufferPointer {
+                        ETPipeline_DestroyInstances(engine, $0.baseAddress, UInt32($0.count))
+                    } != 0
+                    if ok { EffeTuneDSP.shared.republish() }
+                    return ok
+                }
+                if done { break }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
         }
     }
 

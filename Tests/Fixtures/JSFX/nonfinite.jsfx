@@ -1,0 +1,13 @@
+desc:Nonfinite
+author:nemut.ai
+slider1:0<0,3,1>Mode
+
+@sample
+// 0: NaN / +Inf、1: -Inf / 非正規化数（float で）、2: log(0) / 半分、3: 半分 / 半分
+// NaN（Inf × 0）は、この版の EEL を通すと host に着く前に 0 になっていた。Inf と非正規化数はそのまま着く。
+z = 0;
+tiny = 0.0000000001 * 0.0000000001 * 0.0000000001 * 0.0000000001; // 1e-40
+slider1 == 0 ? ( inf = 1 / z; spl0 = inf * z; spl1 = inf; );
+slider1 == 1 ? ( spl0 = -1 / z; spl1 = tiny; );
+slider1 == 2 ? ( spl0 = log(z); spl1 *= 0.5; );
+slider1 == 3 ? ( spl0 *= 0.5; spl1 *= 0.5; );

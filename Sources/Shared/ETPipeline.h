@@ -91,6 +91,21 @@ int32_t ETPipeline_LastStatus(void);
 /// instance を壊す前に、この値が 2 つ進むのを待てば読み終えたと分かる。
 uint64_t ETPipeline_ProcessCount(void);
 
+/// instance を壊す。**音のスレッドが engine の外に居るあいだに壊す。**
+///
+/// et_instance_destroy は壊した instance だけでなく、invalidatePipeline() で
+/// pipeline_ と遅延補正の線まで作り直す（engine.cpp:395-401, 119-129）。
+/// ProcessCount を 2 つ待っても守れるのは壊す instance だけで、
+/// 音のスレッドが processPipeline の途中ならその線や kernel を解放後に読む。
+/// ここは音のスレッドを入口で止め、中に居るのが抜けるのを待ってから壊す。
+/// 止めている間の Process / ApplyPending は何もせず戻る（そのブロックは素通し）。
+///
+/// UI スレッドから呼ぶ。待つのはいま走っているブロックが終わるまでで、**50 ms まで。**
+/// JSFX の 1 ブロックには上限が無いので、抜けてこなければ何も壊さずに 0 を返す。
+/// そのときは間を置いて呼び直す。壊したら 1。
+/// **音のスレッドから呼ばない**（自分を待って戻らない）。
+int ETPipeline_DestroyInstances(uint32_t engine, const uint32_t *instances, uint32_t count);
+
 /// et_pipeline_configure を呼んだ回数。成功・失敗の両方を数える。
 /// 0 なら Publish が音のスレッドに一度も拾われていない。
 uint64_t ETPipeline_ConfigureCount(void);

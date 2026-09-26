@@ -11,22 +11,44 @@
 // 8x8 fallback text and gfx_getsyscol still reference this SWELL entry point.
 int GetSysColor(int) { return RGB(240, 240, 240); }
 
+// **書体名は UTF-8 とは限らない。** 日本語版 REAPER の JSFX は CP932 のまま、欧文は
+// CP1252 のまま届く。\xNN や str_setchar でも任意のバイト列が作れ、127 バイトで
+// 切られた UTF-8 は字の途中で終わる。読めない名前に CFStringCreateWithCString は
+// NULL を返し、それを CFRelease すると trap でアプリごと落ちる（起動のたびに開き直すので毎回）。
+// 厳しい順に試す。CP1252 はほぼ何でも読めてしまうので CP932 の後。MacRoman は 256 通り全部に字がある。
+static CFStringRef ETCreateFontFamilyName(const char *name)
+{
+    if (!name || !*name) name = "Helvetica";
+    const CFStringEncoding encodings[] = {
+        kCFStringEncodingUTF8, kCFStringEncodingDOSJapanese,
+        kCFStringEncodingWindowsLatin1, kCFStringEncodingMacRoman,
+    };
+    for (CFStringEncoding encoding : encodings)
+        if (CFStringRef family = CFStringCreateWithCString(nullptr, name, encoding)) return family;
+    return CFStringCreateWithCString(nullptr, "Helvetica", kCFStringEncodingUTF8);
+}
+
 class ETCoreTextLICEFont final : public LICE_IFont {
 public:
     ~ETCoreTextLICEFont() override { if (font_) CFRelease(font_); }
-    void configure(const char *name, int size, bool bold, bool italic, bool underline) {
-        if (font_) CFRelease(font_);
-        CFStringRef family = CFStringCreateWithCString(nullptr,
-            name && *name ? name : "Helvetica", kCFStringEncodingUTF8);
+    bool configure(const char *name, int size, bool bold, bool italic, bool underline) {
+        if (font_) { CFRelease(font_); font_ = nullptr; }
+        CFStringRef family = ETCreateFontFamilyName(name);
+        if (!family) return false;
         CTFontSymbolicTraits traits = 0;
         if (bold) traits |= kCTFontBoldTrait;
         if (italic) traits |= kCTFontItalicTrait;
         CTFontRef base = CTFontCreateWithName(family, size > 1 ? size : 1, nullptr);
-        font_ = traits ? CTFontCreateCopyWithSymbolicTraits(base, 0, nullptr, traits, traits)
-                       : (CTFontRef)CFRetain(base);
-        CFRelease(base); CFRelease(family);
+        CFRelease(family);
+        if (!base) return false;
+        // **太字や斜体を持たない書体では NULL が返る**（CTFont.h）。そのときは元の書体で描く。
+        CTFontRef styled = traits ? CTFontCreateCopyWithSymbolicTraits(base, 0, nullptr, traits, traits)
+                                  : nullptr;
+        font_ = styled ? styled : (CTFontRef)CFRetain(base);
+        CFRelease(base);
         underline_ = underline;
         lineHeight_ = (int)ceil(CTFontGetAscent(font_) + CTFontGetDescent(font_) + CTFontGetLeading(font_));
+        return true;
     }
     void SetFromHFont(HFONT, int = 0) override {}
     LICE_pixel SetTextColor(LICE_pixel c) override { auto old=color_; color_=c; return old; }
@@ -107,7 +129,8 @@ int ETLICE_ConfigureFont(LICE_IFont *font, const char *name, int size,
 {
     auto *coreText = dynamic_cast<ETCoreTextLICEFont *>(font);
     if (!coreText) return 0;
-    coreText->configure(name, size, bold, italic, underline);
+    // 0 を返すと gfx_setfont はこの番号を使わず、既定の書体で描く。
+    if (!coreText->configure(name, size, bold, italic, underline)) return 0;
     if (actualName && actualNameSize) std::snprintf(actualName, actualNameSize, "%s", name && *name ? name : "Helvetica");
     return coreText->GetLineHeight();
 }

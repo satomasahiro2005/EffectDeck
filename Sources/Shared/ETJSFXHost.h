@@ -13,9 +13,14 @@ typedef int32_t (*ETJSFXMenuCallback)(void *context, const char *menu,
                                       int32_t x, int32_t y);
 ETJSFX *ETJSFX_Create(const char *path, double sampleRate, uint32_t maxFrames,
                       char *error, size_t errorCapacity);
+/// 走っている SaveState / Reconfigure / LoadState / GFX の呼び出しを待ってから消す。
+/// **返った後に呼ばれたものは守れない。**gfxQueue に積んだものは先に流すこと。
 void ETJSFX_Destroy(ETJSFX *host);
+/// 出力の NaN・Inf・非正規化数は 0 にして返す（後段の IIR を守る）。
 ETExternalProcessor ETJSFX_Processor(ETJSFX *host);
+/// Reconfigure / SaveState / LoadState は同じ host の上で 1 本ずつ走る（後から来た方は待つ）。
 bool ETJSFX_Reconfigure(ETJSFX *host, double sampleRate, uint32_t maxFrames);
+/// 全体が 16 MiB を超える状態は false（@serialize は書いている最中に止まる）。
 bool ETJSFX_SaveState(ETJSFX *host, uint8_t **bytes, size_t *size);
 bool ETJSFX_LoadState(ETJSFX *host, const uint8_t *bytes, size_t size);
 void ETJSFX_FreeBytes(void *bytes);
@@ -47,12 +52,13 @@ bool ETJSFX_UsesTrigger(const ETJSFX *host);
 bool ETJSFX_IsRunning(const ETJSFX *host);
 /// 自動バイパスを解く。診断を消し、締切の回数を 0 に戻し、
 /// **automaticBypass のときだけ** running へ戻す（maintenance は触らない）。
-/// 戻せたら true。
+/// 戻せたら true。maintenance の最中で戻せなかったときは診断を残す（札が消えない）。
 bool ETJSFX_ClearDiagnostic(ETJSFX *host);
 /// 締切を超えたブロックの累計。**測るためだけ。**
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *host);
 /// 1 ブロックの持ち時間に対して使った割合の最大値（1/1000）。1000 で使い切り。
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *host);
+/// 遅延（pdc_delay）が変わったか。遅延そのものは 0〜192000 サンプルに切ってある。
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);
 bool ETJSFX_HasGFX(const ETJSFX *host);
