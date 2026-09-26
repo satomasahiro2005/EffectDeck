@@ -7,27 +7,36 @@
 # ロックされているとログインキーチェーンが開かず、Xcode が Apple ID を
 # 読めない（"No Accounts" / "Cloud signing permission error"）。
 # 署名はクラウド管理なので、そこが開いていないと書き出せない。
+# Mac に API キーがあれば Accounts の代わりにそれを渡す（Scripts/asc_auth.sh）。
+# ロック中に最後まで通るかはまだ確かめていない。
 #
 # 先に Scripts/archive.sh を済ませておく（/tmp/EffeTuneLive.xcarchive）。
+# 書き出しの設定は ~/signing/export.plist（/tmp は再起動で消えるので置かない）。
+# **鍵を渡すと書き出しがビルド番号を上げる**（書庫の 26 が 27 で出た）。
+# 止めたいときは export.plist に manageAppVersionAndBuildNumber=false を足す。
 set -u
 export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")/.." || exit 1
+. Scripts/asc_auth.sh || exit 1   # KEY_ID / ISSUER / KEY と PROVISIONING
 
-KEY_ID=JYMYS92KUB
-ISSUER=175cb308-6a31-42f0-970a-e72757f60bde
-KEY="$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8"
 APP=6812467517
 VERSION_ID=51742091-f729-4a5a-8147-66077fa0164b
+EXPORT_PLIST="$HOME/signing/export.plist"
 
 export ASC_KEY_ID="$KEY_ID" ASC_ISSUER_ID="$ISSUER" ASC_PRIVATE_KEY_PATH="$KEY"
+
+[ -f "$EXPORT_PLIST" ] || {
+  echo "!! $EXPORT_PLIST が無い（method=app-store-connect・手動署名・プロファイル名を書いたもの）"
+  exit 1
+}
 
 echo "=== 書き出し ==="
 rm -rf /tmp/live-ipa
 /usr/bin/xcodebuild -exportArchive \
   -archivePath /tmp/EffeTuneLive.xcarchive \
   -exportPath /tmp/live-ipa \
-  -exportOptionsPlist /tmp/export.plist \
-  -allowProvisioningUpdates 2>&1 | grep -E "EXPORT SUCCEEDED|EXPORT FAILED|error:" | tail -5
+  -exportOptionsPlist "$EXPORT_PLIST" \
+  "${PROVISIONING[@]}" 2>&1 | grep -E "EXPORT SUCCEEDED|EXPORT FAILED|error:" | tail -5
 
 IPA="/tmp/live-ipa/EffectDeck.ipa"
 [ -f "$IPA" ] || { echo "!! ipa が無い。画面のロックを解いたか確認する"; exit 1; }
