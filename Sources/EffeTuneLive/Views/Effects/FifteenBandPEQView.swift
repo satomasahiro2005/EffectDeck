@@ -363,7 +363,6 @@ struct FifteenBandPEQView: View {
             decibelRange: -20...20,
             decibelStep: 6,
             height: 190,
-            caption: "Drag the nearest marker, or pick a band below",
             spectrumTap: dsp.probeTap(at: index),
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
             onMarkerSelected: { selected = $0 })

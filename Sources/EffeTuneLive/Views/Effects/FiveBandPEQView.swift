@@ -359,7 +359,6 @@ struct FiveBandPEQView: View {
             decibelRange: -20...20,
             decibelStep: 6,
             height: ETGraphMetrics.height,
-            caption: "Drag a marker: across for frequency, up for gain",
             spectrumTap: dsp.probeTap(at: index),
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
             onMarkerSelected: { selected = $0 })

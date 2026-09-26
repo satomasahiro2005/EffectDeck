@@ -10,7 +10,6 @@ struct PitchMeterView: View {
         VStack(alignment: .leading, spacing: 12) {
             PitchMeterGraph(tap: node.tapId, minimum: value("mn"), maximum: value("mx"), reference: value("rf"))
             if !graphOnly {
-                Text("Monophonic input only").font(.caption).foregroundStyle(.secondary)
                 ForEach(node.spec.params) { param in
                     ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
                 }

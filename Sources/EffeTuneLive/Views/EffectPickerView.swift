@@ -308,11 +308,9 @@ struct EffectPickerView: View {
                     }
                 } message: {
                     switch alert {
-                    case .link:
-                        Text("A link to a JSFX source. A GitHub page works as well as a raw link.")
                     case .failed(let why):
                         Text(why)
-                    case nil:
+                    case .link, nil:
                         EmptyView()
                     }
                 }
@@ -329,7 +327,7 @@ struct EffectPickerView: View {
                 }
                 Button("Cancel", role: .cancel) { pendingDeleteJSFX = nil }
             } message: {
-                Text("A chain built around it will not find it here again. This cannot be undone.")
+                Text("This cannot be undone.")
             }
             // **半分の高さで出す。** 全画面だと鎖が隠れて、つまんだものを
             // 落とす先が画面に無くなる。上半分に鎖を残す。
@@ -448,10 +446,6 @@ struct EffectPickerView: View {
             if au.entries.isEmpty && jsfx.entries.isEmpty {
                 ContentUnavailableView {
                     Label("No Plugins", systemImage: "waveform")
-                } description: {
-                    Text(ETJSFXHost.isEnabled
-                         ? "Install an AUv3 plug-in or import a single-file JSFX."
-                         : "Install an AUv3 plug-in.")
                 } actions: {
                     if ETJSFXHost.isEnabled {
                         Button("Import JSFX", systemImage: "square.and.arrow.down") {
@@ -641,8 +635,7 @@ struct EffectPickerView: View {
     private var userPresetList: some View {
         Group {
             if presets.names.isEmpty {
-                ContentUnavailableView("No user presets", systemImage: "square.stack",
-                                       description: Text("Save a chain from Presets to see it here."))
+                ContentUnavailableView("No user presets", systemImage: "square.stack")
             } else {
                 ScrollViewReader { proxy in
                 VStack(spacing: 0) {
@@ -835,16 +828,11 @@ struct EffectPickerView: View {
             searching = false
             Task { @MainActor in onPickPreset(name, load()) }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.primary)
-                Text("Adds its effects as a group named “\(name)”.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            Text(name)
+                .font(.system(size: 15))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
         }
         .onDrag {
             dismissAfterDragBegins()

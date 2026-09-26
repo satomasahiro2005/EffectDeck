@@ -45,8 +45,7 @@ struct HardClippingView: View {
                     default: return min(max(x, -threshold), threshold)
                     }
                 },
-                knees: knees,
-                caption: "Static curve. The kernel clips at 4x, then filters back down.")
+                knees: knees)
 
             ForEach(node.spec.params) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)

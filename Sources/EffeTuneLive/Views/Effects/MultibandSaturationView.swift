@@ -66,7 +66,6 @@ struct MultibandSaturationView: View {
                 decibelRange: -24...6,
                 decibelStep: 6,
                 height: ETGraphMetrics.compactHeight,
-                caption: "Drag 1 or 2 to move a crossover",
                 onMarkerChanged: { marker, hz, _ in
                     moveCrossover(marker, to: hz, f1: f1, f2: f2)
                 })

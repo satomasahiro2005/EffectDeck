@@ -37,8 +37,7 @@ struct HarmonicDistortionView: View {
                     let s4 = s2 * s2
                     let s5 = s4 * s
                     return (s + a2 * s2 + a3 * s3 + a4 * s4 + a5 * s5) * inverse
-                },
-                caption: "Polynomial through the 5th order, scaled by sensitivity.")
+                })
 
             ForEach(node.spec.params) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)

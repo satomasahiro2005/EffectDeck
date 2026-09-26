@@ -212,15 +212,6 @@ struct RoomEQView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if session.sources.isEmpty {
-                Text("""
-                     Room correction is an FIR built from a room measurement. Import one \
-                     to design it. Channel Delay and Output Gain work without it; the \
-                     delay is counted in samples.
-                     """)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             ForEach(warnings, id: \.self) { warning in

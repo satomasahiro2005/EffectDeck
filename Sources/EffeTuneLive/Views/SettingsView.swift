@@ -15,7 +15,7 @@
 //  設定の節は Preferences しか見ない。
 //
 //  設定を変えると音の経路を組み直す（Preferences.onAudioChange）。一瞬止まる。
-//  その断りは Processing rate の footer に 1 回だけ置いてある。繰り返さない。
+//  画面では断らない（説明文は置かない方針）。
 
 import SwiftUI
 import UIKit
@@ -91,8 +91,6 @@ struct SettingsView: View {
             Toggle("Sync Visuals to Audio", isOn: $prefs.syncVisualsToAudio)
         } header: {
             Text("Graphs")
-        } footer: {
-            Text("Delay graphs to match the audio output latency.")
         }
     }
 
@@ -113,8 +111,6 @@ struct SettingsView: View {
                               selection: $prefs.jsfxCanvasMode)
         } header: {
             Text("Plug-ins")
-        } footer: {
-            Text("Adaptive scales the canvas up to fill the card. Pixel Perfect stops at one canvas pixel per screen pixel, so most canvases look smaller and sharper. Either way the whole canvas stays on screen.")
         }
     }
 
@@ -279,8 +275,6 @@ struct SettingsView: View {
             }
         } header: {
             Text("Feedback")
-        } footer: {
-            Text("Report a problem opens with the diagnostics already filled in.")
         }
 
         // 名前が 1 つも無いうちは節ごと出さない。
@@ -368,8 +362,6 @@ private struct ETReportView: View {
                 }
             } header: {
                 Text("Where to send it")
-            } footer: {
-                Text("Either one opens with the diagnostics and the end of the log already written in.")
             }
 
             // **Copy details をここに置かない。**診断は上の 2 つが本文へ
@@ -381,8 +373,6 @@ private struct ETReportView: View {
             // ここに残るのは、本文に入りきらないもの＝ログの全体だけ。
             Section {
                 ETShareLogButton()
-            } footer: {
-                Text("Only a few kilobytes of the log fit in a link.")
             }
         }
         .navigationTitle("Report a problem")

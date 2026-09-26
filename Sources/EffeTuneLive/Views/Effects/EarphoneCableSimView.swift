@@ -171,7 +171,6 @@ struct EarphoneCableSimView: View {
             height: ETGraphMetrics.height,
             insets: .standard,
             readout: Self.readout(hz: probe, decibels: probeDecibels),
-            caption: "Source and cable against the earphone load",
             clipsContent: true,
             draw: { context, plot in
                 var path = Path()

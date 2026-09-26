@@ -299,12 +299,6 @@ struct PresetsView: View {
                         store.addFolder(typed)
                     }
                 }
-            } message: { what in
-                switch what {
-                case .rename:       Text("A name already in use is not accepted.")
-                case .renameFolder: Text("Everything in it keeps its own name.")
-                case .newFolder:    Text("Folders cannot contain folders.")
-                }
             }
         }
     }
@@ -325,11 +319,8 @@ struct PresetsView: View {
         } header: {
             Text("Save current chain")
         } footer: {
-            // 押せないボタンだけ置くと、壊れているのか条件があるのか読めない。
             // 同じ名前で保存すると前のものが黙って消えるので、押す前に言う。
-            if dsp.chain.isEmpty {
-                Text("There is nothing to save yet. Add an effect first.")
-            } else if !trimmedName.isEmpty && store.names.contains(trimmedName) {
+            if !dsp.chain.isEmpty && !trimmedName.isEmpty && store.names.contains(trimmedName) {
                 Text("A preset named “\(trimmedName)” already exists. Saving replaces it.")
             }
         }
@@ -627,8 +618,6 @@ struct PresetsView: View {
             }
         } header: {
             Text("System Presets")
-        } footer: {
-            Text("Adds to the end of the current chain instead of replacing it.")
         }
     }
 
@@ -674,12 +663,6 @@ struct PresetsView: View {
             }
         } header: {
             Text("EffeTune on the web")
-        } footer: {
-            if externalCount == 0 {
-                Text("A shared chain opens in EffeTune, and one made there opens here.")
-            } else {
-                Text("EffeTune export omits external effects. EffectDeck saves keep them.")
-            }
         }
     }
 }

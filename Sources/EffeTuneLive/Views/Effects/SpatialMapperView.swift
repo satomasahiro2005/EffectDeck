@@ -14,8 +14,6 @@ struct SpatialMapperView: View {
                 Button("Use all output channels") {
                     dsp.setRouting(at: index, channelSpec: -2)
                 }
-                Text("Spatial Mapper needs Routing set to All to send sound beyond channels 1–2.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             ForEach(node.spec.params.filter { !$0.isArray }) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
@@ -26,8 +24,6 @@ struct SpatialMapperView: View {
                 Text("Residual").tag("rm")
             }.pickerStyle(.segmented)
             Stepper("Output \(output + 1)", value: $output, in: 0...15)
-            Text("Only channels available on the audio route produce output.")
-                .font(.caption).foregroundStyle(.secondary)
             if let matrix = node.spec.params.first(where: { $0.key == component }) {
                 ForEach(0..<inputCount, id: \.self) { input in
                     let offset = matrix.offset + output * 16 + input
