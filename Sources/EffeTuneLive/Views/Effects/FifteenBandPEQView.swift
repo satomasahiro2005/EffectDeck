@@ -14,8 +14,8 @@
 //    - 下の番号の帯で直に選べる。選んだ番号は勝手に見える位置まで送る
 //    - 選んでいる 1 本だけ、合成曲線の脇に破線で出す
 //
-//  web にあって、ここに無いもの: Import（.txt の EQ 設定の読み込み）。
-//  ファイルを開く口がまだ無いので付けていない。Inverse は付けた。
+//  Import と Inverse は web と同じく両方ある（fifteen_band_peq.js:472-508）。
+//  Import の読み方は DSP/ETPEQTextImport.swift。**書き込みは Inverse と同じ setValue を通す。**
 //
 //  図に重ねるスペクトラムについて:
 //    web にも同じものが在るが、PEQ のプラグインの中には無い。ホスト側の共通機能
@@ -31,6 +31,7 @@
 
 import SwiftUI
 import Foundation
+import UniformTypeIdentifiers
 
 // MARK: - バンド 1 本ぶん
 
@@ -330,6 +331,9 @@ struct FifteenBandPEQView: View {
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
 
+    @State private var importing = false
+    @State private var importFailure: String?
+
     /// 生成されたカタログは配列の既定値を拾えていない
     /// （Tools/gen_catalog.py:101 で list を float に直せず 0 になる）。
     /// 全部 0Hz のままだと印が左端に 15 個重なるので、web 版の初期値
@@ -424,8 +428,33 @@ struct FifteenBandPEQView: View {
                     .font(.system(size: 12))
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
+                // web は accept='.txt'（fifteen_band_peq.js:483）。
+                Button("Import") { importing = true }
+                    .font(.system(size: 12))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .fileImporter(isPresented: $importing,
+                                  allowedContentTypes: [.plainText],
+                                  allowsMultipleSelection: false) { result in
+                        switch result {
+                        case .success(let urls):
+                            if let url = urls.first { importEQ(url) }
+                        case .failure(let error):
+                            // **取り消しは黙る。**それ以外の失敗は読めなかったのと同じ扱い。
+                            if (error as? CocoaError)?.code != .userCancelled {
+                                importFailure = "Could not read that file."
+                            }
+                        }
+                    }
             }
             numbers
+        }
+        .alert("Import Failed", isPresented: Binding(
+            get: { importFailure != nil },
+            set: { if !$0 { importFailure = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importFailure ?? "")
         }
     }
 
@@ -527,6 +556,36 @@ struct FifteenBandPEQView: View {
         let l = layout
         for i in 0..<l.count {
             dsp.setValue(-value(l.gain + i), at: index, offset: l.gain + i)
+        }
+    }
+
+    /// web の Import（fifteen_band_peq.js:1279-1355）。読み方は ETPEQTextImport。
+    /// **1 本も当たらなければ何も書かない。**上流は全バンドを切って終わるが、
+    /// 読めないファイルで今の EQ を消さないようにした。
+    private func importEQ(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            importFailure = "Could not read that file."
+            return
+        }
+        let result = ETPEQTextImport.parse(ETPEQTextImport.decode(data))
+        guard result.imported > 0 else {
+            importFailure = "No filters found."
+            return
+        }
+
+        let l = layout
+        // Inverse と同じ setValue。値の変わらない所は撃たない（1 回ごとに instance へ送るため）。
+        func write(_ v: Float, _ offset: Int) {
+            if value(offset) != v { dsp.setValue(v, at: index, offset: offset) }
+        }
+        for (i, b) in result.bands.prefix(l.count).enumerated() {
+            write(Float(b.type), l.type + i)
+            write(Float(b.frequency), l.frequency + i)
+            write(Float(b.gain), l.gain + i)
+            write(Float(b.q), l.q + i)
+            write(b.enabled ? 1 : 0, l.enabled + i)
         }
     }
 

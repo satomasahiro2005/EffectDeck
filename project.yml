@@ -242,6 +242,8 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SpectrumSmoothing.swift
       # リンクの読み替え（RemoteFileTests）。Foundation と OSLog だけ。
       - path: Sources/EffeTuneLive/DSP/ETRemoteFile.swift
+      # 15Band PEQ の Import（AutoEQ の ParametricEQ.txt など）。Foundation だけ（PEQTextImportTests）。
+      - path: Sources/EffeTuneLive/DSP/ETPEQTextImport.swift
       # 鎖の意味と正規形。Foundation だけなので実機なしで試せる。
       # 判断をここへ出してあるのは、そのため（PipelineRulesTests）。
       - path: Sources/EffeTuneLive/DSP/PipelineAnalysis.swift
