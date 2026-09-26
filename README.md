@@ -110,8 +110,9 @@ checklist to run a generated script against before you try to import it.
 
 In the app, **Write JSFX with ChatGPT** (Plugins, or the Import JSFX menu) opens
 [effectdeck.nemut.ai/write](https://effectdeck.nemut.ai/write), which hands ChatGPT a
-request that points it at `JSFX.md` and asks what you want to build. Copy the script it
-returns and use **Import JSFX → From Clipboard**. Use a paid ChatGPT plan: it reads the
+request that points it at `JSFX.md` and asks what you want to build. Import the file it
+returns with **Import JSFX → From Files**, or copy the script and use **From Clipboard**.
+Use a paid ChatGPT plan: it reads the
 linked file and reasons through the code, while the free tier may skip the link and
 miss the rules.
 

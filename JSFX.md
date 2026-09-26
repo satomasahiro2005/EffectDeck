@@ -25,6 +25,8 @@ Hard requirements, in order of how often they are violated:
    it is a plain text search. See the rejection table.
 5. **No JIT.** The interpreter is portable EEL2. A script that repeatedly
    misses the block deadline is forced into passthrough.
+6. **Hand over the whole script as one file**, every time, including after a
+   change. See *Handing the script over*.
 
 If a requirement conflicts with what you know about REAPER JSFX, this document
 wins.
@@ -112,6 +114,21 @@ word in a string, break it up (`"inclu" + "de("`).
 - [ ] every `@sample` body is cheap; per-block work is in `@block`
 - [ ] if it draws, it reads `gfx_w` / `gfx_h` instead of assuming a size
 - [ ] if it has state worth keeping, it has an `@serialize`
+- [ ] the reply carries the whole script, as one file (see below)
+
+### Handing the script over
+
+The user imports exactly what you hand over, as a file or from the clipboard.
+They cannot put a script together from pieces.
+
+- **Always hand over the whole script**, also after a fix or a change. Never
+  send only the changed lines, a diff, or "replace this part with".
+- **As a file if you can create files:** one downloadable file holding the
+  complete script, named after the effect with the `.jsfx` extension (for
+  example `Tape Wobble.jsfx`).
+- **Otherwise as one code block:** the complete script in a single fenced code
+  block, and no other code block in the same reply. EffectDeck's clipboard
+  import takes the first code block it finds.
 
 ### What you can rely on
 

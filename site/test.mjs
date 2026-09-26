@@ -139,12 +139,13 @@ await test("/write text: the app's request, linked from home and llms.txt", asyn
   assert.equal(decodeURIComponent(CHATGPT.slice("https://chatgpt.com/?q=".length)), CHATGPT_Q);
   assert.ok(CHATGPT_Q.startsWith("Write a JSFX effect for EffectDeck, an iOS app that runs single-file JSFX. First read "));
   assert.ok(CHATGPT_Q.includes(JSFX_MD));
-  assert.ok(CHATGPT_Q.endsWith("reply with the complete script in one code block."));
+  assert.ok(CHATGPT_Q.endsWith("give the whole script, not only the part you changed: as one downloadable .jsfx file if you can create files, otherwise in one code block."));
   assert.ok(!/\s{2}|\n/.test(CHATGPT_Q), "joined lines");
   assert.equal(TEXT.writeTitle, "Write a JSFX effect with ChatGPT");
   assert.match(TEXT.writePlan, /^A paid ChatGPT plan is recommended/);
   assert.ok(TEXT.writePlan.includes(`href="${JSFX_MD}"`));
-  assert.match(TEXT.writeReturn, /Import JSFX → From Clipboard/);
+  assert.match(TEXT.writeReturn, /Import JSFX → From Files/);
+  assert.match(TEXT.writeReturn, /From Clipboard/);
   assert.ok(TEXT.jsfxLinks.some((l) => l.includes('href="/write"')));
   assert.ok(!TEXT.jsfxLinks.some((l) => l.includes("chatgpt.com")), "home goes through /write");
   assert.ok(LLMS_TXT.includes("https://effectdeck.nemut.ai/write"));

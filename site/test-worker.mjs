@@ -311,7 +311,8 @@ try {
     assert.equal(new URL(open[1]).searchParams.get("q"), CHATGPT_Q);
     assert.match(r.body, /A paid ChatGPT plan is recommended/);
     assert.ok(r.body.includes("The same text works in other assistants."));
-    assert.ok(r.body.includes("Import JSFX → From Clipboard"));
+    assert.ok(r.body.includes("Import JSFX → From Files"));
+    assert.ok(r.body.includes("From Clipboard"));
     assert.ok(r.body.includes(`<link rel="canonical" href="https://${DECK}/write">`));
     assert.ok(r.body.includes(`<meta name="apple-itunes-app" content="app-id=${APP}">`));
     const m = new RegExp(`<meta name="apple-itunes-app" content="app-id=${APP}">\\n<script>([\\s\\S]*?)</script>`).exec(r.body);

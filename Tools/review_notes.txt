@@ -18,8 +18,8 @@ Only from the user. Scripts are imported by the user through:
   script is carried inside the link itself; it is added to the Plugins list, not
   to the chain, and does not run until the user adds it.
 Import JSFX > Write JSFX with ChatGPT only opens https://effectdeck.nemut.ai/write
-in the browser. The app sends nothing to ChatGPT; the user copies the script it
-returns and uses From Clipboard.
+in the browser. The app sends nothing to ChatGPT; the user imports the script it
+returns with From Files or From Clipboard.
 The app does not offer a catalog, store or directory of scripts, and it does not
 download scripts on its own. A link is fetched only when the user taps Import.
 The App Store build ships no scripts, so no JSFX appears in the list until the

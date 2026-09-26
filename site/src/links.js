@@ -32,5 +32,7 @@ export const CHATGPT_Q =
   "one file only, no import and no include(), and never write the text include( " +
   "anywhere; no file sliders, no filesystem, no MIDI; desc: comes before any @ " +
   "section; the interpreter is portable EEL2 without JIT, so keep @sample cheap. " +
-  "Then ask me what effect I want, and reply with the complete script in one code block.";
+  "Then ask me what effect I want. Every time you give me the script, give the whole script, " +
+  "not only the part you changed: as one downloadable .jsfx file if you can create files, " +
+  "otherwise in one code block.";
 export const CHATGPT = "https://chatgpt.com/?q=" + encodeURIComponent(CHATGPT_Q);

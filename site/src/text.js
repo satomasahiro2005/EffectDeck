@@ -40,7 +40,7 @@ export const TEXT = {
   jsfx: [
     "EffectDeck loads JSFX, the script format REAPER uses. One text file is one effect.",
     `${a(JSFX_MD, "JSFX.md")} sets out what EffectDeck supports and what it rejects. It is written to be handed to a language model as it is.`,
-    "In the app, <strong>Write JSFX with ChatGPT</strong> (under Plugins) opens a page with a request for ChatGPT that points it at JSFX.md. Copy the script it returns and use <strong>Import JSFX → From Clipboard</strong>. A paid ChatGPT plan works better, since the free tier may skip the linked file and miss the rules.",
+    "In the app, <strong>Write JSFX with ChatGPT</strong> (under Plugins) opens a page with a request for ChatGPT that points it at JSFX.md. Import the file it returns with <strong>Import JSFX → From Files</strong>, or copy the script and use <strong>From Clipboard</strong>. A paid ChatGPT plan works better, since the free tier may skip the linked file and miss the rules.",
   ],
   // **ChatGPT へは /write を挟む。**依頼文を見せてコピーもでき、有料版を勧める 1 行もそこに置く。
   jsfxLinks: [a(JSFX_MD, "JSFX.md"), a("/write", "Write JSFX with ChatGPT")],
@@ -71,7 +71,7 @@ export const TEXT = {
   writePlan: `A paid ChatGPT plan is recommended: it reads the linked ${a(JSFX_MD, "JSFX.md")} and reasons through the code. The free plan often gives scripts that do not load.`,
   openChatGPT: "Open ChatGPT",
   writeOther: "The same text works in other assistants.",
-  writeReturn: "Copy the script it returns, then in EffectDeck use <strong>Import JSFX → From Clipboard</strong>.",
+  writeReturn: "In EffectDeck, import the file it returns with <strong>Import JSFX → From Files</strong>, or copy the script and use <strong>From Clipboard</strong>.",
   off: "Off",
   unreadable: "This link could not be read.",
   copy: "Copy",
@@ -239,7 +239,7 @@ export const LLMS_TXT = `# EffectDeck
 - Audio is processed on the device. It is not recorded and not sent over the network.
 - The effects are EffeTune's DSP (MIT license), including EQ, dynamics, saturation, reverb, spatial effects and analyzers.
 - EffectDeck also loads JSFX, the script format REAPER uses. One text file is one effect. JSFX.md describes what is supported and is written to be given to a language model.
-- https://effectdeck.nemut.ai/write has a request to paste into ChatGPT or another assistant to have it write a JSFX effect. The returned script is imported with Import JSFX → From Clipboard.
+- https://effectdeck.nemut.ai/write has a request to paste into ChatGPT or another assistant to have it write a JSFX effect. The returned file is imported with Import JSFX → From Files, or the copied script with From Clipboard.
 - EffectDeck is free on the App Store and its source is on GitHub under the MIT license.
 - Chains and JSFX scripts are shared as links on https://effectdeck.nemut.ai/ . A JSFX link carries the script after the #.
 
