@@ -171,10 +171,10 @@ private enum ETTips {
               en: .init(title: "Spotify sometimes cannot connect to EffectDeck, even on tracks "
                              + "without a Canvas",
                         act: "Restart Spotify, then connect to EffectDeck again.",
-                        why: "After a Canvas has played, iOS may keep treating Spotify as playing video."),
+                        why: "When Spotify has a video (such as a Canvas) loaded, iOS treats it as playing video, even while paused."),
               ja: .init(title: "SpotifyでCanvasのない曲でもEffectDeckに接続できないことがある",
                         act: "Spotifyを再起動してから、もう一度EffectDeckに接続してください。",
-                        why: "Canvasを再生したあと、iOSがSpotifyを動画の再生中として扱い続けることがあります。")),
+                        why: "Spotifyに動画（Canvasなど）が読み込まれていると、一時停止中でもiOSは動画の再生中と判定します。")),
         ETTip(issue: 3,
               en: .init(title: "Playing a YouTube video may disconnect EffectDeck",
                         act: "Restart YouTube, then connect to EffectDeck again. "

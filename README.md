@@ -66,9 +66,9 @@ AirPlay instead of here, finds no receiver, and puts it back where it was. A tra
 Canvas enabled cannot connect to EffectDeck, and Spotify does not have to be on screen for
 it. Turn Canvas off in Spotify's settings, then restart Spotify.
 
-Spotify sometimes cannot connect even on a track without a Canvas: after a Canvas has
-played, iOS may keep treating Spotify as playing video. Restart Spotify, then connect to
-EffectDeck again.
+Spotify sometimes cannot connect even on a track without a Canvas: when Spotify has a video
+(such as a Canvas) loaded, iOS treats it as playing video, even while paused. Restart
+Spotify, then connect to EffectDeck again.
 
 Playing a YouTube video may disconnect EffectDeck, depending on YouTube's playback state.
 Restart YouTube, then connect to EffectDeck again; the same video usually connects.
