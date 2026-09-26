@@ -101,4 +101,6 @@ function main() {
     return 0;
 }
 
-process.exit(main());
+// process.exit() は使わない。Mac のパイプは stdout が非同期なので、
+// 書き切る前に終わり 65536 バイトで切れる。exitCode なら出し切ってから終わる。
+process.exitCode = main();
