@@ -15,6 +15,8 @@ struct JSFXSourceView: View {
     @State private var rendered: JSFXRenderedSource?
     @State private var unavailable = false
     @State private var query = ""
+    /// **閉じる前に畳む。**検索が出ている間のdismiss()は検索だけを閉じ、シートが残る（EffectPickerViewと同じ）。
+    @State private var searching = false
     @State private var matches: [Int] = []
     @State private var matchSet: Set<Int> = []
     @State private var current = 0
@@ -29,7 +31,7 @@ struct JSFXSourceView: View {
             }
             .navigationTitle("JSFX Source")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $query)
+            .searchable(text: $query, isPresented: $searching)
         }
         .task { await load() }
     }
@@ -79,7 +81,11 @@ struct JSFXSourceView: View {
     @ToolbarContentBuilder
     private func toolbar(_ proxy: ScrollViewProxy) -> some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
-            Button("Done") { dismiss() }
+            Button("Done") {
+                searching = false
+                // 畳むのが効くのは次の回。
+                Task { @MainActor in dismiss() }
+            }
         }
         if let rendered, !rendered.document.sections.isEmpty {
             ToolbarItem(placement: .topBarLeading) {
