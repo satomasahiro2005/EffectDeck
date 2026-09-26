@@ -70,6 +70,9 @@ struct ConnectionTipsView: View {
                         .font(.system(size: 15, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
+                    Text(verbatim: p.intro)
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
                     ForEach(Array(p.steps.enumerated()), id: \.offset) { i, step in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(verbatim: "\(i + 1).")
@@ -137,10 +140,12 @@ private enum ETTips {
     /// 2026.09.17 から上げた後に音声が届かない件（#2）は 3 段目で直るので節を持たない。
     static let procedure = (
         en: (title: "If none of the above applies",
+             intro: "Try these in order.",
              steps: ["Restart the player app.",
                      "Restart EffectDeck.",
                      "Restart the iPhone."]),
         ja: (title: "上記のいずれにも当てはまらない場合",
+             intro: "上から順にお試しください。",
              steps: ["プレイヤーアプリを再起動する",
                      "EffectDeckを再起動する",
                      "iPhoneを再起動する"])
@@ -153,32 +158,31 @@ private enum ETTips {
     /// **問題は接続する時に起きる。**題は「再生されない」でなく「接続できない」「接続が切れる」で書く。
     /// **日本語と英数字のあいだに空白を入れない。**
     static let all: [ETTip] = [
+        // 日本語はオーナーの文面（2026-09-26）をそのまま使う。英語はそれに合わせて書いた。
         ETTip(issue: 1,
-              en: .init(title: "Spotify tracks with a Canvas cannot connect to EffectDeck",
-                        act: "Select EffectDeck while a track without a Canvas is playing, "
-                           + "or turn Canvas off in Spotify's settings.",
-                        why: "iOS treats a track with a Canvas (the short video behind the player) "
-                           + "as video."),
-              ja: .init(title: "CanvasのあるSpotifyの曲はEffectDeckに接続できない",
-                        act: "Canvasのついていない曲でEffectDeckを選択するか、Spotifyの設定でCanvasをオフにしてください。",
-                        why: "iOSはCanvas（再生画面の背景に表示される短い動画）のある曲を動画として扱います。")),
-        // #4 は Canvas と関係ない。Canvas の無い曲でも Spotify が動画を再生中と判定され、
-        // Spotify のプロセスが変わると同じ曲で通った（issue #4 の本文）。
+              en: .init(title: "Spotify tracks with Canvas enabled cannot connect to EffectDeck",
+                        act: "Turn Canvas off in Spotify's settings, then restart Spotify.",
+                        why: "iOS treats playback that includes a Canvas as video and refuses "
+                           + "the connection to EffectDeck."),
+              ja: .init(title: "SpotifyでCanvasが有効な曲を再生するとEffectDeckに接続できない",
+                        act: "Spotifyの設定でCanvasをオフにしてから、Spotifyを再起動してください。",
+                        why: "Canvasを含む再生はiOSで動画として扱われ、EffectDeckへの接続が拒否されます。")),
         ETTip(issue: 4,
-              en: .init(title: "Spotify sometimes cannot connect to EffectDeck",
-                        act: "Restart Spotify.",
-                        why: "iOS sometimes treats Spotify as playing video even on a track "
-                           + "without a Canvas. After a restart, the same track connects."),
-              ja: .init(title: "SpotifyがEffectDeckに接続できないことがある",
-                        act: "Spotifyを再起動してください。",
-                        why: "iOSはCanvasのない曲でもSpotifyを動画の再生中と判定することがあります。再起動すると同じ曲でも接続できます。")),
+              en: .init(title: "Spotify sometimes cannot connect to EffectDeck, even on tracks "
+                             + "without a Canvas",
+                        act: "Restart Spotify, then connect to EffectDeck again.",
+                        why: "After a Canvas has played, iOS may keep treating Spotify as playing video."),
+              ja: .init(title: "SpotifyでCanvasのない曲でもEffectDeckに接続できないことがある",
+                        act: "Spotifyを再起動してから、もう一度EffectDeckに接続してください。",
+                        why: "Canvasを再生したあと、iOSがSpotifyを動画の再生中として扱い続けることがあります。")),
         ETTip(issue: 3,
-              en: .init(title: "Playing a YouTube video disconnects EffectDeck",
-                        act: "Restart YouTube, then play the video.",
-                        why: "When iOS treats YouTube as playing video, it disconnects EffectDeck. "
-                           + "After a restart, the same video may stay connected."),
-              ja: .init(title: "YouTubeの動画を再生するとEffectDeckとの接続が切れる",
-                        act: "YouTubeを再起動してから、動画を再生してください。",
-                        why: "iOSがYouTubeを動画の再生中として扱うと、EffectDeckとの接続が切れます。YouTubeを再起動すると、同じ動画でも接続が続く場合があります。")),
+              en: .init(title: "Playing a YouTube video may disconnect EffectDeck",
+                        act: "Restart YouTube, then connect to EffectDeck again. "
+                           + "The same video usually connects.",
+                        why: "Depending on YouTube's playback state, iOS may end the connection "
+                           + "to EffectDeck."),
+              ja: .init(title: "YouTubeの動画を再生するとEffectDeckとの接続が切れることがある",
+                        act: "YouTubeを再起動してから、もう一度EffectDeckに接続してください。同じ動画でも接続できることが多いです。",
+                        why: "YouTubeの再生状態によっては、iOSがEffectDeckとの接続を解除することがあります。")),
     ]
 }

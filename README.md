@@ -62,16 +62,16 @@ built-in speaker
 
 Almost always **Spotify with Canvas on.** Canvas is the short looping video behind some
 tracks. While one plays, the session counts as video output, so iOS sends the route to
-AirPlay instead of here, finds no receiver, and puts it back where it was. A track with a
-Canvas cannot connect to EffectDeck, and Spotify does not have to be on screen for it.
-Pick EffectDeck while a track without a Canvas is playing, or turn Canvas off in Spotify's
-settings.
+AirPlay instead of here, finds no receiver, and puts it back where it was. A track with
+Canvas enabled cannot connect to EffectDeck, and Spotify does not have to be on screen for
+it. Turn Canvas off in Spotify's settings, then restart Spotify.
 
-Spotify sometimes cannot connect even on a track without a Canvas: iOS treats it as playing
-video. Restart Spotify; after a restart the same track connects.
+Spotify sometimes cannot connect even on a track without a Canvas: after a Canvas has
+played, iOS may keep treating Spotify as playing video. Restart Spotify, then connect to
+EffectDeck again.
 
-Playing a YouTube video disconnects EffectDeck for the same reason. Restart YouTube, then
-play the video; after a restart the same video may stay connected.
+Playing a YouTube video may disconnect EffectDeck, depending on YouTube's playback state.
+Restart YouTube, then connect to EffectDeck again; the same video usually connects.
 
 Otherwise, try these in order:
 
