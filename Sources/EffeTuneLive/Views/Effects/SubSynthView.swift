@@ -17,8 +17,8 @@
 //    縦 -30〜+6 dB、格子は 6 dB ごと（同 462-464）
 //    線は 2 本。dry は Dry HPF だけを掛けたもの（同 501-519。Dry Level は入らない）、
 //      sub は Sub Level に Sub LPF と Sub HPF を掛けたもの（同 525-554）
-//    軸名は同 479-483 の「Frequency (Hz)」「Level (dB)」。GraphCanvas は軸名を持たないので
-//      見出しに入れてある。
+//    軸名は同 479-483 の「Frequency (Hz)」「Level (dB)」。GraphCanvas は軸名を持たず、
+//      見出しにも入れない（見出しは線の名前だけ）。
 //
 //  上流は図をコントロールの後ろに置く（同 405）が、このアプリの他のカードは
 //  図が先なので、そちらに合わせてある。
@@ -68,7 +68,7 @@ struct SubSynthView: View {
             y: ETAxis.decibels(Self.decibelRange, step: 6),
             height: ETGraphMetrics.height,
             insets: .standard,
-            caption: "Sub and Dry, Level (dB) over Frequency (Hz)",
+            caption: "Sub / Dry",
             clipsContent: true,
             draw: { context, plot in
                 for trace in traces {

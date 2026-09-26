@@ -38,11 +38,12 @@ struct ClipboardBanner: View {
                                 .font(.system(size: 14, weight: .semibold))
                                 .fixedSize(horizontal: false, vertical: true)
                             // 押すと今の鎖が消えることを、押す前に言う。
-                            Text(failed ? "Copy an EffeTune share link and try again."
-                                        : "Paste it to replace the current chain.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            if !failed {
+                                Text("Pasting replaces the current chain.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
 
                         Spacer(minLength: 4)

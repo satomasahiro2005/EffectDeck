@@ -76,14 +76,6 @@ struct CrosstalkCancellationView: View {
         var title: String {
             self == .left ? "Left-ear measurement" : "Right-ear measurement"
         }
-
-        /// 「左スピーカーの枠は下のチャンネルを取る」（同 :30-31）。
-        /// 枠の呼び名は同 :9-14 の SLOT_LABELS。
-        var hint: String {
-            self == .left
-                ? "Channel 1 becomes LL (L speaker → left ear), channel 2 becomes RL (R speaker → left ear)."
-                : "Channel 1 becomes LR (L speaker → right ear), channel 2 becomes RR (R speaker → right ear)."
-        }
     }
 
     private var leftEar: ETCrosstalkLoader.Ear? { session.leftEar }
@@ -187,11 +179,6 @@ struct CrosstalkCancellationView: View {
                 .foregroundStyle(loaded == nil ? AnyShapeStyle(.secondary)
                                                : AnyShapeStyle(.primary))
                 .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(side.hint)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {

@@ -5,8 +5,8 @@
 //  web 版で作ったプリセットをこちらで開くには、同じ IR がここに入っている必要がある。
 //  鍵は sha256 の先頭24桁で、web 版と同じ作り方をしている。
 //
-//  取り込みの結果と削除の確認は上流に合わせてある
-//  （js/locales/en.json5 の irLibrary.status.importResult と irLibrary.confirm.delete）。
+//  取り込みの結果は上流に合わせてある（js/locales/en.json5 の irLibrary.status.importResult）。
+//  削除の確認は見出しだけ上流（irLibrary.confirm.delete）に寄せ、本文は戻せないことだけ言う。
 //  importFile は読めない・書けないときに nil を返すだけで何も言わない。
 //  同じ中身のものは既にある鍵を返して一覧が変わらない。
 //  どちらも呼びっぱなしだと「選んだのに増えない」が理由なしで起きる。
@@ -48,16 +48,6 @@ struct IRLibraryView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                } footer: {
-                    // 「WAV と FLAC が使える」とは書かない。**このアプリに音の
-                    // デコーダは無い。** importFile は中身を読まずに sha256 を取って
-                    // Documents へ写すだけで、IR を畳み込みへ渡す口もまだ無い
-                    // （IRReverbView.swift の notice に同じことが書いてある）。
-                    Text("""
-                         Files are kept under this app's Documents folder, so you can also \
-                         drop them in with the Files app. Nothing plays them back yet: \
-                         IR Reverb still passes the dry signal through.
-                         """)
                 }
 
                 if library.entries.isEmpty {
@@ -100,10 +90,6 @@ struct IRLibraryView: View {
 
                     } header: {
                         Text("Impulse responses")
-                    } footer: {
-                        Text(onPick == nil
-                             ? "Swipe one to delete it."
-                             : "Tap one to load it. Swipe to delete.")
                     }
                 }
             }
@@ -128,12 +114,8 @@ struct IRLibraryView: View {
                 Button("Delete", role: .destructive) { library.remove(entry) }
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
-                // 上流の文言に寄せる（irLibrary.confirm.delete）。
-                // 「使用中」は言えない。IR を指す側がまだ居ないので、
-                // 困るのは**その鍵を書いたプリセットを開いたとき**だけ。
-                Text("""
-                     A preset built around it will not find it here again. This cannot be undone.
-                     """)
+                // 戻せないことだけ言う。「使用中」は言えない（IR を指す側を数えていない）。
+                Text("This cannot be undone.")
             }
         }
     }

@@ -49,8 +49,7 @@ struct DynamicSaturationView: View {
                 shape: { x in
                     let wet = tanh(drive * (x + bias)) - biasTerm
                     return x * (1 - mix) + wet * mix
-                },
-                caption: "Cone displacement in, shaped displacement out.")
+                })
 
             if !graphOnly {
                 label("Output")

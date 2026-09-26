@@ -99,7 +99,7 @@ struct ETNoticeRow: View {
     let systemImage: String
     let tone: ETNoticeTone
     let title: String
-    let detail: String
+    let detail: String?
     var mono: String? = nil
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
@@ -112,10 +112,12 @@ struct ETNoticeRow: View {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true)
-                Text(detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let mono {
                     Text(mono)
                         .font(.system(size: 11, design: .monospaced))

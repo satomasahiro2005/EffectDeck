@@ -498,7 +498,7 @@ final class GroupDelayEQDesigner: ObservableObject {
         var message: String {
             switch self {
             case .flat:
-                return "All bands are at 0 ms, so audio passes through unchanged."
+                return "All bands are at 0 ms."
             case .designing:
                 return "Designing filter…"
             case .staging:

@@ -890,13 +890,12 @@ private struct TubeSimulatorHUD: View {
         return sign + pad + String(whole) + String(fraction)
     }
 
-    /// 上流の status（js:6983-6988）。0 dB でも必ず出す。
+    /// 上流の status（js:6983-6988）から、後ろの案内の文を落としたもの。0 dB でも必ず出す。
     private var safetyLine: String {
         guard let reported = latest?.safetyReductionDb, reported.isFinite, reported < 0 else {
             return "Output safety reduction: 0.0 dB."
         }
-        return String(format: "Output safety reduction: %.1f dB applied automatically. "
-                      + "Move Output Safety Trim to clear it.", -reported)
+        return String(format: "Output safety reduction: %.1f dB.", -reported)
     }
 }
 

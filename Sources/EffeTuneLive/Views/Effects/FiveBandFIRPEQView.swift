@@ -213,7 +213,6 @@ private struct FiveBandFIRPEQPanel: View {
             decibelRange: -20...20,
             decibelStep: 6,
             height: ETGraphMetrics.height,
-            caption: "Drag a handle for frequency and gain. Target is dashed.",
             // 他の PEQ と同じく、入っている音を図に重ねる。
             spectrumTap: tapId,
             onMarkerChanged: { slot, hz, db in

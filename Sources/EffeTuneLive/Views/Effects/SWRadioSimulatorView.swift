@@ -137,29 +137,21 @@ private struct SWRadioHUD: View {
     private var content: some View {
         if !isEnabled {
             // js:2070-2076 の messages。
-            placeholder("Effect is off", nil)
+            placeholder("Effect is off")
         } else if let t = latest {
             cards(t)
         } else {
-            placeholder("Waiting for audio", "Start playback to view the receiver status.")
+            placeholder("Waiting for audio")
         }
     }
 
-    private func placeholder(_ title: String, _ detail: String?) -> some View {
-        VStack(spacing: 4) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: Self.cardHeight * 2 + Self.gap)
-        .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+    private func placeholder(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.cardHeight * 2 + Self.gap)
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 
     private func cards(_ t: ETSWRadioTelemetry) -> some View {

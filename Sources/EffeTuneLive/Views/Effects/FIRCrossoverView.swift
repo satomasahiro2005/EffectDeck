@@ -53,7 +53,7 @@
 //
 //  並びは上流と同じで、error → Latency → Band Count。
 //  error の場所には、出口が足りているときだけ designer の状態を出す。
-//  .unavailable の文は busError の 1 行目と同じことを言うので、重ねない。
+//  .unavailable の文は busError と同じことを言うので、重ねない。
 
 import SwiftUI
 import Foundation
@@ -96,8 +96,8 @@ private struct FIRCrossoverBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // .unavailable の文（FIRCrossoverDesigner.swift:572）は busError の
-            // 1 行目と同じことを言う。出口が足りないときは busError だけ出す。
+            // .unavailable の文（FIRCrossoverDesigner.swift:572）は busError と
+            // 同じことを言う。出口が足りないときは busError だけ出す。
             if maximumBandCount == 0 {
                 busError
             } else {
@@ -105,7 +105,6 @@ private struct FIRCrossoverBody: View {
             }
             latencyRow
             bandCountRow
-            notice
         }
         .onAppear { connect() }
         // 鎖を組み直すと instance が変わる（EffeTuneDSP.swift:594-607 の rebuildAll）。
@@ -227,46 +226,14 @@ private struct FIRCrossoverBody: View {
 
     // MARK: 出口の幅が足りない
 
-    /// fir_crossover.js:615-622 の _renderBusError。1 文目は上流と同じ文言。
+    /// fir_crossover.js:615-622 の _renderBusError の 1 文目。文言は上流と同じ。
     private var busError: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("This effect needs an even number of output channels from 4 to 16.")
-                .font(.system(size: 12, weight: .semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            Text("""
-                 This build processes two channels, so the kernel passes audio through \
-                 unchanged and the filters are never loaded. The band controls still \
-                 record what you pick.
-                 """)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-    }
-
-    // MARK: 図が無い理由
-
-    /// 何も言わずに空にすると、壊れているように見える。
-    private var notice: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("No band response curve")
-                .font(.system(size: 12, weight: .semibold))
-            Text("""
-                 Crossover frequencies, slopes, phase and taps are not parameters of this \
-                 effect. They shape the FIR coefficients that reach the kernel as an asset, \
-                 and a preset cannot carry them, so they stay at their defaults and there \
-                 is nothing to plot.
-                 """)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+        Text("This effect needs an even number of output channels from 4 to 16.")
+            .font(.system(size: 12, weight: .semibold))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 
     // MARK: 値の読み書き

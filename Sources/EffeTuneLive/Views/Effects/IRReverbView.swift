@@ -110,7 +110,7 @@ struct IRReverbView: View {
     /// 上流の status 行（ir_reverb.js:1963-1970）に当たるもの。
     private var status: String {
         switch library.entries.count {
-        case 0:  return "Import an impulse response to use IR Reverb."
+        case 0:  return "No impulse responses in the library."
         case 1:  return "1 impulse response in the library."
         case let n: return "\(n) impulse responses in the library."
         }
@@ -135,15 +135,6 @@ struct IRReverbView: View {
                 Text(failure)
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if node.irId.isEmpty {
-                Text("""
-                     Import a file or choose one from the library. Four-channel true \
-                     stereo impulse responses work: with Channel Mode on Auto they are \
-                     routed as True Stereo.
-                     """)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

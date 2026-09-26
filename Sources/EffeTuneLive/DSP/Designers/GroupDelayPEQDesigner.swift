@@ -742,7 +742,7 @@ final class GroupDelayPEQDesigner: ObservableObject {
             case .detached:
                 return "Not connected to the audio engine."
             case .flat:
-                return "All bands are at 0 ms, so audio passes through unchanged."
+                return "All bands are at 0 ms."
             case .designing:
                 return "Designing filter…"
             case .staging:

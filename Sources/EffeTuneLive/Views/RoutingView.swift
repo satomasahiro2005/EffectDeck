@@ -25,15 +25,10 @@ struct RoutingView: View {
         NavigationStack {
             Group {
                 if dsp.chain.isEmpty {
-                    // List の上に overlay で重ねない。段が無くても Section の見出しと
-                    // 注記は描かれるので、その上に重なって二重に読める。
-                    ContentUnavailableView(
-                        "Nothing to route",
-                        systemImage: "arrow.triangle.branch",
-                        description: Text("""
-                                          Add an effect first. Buses and channels belong to \
-                                          the effects on the chain.
-                                          """))
+                    // List の上に overlay で重ねない。段が無くても Section の見出しは
+                    // 描かれるので、その上に重なって二重に読める。
+                    ContentUnavailableView("Nothing to route",
+                                           systemImage: "arrow.triangle.branch")
                 } else {
                     list
                 }
@@ -54,13 +49,6 @@ struct RoutingView: View {
                 }
             } header: {
                 Text("Signal flow")
-            } footer: {
-                Text("""
-                     Bus 0 is the main path. Buses 1–4 are cleared at the start of every \
-                     block, so whatever an effect writes there has to be read back within \
-                     the same block. When the input and output bus differ, the result is \
-                     added to that bus instead of replacing what is already on it.
-                     """)
             }
 
             if dsp.chain.contains(where: { !$0.isDefaultRouting }) {

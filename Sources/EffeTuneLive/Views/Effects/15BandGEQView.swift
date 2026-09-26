@@ -209,7 +209,6 @@ struct FifteenBandGEQView: View {
             decibelRange: -24...24,
             decibelStep: 6,
             height: 190,
-            caption: "Drag a handle for that band's gain. Frequencies are fixed.",
             onMarkerChanged: { id, _, db in setGain(id, db) },
             onMarkerSelected: { selected = $0 })
     }

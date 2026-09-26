@@ -139,8 +139,6 @@ struct EffectPresetsView: View {
             }
         } header: {
             Text("System Presets")
-        } footer: {
-            Text("Changes this effect only.")
         }
     }
 
@@ -180,14 +178,9 @@ struct EffectPresetsView: View {
         } header: {
             Text("User Presets")
         } footer: {
-            // 押せないボタンだけ置くと、壊れているのか条件があるのか読めない。
             // 同じ名前で保存すると前のものが黙って消えるので、押す前に言う。
             if !trimmedName.isEmpty && names.contains(trimmedName) {
                 Text("A preset named “\(trimmedName)” already exists. Saving replaces it.")
-            } else if names.isEmpty {
-                Text("Saved under “\(spec.name)”. Only this effect sees them.")
-            } else {
-                Text("Saved under “\(spec.name)”. Swipe a preset to delete it.")
             }
         }
     }

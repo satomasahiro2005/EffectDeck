@@ -127,12 +127,11 @@ enum ETRunState {
         }
     }
 
-    var detail: String {
+    /// 見出しだけで足りる状態は nil（行は見出し 1 行になる）。
+    var detail: String? {
         switch self {
         case .failed:
-            return "Close any other app that is holding the audio device, then try again."
-        case .interrupted:
-            return "A call or another app took the audio device. Play something again to restart."
+            return "Another app may be holding the audio device."
         // **「少し鳴らしてから選ぶ」を先に書く。**ここがいちばん効く条件で、
         // 外すと 1.5 秒後に黙ってスピーカーへ戻る（#1 / #3）。
         //
@@ -148,18 +147,13 @@ enum ETRunState {
         //
         // **時機だけが条件ではない。**検出器が既に居れば早く選んでも通るし、
         // MediaToolbox が `isPlayingVideoOutput = YES` と分類した回は
-        // 待っても通らない（そちらは #3 / #4）。だから断定せず "may" にする。
+        // 待っても通らない（そちらは #3 / #4）。
         // こちらから直せる所ではないので、手順で外す。
         case .waiting:
-            return "Start playback and let it run for a few seconds, then open Control Center, "
-                 + "press and hold the audio card, and choose EffectDeck. Picking it too early "
-                 + "may not stick — iOS can drop back to the speaker a moment later. Try again "
-                 + "if that happens."
-        case .idle:
-            return "The input has been silent, so the effects are paused. They start again "
-                 + "the moment sound returns."
-        case .playing:
-            return "Audio is arriving and the effects are running."
+            return "Play audio in another app for a few seconds, then select EffectDeck "
+                 + "as the output in Control Center."
+        case .interrupted, .idle, .playing:
+            return nil
         case .starting:
             return "Waiting for the audio device."
         }
@@ -315,7 +309,8 @@ struct ETIssue: Identifiable {
     let tone: ETNoticeTone
     let systemImage: String
     let title: String
-    let detail: String
+    /// 見出しだけで足りる問題は nil。
+    let detail: String?
 
     @MainActor
     static func current(io: AudioIO, dsp: EffeTuneDSP) -> [ETIssue] {
@@ -328,10 +323,7 @@ struct ETIssue: Identifiable {
                 tone: .warning,
                 systemImage: "arrow.triangle.2.circlepath",
                 title: "Output is set to EffectDeck",
-                detail: "The processed sound is going back into this app instead of to a "
-                      + "speaker, so you hear nothing and the level keeps rising. Open "
-                      + "Control Center, press and hold the audio card, and pick a real "
-                      + "output for this device."))
+                detail: "Select a different output in Control Center."))
         }
 
         // 2. 端末のレートが 48kHz でない。速さと音程がずれる。
@@ -342,16 +334,11 @@ struct ETIssue: Identifiable {
                 tone: .warning,
                 systemImage: "exclamationmark.triangle.fill",
                 title: "The device is running at \(hz) Hz",
-                // **16 k / 32 k は Bluetooth のハンズフリー。**そこに落ちる
-                // のは、通話用のマイクを掴むアプリが動いているとき。
-                // 「他のアプリが握っている」だけでは、何を止めればいいのか
-                // 分からない。出る値そのものが手がかりになる。
-                detail: io.sampleRate <= 32000
-                      ? "Audio arrives at 48 kHz, so pitch and speed are off. Bluetooth "
-                      + "headphones drop to this rate when an app takes their microphone "
-                      + "— a call, voice input or a recorder. Quit it, then play again."
-                      : "Audio arrives at 48 kHz, so pitch and speed are off. Another app is "
-                      + "holding the hardware at that rate. Stop it, then play again."))
+                // **マイクも名指しする。**16 k / 32 k は Bluetooth のハンズフリーで、
+                // そこに落ちるのは通話用のマイクを掴むアプリが動いているとき。
+                // 「他のアプリが握っている」だけでは、何を止めればいいのか分からない。
+                detail: "Pitch and speed are incorrect. Close any other app that is "
+                      + "using the microphone or the audio device."))
         }
 
         // 3. **割れているときだけ出す。**「締切に近い」は CPU の数字が
@@ -363,9 +350,7 @@ struct ETIssue: Identifiable {
                 tone: .warning,
                 systemImage: "gauge.with.needle",
                 title: "The sound is breaking up",
-                detail: "The effects need more time than each buffer has "
-                      + "(\(load.percent)% of it). Lower the processing rate, "
-                      + "raise the latency, or remove an effect."))
+                detail: "CPU \(load.percent)%. Lower the processing rate or raise the latency."))
         }
 
         // 4. 鎖が切ってある。警告ではなく事実の確認なので色を付けない。
@@ -377,8 +362,7 @@ struct ETIssue: Identifiable {
                 tone: .normal,
                 systemImage: "power",
                 title: "Effects are switched off",
-                detail: "The sound is passing through untouched. The power button at the top "
-                      + "left of the main screen turns them back on."))
+                detail: nil))
         }
 
         return out

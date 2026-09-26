@@ -243,13 +243,13 @@ struct PipelineView: View {
                 }
                 Button("Cancel", role: .cancel) { confirmingSectionRemoval = nil }
             } message: {
-                Text("The section is off, so the effects inside it are silent. Removing it lets them play again. Each effect keeps its own on/off.")
+                Text("The effects inside it will start playing again.")
             }
             .onAppear {
                 // **案内の画面は持たない。**
                 // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
                 // と思って 1 枚置いていた。いまは鎖の頭の帯（ConnectBanner）が
-                // 「別のアプリで鳴らしてから、コントロールセンターで EffeTune を
+                // 「別のアプリで少し鳴らしてから、コントロールセンターで EffectDeck を
                 // 選ぶ」と言っていて、音が来ていないあいだ出たままになる。
                 // 読む場所が 2 つあっても片方しか読まれない。
                 //
@@ -1216,8 +1216,8 @@ private struct ConnectBanner: View {
                     // 鳴らしてから選ぶ順も落とさない。止まっていると系が
                     // 1.5 秒で経路を戻す（README の If it says Unable to Connect）。
                     Text("""
-                         Play something in another app first, then pick EffectDeck as \
-                         the output in Control Center.
+                         Play audio in another app for a few seconds, then select \
+                         EffectDeck as the output in Control Center.
                          """)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -1252,15 +1252,8 @@ private struct BypassBanner: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 26)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("All effects bypassed")
-                        .font(.system(size: 15, weight: .semibold))
-                    // 鎖が空のときと同じ言い方にする（下の EmptyChainRow）。
-                    Text("The audio passes through untouched.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("All effects bypassed")
+                    .font(.system(size: 15, weight: .semibold))
 
                 Spacer(minLength: 4)
 
@@ -1291,9 +1284,6 @@ private struct EmptyChainRow: View {
                 .foregroundStyle(.secondary)
             Text("No effects")
                 .font(.system(size: 16, weight: .semibold))
-            Text("The audio passes through untouched.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
             Button("Add Effect", action: add)
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 2)
