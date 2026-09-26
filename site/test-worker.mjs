@@ -210,7 +210,8 @@ try {
     assert.ok(hero.includes('<a class="btn gh" href="https://github.com/satomasahiro2005/EffectDeck">GitHub</a>'));
     assert.ok(hero.includes("Media Device Extension in iOS 27"));
     assert.match(hero, /<p class="foss">Free and open source \(<a href="[^"]+\/LICENSE">MIT<\/a>\)<\/p>/);
-    assert.ok(!/JSFX|App Store version/.test(hero), "hero talks about builds");
+    // JSFX は全部の版に入ったので頭に書いてよい。版の話はしない。
+    assert.ok(!/App Store version/.test(hero), "hero talks about builds");
     assert.match(home, /<meta name="description" content="[^"]*Free and open source \(MIT\)[^"]*">/);
     assert.match(home, /<meta property="og:description" content="[^"]*Free and open source \(MIT\)[^"]*">/);
     // FAQ の答えは本文の色（.faq p に color を付けない）

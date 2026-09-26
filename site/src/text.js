@@ -20,14 +20,14 @@ const mail = `<a href="mailto:${EMAIL}">${EMAIL}</a>`;
 export const TEXT = {
   // <title> と og:title。検索に出る言い回しをそのまま入れる。
   title: "EffectDeck — audio effects for any app on iPhone",
-  description: "EffectDeck runs EffeTune's audio effects on iPhone. Pick it as the output in Control Center and audio from any app with a Now Playing transport goes through your effect chain. Free and open source (MIT). Requires iOS 27.",
+  description: "EffectDeck puts an effect chain on the audio of any app on iPhone: built-in effects, AUv3 plug-ins, impulse responses, and JSFX effects you write or have ChatGPT write. Free and open source (MIT). Requires iOS 27.",
   // トップの頭。リリースで変わらないことだけ（何か・App Store・GitHub・FOSS）。
-  tagline: "EffeTune's DSP, applied to the audio of any app on your iPhone through the Media Device Extension in iOS 27.",
+  tagline: "Any effect on the audio of any app on your iPhone, through the Media Device Extension in iOS 27. Combine the built-in effects, AUv3 plug-ins and impulse responses, or write the effect you want in JSFX.",
   foss: `Free and open source (${a(LICENSE, "MIT")})`,
   howTitle: "How it works",
   home: [
-    "EffectDeck runs EffeTune's audio effects on iPhone. Pick EffectDeck as the output in Control Center, and audio from any app that shows up in Now Playing goes through your effect chain, then out through the speaker, headphones or AirPods you were already using.",
-    "YouTube and Spotify can keep their audio from reaching EffectDeck while a video is playing. Stopping the video, or quitting the app, lets it through.",
+    "Pick EffectDeck as the output in Control Center, and audio from any app that shows up in Now Playing goes through your effect chain, then out through the speaker, headphones or AirPods you were already using.",
+    "You choose what goes in the chain. EQ, dynamics, saturation, reverb, spatial effects and analyzers are built in. AUv3 plug-ins on your iPhone, impulse responses and AutoEQ profiles load into it. An effect that does not exist yet can be written as a JSFX script.",
     "It is built on the Media Device Extension that arrived in iOS 27, so it needs iOS 27 or later.",
   ],
   // スクリーンショットの下の字は名札。説明を書かない。
@@ -92,7 +92,7 @@ export const TEXT = {
 export const FAQ = [
   {
     q: "Can iOS run system-wide audio effects like JamesDSP or ViPER4Android?",
-    a: "Since iOS 27, for media playback. The Media Device Extension lets an app appear as an audio output in Control Center. EffectDeck uses it to apply EffeTune's DSP to audio from any app with a Now Playing transport, such as music and podcast apps and Safari. Games are not covered. No jailbreak is involved.",
+    a: "Since iOS 27, for media playback. The Media Device Extension lets an app appear as an audio output in Control Center. EffectDeck uses it to run an effect chain on audio from any app with a Now Playing transport, such as music and podcast apps and Safari. Games are not covered. No jailbreak is involved.",
   },
   {
     q: "Which iOS version does it need?",
@@ -104,7 +104,7 @@ export const FAQ = [
   },
   {
     q: "Which effects are included?",
-    a: `EffeTune's effects, including EQ, dynamics, saturation, reverb, spatial effects and analyzers such as a spectrum analyzer and a spectrogram. It also loads single-file JSFX effects; ${a(JSFX_MD, "JSFX.md")} lists what is supported.`,
+    a: `Built in: EQ, dynamics, saturation, reverb, spatial effects and analyzers such as a spectrum analyzer and a spectrogram, ported from EffeTune. It also hosts AUv3 effect plug-ins installed on the iPhone, loads impulse responses and AutoEQ profiles, and runs single-file JSFX effects; ${a(JSFX_MD, "JSFX.md")} lists what is supported.`,
   },
   {
     q: "Is it free?",
@@ -112,7 +112,7 @@ export const FAQ = [
   },
   {
     q: "It says Unable to Connect. What is wrong?",
-    a: "Usually Spotify with Canvas on. While a Canvas video plays, iOS routes the audio away from EffectDeck; turn Canvas off in Spotify's settings. Otherwise, pick EffectDeck while music is playing, not while it is paused.",
+    a: "Usually Spotify with Canvas on. A track with a Canvas plays as video, and iOS does not route it to EffectDeck; turn Canvas off in Spotify's settings, then restart Spotify. Otherwise, restart the player app, then EffectDeck, then the iPhone.",
   },
   {
     q: "Does my audio leave the device?",
@@ -229,7 +229,7 @@ export const PRIVACY = {
 // /llms.txt。言語モデルのクローラー向けの素の字。ページと同じことだけを書く。
 export const LLMS_TXT = `# EffectDeck
 
-> EffectDeck is an iPhone app that runs EffeTune's audio effects on audio from other apps. It requires iOS 27 or later. It is free and open source (MIT). It is an independent project by nemut.ai, not affiliated with, endorsed by, or supported by EffeTune or its author.
+> EffectDeck is an iPhone app that runs an effect chain on audio from other apps. It requires iOS 27 or later. It is free and open source (MIT). It is an independent project by nemut.ai, not affiliated with, endorsed by, or supported by EffeTune or its author.
 
 ## How it works
 
@@ -237,7 +237,7 @@ export const LLMS_TXT = `# EffectDeck
 - When EffectDeck is picked as the output, audio from any app with a Now Playing transport (music and podcast apps, Safari) goes through the user's effect chain, then plays on the output that was selected before (speaker, wired headphones, AirPods).
 - Games and other apps without a Now Playing transport are not covered. No jailbreak is involved.
 - Audio is processed on the device. It is not recorded and not sent over the network.
-- The effects are EffeTune's DSP (MIT license), including EQ, dynamics, saturation, reverb, spatial effects and analyzers.
+- Built-in effects: EQ, dynamics, saturation, reverb, spatial effects and analyzers, ported from EffeTune (MIT license). The chain also takes AUv3 plug-ins installed on the device, impulse responses and AutoEQ profiles.
 - EffectDeck also loads JSFX, the script format REAPER uses. One text file is one effect. JSFX.md describes what is supported and is written to be given to a language model.
 - https://effectdeck.nemut.ai/write has a request to paste into ChatGPT or another assistant to have it write a JSFX effect. The returned file is imported with Import JSFX → From Files, or the copied script with From Clipboard.
 - EffectDeck is free on the App Store and its source is on GitHub under the MIT license.
