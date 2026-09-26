@@ -92,6 +92,24 @@ final class JSFXStateTests: XCTestCase {
         XCTAssertEqual(host.get(2), 26)
     }
 
+    /// **状態に無いつまみは、復元の @init でも既定値で見える。**
+    ///
+    /// script につまみを足した後で古い状態を戻す形。@init を先に回すので、
+    /// 既定値へ戻すのを ysfx_load_state に任せると @init だけが動かした後の値（7）を読む。
+    func testMissingSliderIsDefaultDuringInitOnLoad() throws {
+        let old = try JSFX.load("state_grow_old")
+        old.run()
+        let saved = try XCTUnwrap(old.save())
+
+        let host = try JSFX.load("state_grow_new")
+        host.set(0, 7)
+        host.run()
+        XCTAssertTrue(host.load(saved))
+        host.run()
+        XCTAssertEqual(host.get(0), 3, "状態に無いつまみが既定値へ戻っていない")
+        XCTAssertEqual(host.get(1), 6, "@init が既定値ではなく動かした後の値を読んだ")
+    }
+
     /// Save → Load → Save。同じ状態からは同じバイト列が出る。
     func testSaveLoadSaveIsStable() throws {
         let host = try JSFX.load("state_payload")

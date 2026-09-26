@@ -14,7 +14,8 @@ Only from the user. Scripts are imported by the user through:
 - Open in / share sheet from another app
 The app does not offer a catalog, store or directory of scripts, and it does not
 download scripts on its own. A link is fetched only when the user taps Import.
-In the App Store build the list stays empty until the user imports a script.
+The App Store build ships no scripts, so no JSFX appears in the list until the
+user imports one.
 
 How scripts run
 - Scripts run in a portable EEL2 interpreter (the WDL/EEL2 engine through the
@@ -36,7 +37,9 @@ the binary and user-supplied scripts do not change the app's features) and 4.7
 (plug-ins).
 
 How to test
-1. Tap Add Effect (the + button), switch to Plugins, tap Import JSFX.
+1. Tap Add Effect (the + button), switch to Plugins, and tap Import JSFX in the
+   top-right corner of the toolbar. (The Import JSFX button in the middle of the
+   empty list opens Files directly, without the From Link choice.)
 2. Either:
    a. Choose From Link and enter
       https://github.com/satomasahiro2005/EffectDeck/blob/main/Tests/Fixtures/JSFX/gain.jsfx

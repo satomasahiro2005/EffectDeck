@@ -457,7 +457,7 @@ ETExternalProcessor ETJSFX_Processor(ETJSFX *h)
 /// 標本化率やブロック長が変わったときの @init。**状態の復元ではない。**
 /// @serialize で戻した値も @init が書けば変わる。REAPER も同じで、文書が
 /// 「@init は @serialize の後に呼ばれることがあるので、@serialize で保存する変数を
-/// @init で消すな」と書いている（js.php の @init）。ここは REAPER に合わせてある。
+/// @init で消すな」と書いている（js.php の @serialize）。ここは REAPER に合わせてある。
 bool ETJSFX_Reconfigure(ETJSFX *h, double rate, uint32_t maxFrames)
 {
     if (!h || !maxFrames) return false;
@@ -496,17 +496,22 @@ bool ETJSFX_SaveState(ETJSFX *h, uint8_t **bytes, size_t *size)
 
 /// 状態を戻す。**順序は つまみ → @init → @serialize 読み → @slider。**
 ///
-/// ysfx 自身が読み込むときと同じ並び。plugin/processor.cpp は compile の直後に
-/// ysfx_load_state を呼び、ysfx_load_state がつまみを置いてから ysfx_serialize を
-/// 回し、ysfx_serialize は保留の @init を先に回す（ysfx.cpp）。@slider は
-/// must_compute_slider で次の process に回る。
+/// compile 直後の ysfx_load_state と同じ並び（ysfx.cpp: ysfx_load_state がつまみを
+/// 置いてから ysfx_serialize を回し、ysfx_serialize は保留の @init を先に回す）。
+/// @slider は must_compute_slider で次の process に回る。
 /// **@init を @serialize 読みの後に回さない。**@serialize を持つ script でも
 /// ysfx_init は @init のコード自体は実行するので、`@init x = 1;` と
 /// `file_var(0, x);` を両方持つ script は読んだ値をその場で失う（以前はそうだった）。
+/// ysfx の plugin はこの後 installNewFx でもう一度 ysfx_init を呼ぶ
+/// （processor.cpp: createNewFx → installNewFx）ので、あちらは失う。
+/// REAPER の文書は読み込みの順序を決めておらず、「@init が @serialize の後に
+/// 呼ばれることがある」とだけ書いている（js.php の @serialize）。
 ///
 /// @init が保留かどうかは ysfx の外から見えないので、保留に頼らず自分で回す。
 /// つまみを先に置くのは @init に戻した値を読ませるため（通知はしない。@slider は
-/// ysfx_init が立てる）。欠けたつまみを既定値へ戻すのは ysfx_load_state がやる。
+/// ysfx_init が立てる）。**欠けたつまみは既定値にしてから @init を回す。**
+/// ysfx_load_state も既定値へ戻すが、それは @init の後なので、@init だけが
+/// 動かした後の値を見てしまう。
 /// ext_noinit の script は ysfx_init が @init のコードを飛ばす（Create と同じ）。
 bool ETJSFX_LoadState(ETJSFX *h,const uint8_t *bytes,size_t size)
 {
@@ -517,6 +522,10 @@ bool ETJSFX_LoadState(ETJSFX *h,const uint8_t *bytes,size_t size)
         for(uint32_t i=0;i<n;++i,p+=12){values[i].index=get32(p);values[i].value=fromBits(get64(p+4));}
         ysfx_state_t s{};s.sliders=values.data();s.slider_count=n;s.data=const_cast<uint8_t*>(p);s.data_size=payload;
         Maintenance m(h); if(!m.live)return false;
+        for(uint32_t i:h->sliders){
+            ysfx_slider_range_t r{};
+            if(ysfx_slider_get_range(h->effect,i,&r))ysfx_slider_set_value(h->effect,i,r.def,false);
+        }
         for(const auto &v:values)
             if(v.index<ysfx_max_sliders&&ysfx_slider_exists(h->effect,v.index))
                 ysfx_slider_set_value(h->effect,v.index,v.value,false);
