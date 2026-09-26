@@ -67,9 +67,14 @@ final class ETChainViewport {
 
     /// いま読んでいる位置（見えているうちで一番上のカード）を戻す先として覚える。
     /// 見えているカードが無ければ何もしない（前に覚えたものを消さない）。
+    ///
+    /// **鎖の先頭のカードが見えているなら覚えない（覚えていたものも捨てる）。**一番上を
+    /// 読んでいるので、そのカードを上端へ戻すと、上の帯（No audio yetなど）が画面の外へ出る。
+    /// 回しただけで帯が消えていた。覚えなければ一番上に居たままになる。
     func arm(split: Bool) {
         let shown = split ? onScreen : stackShown
-        if let first = order.first(where: shown.contains) { anchor = first }
+        guard let first = order.first(where: shown.contains) else { return }
+        anchor = first == order.first ? nil : first
     }
 
     /// その並べ方の行が画面から外れた。次に出るときに新しく数え直す。

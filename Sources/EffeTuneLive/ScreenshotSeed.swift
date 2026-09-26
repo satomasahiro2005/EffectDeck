@@ -107,14 +107,18 @@ enum ETScreenshotSeed {
     ///
     /// 左の一覧で見たいものを1枚に収める。字下げ（Section 2つ）、薄く出す行
     /// （SpaceのDelayを切ってある）、Level Meterの棒、図を持つカード。
+    ///
+    /// **組の外の段はSectionより前に置く。**Sectionは次のSectionまでを抱えるので、
+    /// Vocalの後ろに置くとPEQとStereo MeterまでVocalの配下になる。無名のSectionで
+    /// 閉じても、読み込むと無名の組になるだけで組の外には戻らない。
     static let demoChain = """
     {"pipeline":[
       {"name":"Level Meter","enabled":true,"parameters":{}},
+      {"name":"15Band PEQ","enabled":true,"parameters":{}},
+      {"name":"Stereo Meter","enabled":true,"parameters":{}},
       {"name":"Section","enabled":true,"parameters":{"cm":"Vocal"}},
       {"name":"Gate","enabled":true,"parameters":{}},
       {"name":"Compressor","enabled":true,"parameters":{}},
-      {"name":"15Band PEQ","enabled":true,"parameters":{}},
-      {"name":"Stereo Meter","enabled":true,"parameters":{}},
       {"name":"Section","enabled":true,"parameters":{"cm":"Space"}},
       {"name":"RS Reverb","enabled":true,"parameters":{}},
       {"name":"Delay","enabled":false,"parameters":{}}

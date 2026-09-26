@@ -502,7 +502,14 @@ struct PipelineView: View {
         let before = Set(old)
         let shown = Set(rows.map(\.node.id))
         guard let id = new.first(where: { !before.contains($0) && shown.contains($0) }) else { return }
-        geometry.pendingReveal = id
+        // **先に測れていたらここで決める。**新しい行の最初の測りとこのonChangeの
+        // どちらが先に来るかは決まっていない。測りが先だと、待ちが残ったまま次に
+        // 送ったときに消化され、人が送っている最中に飛んでいた。
+        if let rect = geometry[id] {
+            reveal(id, rect)
+        } else {
+            geometry.pendingReveal = id
+        }
     }
 
     /// 行が測れた。並べ替えの判定と最後の帯の高さ、足したカードの確かめに使う。
@@ -512,9 +519,14 @@ struct PipelineView: View {
         if rowsHeight != height { rowsHeight = height }
         if geometry.pendingReveal == id {
             geometry.pendingReveal = nil
-            // 矩形はScrollViewに付けた座標なので、0からlistHeightが見えている範囲。
-            if rect.maxY <= 0 || rect.minY >= listHeight { viewport.request(id) }
+            reveal(id, rect)
         }
+    }
+
+    /// 足したカードが画面の外なら、そこへ飛ぶ。
+    private func reveal(_ id: UUID, _ rect: CGRect) {
+        // 矩形はScrollViewに付けた座標なので、0からlistHeightが見えている範囲。
+        if rect.maxY <= 0 || rect.minY >= listHeight { viewport.request(id) }
     }
 
     /// 左の一覧から頼まれた所へ飛ぶ。**動かさない。**
@@ -564,9 +576,19 @@ struct PipelineView: View {
         // 取り込んだ JSFX は一覧に入る。そこから鎖へ足してもらう。
         case .jsfx: presentPicker()
         // **黙って落とさない。**押しても何も起きないのと見分けが付かない。
-        case .failed(let why): pluginError = why
-        case .unsupported: if let unsupported { pluginError = unsupported }
+        case .failed(let why): presentError(why)
+        case .unsupported: if let unsupported { presentError(unsupported) }
         }
+    }
+
+    /// 警告を出す。2列でピッカーのpopoverが出ていたら、先に畳んでから出す（presentSheetと同じ）。
+    /// popoverの上には警告が出ない。1列は今までどおりその場で立てる。
+    private func presentError(_ why: String) {
+        guard usesSplit, sheet == .picker else {
+            pluginError = why
+            return
+        }
+        afterClosingSheet { pluginError = why }
     }
 
     /// 共有の拡張（EffectDeckShare）が App Group に置いたものを拾う。
@@ -1546,7 +1568,8 @@ private struct PipelineToolbar: ToolbarContent {
                 // 右のカード・余白、左の一覧の行の間のどれへでも落とせる。
                 Button("Add Effect", systemImage: "plus") { sheet = .picker }
                     .popover(isPresented: pickerShown) {
-                        ETPickerHost(dsp: dsp, sheet: $sheet, pluginError: $pluginError)
+                        ETPickerHost(dsp: dsp, sheet: $sheet, pluginError: $pluginError,
+                                     waitsForDismissal: true)
                             .frame(minWidth: 380, idealWidth: 420,
                                    minHeight: 520, idealHeight: 720)
                             .onDisappear { runAfterPopover() }
@@ -1589,6 +1612,10 @@ struct ETPickerHost: View {
     let dsp: EffeTuneDSP
     @Binding var sheet: PipelineView.Sheet?
     @Binding var pluginError: String?
+    /// popoverで出しているとき。足せなかった警告を、popoverが畳み終わってから出す。
+    /// JSFXは音の準備が無いとその場で失敗し、閉じる途中に警告を立てると出ないまま残る。
+    /// シート（1列）は今までどおりその場で立てる。
+    var waitsForDismissal = false
 
     var body: some View {
         EffectPickerView(onPick: { spec in
@@ -1613,7 +1640,7 @@ struct ETPickerHost: View {
                     dsp.addExternal(id: entry.id, instanceID: instanceID,
                                     name: entry.name, category: "JSFX",
                                     externalIndex: externalIndex, at: nil)
-                case .failure(let error): pluginError = error.localizedDescription
+                case .failure(let error): report(error.localizedDescription)
                 }
             }
         }, onPickPreset: { name, items in
@@ -1622,6 +1649,17 @@ struct ETPickerHost: View {
             dsp.addPreset(named: name, items: items, at: nil)
             sheet = nil
         })
+    }
+
+    private func report(_ why: String) {
+        guard waitsForDismissal else {
+            pluginError = why
+            return
+        }
+        Task { @MainActor in
+            await ETPresentation.settled()
+            pluginError = why
+        }
     }
 }
 

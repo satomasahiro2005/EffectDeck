@@ -479,13 +479,15 @@ struct PhaseSelectEqView: View {
     }
 
     private var constraints: ETPhaseConstraints {
-        // 幅は測った実寸を使う。**390pt決め打ちにしない。**iPhoneより広い所（iPad）では
-        // 最小幅が実際より太く効いて、帯を狭められなかった。測る前だけiPhoneの幅で見積もる。
-        ETPhaseConstraints(plotWidth: plotWidth
-                               ?? 390 - Double(insets.leading + insets.trailing) - 32,
-                           plotHeight: Double(Self.graphHeight - insets.top - insets.bottom),
-                           maximumFrequency: maximumFrequency,
-                           sampleRate: sampleRate, fftSize: fftSize)
+        // iPadは測った実寸を使う。390pt決め打ちだと、iPhoneより広い所では
+        // 最小幅が実際より太く効いて、帯を狭められなかった。
+        // **iPhoneは今までの見積もりのまま**（iPhoneの手触りは変えない）。測る前もこの見積もり。
+        let estimate = 390 - Double(insets.leading + insets.trailing) - 32
+        let measured = UIDevice.current.userInterfaceIdiom == .pad ? plotWidth : nil
+        return ETPhaseConstraints(plotWidth: measured ?? estimate,
+                                  plotHeight: Double(Self.graphHeight - insets.top - insets.bottom),
+                                  maximumFrequency: maximumFrequency,
+                                  sampleRate: sampleRate, fftSize: fftSize)
     }
 
     private var xAxis: ETAxis {
