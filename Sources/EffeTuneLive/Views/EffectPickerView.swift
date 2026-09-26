@@ -609,9 +609,10 @@ struct EffectPickerView: View {
             jsfxPickButton(entry)
             jsfxMenu(entry)
         }
-        // **両方borderlessにする。**Listは行の中の既定スタイルのボタンを行1つの当たりに
+        // **両方plainにする。**Listは行の中の既定スタイルのボタンを行1つの当たりに
         // まとめるので、そのままだと…を押しても鎖へ足す側まで走りうる。
-        .buttonStyle(.borderless)
+        // borderlessは不可。中の.primary・.secondaryがアクセント色の段になり、名前が青くなる。
+        .buttonStyle(.plain)
     }
 
     private func jsfxPickButton(_ entry: ETJSFXHost.Entry) -> some View {
@@ -687,7 +688,7 @@ struct EffectPickerView: View {
                 .frame(minWidth: ETMetrics.hitTarget, alignment: .trailing)
                 .contentShape(Rectangle())
         }
-        // buttonStyle(.borderless)を効かせるため（jsfxRow）。
+        // buttonStyle(.plain)を効かせるため（jsfxRow）。
         .menuStyle(.button)
     }
 
