@@ -398,9 +398,6 @@ extension String {
         switch self {
         case "eq":   return "EQ"
         case "lofi": return "Lo-Fi"
-        // control に居るのは Section だけで、音を触らない。効果と同じ顔で
-        // 「Control」と出ると効果の一種に見えるので、何をするものかで呼ぶ。
-        case "control": return "Grouping"
         default:     return prefix(1).uppercased() + dropFirst()
         }
     }

@@ -91,17 +91,10 @@ struct EffectPickerView: View {
     /// （上流も plugins/control/section.js の processor は `return data;` だけ）。
     private var catalog: [ETEffect] { dsp.available }
 
-    /// 効果のカテゴリ。**Section の居る control は外す。**
-    /// 中身は Section 1 件だけで、しかも音を触らない。効果のあいだに
-    /// 1 件のカテゴリとして挟まると、効果の一種に見える。
+    /// 効果のカテゴリ。**Section の居る control も上流と同じく「Control」で並べる。**
+    /// 一度「Grouping」と呼び替えて末尾に分けたが、EffeTune に慣れた人は Control の中を探す。
     private var categories: [String] {
         Array(Set(catalog.map(\.category))).sorted()
-            .filter { $0 != ETSection.spec.category }
-    }
-
-    /// 音を触らない区切り。一覧の末尾に自分の節を持つ。
-    private var groupingEntries: [ETEffect] {
-        catalog.filter { $0.category == ETSection.spec.category }
     }
 
     // MARK: - 探す
@@ -414,22 +407,6 @@ struct EffectPickerView: View {
                             // 下へ払えば次の見出しで、上へ払えば前の見出しで切り替わる。
                             .onScrollVisibilityChange(threshold: 0.1) { visible in
                                 if visible { current = name }
-                            }
-                    }
-                }
-
-                // 効果の後ろ。Section は効果ではないので、末尾で分ける。
-                if !groupingEntries.isEmpty {
-                    Section {
-                        ForEach(Array(groupingEntries.enumerated()), id: \.element.id) { offset, effect in
-                            row(effect)
-                                .id(offset == 0 ? Self.jumpTarget(ETSection.spec.category)
-                                                : "effect-" + effect.type)
-                        }
-                    } header: {
-                        Text(ETSection.spec.category.categoryLabel)
-                            .onScrollVisibilityChange(threshold: 0.1) { visible in
-                                if visible { current = ETSection.spec.category }
                             }
                     }
                 }
@@ -795,7 +772,6 @@ struct EffectPickerView: View {
     /// 上流が増やした効果は、ジャンルに散らばると見つけられない。
     private var stripNames: [String] {
         (newEffects.isEmpty ? [] : [Self.newKey]) + categories
-            + (groupingEntries.isEmpty ? [] : [ETSection.spec.category])
     }
 
     /// この版で増えた効果。増えるたびにここを書き替える。
