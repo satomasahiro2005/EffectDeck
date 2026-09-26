@@ -3,6 +3,7 @@
 set -u
 export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")/.." || exit 1
+. Scripts/asc_auth.sh || exit 1   # PROVISIONING（API キー）。画面ロック中の "No Accounts" よけ
 SCHEME="${1:-EffeTuneLive}"
 # アイコン。**既定は紫**（EffectDeckPublicBeta）。ここから出る書庫は TestFlight 行きで、
 # 端末で青と紫を見分けられると、いまどちらを触っているか分かる。
@@ -25,7 +26,7 @@ LOG="$PWD/archive.log"
   python3 Tools/gen_version.py 2>&1 | tail -1
   xcodegen generate --spec project.yml 2>&1 | tail -1
   /usr/bin/xcodebuild -project EffeTuneLive.xcodeproj -scheme "$SCHEME" \
-    -configuration Release -sdk iphoneos -arch arm64 -allowProvisioningUpdates \
+    -configuration Release -sdk iphoneos -arch arm64 "${PROVISIONING[@]}" \
     ET_APPICON="$APPICON" \
     SWIFT_ACTIVE_COMPILATION_CONDITIONS="$SWIFT_FLAGS" \
     archive -archivePath "/tmp/$SCHEME.xcarchive" 2>&1 \
