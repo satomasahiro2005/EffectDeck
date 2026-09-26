@@ -5,8 +5,12 @@
 //  （Settings の Known limitations と ConnectBanner の Help）。footer や注記は足さない。
 //
 //  **日英はこのファイルの中だけで持つ。**アプリの残りは英語のまま。
-//  String Catalog も Localizable.strings も作らない。言語は
-//  Locale.preferredLanguages の先頭で決める。Bundle.main.preferredLocalizations は
+//  String Catalog も Localizable.strings も作らない。
+//
+//  **言語は頭のセグメントで選ばせる。**選んだ側を "tips.language"（"en" / "ja"）に
+//  残す。一度も選んでいなければ Locale.preferredLanguages の先頭で決める。
+//  先頭だけで決めていたころは、端末を英語のまま使っている日本の人（en-JP）が
+//  日本語に辿り着けなかった。Bundle.main.preferredLocalizations は
 //  バンドルに en しか無いので常に en を返す。
 //
 //  字は全部 Text(verbatim:) で渡す。LocalizedStringKey として引かせない。
@@ -17,11 +21,28 @@
 import SwiftUI
 
 struct ConnectionTipsView: View {
+    /// 選んだ側だけ覚える。**一度も選んでいなければ nil** で、端末の言語に従う。
+    @AppStorage("tips.language") private var chosen: ETTips.Language?
+
     /// 言語はここで決めて、題・本文・リンク・読み上げで揃える。
-    private let ja = ETTips.isJapanese
+    private var ja: Bool { (chosen ?? ETTips.defaultLanguage) == .ja }
 
     var body: some View {
         List {
+            // **バーに置かない。**principal に置くと題が消える。
+            // 行にしておけば、Settings から押したときもシートの中でも同じ場所に出る。
+            // セグメントは UISegmentedControl で Menu ではない（SettingsRows.swift の頭）。
+            Section {
+                Picker(selection: Binding(get: { chosen ?? ETTips.defaultLanguage },
+                                          set: { chosen = $0 })) {
+                    Text(verbatim: "English").tag(ETTips.Language.en)
+                    Text(verbatim: "日本語").tag(ETTips.Language.ja)
+                } label: {
+                    Text(verbatim: ja ? "言語" : "Language")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
             ForEach(ETTips.all) { tip in
                 let c = ja ? tip.ja : tip.en
                 Section {
@@ -70,7 +91,14 @@ private struct ETTip: Identifiable {
 /// **修飾子を付けない。**private にすると同じファイルの ConnectionTipsView からも
 /// 見えなくなる。ファイルの外へ出さないのは、この enum 自体の private が受け持つ。
 private enum ETTips {
-    static var isJapanese: Bool { Locale.preferredLanguages.first?.hasPrefix("ja") ?? false }
+    /// 値はそのまま "tips.language" に入る字。
+    enum Language: String { case en, ja }
+
+    /// **既定を広げない。**地域（JP）や 2 番目以降の言語は見ない。
+    /// 外れても頭のセグメントで 1 回選べば直る。
+    static var defaultLanguage: Language {
+        (Locale.preferredLanguages.first?.hasPrefix("ja") ?? false) ? .ja : .en
+    }
 
     /// **口語にしない。**題も本文も落ち着いた語で書く（真面目な道具として出している）。
     static let pageTitle = (en: "Known limitations", ja: "接続に関する既知の制限")
