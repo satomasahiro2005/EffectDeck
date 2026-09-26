@@ -254,6 +254,11 @@ targets:
       - path: Sources/EffeTuneLive/DSP/EffectSpec.swift
       - path: Sources/EffeTuneLive/Generated/EffectCatalog.swift
       - path: Sources/EffeTuneLive/Generated/EffectPresets.swift
+      # 共有リンク（effectdeck.nemut.ai）。**見本はサイトと同じファイルを読む。**
+      # 写しを持つと、片側だけ直して両方の試験が通る形になる（FXDLinkTests）。
+      - path: Sources/EffeTuneLive/DSP/ETFXDLink.swift
+      - path: site/test-vector.json
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests

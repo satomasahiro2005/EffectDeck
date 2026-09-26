@@ -34,15 +34,17 @@ struct EffectPickerView: View {
     private enum Alert: Equatable {
         case link
         case failed(String)
+        case shareFailed(String)
     }
     @State private var alert: Alert?
     @State private var linkText = ""
 
     private var alertTitle: String {
         switch alert {
-        case .link:   return "Import from Link"
-        case .failed: return "Could Not Import"
-        case nil:     return ""
+        case .link:        return "Import from Link"
+        case .failed:      return "Could Not Import"
+        case .shareFailed: return "Could Not Share"
+        case nil:          return ""
         }
     }
     @State private var importingJSFX = false
@@ -310,7 +312,7 @@ struct EffectPickerView: View {
                     }
                 } message: {
                     switch alert {
-                    case .failed(let why):
+                    case .failed(let why), .shareFailed(let why):
                         Text(why)
                     case .link, nil:
                         EmptyView()
@@ -624,6 +626,8 @@ struct EffectPickerView: View {
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)
         }
+        // **長押しに口を置かない。**行の長押しは鎖へのドラッグ（.onDrag）が持っている。
+        // 共有（jsfx.shareURL）は JSFX の詳細画面から出す。
     }
 
     /// 自分で保存したプリセット。`/` で仕切るとフォルダに束ねる。

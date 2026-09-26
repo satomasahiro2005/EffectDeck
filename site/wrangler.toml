@@ -1,0 +1,36 @@
+# effectdeck.nemut.ai（共有リンクとページ・AASA）と fxd.nemut.ai（人が打つ別名・全部 301）を 1 本で受ける。
+# 振り分けは src/worker.js の頭を読むこと。
+#
+# 出すとき: cd site && wrangler deploy
+# **custom_domain の 2 本は nemut.ai のゾーンに DNS レコードを作る。**出す前に既存レコードと衝突しないか確かめる。
+#
+# **ページはどのビルドに何が入っているかを言わない。**JSFX・Write with ChatGPT・共有リンクは機能として書くだけ。
+# リリースごとの状態は GitHub の README と releases に書き、ページはフッターの Release notes で指す
+# （text.js の頭）。出すときにページの文面をビルドに合わせて出し入れしない。
+
+name = "effectdeck-site"
+main = "src/worker.js"
+compatibility_date = "2025-03-01"
+workers_dev = false
+
+routes = [
+  { pattern = "fxd.nemut.ai", custom_domain = true },
+  { pattern = "effectdeck.nemut.ai", custom_domain = true },
+]
+
+# App Store のバッジ（Apple 配布の SVG をそのまま）、アイコン（リポジトリの docs/ を直接読む）、
+# スクリーンショットと og.png（site/tools/images.mjs が docs/ から作って assets/ に置く）。
+[[rules]]
+type = "Text"
+globs = ["**/*.svg"]
+fallthrough = true
+
+[[rules]]
+type = "Data"
+globs = ["**/*.png"]
+fallthrough = true
+
+[[rules]]
+type = "Data"
+globs = ["**/*.webp"]
+fallthrough = true

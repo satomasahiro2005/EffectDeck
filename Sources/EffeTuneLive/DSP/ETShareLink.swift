@@ -25,6 +25,10 @@ enum ETShareLink {
     /// 置き換える。上流に同じものが無いので当然だが、**こちらどうしで渡すときに
     /// 落とす理由は無い。**中身の形も `?p=<base64>` も上流と同じにしてあるので、
     /// 読む側（`parse`）は同じ道で受けられる。違うのは宛先だけ。
+    ///
+    /// **effectdeck.nemut.ai で作る。**associated domain はここだけで、アプリの無い人には
+    /// 同じ URL が公式ページになる。fxd.nemut.ai は人が打つための別名（effectdeck へ 301）で、
+    /// こちらからは作らない。受けるのはどちらでもよい（ETFXDLink.route）。
     static let deckBase = "https://effectdeck.nemut.ai/"
 
     // MARK: - 書く

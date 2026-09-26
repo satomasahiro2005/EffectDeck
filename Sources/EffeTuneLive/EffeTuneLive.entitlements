@@ -36,5 +36,14 @@
 	     拡張は UserDefaults を触らない。 -->
 	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
 	<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<!-- 共有リンク（鎖の ?p= と JSFX の /j#…）を開く。受け口は ETFXDLink。
+	     **effectdeck.nemut.ai だけ。**リンクはここで作り、アプリの無い人には同じ URL が
+	     公式ページになる。/.well-known/apple-app-site-association は site/ の Worker が返す。
+	     fxd.nemut.ai は人が打つための短い別名で、AASA を含めて全部 effectdeck へ 301 する。
+	     AASA を持たないのでここには入れない。 -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:effectdeck.nemut.ai</string>
+	</array>
 </dict>
 </plist>

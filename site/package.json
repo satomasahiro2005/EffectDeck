@@ -1,0 +1,14 @@
+{
+  "name": "effectdeck-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs && node test-worker.mjs",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260925.0-alpha",
+    "wrangler": "4.141.0"
+  }
+}
