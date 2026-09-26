@@ -914,7 +914,7 @@ final class BandFIRPEQDesigner: ObservableObject {
     private func republishForLatencyChange() {
         let nodes = EffeTuneDSP.shared.chain.filter { $0.instance != 0 }.map { node in
             ETPipeNode(instance: node.instance,
-                       enabled: node.enabled ? 1 : 0,
+                       enabled: node.enabled && !EffeTuneDSP.isChannelBypassed(node) ? 1 : 0,
                        inputBus: node.inputBus,
                        outputBus: node.outputBus,
                        channelSpec: node.channelSpec,

@@ -20,6 +20,12 @@ that ABI with an external node marker and callback. `Scripts/setup.sh` applies
 it to the pinned EffeTune submodule, after which the same descriptor order can
 be `native -> AU -> native` without splitting the engine or losing bus state.
 
+Since EffeTune 2.11.0 the engine's latency planner also gives external nodes input
+delays for parallel-bus compensation. The patched engine aligns the node's routed
+channels (`align_input`) after the bus copy and before the callback, as it does for
+native nodes, so the adapter receives aligned input. This is covered only by a scratch
+native test; it has not been measured with an AU or JSFX processor.
+
 The patch is kept in this repository until the corresponding upstream
 EffeTune change is available at the pinned submodule revision.
 

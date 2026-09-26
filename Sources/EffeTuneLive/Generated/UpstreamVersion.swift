@@ -5,4 +5,4 @@
 //  **アプリの版とは別の事実。**あちらは出した日で、
 //  EffeTune アプリ全体の版（package.json）とも別。
 
-let ETUpstreamVersion = "0.10.0"
+let ETUpstreamVersion = "0.11.0"

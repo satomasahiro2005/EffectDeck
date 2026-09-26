@@ -295,9 +295,31 @@ final class EffeTuneDSP: ObservableObject {
             node.values = spec.defaults + Array(repeating: 0,
                                                 count: max(0, spec.floatCount - spec.defaults.count))
         }
+        applyAddDefaults(&node)
         guard instantiate(&node) else { return false }
         chain.append(node)
         return true
+    }
+
+    /// 新しく足した段だけに掛ける既定。上流の constructor が params.json の既定から
+    /// 外しているもの。
+    ///
+    /// **プリセット・共有リンク・保存した鎖には掛けない。**そちらは append(_:) と
+    /// addPreset を通り、ここ（appendSpec）は通らない。持ってきた値と Routing に従う。
+    private func applyAddDefaults(_ node: inout Node) {
+        switch node.spec.type {
+        case BassManagementDesigners.type:
+            // bass_management.js:23, 42-45。Ch は All、処理幅ぶんの Role を Managed に。
+            // su は 0 のままなので、Sub を選ぶまでカーネルは素通し（kernel.cpp:455-462）。
+            node.channelSpec = -2
+            guard let roles = node.spec.params.first(where: { $0.key == "ro" }) else { return }
+            for ch in 0..<min(roles.count, Int(maxChannels))
+            where node.values.indices.contains(roles.offset + ch) {
+                node.values[roles.offset + ch] = 1
+            }
+        default:
+            break
+        }
     }
 
     func remove(at offsets: IndexSet) {
@@ -480,6 +502,7 @@ final class EffeTuneDSP: ObservableObject {
                 expanded = ETScreenshotSeed.collapsed ? [] : Set(chain.map(\.id))
                 restoring = false
                 publish()
+                ETAssetReattach.loaded(chain)
                 return
             }
         }
@@ -508,6 +531,8 @@ final class EffeTuneDSP: ObservableObject {
             restoring = false
             publish()
             reloadAssets()
+            // 畳んだまま起動した Bass Management の Linear も設計させる（replaceChain と同じ）。
+            ETAssetReattach.loaded(chain)
         } else if !PipelineStore.hasSaved {
             if let meter = ETCatalog.first(where: { $0.type == Self.defaultType }) {
                 add(meter)
@@ -576,6 +601,28 @@ final class EffeTuneDSP: ObservableObject {
         case -1: return min(2, Int(shared.maxChannels))
         case 16...:  return 2
         default:     return 1
+        }
+    }
+
+    /// 上流が受けない Ch に置かれた段。**descriptor では enabled 0 で渡す**
+    /// （カーネルを回さず、遅延も engine の合計に入らない）。
+    ///
+    /// 上流は plugin-execution-capabilities.js:37-89 で Ch を mode に直し、
+    /// supportedChannelModes に無ければ bypass する（:91-110）。
+    ///   Bass Extender   mono / stereo-pair（bass_extender.js:15-19）
+    ///     → 既定（-1。出力 1ch なら mono）と対（16 以降）だけ。All は幅によらず外す
+    ///   Bass Management all（bass_management.js:15-19）→ All（-2）だけ
+    /// 上流の bypass は入力をそのまま出力 bus へ渡す（offline-processor.js:878-879 で
+    /// 処理前の buffer を applyOfflineRoutingResult へ回す）。
+    /// enabled 0 は bus を移さないので、**入力と出力の bus が違う段だけ**音が食い違う。
+    static func isChannelBypassed(_ node: Node) -> Bool {
+        switch node.spec.type {
+        case "BassExtenderPlugin":
+            return !(node.channelSpec == -1 || node.channelSpec >= 16)
+        case BassManagementDesigners.type:
+            return node.channelSpec != -2
+        default:
+            return false
         }
     }
 
@@ -700,6 +747,8 @@ final class EffeTuneDSP: ObservableObject {
         for offset in made.indices where !made[offset].irId.isEmpty {
             _ = reloadAsset(at: target + offset)
         }
+        // 値だけで設計できる型（Bass Management の Linear）も同じ理由でここで作らせる。
+        ETAssetReattach.loaded(Array(chain[target..<(target + made.count)]))
         // 足したものは開いて出す。上流も expandedPlugins に入れている。
         // publish() の後に入れるのは、persistExpanded に確定後の位置を書かせるため。
         for node in made { expanded.insert(node.id) }
@@ -729,6 +778,8 @@ final class EffeTuneDSP: ObservableObject {
         // プリセット／共有リンクから復元した IR を、新しく作った instance へ送る。
         // ビューの生成に依存させないので、畳んだ IR Reverb も直ちに有効になる。
         reloadAssets()
+        // 値だけで設計できる型（Bass Management の Linear）も同じ。
+        ETAssetReattach.loaded(chain)
         retire(doomed)
     }
 
@@ -871,11 +922,33 @@ final class EffeTuneDSP: ObservableObject {
     /// **長さが違う配列は受けない。** pushParams は spec.floatCount を渡していて
     /// 配列の長さを見ないので（:703-711）、短いものを入れると確保していない先を
     /// 読ませることになる。
+    ///
+    /// **後始末は setValue / resetParams と同じにする。**以前はここだけ何もしなかった。
+    ///   - 遅延: os の入ったプリセット（歪み系 6 種、0 → 64）や Bass Management の
+    ///     Phase / Linear Quality で変わる。組み直さないと帯の Fx と並列の段の位置合わせが古いまま。
+    ///   - IR Reverb: cm / lt / cr が変わったら送り直す（settleAfterParams と同じ）。
+    ///   - designer で作る型: 値から材料を引き直させる（ETAssetReattach.paramsChanged）。
+    ///     FIR Crossover は lt / bc を、Bass Management は全部を params から読む。
+    ///     カードを畳んだまま当てるとビューが無いので、ここで呼ばないと誰も呼ばない。
+    ///     他の 5 種は材料が置き場にあり、値からは何も引き直さない。
+    ///     プリセットの lt / fd はその 5 種では次に設計し直すまで係数に効かない
+    ///     （カーネルは入っている係数の遅延のまま鳴り続けるので、無音にはならない）。
     func setValues(_ values: [Float], at index: Int) {
         guard chain.indices.contains(index),
               values.count == chain[index].values.count else { return }
+        let before = instanceLatency(of: chain[index])
+        let changed = Set(values.indices.filter { values[$0] != chain[index].values[$0] })
         chain[index].values = values
         pushParams(chain[index])
+        if !changed.isEmpty {
+            if !Self.assetConfigOffsets(of: chain[index]).isDisjoint(with: changed) {
+                // 送り直すと ETIRLoader.load の中で組み直される。
+                reloadAsset(at: index)
+            } else if instanceLatency(of: chain[index]) != before {
+                republish(reason: "遅延が変わった")
+            }
+            ETAssetReattach.paramsChanged(chain[index])
+        }
         // setValue と同じ理由で publish() は通さず、端末にだけ残す。
         persistSoon()
     }
@@ -892,6 +965,8 @@ final class EffeTuneDSP: ObservableObject {
         } else if instanceLatency(of: chain[index]) != before {
             republish(reason: "遅延が変わった")
         }
+        // setValues と同じ。値から材料を引く designer に、戻した値を読ませる。
+        ETAssetReattach.paramsChanged(chain[index])
         persistSoon()
     }
 
@@ -1134,7 +1209,7 @@ final class EffeTuneDSP: ObservableObject {
                                         externalIndex: 0))
             }
             nodes.append(ETPipeNode(instance: n.isExternal ? 0 : n.instance,
-                                    enabled: n.enabled ? 1 : 0,
+                                    enabled: n.enabled && !Self.isChannelBypassed(n) ? 1 : 0,
                                     inputBus: n.inputBus,
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,
@@ -1166,11 +1241,20 @@ final class EffeTuneDSP: ObservableObject {
                     channelSpec: Int8? = nil, sectionGate: UInt8? = nil) {
         guard chain.indices.contains(index) else { return }
         let previousChannels = Self.routedChannels(of: chain[index])
+        let previousBypass = Self.isChannelBypassed(chain[index])
         if let v = inputBus    { chain[index].inputBus = v }
         if let v = outputBus   { chain[index].outputBus = v }
         if let v = channelSpec { chain[index].channelSpec = v }
         if let v = sectionGate { chain[index].sectionGate = v }
         publish()
+        // 処理幅が変わると、幅を含めて設計する資産（FIR Crossover、Bass Management）は
+        // 送り直しが要る。Routing は別の画面から変えるので、カードのビューが居るとは限らない。
+        // 幅が同じでも外れる・戻るときは designer に知らせる（Bass Management は All 以外で外れる）。
+        if !chain[index].isExternal,
+           Self.routedChannels(of: chain[index]) != previousChannels
+            || Self.isChannelBypassed(chain[index]) != previousBypass {
+            ETAssetReattach.paramsChanged(chain[index])
+        }
         if chain[index].isExternal {
             let channels = Self.routedChannels(of: chain[index])
             if channels != previousChannels {
@@ -1277,7 +1361,7 @@ final class EffeTuneDSP: ObservableObject {
                                         externalIndex: 0))
             }
             nodes.append(ETPipeNode(instance: n.isExternal ? 0 : n.instance,
-                                    enabled: n.enabled ? 1 : 0,
+                                    enabled: n.enabled && !Self.isChannelBypassed(n) ? 1 : 0,
                                     inputBus: n.inputBus,
                                     outputBus: n.outputBus,
                                     channelSpec: n.channelSpec,

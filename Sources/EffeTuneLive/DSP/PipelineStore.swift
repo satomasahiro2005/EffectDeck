@@ -215,7 +215,8 @@ enum PipelineStore {
 
             let values = ETParamCoding.decode(params: spec.params,
                                               defaults: spec.defaults,
-                                              from: params)
+                                              from: params,
+                                              type: spec.type)
 
             let ch = (entry["channel"] ?? entry["ch"]) as? String
             out.append(Loaded(

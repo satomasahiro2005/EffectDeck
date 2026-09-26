@@ -48,7 +48,8 @@ enum EffectPresetApply {
             : params
 
         var out = ETParamCoding.decode(params: spec.params,
-                                       defaults: current, from: source)
+                                       defaults: current, from: source,
+                                       type: spec.type)
         guard isTube else { return out }
 
         // rl = Number(preset.params.sl ?? this.sl)（tube_simulator.js:6132）。

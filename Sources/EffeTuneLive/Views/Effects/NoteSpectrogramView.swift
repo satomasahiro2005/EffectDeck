@@ -162,6 +162,57 @@ enum ETNoteKeyboard {
     }
 }
 
+// MARK: - 音量の目盛り（共有）
+
+/// dB を 0〜1 の濃さへ写す目盛り。**上端はピークを追い、1 秒持ってから 20dB/s で落とす。**
+/// note_spectrogram.js v2.11.0:89-112 の normalizedLevel / updateLevelReference。
+/// 上流は Chroma Spiral もこれを借りている（chroma_spiral.js:210-220, :328）。
+///
+/// 幅（lr）と床（df）は呼ぶ側が渡す。Note Spectrogram は上流と同じく既定のまま使う。
+/// 既定の床 -60 は MULTI_F0_LEVEL_CEILING_DB − RANGE（同 :16-17）。
+struct ETLevelReference: Equatable {
+    /// MULTI_F0_LEVEL_FLOOR（同 :15）。枠が無いときの上端。
+    static let floor: Double = -240
+    /// MULTI_F0_LEVEL_RANGE_DB（同 :16）。
+    static let defaultRange: Double = 24
+    /// MULTI_F0_LEVEL_CEILING_DB − MULTI_F0_LEVEL_RANGE_DB（同 :17, :90）。
+    static let defaultFloor: Double = -60
+    /// 同 :18-19。
+    static let releaseDBPerSecond: Double = 20
+    static let holdSeconds: Double = 1
+
+    private(set) var reference: Double = ETLevelReference.floor
+    private(set) var hold: Double = 0
+
+    init() {}
+
+    /// 追い直す。上流が levelReference を null に戻す所（chroma_spiral.js:116, :205）。
+    mutating func reset() {
+        reference = Self.floor
+        hold = 0
+    }
+
+    /// 1 枠ぶん進める。同 :97-112。
+    mutating func update(peak: Double, elapsed: Double) {
+        if peak >= reference {
+            reference = peak
+            hold = Self.holdSeconds
+        } else {
+            let decay = max(0, elapsed - hold)
+            hold = max(0, hold - elapsed)
+            reference = max(peak, reference - Self.releaseDBPerSecond * decay)
+        }
+    }
+
+    /// dB を 0〜1 へ。**下端は max(上端 − 幅, 床)。**同 :89-95。
+    func normalized(_ level: Double, range: Double = ETLevelReference.defaultRange,
+                    floor: Double = ETLevelReference.defaultFloor) -> Double {
+        guard range > 0 else { return 0 }
+        let lower = max(reference - range, floor)
+        return min(max((level - lower) / range, 0), 1)
+    }
+}
+
 // MARK: - 画面
 
 struct NoteSpectrogramView: View {
@@ -868,12 +919,6 @@ final class ETNoteBand: ObservableObject {
     static let pitches = notes * divisions
     static let firstMidi = 21
     static let lastMidi = firstMidi + notes - 1
-    /// 音量の目盛りの幅。同 :16-17 の MULTI_F0_LEVEL_RANGE_DB / _CEILING_DB。
-    static let levelRangeDB: Double = 24
-    static let levelCeilingDB: Double = -36
-    /// 目盛りの上端の落とし方。同 :18-19。
-    static let levelReleaseDBPerSecond: Double = 20
-    static let levelHoldSeconds: Double = 1
 
     @Published private(set) var revision: UInt32 = 0
 
@@ -935,9 +980,8 @@ final class ETNoteBand: ObservableObject {
     /// RGBA、前乗算。Normal では 4 バイトとも同じ値（使うのは alpha だけ）。
     private var pixels: [UInt8] = []
 
-    /// 音量の目盛りの上端。note_spectrogram.js:501-516。
-    private var levelReference: Double = -240
-    private var levelHold: Double = 0
+    /// 音量の目盛り。幅と床は上流の既定のまま（lr 24 / df -60）。
+    private var levelReference = ETLevelReference()
     private var lastTime: Double?
 
     init() {
@@ -981,7 +1025,7 @@ final class ETNoteBand: ObservableObject {
             let best = Self.best(in: snapshot.confidence, note: note)
             let db = Double(snapshot.level[best])
             levels[note * Self.columns + column] = snapshot.level[best]
-            loudness[note * Self.columns + column] = Self.byte(Float(normalized(level: db)))
+            loudness[note * Self.columns + column] = Self.byte(Float(levelReference.normalized(db)))
         }
         times[column] = snapshot.time
         paint(column: column)
@@ -1233,29 +1277,15 @@ final class ETNoteBand: ObservableObject {
 
     // MARK: 音量の目盛り
 
-    /// 上端は確からしさ 0.5 以上の中の最大。1 秒持ってから 20dB/s で落とす。
-    /// note_spectrogram.js:501-516。
+    /// 上端は確からしさ 0.5 以上の中の最大。追い方は ETLevelReference。
+    /// note_spectrogram.js v2.11.0:541-548。
     private func updateLevelReference(_ snapshot: ETNoteSnapshot, elapsed: Double) {
-        var peak = -240.0
+        var peak = ETLevelReference.floor
         for pitch in 0..<Self.pitches where snapshot.confidence[pitch] >= 0.5 {
             let db = Double(snapshot.level[pitch])
             if db > peak { peak = db }
         }
-        if peak >= levelReference {
-            levelReference = peak
-            levelHold = Self.levelHoldSeconds
-        } else {
-            let decay = max(0, elapsed - levelHold)
-            levelHold = max(0, levelHold - elapsed)
-            levelReference = max(peak, levelReference - Self.levelReleaseDBPerSecond * decay)
-        }
-    }
-
-    /// dB を 0〜1 へ。note_spectrogram.js:492-499。
-    private func normalized(level: Double) -> Double {
-        let upper = max(levelReference, Self.levelCeilingDB)
-        let value = (level - (upper - Self.levelRangeDB)) / Self.levelRangeDB
-        return min(max(value, 0), 1)
+        levelReference.update(peak: peak, elapsed: elapsed)
     }
 
     // MARK: 細々

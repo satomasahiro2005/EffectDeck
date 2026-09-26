@@ -47,18 +47,34 @@ BS = chr(92)
 # 上流の配列形式:
 #   - オブジェクト配列  "bs": [{"en":…}, …]   params.json の objectArrayKey
 #   - 添字付き          "f0" "f1" "f2" …      js が params['f' + i] で書く
-#   - 2.10.0 Spatial Mapper のみ、dm / fm / rm は平らな 256 要素配列。
+#   - 平らな配列        "dm": [...]            FLAT_ARRAYS の表にあるものだけ
 # 5Band PEQ を平らな "f": [...] で書いていたときは、
 # プリセットが一つも読めず曲線が平坦になっていた。
 # 将来 params.json が増えたときに黙って同じ穴に落ちないよう、
 # 「object でも indexed でもない配列」が出たらここで止める。
+#
+# **平らな配列は表で持つ。検査と flatArrayKey の出力の両方がこの表を見る。**
+# 検査だけ外すと ro0..ro15 の添字形式で書かれ、web 版とプリセットが食い違う。
+#   - Spatial Mapper (2.10.0): dm / fm / rm は 16×16 の行列
+#   - Bass Management (2.11.0): ro / fc / sl / rt / ri は 16ch 分
+#     （bass_management.js の getParameters / setParameters が平らなまま読み書きする）
+FLAT_ARRAYS = {
+    "SpatialMapperPlugin": ("dm", "fm", "rm"),
+    "BassManagementPlugin": ("ro", "fc", "sl", "rt", "ri"),
+}
+
+
+def is_flat_array(type_name, f):
+    return f.get("arrayKey") in FLAT_ARRAYS.get(type_name, ())
+
+
 def check_array_shape(meta, type_name, category, folder):
     js = JS_PLUGINS / category / (folder + ".js")
     src = js.read_text(encoding="utf-8", errors="replace") if js.exists() else ""
     for f in meta.get("fields", []):
         if (f.get("count") or 1) <= 1 or f.get("objectArrayKey"):
             continue
-        if type_name == "SpatialMapperPlugin" and f.get("arrayKey") in ("dm", "fm", "rm"):
+        if is_flat_array(type_name, f):
             continue
         k = f.get("key") or f["name"]
         indexed = re.search(r"\[\s*['\"]%s['\"]\s*\+" % re.escape(k), src) or                   re.search(r"`%s\$\{" % re.escape(k), src)
@@ -510,7 +526,7 @@ def main():
             # 同梱プリセットも読めない（Sources/.../EffectSpec.swift の
             # objectArrayKey のコメントに経緯）。
             extra = ""
-            if type_name == "SpatialMapperPlugin" and f.get("arrayKey") in ("dm", "fm", "rm"):
+            if is_flat_array(type_name, f):
                 extra += ", flatArrayKey: %s" % swift_str(f["arrayKey"])
             oak, mk = f.get("objectArrayKey"), f.get("memberKey")
             if oak and mk and mcount > 1:

@@ -134,14 +134,29 @@ else
   exit 1
 fi
 
+# **生成の失敗で止める。**`| tail` の終了値は tail のものなので、gen_catalog が
+# SystemExit しても古いカタログのまま建ってしまう（2.11.0 の Bass Management で
+# 起きた。os が増えた 6 種の set_params が全部 ET_ERR_HASH になる）。
+# 呼び方: パイプの直後に gen_ok "${PIPESTATUS[0]}" 名前
+gen_ok() {
+  if [ "$1" -ne 0 ]; then
+    echo "!! $2 が失敗した (exit $1)"
+    exit 1
+  fi
+}
+
 echo "--- エフェクトのカタログを作る ---"
 python3 Tools/gen_catalog.py 2>&1 | tail -5
+gen_ok "${PIPESTATUS[0]}" gen_catalog.py
 python3 Tools/gen_presets.py 2>&1 | tail -1
+gen_ok "${PIPESTATUS[0]}" gen_presets.py
 # カードごとの出荷時プリセット。**node が要る**（Tube Simulator のグループだけ
 # 静的な表ではなく組み立てなので、評価しないと取れない）。無ければ飛ばして、
-# 追跡してある Generated/EffectPresets.swift をそのまま使う。
+# 追跡してある Generated/EffectPresets.swift をそのまま使う（そのときも 0 で戻る）。
 python3 Tools/gen_effect_presets.py 2>&1 | tail -1
+gen_ok "${PIPESTATUS[0]}" gen_effect_presets.py
 python3 Tools/gen_licenses.py 2>&1 | tail -1
+gen_ok "${PIPESTATUS[0]}" gen_licenses.py
 
 echo "--- Note Spectrogram のモデルを埋め込む ---"
 # upstream の models.cmake と同じことをする。
@@ -150,9 +165,13 @@ NS="Vendor/effetune/dsp/plugins/analyzer/note_spectrogram"
 rm -rf Generated/note-models && mkdir -p Generated/note-models
 for m in learned_model fine_model octave_model; do
   python3 "$NS/embed_models.py" "$NS/$m.json" Generated/note-models --target macho 2>&1 | tail -2
+  gen_ok "${PIPESTATUS[0]}" "embed_models.py $m"
 done
 ls Generated/note-models
 
 echo "--- プロジェクトを作る ---"
+# gen_version だけは止めない。git の無い写し（Mac へ送った作業ツリー）では
+# git describe が落ちるが、追跡してある UpstreamVersion.swift をそのまま使える。
 python3 Tools/gen_version.py 2>&1 | tail -1
 xcodegen generate --spec project.yml 2>&1 | tail -5
+gen_ok "${PIPESTATUS[0]}" xcodegen

@@ -46,11 +46,19 @@ struct StereoMeterView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    @Environment(\.etGraphOnly) private var graphOnly
+    /// 表示だけの倍率（dB）。上流の `gn`（v2.11.0 の stereo_meter.js:160、:264-269）。DSP へは送らない。
+    @State private var gain: Double = 0
+
+    /// v2.11.0 の stereo_meter.js:222 の 0〜24dB。
+    private static let gainRange: ClosedRange<Double> = 0...24
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // テレメトリを観測するのはこの中だけ。つまみの行を 30Hz で作り直さない。
-            StereoMeterFigure(tapId: node.tapId, windowSeconds: windowSeconds)
+            StereoMeterFigure(tapId: node.tapId, windowSeconds: windowSeconds, gainDB: gain)
 
+            // 上流は Window・Gain の順（v2.11.0 の stereo_meter.js:213-226）。
             ForEach(node.spec.params) { param in
                 if param.name == "windowTime" {
                     StereoWindowRow(param: param, nodeIndex: index,
@@ -59,7 +67,34 @@ struct StereoMeterView: View {
                     ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
                 }
             }
+            if !graphOnly { gainRow }
         }
+        // 畳むと View ごと消えるので鎖に持たせる。上流も `gn` をプリセットに書く
+        // （v2.11.0 の stereo_meter.js:271-279）。
+        .etSaved($gain, key: "gn", index: index, dsp: dsp)
+    }
+
+    /// v2.11.0 の stereo_meter.js:221-226 の createParameterControl('Gain', 0, 24, 1, …, 'dB')。
+    private var gainRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Gain (dB)")
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                ETValueField(text: ETNumberText.plain(gain) + " dB",
+                             label: "Gain",
+                             editText: { ETNumberText.plain(gain) }) { typed in
+                    // 上流の setGain（:264-269）と同じく挟むだけで丸めない。
+                    gain = min(max(typed, Self.gainRange.lowerBound), Self.gainRange.upperBound)
+                }
+            }
+            Slider(value: $gain, in: Self.gainRange, step: 1)
+                .accessibilityLabel("Gain")
+                .accessibilityValue(ETNumberText.plain(gain) + " dB")
+        }
+        .padding(.vertical, 2)
     }
 
     /// つまみが持っている Window の長さ。秒で入っている（EffectCatalog の windowTime）。
@@ -80,6 +115,9 @@ private struct StereoMeterFigure: View {
 
     let tapId: UInt32
     let windowSeconds: Double
+    /// 点と包絡線の半径にだけ掛ける（v2.11.0 の stereo_meter.js:542 の signalRadius）。
+    /// ひし形・目盛り・相関と左右差の棒は変えない。
+    let gainDB: Double
 
     @ObservedObject private var telemetry = Telemetry.shared
     @StateObject private var trail = ETStereoTrail()
@@ -107,8 +145,9 @@ private struct StereoMeterFigure: View {
             draw: { context, plot in
                 Self.drawField(&context, plot)
                 if let r = reading {
-                    trail.draw(&context, plot, seconds: windowSeconds)
-                    Self.drawEnvelope(&context, plot, Self.smooth(r.envelope))
+                    let gain = pow(10, gainDB / 20)
+                    trail.draw(&context, plot, seconds: windowSeconds, gain: gain)
+                    Self.drawEnvelope(&context, plot, Self.smooth(r.envelope), gain: gain)
                     Self.drawCorrelationBar(&context, plot, Double(r.correlation))
                     Self.drawBalanceBar(&context, plot, Double(r.balance))
                 }
@@ -195,8 +234,9 @@ private struct StereoMeterFigure: View {
     // MARK: 包絡線
 
     /// 角度ごとのピークを結んだ輪（stereo_meter.js:641-653）。
+    /// gain は Gain の倍率（v2.11.0 の stereo_meter.js:671）。
     private static func drawEnvelope(_ context: inout GraphicsContext, _ plot: ETPlot,
-                                     _ envelope: [Double]) {
+                                     _ envelope: [Double], gain: Double) {
         guard envelope.count == envelopeBins else { return }
         let rect = plot.rect
         let center = CGPoint(x: rect.midX, y: rect.midY)
@@ -205,7 +245,8 @@ private struct StereoMeterFigure: View {
         var path = Path()
         for bin in 0..<envelopeBins {
             let radians = Double(bin) * .pi / 180
-            let r = min(max(envelope[bin], 0), 4) * 0.5 * Double(radius)
+            // 上限 4 は倍率を掛けた後で切る。図の外へ大きく外れた点で Path を壊さない。
+            let r = min(max(envelope[bin] * gain, 0), 4) * 0.5 * Double(radius)
             let point = CGPoint(x: center.x + CGFloat(cos(radians) * r),
                                 y: center.y + CGFloat(sin(radians) * r))
             if bin == 0 { path.move(to: point) } else { path.addLine(to: point) }
@@ -442,7 +483,9 @@ final class ETStereoTrail: ObservableObject {
     }
 
     /// Window の長さだけ遡って打つ（stereo_meter.js:595-618）。
-    func draw(_ context: inout GraphicsContext, _ plot: ETPlot, seconds: Double) {
+    /// gain は Gain の倍率（v2.11.0 の stereo_meter.js:627-628）。
+    func draw(_ context: inout GraphicsContext, _ plot: ETPlot, seconds: Double,
+              gain: Double = 1) {
         guard count > 0, storedRate > 0, seconds > 0 else { return }
         let needed = min(count, max(1, Int((seconds * storedRate).rounded())))
         let step = max(1, needed / Self.maxDrawn)
@@ -465,8 +508,9 @@ final class ETStereoTrail: ObservableObject {
             i += step
             guard x.isFinite, y.isFinite else { continue }
             // ひし形の外へ大きく外れた点で Path を壊さないよう、ほどほどで止める。
-            let cx = min(max(x, -4), 4)
-            let cy = min(max(y, -4), 4)
+            // 倍率を掛けた後で止める。
+            let cx = min(max(x * gain, -4), 4)
+            let cy = min(max(y * gain, -4), 4)
             let px = center.x + CGFloat(cx * 0.5) * radius
             let py = center.y - CGFloat(cy * 0.5) * radius
             paths[shade].addRect(CGRect(x: px - 0.75, y: py - 0.75, width: 1.5, height: 1.5))

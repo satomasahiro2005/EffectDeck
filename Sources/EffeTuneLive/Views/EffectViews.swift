@@ -33,6 +33,8 @@ enum ETEffectViews {
         // collapsedFully が空なので、一度も操作しなくてもその状態から始まる）。
         "MatrixPlugin",
         "OscillatorPlugin",
+        // 状態の一語とつまみだけ（BassExtenderView.swift）。
+        "BassExtenderPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。
@@ -46,7 +48,10 @@ enum ETEffectViews {
         "PitchMeterPlugin",
         "SpatialMapperPlugin",
         "AutoLevelerPlugin",
+        "BassExtenderPlugin",
+        "BassManagementPlugin",
         "ChannelDividerPlugin",
+        "ChromaSpiralPlugin",
         "CompressorPlugin",
         "CrosstalkCancellationPlugin",
         "DynamicSaturationPlugin",
@@ -98,8 +103,14 @@ enum ETEffectViews {
             SpatialMapperView(index: index, node: node, dsp: dsp)
         case "AutoLevelerPlugin":
             AutoLevelerView(index: index, node: node, dsp: dsp)
+        case "BassExtenderPlugin":
+            BassExtenderView(index: index, node: node, dsp: dsp)
+        case "BassManagementPlugin":
+            BassManagementView(index: index, node: node, dsp: dsp)
         case "ChannelDividerPlugin":
             ChannelDividerView(index: index, node: node, dsp: dsp)
+        case "ChromaSpiralPlugin":
+            ChromaSpiralView(index: index, node: node, dsp: dsp)
         case "CompressorPlugin":
             CompressorView(index: index, node: node, dsp: dsp)
         case "CrosstalkCancellationPlugin":

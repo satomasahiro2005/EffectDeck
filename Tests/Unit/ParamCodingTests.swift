@@ -32,6 +32,30 @@ final class ParamCodingTests: XCTestCase {
         XCTAssertEqual(ETParamCoding.decode(params: s.params, defaults: s.defaults, from: json), values)
     }
 
+    /// Bass Management 2.11.0 も 16ch 分を平らな配列で書く
+    /// （bass_management.js の getParameters / setParameters）。
+    func testBassManagementChannelsUseUpstreamFlatArrays() throws {
+        let s = try spec("BassManagementPlugin")
+        // ch 4 に入れる。rt / ri は bitmask なので最上位の bit も通す。
+        let sample: [String: Float] = ["ro": 2, "fc": 97.5, "sl": 48, "rt": 32769, "ri": 32768]
+        var values = s.defaults
+        for (key, v) in sample {
+            let p = try XCTUnwrap(s.params.first { $0.key == key })
+            XCTAssertEqual(p.count, 16)
+            values[p.offset + 3] = v
+        }
+        let encoded = ETParamCoding.encode(params: s.params, values: values)
+        let data = try JSONSerialization.data(withJSONObject: encoded)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for (key, v) in sample {
+            let channels = try XCTUnwrap(json[key] as? [NSNumber])
+            XCTAssertEqual(channels.count, 16)
+            XCTAssertEqual(channels[3].floatValue, v)
+            XCTAssertNil(json[key + "0"])
+        }
+        XCTAssertEqual(ETParamCoding.decode(params: s.params, defaults: s.defaults, from: json), values)
+    }
+
     func testOldSpectrumPresetsKeepHQDisabled() throws {
         for type in ["SpectrumAnalyzerPlugin", "SpectrogramPlugin"] {
             let s = try spec(type)
@@ -220,9 +244,10 @@ final class ParamCodingTests: XCTestCase {
     ///
     /// **`flatArrayKey` を宣言したものだけが例外。**以前は「平らは 1 つも無い」と
     /// 書いていたが、EffeTune 2.10.0 が Spatial Mapper を足して破れた。
-    /// あれは 16×16 の行列を 3 つ持っていて、上流が平らで書く
-    /// （`Tools/gen_catalog.py` がその 3 つにだけ `flatArrayKey` を付けている）。
-    /// こちらが object で書くと web 版も同梱プリセットも読めなくなるので、
+    /// あれは 16×16 の行列を 3 つ持っていて、上流が平らで書く。2.11.0 の
+    /// Bass Management も 16ch 分の 5 本を平らで書く
+    /// （`Tools/gen_catalog.py` の FLAT_ARRAYS の表にあるものだけに `flatArrayKey` を付けている）。
+    /// こちらが object や添字付きで書くと web 版も同梱プリセットも読めなくなるので、
     /// **平らが正しい。**
     ///
     /// なので見るのは「宣言していないものが平らになっていないか」。
@@ -246,7 +271,8 @@ final class ParamCodingTests: XCTestCase {
     ///
     /// **数を書いて留める。**上流が別のプラグインでも平らを使い始めたら、
     /// 黙って通さずここで止める（通してよいかは人が決めること）。
-    func testDeclaredFlatArraysAreOnlySpatialMapper() {
+    /// いまは Spatial Mapper の 3 本と Bass Management の 5 本。
+    func testDeclaredFlatArraysAreOnlyKnownOnes() {
         var declared: [String] = []
         for s in ETCatalog {
             for p in s.params where p.flatArrayKey != nil {
@@ -254,6 +280,11 @@ final class ParamCodingTests: XCTestCase {
             }
         }
         XCTAssertEqual(declared.sorted(), [
+            "BassManagementPlugin.fc",
+            "BassManagementPlugin.ri",
+            "BassManagementPlugin.ro",
+            "BassManagementPlugin.rt",
+            "BassManagementPlugin.sl",
             "SpatialMapperPlugin.dm",
             "SpatialMapperPlugin.fm",
             "SpatialMapperPlugin.rm",

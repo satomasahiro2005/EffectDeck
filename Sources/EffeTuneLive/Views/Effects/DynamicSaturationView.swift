@@ -5,7 +5,7 @@
 //  writeTelemetry は無い。
 //
 //  図に出せるのは歪ませる段だけ。横軸はコーンの変位で、音の入力ではない。
-//  カーネル（kernel.cpp:104-107）はこう書いている:
+//  カーネル（kernel.cpp:108-117）はこう書いている:
 //      wet   = tanh(distortionDrive * (position + bias)) - tanh(distortionDrive * bias)
 //      xNl   = position + distortionMix * (wet - position)
 //      delta = (xNl - position) * coneMotionMix
@@ -13,6 +13,7 @@
 //  position は 2 次系（質量・ばね・減衰）の出力で、いまの変位は params から決まらない。
 //  だから曲線に出せるのは dd / db / dm の 3 つだけ。
 //  sd・ss・sp・sm は変位そのものを、cm と og は出口を動かすので、この曲線には映らない。
+//  os（Oversampling）は tanh の段を何倍で回すかだけで、形は変えない（kernel.cpp:108-110）。
 //  web 版の canvas（plugins/saturation/dynamic_saturation.js:282-295）も同じ 3 つだけで引いている。
 //
 //  並べ方は web 版に合わせて、図を Distortion の下に置いた。
@@ -38,6 +39,9 @@ struct DynamicSaturationView: View {
             // **図だけの段では見出しも出さない。**ParameterRow は graphOnly のとき
             // 自分で消えるが、見出しは残って宙に浮く。
             if !graphOnly {
+                // 上流も createUI の先頭（dynamic_saturation.js:311-314）。
+                rows(["os"])
+
                 label("Speaker")
                 rows(["sd", "ss", "sp", "sm"])
 

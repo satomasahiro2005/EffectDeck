@@ -44,7 +44,9 @@
 //      **PEQ のゲイン軸（±20dB）とは別の軸。** plot.y() を使わない
 //    - 横は図の対数軸をそのまま使う
 //    - 1/12 オクターブで均す（ETSpectrumSmoothing）。均さないと Spectrum Analyzer の図と
-//      同じギザギザになり、web と線の性格が変わる
+//      同じギザギザになり、web と線の性格が変わる。**借りた analyzer が HQ（対数セル）の
+//      ときは均さない。**上流の Quality = HQ も analyzer のセルをそのまま描く
+//      （v2.11.0 の spectrum-overlay.js:372-375）
 //    - 塗りではなく線。曲線の**上**に重ねる（spectrum-overlay.css:15 の z-index: 2）
 //    - 右端に -24 / -48 / -72 の字（同 :548-551）。"Level (dBFS)" の縦書きは出さない。
 //      上流も inset のある図（PEQ は inset=20）には出していない（同 :552）
@@ -60,7 +62,12 @@
 //    - 音が途切れたときの -4dB/フレームの減衰（同 :384-390）は入れていない。
 //      Telemetry は最新の 1 枠しか持たないので、最後の枠が残ったままになる。
 //      Spectrum Analyzer のカード自身も同じ振る舞いにしてある
-//    - ピーク保持は重ねない。上流のオーバーレイに無い
+//    - ピーク保持は重ねない。上流は v2.11.0 で Peak Hold（20 dB/秒で落とす）を足したが、
+//      Config の全体設定で既定は切（spectrum-overlay.js:15、:362-368、
+//      js/electron/configIntegration.js:45）。こちらはその設定を持たないので、
+//      上流の既定と同じ見た目になる
+//    - 上流の Quality（Normal / HQ）も全体設定。こちらは借りた analyzer の
+//      Frequency Scale がそのまま効く（Log (HQ) なら HQ の枠が来る）
 
 import SwiftUI
 
@@ -216,12 +223,12 @@ struct SpectrumOverlayLayer: View {
             .foregroundStyle(AnyShapeStyle(.tint).opacity(0.8))
     }
 
-    /// 最新の枠を 1/12 オクターブで均し、1pt ごとに畳んだ列。
+    /// 最新の枠を 1/12 オクターブで均し（HQ の枠は均さない）、1pt ごとに畳んだ列。
     private var columns: [ETSpectrumColumn] {
         guard plot.xAxis.upper > plot.xAxis.lower,
               let reading = ETSpectrumReading(frame: telemetry.frame(tap: tapId, type: .spectrum)),
               reading.hzPerBin > 0 else { return [] }
-        return reading.columns(reading.smoothedCurrent, plot: plot, floor: floorDB,
+        return reading.columns(reading.overlayCurrent, plot: plot, floor: floorDB,
                                range: plot.xAxis.lower...plot.xAxis.upper)
     }
 }

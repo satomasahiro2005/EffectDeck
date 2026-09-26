@@ -1,10 +1,15 @@
 //  DisplayParams.swift
 //  音に関わらない表示の設定で、**上流がプリセットに書いているもの**。
 //
-//  上流は getParameters() でこれらを返している:
-//      note_spectrogram.js:155-169   cl / pr / ly / vl / ts
-//      spectrogram.js:345-356        sc
-//      spectrum_analyzer.js:276-288  sc / dm
+//  上流は getParameters() でこれらを返している（v2.11.0 の行）:
+//      note_spectrogram.js:190-204   cl / pr / ly / vl / ts
+//      spectrogram.js:364-376        cl / kb / sc
+//      spectrum_analyzer.js:295-308  kb / sc / dm / cl
+//      pitch_meter.js:96-107         ly / cl
+//      stereo_meter.js:271-279       gn
+//      chroma_spiral.js:92-96        dm / lo / hi / ft / lr / df
+//  **画面で使っていないもの（kb、Pitch Meter の ly）も表に入れる。**
+//  入れないと web 版から来た値が往復で消える。
 //
 //  DSP のパラメータではないので params.json に席が無く、こちらの values
 //  （float の並び）にも載らない。Section の名前（`cm`）や IR の鍵（`ir`）と
@@ -36,9 +41,17 @@ enum ETDisplayParam {
         case "NoteSpectrogramPlugin":
             return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number]
         case "SpectrogramPlugin":
-            return ["sc": .text]
+            return ["sc": .text, "cl": .text, "kb": .flag]
         case "SpectrumAnalyzerPlugin":
-            return ["sc": .text, "dm": .text]
+            return ["sc": .text, "dm": .text, "cl": .text, "kb": .flag]
+        case "PitchMeterPlugin":
+            return ["ly": .text, "cl": .text]
+        case "StereoMeterPlugin":
+            return ["gn": .number]
+        case "ChromaSpiralPlugin":
+            // dm はここでは数（0/1/2）。上流は `=== 0` で比べる（chroma_spiral.js:103）。
+            return ["dm": .number, "lo": .number, "hi": .number,
+                    "ft": .number, "lr": .number, "df": .number]
         default:
             return [:]
         }

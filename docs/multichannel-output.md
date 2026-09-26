@@ -26,6 +26,20 @@ FIR Crossover also follows the selected routing width. It becomes available with
 All-channel width from 4 through 16, and its designed assets are reattached after an audio
 route rebuild even when its card is collapsed.
 
+## Bass Management
+
+Bass Management (EffeTune 2.11.0) runs only when routed to All, as upstream requires. On
+any other Routing the host publishes it disabled and the card offers **Use all output
+channels**. A card added from the picker starts on All with every output channel Managed;
+presets, share links and saved chains keep their own Routing.
+
+Sub Outputs lists only channels inside the current width. Choosing one makes that channel
+LFE and routes every channel in the width to it, so on a two-channel route the sub takes
+one of the two main channels. A configuration that does not fit the width shows upstream's
+configuration error and the kernel does not apply it. Linear phase is designed on the
+device and resent after a route rebuild, a preset apply or a chain load, also for
+collapsed cards. Sub output on an interface has not been checked on a device.
+
 ## Verification boundary
 
 The native preview-tone test covers a four-channel buffer and verifies that the preview

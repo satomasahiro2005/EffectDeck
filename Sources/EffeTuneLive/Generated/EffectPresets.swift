@@ -833,7 +833,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Subtle Cone Color",
       group: "",
       json: #"""
-      {"sd":2,"ss":1.5,"sp":0.8,"sm":1,"dd":1.2,"db":0.1,"dm":60,"cm":10,"og":0}
+      {"os":1,"sd":2,"ss":1.5,"sp":0.8,"sm":1,"dd":1.2,"db":0.1,"dm":60,"cm":10,"og":0}
       """#),
     ETEffectPreset(
       effect: "Dynamic Saturation",
@@ -841,7 +841,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Pushed Speaker",
       group: "",
       json: #"""
-      {"sd":5,"ss":3,"sp":1.5,"sm":1.5,"dd":2,"db":0.16,"dm":100,"cm":25,"og":-0.6}
+      {"os":1,"sd":5,"ss":3,"sp":1.5,"sm":1.5,"dd":2,"db":0.16,"dm":100,"cm":25,"og":-0.6}
       """#),
     ETEffectPreset(
       effect: "Dynamic Saturation",
@@ -849,7 +849,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Ragged Cone",
       group: "",
       json: #"""
-      {"sd":8,"ss":5,"sp":2.5,"sm":2,"dd":3,"db":0.3,"dm":100,"cm":35,"og":-1.7}
+      {"os":1,"sd":8,"ss":5,"sp":2.5,"sm":2,"dd":3,"db":0.3,"dm":100,"cm":35,"og":-1.7}
       """#),
     ETEffectPreset(
       effect: "Tube Simulator",

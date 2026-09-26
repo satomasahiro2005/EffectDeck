@@ -72,7 +72,9 @@ struct ETParam: Identifiable {
     /// objectArrayKey を持つのは params.json 8 本・57 フィールド。
     var objectArrayKey: String? = nil
 
-    /// Spatial Mapper 2.10.0 stores each 16×16 routing matrix as a flat array.
+    /// 平らな配列 `"dm": [...]` で書くもの。gen_catalog.py の FLAT_ARRAYS の表が正。
+    /// Spatial Mapper (2.10.0) の 16×16 行列 dm / fm / rm と、
+    /// Bass Management (2.11.0) の 16ch 分の ro / fc / sl / rt / ri。
     var flatArrayKey: String? = nil
 
     /// そのオブジェクトの中での名前。

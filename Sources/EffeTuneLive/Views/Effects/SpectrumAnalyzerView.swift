@@ -39,6 +39,26 @@ enum ETSpectrumScale: String, CaseIterable, Identifiable {
     }
 }
 
+/// 線と棒の色。上流の `cl`（spectrum_analyzer.js:36、:263-269）。
+/// DSP へは送らない。
+enum ETSpectrumColor: String, CaseIterable, Identifiable {
+    // **綴りは上流のまま。**Note Colors の値は "Rainbow"（spectrum_analyzer.js:629）。
+    case normal = "Normal"
+    case heatmap = "Heatmap"
+    case rainbow = "Rainbow"
+
+    var id: String { rawValue }
+
+    /// spectrum_analyzer.js:627-629 の label。
+    var label: String {
+        switch self {
+        case .normal:  return "Normal"
+        case .heatmap: return "Heatmap"
+        case .rainbow: return "Note Colors"
+        }
+    }
+}
+
 struct SpectrumAnalyzerView: View {
 
     let index: Int
@@ -49,6 +69,7 @@ struct SpectrumAnalyzerView: View {
 
     @State private var scale: ETSpectrumScale = .log
     @State private var bars = false
+    @State private var color: ETSpectrumColor = .normal
 
     private var effectiveScale: ETSpectrumScale {
         let hq = node.spec.params.first(where: { $0.key == "hq" })
@@ -57,9 +78,10 @@ struct SpectrumAnalyzerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SpectrumAnalyzerGraph(tapId: node.tapId, floorDB: floorDB, scale: effectiveScale, bars: bars)
-            // 上流は DB Range・Points・Frequency Scale の順に並べている
-            // （spectrum_analyzer.js:465-519）。同じ順にする。
+            SpectrumAnalyzerGraph(tapId: node.tapId, floorDB: floorDB, scale: effectiveScale,
+                                  bars: bars, color: color)
+            // 上流は DB Range・Points・Frequency Scale・Display・Color の順に並べている
+            // （spectrum_analyzer.js:557-633）。同じ順にする。
             ForEach(node.spec.params.filter { $0.key != "hq" }) { param in
                 if param.name == "points" {
                     if !graphOnly {
@@ -72,15 +94,33 @@ struct SpectrumAnalyzerView: View {
             }
             if !graphOnly { scalePicker }
             if !graphOnly { Toggle("Bar display", isOn: $bars) }
+            if !graphOnly { colorPicker }
         }
         // 畳むとこの View ごと消えるので、表示の選択は鎖に持たせる。
-        // 上流も `sc` と `dm` をプリセットに書く（spectrum_analyzer.js:276-288）。
+        // 上流も `sc`・`dm`・`cl` をプリセットに書く（spectrum_analyzer.js:295-308）。
         // `dm` は入切ではなく "line"/"bar" の字なので、綴りを渡す。
         .etSaved($scale, key: "sc", index: index, dsp: dsp)
         .etSaved($bars, key: "dm", index: index, dsp: dsp, on: "bar", off: "line")
+        .etSaved($color, key: "cl", index: index, dsp: dsp)
     }
 
-    /// spectrum_analyzer.js:510-519 の createRadioGroup に当たる。Menu にはしない。
+    /// spectrum_analyzer.js:624-633 の createRadioGroup に当たる。
+    private var colorPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Color")
+                .font(.system(size: 14))
+            Picker("Color", selection: $color) {
+                ForEach(ETSpectrumColor.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// spectrum_analyzer.js:602-611 の createRadioGroup に当たる。Menu にはしない。
     private var scalePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Frequency Scale")
@@ -233,6 +273,7 @@ private struct SpectrumAnalyzerGraph: View {
     let floorDB: Double
     let scale: ETSpectrumScale
     let bars: Bool
+    let color: ETSpectrumColor
 
     @ObservedObject private var telemetry = Telemetry.shared
 
@@ -265,6 +306,9 @@ private struct SpectrumAnalyzerGraph: View {
                 // 枠が来ていない。値が無いことと -inf は違うので、線は描かない。
                 guard let r = reading else { return }
                 let bottom = plot.rect.maxY
+                // Color の塗り。Normal は nil でテーマの色のまま。
+                // 上流は current と peak に同じ塗りを使う（spectrum_analyzer.js:1144-1164）。
+                let tint = colorShading(plot)
 
                 let columns = r.columns(r.current, plot: plot, floor: floorDB,
                                         range: Self.floorHz...Self.ceilingHz)
@@ -278,9 +322,18 @@ private struct SpectrumAnalyzerGraph: View {
                     }
                     for (band, db) in bands.enumerated() {
                         let y = plot.y(db)
+                        // Note Colors の棒は帯の中心の周波数で 1 色に決める
+                        // （spectrum_analyzer.js:1217-1222）。
+                        let fill: GraphicsContext.Shading
+                        if color == .rainbow {
+                            let hz = plot.xValue(at: plot.rect.minX + (CGFloat(band) + 0.5) * width)
+                            fill = .color(ETSpectrumColoring.noteColor(hz: hz))
+                        } else {
+                            fill = tint ?? ETGraphShading.curve
+                        }
                         context.fill(Path(CGRect(x: plot.rect.minX + CGFloat(band) * width + 1,
                                                  y: y, width: max(1, width - 2), height: max(0, bottom - y))),
-                                     with: ETGraphShading.curve)
+                                     with: fill)
                     }
                 } else if columns.count > 1 {
                     var path = Path()
@@ -293,7 +346,7 @@ private struct SpectrumAnalyzerGraph: View {
                     area.addLine(to: CGPoint(x: columns[0].x, y: bottom))
                     area.closeSubpath()
                     context.fill(area, with: ETGraphShading.grid)
-                    context.stroke(path, with: ETGraphShading.curve,
+                    context.stroke(path, with: tint ?? ETGraphShading.curve,
                                    style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
                 }
 
@@ -306,7 +359,7 @@ private struct SpectrumAnalyzerGraph: View {
                         let pt = CGPoint(x: column.x, y: plot.y(column.db))
                         if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
                     }
-                    context.stroke(path, with: ETGraphShading.muted, lineWidth: 1)
+                    context.stroke(path, with: tint ?? ETGraphShading.muted, lineWidth: 1)
                 }
 
                 // 触った所の縦線。
@@ -332,6 +385,31 @@ private struct SpectrumAnalyzerGraph: View {
                             }
                             .onEnded { _ in probe = nil })
             })
+    }
+
+    // MARK: 色
+
+    /// spectrum_analyzer.js:1107-1140 の getColorStyle。
+    /// Heatmap は下端（dB Range）から上端（0dB）への縦、Note Colors は周波数の横。
+    /// 図の枠に貼るので、線でも棒でも同じ位置が同じ色になる。
+    private func colorShading(_ plot: ETPlot) -> GraphicsContext.Shading? {
+        let rect = plot.rect
+        switch color {
+        case .normal:
+            return nil
+        case .heatmap:
+            return GraphicsContext.Shading.linearGradient(
+                ETSpectrumColoring.heatmap,
+                startPoint: CGPoint(x: rect.minX, y: rect.maxY),
+                endPoint: CGPoint(x: rect.minX, y: rect.minY))
+        case .rainbow:
+            let notes = scale == .linear ? ETSpectrumColoring.notesLinear
+                                         : ETSpectrumColoring.notesLog
+            return GraphicsContext.Shading.linearGradient(
+                notes,
+                startPoint: CGPoint(x: rect.minX, y: rect.minY),
+                endPoint: CGPoint(x: rect.maxX, y: rect.minY))
+        }
     }
 
     // MARK: 軸
@@ -379,5 +457,56 @@ private struct SpectrumAnalyzerGraph: View {
     /// PEQ の図に重ねる側（SpectrumOverlayLayer）が同じ枠を読むため。
     private var reading: ETSpectrumReading? {
         ETSpectrumReading(frame: telemetry.frame(tap: tapId, type: .spectrum))
+    }
+}
+
+// MARK: - Color の表
+
+/// 上流は Spectrogram と Note Spectrogram の表を借りている
+/// （spectrum_analyzer.js:1115 の getHeatmapLuts、:1124 の noteColor）。こちらも同じく借りる。
+/// グラデーションは形が変わらないので 1 度だけ作る。
+private enum ETSpectrumColoring {
+
+    /// Heatmap は透ける版（getHeatmapLuts().rgba）。低い所は地が見える。
+    static let heatmap = ETIntensityLUT.heatmapTranslucent.gradient
+
+    static let notesLog = notes(linear: false)
+    static let notesLinear = notes(linear: true)
+
+    /// 横軸の端。SpectrumAnalyzerGraph の floorHz / ceilingHz と同じ。
+    private static let lowHz: Double = 20
+    private static let highHz: Double = 40000
+
+    /// 周波数の音色。**色は EffectDeck の ETNoteKeyboard.noteColors**
+    /// （Note Spectrogram の Note Colors と同じ表）。混ぜ方は上流の multiF0NoteColor
+    /// （note_spectrogram.js:58-68）と同じで、半音の間を線形に混ぜる。
+    static func noteColor(hz: Double) -> Color {
+        let midi = 69 + 12 * log2(max(hz, 1) / 440)
+        let lowerMidi = Int(midi.rounded(.down))
+        let fraction = midi - Double(lowerMidi)
+        let lower = ETNoteKeyboard.noteColors[((lowerMidi % 12) + 12) % 12]
+        let upper = ETNoteKeyboard.noteColors[(((lowerMidi + 1) % 12) + 12) % 12]
+        return Color(red: (lower.r + (upper.r - lower.r) * fraction) / 255,
+                     green: (lower.g + (upper.g - lower.g) * fraction) / 255,
+                     blue: (lower.b + (upper.b - lower.b) * fraction) / 255)
+    }
+
+    /// 左端・整数の MIDI ごと・右端に止まりを置く（spectrum_analyzer.js:1126-1137）。
+    private static func notes(linear: Bool) -> Gradient {
+        func position(_ hz: Double) -> Double {
+            linear ? (hz - lowHz) / (highHz - lowHz)
+                   : log10(hz / lowHz) / log10(highHz / lowHz)
+        }
+        func midi(_ hz: Double) -> Double { 69 + 12 * log2(hz / 440) }
+        var stops = [Gradient.Stop(color: noteColor(hz: lowHz), location: 0)]
+        var m = Int(midi(lowHz).rounded(.up))
+        while m <= Int(midi(highHz).rounded(.down)) {
+            let hz = 440 * pow(2, Double(m - 69) / 12)
+            stops.append(Gradient.Stop(color: noteColor(hz: hz),
+                                       location: min(max(position(hz), 0), 1)))
+            m += 1
+        }
+        stops.append(Gradient.Stop(color: noteColor(hz: highHz), location: 1))
+        return Gradient(stops: stops)
     }
 }

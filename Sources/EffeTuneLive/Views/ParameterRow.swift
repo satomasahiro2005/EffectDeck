@@ -108,6 +108,22 @@ enum ETSliderScale {
     ]
 }
 
+/// 別の toggle が切れている間は触れない行。`型名.key` → その toggle の key。
+///
+/// **止めるのは操作だけで、値は残す。** 上流も input を disabled にするだけ。
+/// 決まった値しか取らない数（Oversampling）の表は ETAllowedValues（ETParamCoding.swift）。
+enum ETParamGate {
+    static func upstream(type: String, key: String) -> String? {
+        table[type + "." + key]
+    }
+
+    private static let table: [String: String] = [
+        // dynamics/attack_tonal_balance.js:67-70（_syncGainControlAvailability）
+        "AttackTonalBalancePlugin.at": "ae",
+        "AttackTonalBalancePlugin.tn": "te",
+    ]
+}
+
 struct ParameterRow: View {
     let param: ETParam
     let nodeIndex: Int
@@ -147,6 +163,22 @@ struct ParameterRow: View {
             valueSlider
         }
         .padding(.vertical, 2)
+        .disabled(isGatedOff)
+    }
+
+    /// 決まった値しか取らない数か。取るなら、その値の並び。
+    private var choices: [Float]? {
+        guard case .number = param.kind, !param.isArray else { return nil }
+        return ETAllowedValues.upstream(type: effectType, key: param.key)
+    }
+
+    /// ETParamGate の toggle が切れているか。
+    private var isGatedOff: Bool {
+        guard let gate = ETParamGate.upstream(type: effectType, key: param.key),
+              dsp.chain.indices.contains(nodeIndex),
+              let owner = dsp.chain[nodeIndex].spec.params.first(where: { $0.key == gate }),
+              values.indices.contains(owner.offset) else { return false }
+        return values[owner.offset] < 0.5
     }
 
     /// 名前と、値そのものを触る所。
@@ -175,13 +207,18 @@ struct ParameterRow: View {
             }
 
         case .number:
-            HStack(spacing: 8) {
-                Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 4)
-                valueField
+            if choices != nil {
+                // 選ぶ所は下の段。数値欄は置かない（打てるのは選択肢の値だけなので）。
+                Text(title).font(.system(size: 14))
+            } else {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 14))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 4)
+                    valueField
+                }
             }
         }
     }
@@ -189,7 +226,9 @@ struct ParameterRow: View {
     /// つまみ。数値のパラメータだけが持つ。
     @ViewBuilder
     private var valueSlider: some View {
-        if case .number(let lo, let hi, let step, _, let isInteger) = param.kind, hi > lo {
+        if let choices {
+            choicePicker(choices)
+        } else if case .number(let lo, let hi, let step, _, let isInteger) = param.kind, hi > lo {
             // step に 0 を渡すと Slider は落ちる。刻みが無いものは
             // step を取らない方を使う。params.json に step が無い
             // パラメータがあるので、ここを分けないと開いた瞬間に死ぬ。
@@ -216,6 +255,24 @@ struct ParameterRow: View {
                 }
             }
         }
+    }
+
+    /// 決まった値から選ぶ。**書くのは値そのもの**（添字ではない）。
+    ///
+    /// 1〜8 のスライダーのままだと 3/5/6/7 を選べてしまい、カーネルは黙って 1x で処理する。
+    /// 上流は select で "1x" 〜 と出している（saturation.js:229-232、hard_clipping.js:315-318）。
+    /// 表に無い値が載っているときは先頭（1x）を選んだ形で出す。カーネルもそう処理する。
+    private func choicePicker(_ choices: [Float]) -> some View {
+        Picker(title, selection: Binding(
+            get: { choices.contains(value) ? value : choices[0] },
+            set: { set($0) })
+        ) {
+            ForEach(choices, id: \.self) { v in
+                Text("\(Int(v))x").tag(v)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 
     /// 行の名前。単位はここに付ける。上流も名前の側だけに付けていて、数値の欄には付けない

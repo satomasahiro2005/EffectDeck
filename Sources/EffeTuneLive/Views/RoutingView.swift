@@ -169,8 +169,8 @@ struct RoutingRow: View {
 
 /// バスとチャンネルの見せ方。カードの頭でも使う。
 enum ETRouting {
-    /// 画面に出す選択肢。このアプリは 2ch しか扱わないので、
-    /// EffeTune が持っている 3ch 目以降の選択肢は出さない。
+    /// 画面に出す選択肢。処理幅は出力IFに合わせて 2〜16ch になるが
+    /// （AudioIO.processingChannels）、3ch 目以降の単独と対は出さない。
     /// ただし取り込んだプリセットがそれらを持っていても値は保つ。
     static var channelOptions: [(Int8, String)] {
         [(-1, "Stereo"), (-2, "All"), (0, "Left"), (1, "Right")]

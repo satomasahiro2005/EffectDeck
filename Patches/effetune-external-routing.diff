@@ -1,7 +1,9 @@
 diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
+index c41094f..d60b8d6 100644
 --- a/dsp/core/engine.cpp
 +++ b/dsp/core/engine.cpp
-@@ -947,5 +947,18 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+@@ -977,26 +977,49 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+ 
      if (node.external) {
        if (pipeline_external_process_ == nullptr) return ET_ERR_STATE;
 +      std::uint32_t first_channel = 0u;
@@ -20,7 +22,14 @@ diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
        float *target = input;
        if (node.inputBus != node.outputBus) {
          target = arena_.scratch(0);
-@@ -956,14 +969,23 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+         std::memcpy(target, input, total_floats * sizeof(float));
+       }
+       // The planner assigns inputDelays to external nodes too, so align like native nodes.
+-      align_input(target, 0u, channel_count);
++      align_input(target + static_cast<std::size_t>(first_channel) * frame_count, first_channel,
++                  routed_channels);
+       const et_status external_status = pipeline_external_process_(
+           pipeline_external_context_, node.externalIndex, target, channel_count, frame_count,
            time_seconds, node.channelSpec);
        if (external_status != ET_OK) return external_status;
        if (node.inputBus != node.outputBus) {
@@ -46,4 +55,4 @@ diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
 +      continue;
      } else if (node.channelSpec == -2) {
        if (node.inputBus == node.outputBus) {
-         processSlot(*slot, input, channel_count, frame_count, time_seconds);
+         align_input(input, 0u, channel_count);

@@ -3,6 +3,8 @@
 Branch: `codex/effetune-2.10.0`, based on `bf1f6c9`.
 Upstream: release tag `v2.10.0` (`abca7ff`). App version/build numbering is unchanged.
 
+Correction (2026-09-26): preview now plays only in five analyzers, and the host prepares 2–16 channels; see `effetune-2.11.0.md`.
+
 ## Implementation
 
 - Regenerated the 103-effect catalog and 146 factory presets (28 effects).

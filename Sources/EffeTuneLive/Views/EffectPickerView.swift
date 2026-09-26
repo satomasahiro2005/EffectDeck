@@ -805,9 +805,14 @@ struct EffectPickerView: View {
     /// `newEffects.isEmpty` を見る）。上流が新しいものを足したときに、
     /// その型をここへ並べる。**一度足したら、次の版で必ず外すこと。**
     /// いつまでも「New」と出ていると意味を失う。
-    /// 直前に居たのは dsp 0.10.0 で足された 3 つ（Pitch Meter /
-    /// TV Audio Simulator / Spatial Mapper）。もう新しくないので外した。
-    static let newTypes: [String] = []
+    /// いまは dsp 0.11.0（EffeTune 2.11.0）で足された 4 つ。
+    /// dsp 0.10.0 の 3 つ（Pitch Meter / TV Audio Simulator / Spatial Mapper）は外した。
+    static let newTypes = [
+        "AttackTonalBalancePlugin",
+        "BassExtenderPlugin",
+        "BassManagementPlugin",
+        "ChromaSpiralPlugin",
+    ]
     static let newKey = "__new"
 
     private var newEffects: [ETEffect] {
