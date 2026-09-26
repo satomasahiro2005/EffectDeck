@@ -239,6 +239,8 @@ targets:
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
       # JSFX を建てる専用スレッドと列挙つまみの選択。Foundation だけ（JSFXLoaderTests）。
       - path: Sources/EffeTuneLive/Audio/ETJSFXLoader.swift
+      # ソース表示の行分けと色分け。Foundationだけ（JSFXSourceSyntaxTests）。
+      - path: Sources/EffeTuneLive/Audio/JSFXSourceSyntax.swift
       # 図に重ねるスペクトラムの平滑。SwiftUI にも et_* にも触らないので、
       # この 1 本だけをここへ入れれば数で照合できる。
       - path: Sources/EffeTuneLive/DSP/SpectrumSmoothing.swift
