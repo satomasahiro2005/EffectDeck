@@ -129,6 +129,15 @@ They cannot put a script together from pieces.
 - **Otherwise as one code block:** the complete script in a single fenced code
   block, and no other code block in the same reply. EffectDeck's clipboard
   import takes the first code block it finds.
+- **Tell the user how to import it**, in one line after the script:
+  - a file: open it, tap Share and choose EffectDeck. Saving it to Files and
+    using **Import JSFX → From Files** also works.
+  - a code block: copy it, then in EffectDeck use **Import JSFX → From
+    Clipboard**.
+
+  **Import JSFX** is at the top right of the Plugins tab in the Add Effect
+  sheet (the + button). The imported script appears in the Plugins list; tap
+  it to add it to the chain.
 
 ### What you can rely on
 
