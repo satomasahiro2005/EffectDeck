@@ -884,7 +884,7 @@ struct EffectPickerView: View {
                 case .failed(let why):
                     alert = .failed(why)
                 case .unsupported:
-                    alert = .failed("That link is neither a JSFX source nor an impulse response.")
+                    alert = .failed(ETInbox.unsupportedLink)
                 }
             } catch {
                 alert = .failed(error.localizedDescription)

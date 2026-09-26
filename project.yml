@@ -108,6 +108,10 @@ targets:
       - target: EffeTuneLiveExtension
         embed: true
         codeSign: true
+      # 共有シートの受け口。Safari の raw リンクを落として App Group へ置く。
+      - target: EffectDeckShare
+        embed: true
+        codeSign: true
 
   # JSFX parser/runtime. EEL_TARGET_PORTABLE is mandatory on iOS: executable
   # memory/JIT is neither required nor permitted for this host.
@@ -204,6 +208,29 @@ targets:
       - sdk: ExtensionFoundation.framework
 
   # ------------------------------------------------------------------
+  # 共有シートの EffectDeck。Safari で開いた gist の raw（WAV・JSFX）、
+  # Files のファイル、選んだ字を受けて App Group の Inbox へ置く。
+  # **判定も取り込みもしない。**本体が前へ出たときに ETShareInbox.drain で拾い、
+  # 「このアプリで開く」と同じ ETInbox.receive に通す。
+  # リンクの読み替えと上限は「Import → From Link」と同じ ETRemoteFile を共有する。
+  # ------------------------------------------------------------------
+  EffectDeckShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/ShareExtension
+      - path: Sources/EffeTuneLive/DSP/ETRemoteFile.swift
+      - path: Sources/EffeTuneLive/DSP/ETShareInbox.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.share
+        PRODUCT_NAME: EffectDeckShare
+        INFOPLIST_FILE: Sources/ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/ShareExtension/ShareExtension.entitlements
+    dependencies:
+      - sdk: UniformTypeIdentifiers.framework
+
+  # ------------------------------------------------------------------
   # UI の当たり判定を機械で確かめるためのもの。製品には入らない。
   # ------------------------------------------------------------------
   # ------------------------------------------------------------------
@@ -261,6 +288,8 @@ targets:
       - path: Sources/EffeTuneLive/DSP/ETFXDLink.swift
       - path: site/test-vector.json
         buildPhase: resources
+      # 共有の拡張から本体へ渡す置き場。並べる・消すだけで Foundation のみ。
+      - path: Sources/EffeTuneLive/DSP/ETShareInbox.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests
