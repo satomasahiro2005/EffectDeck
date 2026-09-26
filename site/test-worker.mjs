@@ -322,7 +322,7 @@ try {
     assert.equal((await get(DECK, "/write/")).status, 200);
     const home = (await get(DECK, "/")).body;
     const jsfx = /<section id="jsfx">[\s\S]*?<\/section>/.exec(home)[0];
-    assert.ok(jsfx.includes('<a href="/write">Write with ChatGPT</a>'));
+    assert.ok(jsfx.includes('<a href="/write">Write JSFX with ChatGPT</a>'));
     assert.ok((await get(DECK, "/llms.txt")).body.includes(`https://${DECK}/write`));
   });
 

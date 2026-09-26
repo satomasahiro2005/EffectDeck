@@ -498,7 +498,7 @@ function jsfxPage() {
 
 // MARK: - /write
 
-// アプリの「Write with ChatGPT」と同じ依頼文を見せる。**字は links.js の CHATGPT_Q 1 か所から。**
+// アプリの「Write JSFX with ChatGPT」が開くページ。**字は links.js の CHATGPT_Q 1 か所から。**
 // JS が無くても字は選べるし、Open ChatGPT はただのリンク。
 function writeScript(t) {
   return inline(`(() => {

@@ -134,7 +134,7 @@ await test("no release status in the text: no TestFlight or beta outside the foo
   assert.ok(FAQ.some((f) => /free and open source under the MIT license/.test(f.a)), "FAQ says FOSS");
 });
 
-// アプリの EffectPickerView.writeWithChatGPT と同じ字（links.js の頭）。/write はこれを見せる。
+// /writeで見せる依頼文（links.jsの頭）。アプリはこのページを開くだけ。
 await test("/write text: the app's request, linked from home and llms.txt", async () => {
   assert.equal(decodeURIComponent(CHATGPT.slice("https://chatgpt.com/?q=".length)), CHATGPT_Q);
   assert.ok(CHATGPT_Q.startsWith("Write a JSFX effect for EffectDeck, an iOS app that runs single-file JSFX. First read "));

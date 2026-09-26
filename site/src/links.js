@@ -23,8 +23,8 @@ export const EFFETUNE = "https://github.com/Frieve-A/effetune";
 export const APPLE_PRIVACY = "https://www.apple.com/legal/privacy/";
 export const CLOUDFLARE_PRIVACY = "https://www.cloudflare.com/privacypolicy/";
 
-// アプリの「Write with ChatGPT」と同じ依頼文（EffectPickerView.writeWithChatGPT）。
-// **文面を変えるときは両方変える。**/write はこの字をそのまま見せる。
+// アプリの「Write JSFX with ChatGPT」が開く/writeで見せる依頼文。**文面はここ1か所。**アプリは持たない。
+// 変えてもアプリを出し直さなくて済む。
 export const CHATGPT_Q =
   "Write a JSFX effect for EffectDeck, an iOS app that runs single-file JSFX. " +
   "First read https://github.com/satomasahiro2005/EffectDeck/blob/main/JSFX.md " +

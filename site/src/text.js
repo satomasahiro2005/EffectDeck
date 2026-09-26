@@ -40,10 +40,10 @@ export const TEXT = {
   jsfx: [
     "EffectDeck loads JSFX, the script format REAPER uses. One text file is one effect.",
     `${a(JSFX_MD, "JSFX.md")} sets out what EffectDeck supports and what it rejects. It is written to be handed to a language model as it is.`,
-    "In the app, <strong>Write with ChatGPT</strong> (under Plugins) opens ChatGPT with a request that points it at JSFX.md. Copy the script it returns and use <strong>Import JSFX → From Clipboard</strong>. A paid ChatGPT plan works better, since the free tier may skip the linked file and miss the rules.",
+    "In the app, <strong>Write JSFX with ChatGPT</strong> (under Plugins) opens a page with a request for ChatGPT that points it at JSFX.md. Copy the script it returns and use <strong>Import JSFX → From Clipboard</strong>. A paid ChatGPT plan works better, since the free tier may skip the linked file and miss the rules.",
   ],
   // **ChatGPT へは /write を挟む。**依頼文を見せてコピーもでき、有料版を勧める 1 行もそこに置く。
-  jsfxLinks: [a(JSFX_MD, "JSFX.md"), a("/write", "Write with ChatGPT")],
+  jsfxLinks: [a(JSFX_MD, "JSFX.md"), a("/write", "Write JSFX with ChatGPT")],
   shareTitle: "Share links",
   share: [
     "Chains and JSFX scripts shared from EffectDeck are links on effectdeck.nemut.ai. With the app installed, they open in the app.",
