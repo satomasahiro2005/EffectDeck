@@ -59,6 +59,8 @@ struct EffectCardView: View {
     }
 
     @State private var sheet: Sheet?
+    /// 2列のとき。開閉の印を出さない（Components.swiftのetCardsPinnedOpen）。
+    @Environment(\.etCardsPinnedOpen) private var pinnedOpen
 
     var body: some View {
         if node.isSection {
@@ -114,7 +116,7 @@ struct EffectCardView: View {
                 }
             }
         }
-        .opacity(isMuted ? 0.55 : 1)
+        .opacity(node.isMuted ? 0.55 : 1)
         .sheet(item: $sheet) { which in
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
@@ -123,15 +125,6 @@ struct EffectCardView: View {
             }
         }
     }
-
-    /// 音が通らない状態か。自分の入切と、上にある Section の入切の両方で決まる。
-    ///
-    /// 上流も同じ掛け算で、鎖の中の位置から区切りの入切を引いて
-    /// plugin-disabled を付けている（js/ui/pipeline/pipeline-core.js:309-323）。
-    /// 区切りの側の答えは sectionGate に入っている。
-    /// DSP も `node.enabled == 0 || node.sectionGate == 0` で読み飛ばす
-    /// （dsp/core/engine.cpp:919）ので、見た目の条件をそれに合わせる。
-    private var isMuted: Bool { !node.enabled || node.sectionGate == 0 }
 
     private var header: some View {
         HStack(spacing: 6) {
@@ -157,7 +150,7 @@ struct EffectCardView: View {
                     // 折り返さない。幅が足りないときは縮める。
                     // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
                     // 2 行に折れていた。
-                    Text(displayName)
+                    Text(node.etDisplayName)
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -198,7 +191,8 @@ struct EffectCardView: View {
                 .accessibilityLabel("Routing \(ETRouting.badge(node))")
             }
 
-            if hasBody {
+            // 2列では開閉しないので出さない。
+            if hasBody && !pinnedOpen {
                 // **印であって押し所ではない。**
                 // 押すのは行そのもの（下の onTapGesture）。
                 // 矢印にも当たり判定があると、行の手つきと取り合って
@@ -335,18 +329,6 @@ struct EffectCardView: View {
         node.isExternal || !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
-    /// 1 行目に出す名前。
-    ///
-    /// 古い鎖は AU の名前に "Vendor: " が付いている（足すときに entry.title を渡していた
-    /// 頃のもの）。作者は 2 行目へ移したので二重になる。**作者名と一致する頭だけ**落とす。
-    /// 端末から AU を消すと作者が空になり、そのときは落とせないまま出る。
-    private var displayName: String {
-        guard let externalID = node.externalID else { return node.spec.name }
-        let author = ETPluginLabel.author(externalID: externalID)
-        guard !author.isEmpty, node.spec.name.hasPrefix(author + ": ") else { return node.spec.name }
-        return String(node.spec.name.dropFirst(author.count + 2))
-    }
-
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
     ///
     /// 開いているときは同じ値がすぐ下に出ているので、分類の方を出す。
@@ -389,6 +371,32 @@ struct EffectCardView: View {
         if case .toggle = param.kind { return v >= 0.5 ? "On" : "Off" }
         return param.format(v)
     }
+}
+
+/// カードと左の一覧（ChainMinimap）で同じ名前・同じ薄さを出す。
+extension EffeTuneDSP.Node {
+    /// 1 行目に出す名前。
+    ///
+    /// 古い鎖は AU の名前に "Vendor: " が付いている（足すときに entry.title を渡していた
+    /// 頃のもの）。作者は 2 行目へ移したので二重になる。**作者名と一致する頭だけ**落とす。
+    /// 端末から AU を消すと作者が空になり、そのときは落とせないまま出る。
+    @MainActor
+    var etDisplayName: String {
+        guard let externalID else { return spec.name }
+        let author = ETPluginLabel.author(externalID: externalID)
+        guard !author.isEmpty, spec.name.hasPrefix(author + ": ") else { return spec.name }
+        return String(spec.name.dropFirst(author.count + 2))
+    }
+
+    /// 音が通らない状態か。自分の入切と、上にある Section の入切の両方で決まる。
+    ///
+    /// 上流も同じ掛け算で、鎖の中の位置から区切りの入切を引いて
+    /// plugin-disabled を付けている（js/ui/pipeline/pipeline-core.js:309-323）。
+    /// 区切りの側の答えは sectionGate に入っている。
+    /// DSP も `node.enabled == 0 || node.sectionGate == 0` で読み飛ばす
+    /// （dsp/core/engine.cpp:919）ので、見た目の条件をそれに合わせる。
+    /// Sectionのgateは常に1（applySectionGates）なので、Sectionでは自分の入切だけになる。
+    var isMuted: Bool { !enabled || sectionGate == 0 }
 }
 
 /// AU parameters are deliberately presented by the external node rather than
@@ -477,10 +485,7 @@ private struct ExternalProcessorView: View {
                                 movingToFullScreen = true
                                 Task { @MainActor in
                                     await Task.yield()
-                                    ETInterfaceOrientation.request(.landscapeRight)
-                                    for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
-                                        try? await Task.sleep(nanoseconds: 20_000_000)
-                                    }
+                                    await ETInterfaceOrientation.turnLandscape()
                                     fullScreen = true
                                 }
                         } label: {
@@ -532,10 +537,7 @@ private struct ExternalProcessorView: View {
                         // avoids drawing one portrait frame of the plug-in
                         // and then snapping it sideways.
                         await Task.yield()
-                        ETInterfaceOrientation.request(.landscapeRight)
-                        for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
-                            try? await Task.sleep(nanoseconds: 20_000_000)
-                        }
+                        await ETInterfaceOrientation.turnLandscape()
                         fullScreen = true
                     }
                 } label: {
@@ -975,7 +977,24 @@ enum ETInterfaceOrientation {
             .interfaceOrientation.isLandscape == true
     }
 
+    /// 全画面に出すときに向きを変えるか。**iPadでは変えない。**
+    ///
+    /// iPadの窓は横でも縦でも十分に広く、Stage Managerやほかのアプリと並んでいると
+    /// 回すこと自体ができない。しかも閉じたときの`.portrait`がそのまま残り、
+    /// 縦に固定されたまま戻らなかった。
+    static var rotates: Bool { UIDevice.current.userInterfaceIdiom != .pad }
+
+    /// 横へ回して、回り終わるまで待つ（最長0.8秒）。回さない端末ではすぐ戻る。
+    static func turnLandscape() async {
+        request(.landscapeRight)
+        guard rotates else { return }
+        for _ in 0..<40 where !isLandscape {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
     static func request(_ mask: UIInterfaceOrientationMask) {
+        guard rotates else { return }
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
@@ -1085,6 +1104,8 @@ private struct SectionCardView: View {
     /// 固まるのがこれなので、確定（改行・欄から離れる）でだけ書く。
     @State private var draft = ""
     @FocusState private var editing: Bool
+    /// 2列のとき。畳むボタンを出さない（Components.swiftのetCardsPinnedOpen）。
+    @Environment(\.etCardsPinnedOpen) private var pinnedOpen
 
     var body: some View {
         Card(block: block) {
@@ -1121,27 +1142,30 @@ private struct SectionCardView: View {
 
                 // 畳む・開く。Menu にはしない（提示が終わらない件を追っている最中で、
                 // 原因は高頻度の再描画）。1 手で効く直のボタンにする。
-                Button {
-                    if editing { commit() }
-                    // **動かさない。**カードの側（上の onTapGesture）と同じ。
-                    // Section は配下の行そのものが増え減りするので、包むと
-                    // 行の抜き差しにも動きが掛かる。
-                    toggleExpanded()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                        .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
-                        .contentShape(Rectangle())
+                // 2列では畳まないので出さない。
+                if !pinnedOpen {
+                    Button {
+                        if editing { commit() }
+                        // **動かさない。**カードの側（上の onTapGesture）と同じ。
+                        // Section は配下の行そのものが増え減りするので、包むと
+                        // 行の抜き差しにも動きが掛かる。
+                        toggleExpanded()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                            .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(isExpanded ? "Collapse section" : "Expand section")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(isExpanded ? "Collapse section" : "Expand section")
             }
             .padding(.leading, 2)
             .padding(.vertical, 10)
         }
-        .opacity(node.enabled ? 1 : 0.55)
+        .opacity(node.isMuted ? 0.55 : 1)
         .onAppear { draft = node.sectionName }
         .onChange(of: node.sectionName) { _, now in
             // プリセットや共有リンクの取り込みで名前が外から変わる。

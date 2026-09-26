@@ -222,7 +222,7 @@ private struct MultibandCompressorGainReduction: View {
     let tapId: UInt32
     let selected: Int
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     private static let bandCount = 5
 

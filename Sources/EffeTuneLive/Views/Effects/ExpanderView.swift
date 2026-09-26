@@ -26,7 +26,7 @@ struct ExpanderView: View {
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     var body: some View {
         let threshold = DynamicsParams.value(node, "th")

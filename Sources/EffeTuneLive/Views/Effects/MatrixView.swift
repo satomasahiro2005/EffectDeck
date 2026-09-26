@@ -222,7 +222,7 @@ struct MatrixView: View {
         let tap: UInt32
         @Binding var channels: Int
 
-        @ObservedObject private var telemetry = Telemetry.shared
+        @ETTelemetryFeed private var telemetry
 
         var body: some View {
             Color.clear

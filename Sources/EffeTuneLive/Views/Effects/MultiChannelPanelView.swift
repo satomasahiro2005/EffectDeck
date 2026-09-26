@@ -30,7 +30,7 @@ struct MultiChannelPanelView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     @Environment(\.etGraphOnly) private var graphOnly
 

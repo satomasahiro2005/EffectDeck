@@ -234,7 +234,7 @@ private struct SpectrumAnalyzerGraph: View {
     let scale: ETSpectrumScale
     let bars: Bool
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 触った所の周波数（x）と dB（y）。
     @State private var probe: CGPoint?

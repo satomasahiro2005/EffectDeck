@@ -59,6 +59,9 @@ enum ETScreenshotSeed {
            let id = storePresets[name] {
             return ETSystemPresets.first { $0.id == id }?.json
         }
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "ETSeed") == "demo" { return demoChain }
+        #endif
         // 宣材用の Analyzer 4 枚。同梱の All Analyzers から Oscilloscope を外し、
         // Level Meter を頭へ持ってきたもの。畳んで撮ると図だけが 4 つ並ぶ。
         // **Spectrogram は埋まるまで時間が要る**（SLEEP を伸ばして撮ること）。
@@ -90,6 +93,34 @@ enum ETScreenshotSeed {
         ]}
         """
     }
+
+    /// 撮るときも2列（左に一覧、右に全部開いたカード）にする。`-ETLayout wide`で立つ。
+    ///
+    /// 撮影の既定は1列。iPadで撮るのは高さが要るからで、幅はiPhoneに絞る（phoneWidth）。
+    /// iPadの画面そのものを撮りたいときだけ立てる。
+    static var wideLayout: Bool {
+        UserDefaults.standard.string(forKey: "ETLayout") == "wide"
+    }
+
+    #if DEBUG
+    /// iPadの2列を撮るための鎖。`-ETSeed demo`で並ぶ。
+    ///
+    /// 左の一覧で見たいものを1枚に収める。字下げ（Section 2つ）、薄く出す行
+    /// （SpaceのDelayを切ってある）、Level Meterの棒、図を持つカード。
+    static let demoChain = """
+    {"pipeline":[
+      {"name":"Level Meter","enabled":true,"parameters":{}},
+      {"name":"Section","enabled":true,"parameters":{"cm":"Vocal"}},
+      {"name":"Gate","enabled":true,"parameters":{}},
+      {"name":"Compressor","enabled":true,"parameters":{}},
+      {"name":"15Band PEQ","enabled":true,"parameters":{}},
+      {"name":"Stereo Meter","enabled":true,"parameters":{}},
+      {"name":"Section","enabled":true,"parameters":{"cm":"Space"}},
+      {"name":"RS Reverb","enabled":true,"parameters":{}},
+      {"name":"Delay","enabled":false,"parameters":{}}
+    ]}
+    """
+    #endif
 
     /// 畳んだ状態で撮るか。既定は開く（中身が写らないと意味が無いので）。
     /// 畳んだときの見え方を確かめたいときだけ立てる。
@@ -133,6 +164,9 @@ enum ETScreenshotSeed {
         guard let name = UserDefaults.standard.string(forKey: "ETSeed") else { return nil }
         // プリセットを読むものは、並べる型を自分では決めない（storeChain が持つ）。
         if storePresets[name] != nil || name == "analyzers4" { return [] }
+        #if DEBUG
+        if name == "demo" { return [] }
+        #endif
         switch name {
         case "none":       return []
         case "peq":        return ["FiveBandPEQPlugin"]

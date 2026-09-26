@@ -112,7 +112,7 @@ private struct OscilloscopeGraph: View {
     let displayLevel: Double
     let verticalOffset: Double
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     @State private var probe: ETScopeProbe?
 

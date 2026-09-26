@@ -70,7 +70,7 @@ private struct SWRadioHUD: View {
     let isAM: Bool
     let isEnabled: Bool
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 1 つ前の数え上げ。差を経過時間で割って毎秒の回数にする（js:1764-1778）。
     @State private var lastStaticCount: UInt32?

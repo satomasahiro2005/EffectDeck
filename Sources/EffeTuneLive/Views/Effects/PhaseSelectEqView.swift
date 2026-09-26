@@ -352,6 +352,8 @@ struct PhaseSelectEqView: View {
     /// 雲を描くのに要る。枠が来るまでは 48k / 4096 として扱う（js:187-188 と同じ既定）。
     @State private var sampleRate: Double = 48000
     @State private var fftSize: Double = 4096
+    /// 図の枠の実寸の横幅（目盛りの余白を除く）。描いて測るまではnil。
+    @State private var plotWidth: Double?
 
     private static let bandCount = 5
     private static let graphHeight: CGFloat = 190
@@ -477,8 +479,10 @@ struct PhaseSelectEqView: View {
     }
 
     private var constraints: ETPhaseConstraints {
-        // 図の実寸は描くときにしか分からないので、iPhone の幅でできる寸法を置いている。
-        ETPhaseConstraints(plotWidth: 390 - Double(insets.leading + insets.trailing) - 32,
+        // 幅は測った実寸を使う。**390pt決め打ちにしない。**iPhoneより広い所（iPad）では
+        // 最小幅が実際より太く効いて、帯を狭められなかった。測る前だけiPhoneの幅で見積もる。
+        ETPhaseConstraints(plotWidth: plotWidth
+                               ?? 390 - Double(insets.leading + insets.trailing) - 32,
                            plotHeight: Double(Self.graphHeight - insets.top - insets.bottom),
                            maximumFrequency: maximumFrequency,
                            sampleRate: sampleRate, fftSize: fftSize)
@@ -539,6 +543,10 @@ struct PhaseSelectEqView: View {
                         .gesture(dragGesture(in: plot))
                 }
             })
+        // ETPlotと同じ引き算（GraphCanvas.swiftのETPlot.init）。
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            plotWidth = Double(max(1, width - insets.leading - insets.trailing))
+        }
     }
 
     private func segments(_ r: ETPhaseRegion, outer: Bool) -> [ETPhaseSegment] {

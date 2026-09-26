@@ -27,7 +27,7 @@ struct CompressorView: View {
     let index: Int
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     var body: some View {
         // 曲線を引く閉包へ self を渡さないよう、要る値だけ控える。

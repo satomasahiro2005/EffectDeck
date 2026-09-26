@@ -202,7 +202,7 @@ struct MultibandExpanderView: View {
 private struct MultibandExpanderMeter: View {
     let tapId: UInt32
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     private static let bandCount = 5
     /// multiband_telemetry.h:18-22 の ValueKind。Expander は 1。

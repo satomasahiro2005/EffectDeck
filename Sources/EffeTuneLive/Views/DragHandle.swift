@@ -30,6 +30,9 @@ import UIKit
 
 /// 長押しで掴み、指について動かし、離すまでを渡す。
 struct ETDragHandle: UIViewRepresentable {
+    /// 長押しで掴むか。**2列の右では掴まない。**並べ替えは左の一覧（ChainMinimap）でやる。
+    /// 払って消すほうはどちらでも残す。
+    var reorders = true
     /// 掴んだ。
     let began: () -> Void
     /// 指が動いた。渡すのは掴んだ時点からの移動量。**縦だけでなく横も渡す。**
@@ -61,6 +64,7 @@ struct ETDragHandle: UIViewRepresentable {
     func updateUIView(_ v: UIView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.attach()
+        context.coordinator.syncReorders()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -114,6 +118,7 @@ struct ETDragHandle: UIViewRepresentable {
             g.delegate = self
             host.addGestureRecognizer(g)
             recognizer = g
+            syncReorders()
 
             // **横へ払う。**縦のスクロールと喧嘩しないよう、
             // 立つかどうかを向きで決める（gestureRecognizerShouldBegin）。
@@ -121,6 +126,12 @@ struct ETDragHandle: UIViewRepresentable {
             pan.delegate = self
             host.addGestureRecognizer(pan)
             panRecognizer = pan
+        }
+
+        /// 掴まないときは長押しを眠らせる。立たなければ送りを預かること（holdScroll）も無い。
+        func syncReorders() {
+            guard let recognizer, recognizer.isEnabled != parent.reorders else { return }
+            recognizer.isEnabled = parent.reorders
         }
 
         /// 横へ払う。長押しと同じく、自分の行の上のぶんだけ通す。

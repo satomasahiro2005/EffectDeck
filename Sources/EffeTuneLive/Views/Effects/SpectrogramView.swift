@@ -107,10 +107,7 @@ struct SpectrogramView: View {
                         movingToFullScreen = true
                         Task { @MainActor in
                             await Task.yield()
-                            ETInterfaceOrientation.request(.landscapeRight)
-                            for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
-                                try? await Task.sleep(nanoseconds: 20_000_000)
-                            }
+                            await ETInterfaceOrientation.turnLandscape()
                             fullScreen = true
                         }
                     } label: {

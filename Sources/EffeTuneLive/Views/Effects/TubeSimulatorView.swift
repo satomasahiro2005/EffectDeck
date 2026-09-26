@@ -583,7 +583,7 @@ private struct TubeSimulatorHUD: View {
     let inputReferenceVpk: Double
     let inputVolumeDb: Double
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 動作点の尾。新しいものが後ろ。
     @State private var trail: [ETTubeTrailSample] = []
@@ -911,7 +911,7 @@ private struct TubeSimulatorSafetyTrimRow: View {
     @ObservedObject var dsp: EffeTuneDSP
     let tapId: UInt32
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 掴んでいる間はテレメトリで数値を動かさない。
     @State private var held = false

@@ -600,6 +600,19 @@ extension EnvironmentValues {
     /// 畳んでもカードが縮まない＝畳めないのと同じだった。
     /// GraphCanvas の 1 箇所で当たるので、12 本ある図に個別の細工は要らない。
     @Entry var etGraphMaxHeight: CGFloat? = nil
+
+    /// 図に最新の枠を届けるか。偽のあいだETTelemetryFeedは知らせを止める。
+    ///
+    /// 2列のときはカードを全部開くので、画面の外にも図が並ぶ。
+    /// 立てたり落としたりするのはETLiveRowだけで、1列のときは常に真。
+    @Entry var etGraphLive: Bool = true
+
+    /// カードを開いたままにするか。**2列のときだけ真。**
+    ///
+    /// 開閉の印（カードの矢印とSectionの44ptのボタン）を出さない。
+    /// 開いているかどうかはPipelineViewが渡すisExpandedが決めていて、
+    /// iPhoneの開閉の覚え（dsp.expanded / dsp.collapsedFully）は書かない。
+    @Entry var etCardsPinnedOpen: Bool = false
 }
 
 /// 組（Section とその配下）の上と下に引く横線。

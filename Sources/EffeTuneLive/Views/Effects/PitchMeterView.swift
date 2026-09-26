@@ -28,7 +28,7 @@ private struct PitchMeterGraph: View {
     let minimum: Double
     let maximum: Double
     let reference: Double
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
     @State private var history: [ETPitchReading] = []
     @GestureState private var previewActive = false
     @Environment(\.scenePhase) private var scenePhase

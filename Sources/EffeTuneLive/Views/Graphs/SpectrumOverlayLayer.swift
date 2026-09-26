@@ -158,7 +158,7 @@ struct SpectrumOverlayLayer: View {
     /// spectrum-overlay.js:4 の DYNAMIC_RANGE_DB。
     var floorDB: Double
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     init(tapId: UInt32, plot: ETPlot, floorDB: Double = -96) {
         self.tapId = tapId

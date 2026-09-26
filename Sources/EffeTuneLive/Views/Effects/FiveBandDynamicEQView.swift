@@ -466,7 +466,7 @@ private struct FiveBandDynamicEQGraph: View {
     let highHz: Double
     let bandCount: Int
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     var body: some View {
         let live = FiveBandDynamicEQView.liveGains(telemetry: telemetry,

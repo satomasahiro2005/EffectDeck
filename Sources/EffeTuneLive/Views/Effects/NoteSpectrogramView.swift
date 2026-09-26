@@ -197,10 +197,7 @@ struct NoteSpectrogramView: View {
                             // 先に回す。縦のまま出してから倒すと、図が 1 枚
                             // 縦の姿で描かれてから横へ跳ねる。
                             await Task.yield()
-                            ETInterfaceOrientation.request(.landscapeRight)
-                            for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
-                                try? await Task.sleep(nanoseconds: 20_000_000)
-                            }
+                            await ETInterfaceOrientation.turnLandscape()
                             fullScreen = true
                         }
                     } label: {
