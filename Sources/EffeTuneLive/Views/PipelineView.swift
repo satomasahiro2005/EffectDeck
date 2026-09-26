@@ -43,7 +43,7 @@ struct PipelineView: View {
     /// 実機で ⋯ の項目が全部押せなくなったのがそれ。ひとつにまとめる。
     /// ツールバーを別の型へ出したので、その型からも見えるところに置く。
     enum Sheet: String, Identifiable, Equatable {
-        case picker, settings, routing, presets, ir
+        case picker, settings, routing, presets, ir, tips
         var id: String { rawValue }
     }
 
@@ -212,6 +212,16 @@ struct PipelineView: View {
                     PresetsView(dsp: dsp)
                 case .ir:
                     IRLibraryView()
+                // ConnectBanner の Help から。Settings 側は自分の NavigationStack で押す。
+                case .tips:
+                    NavigationStack {
+                        ConnectionTipsView()
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Done") { sheet = nil }
+                                }
+                            }
+                    }
                 }
             }
             // 鎖ごと捨てるのは 1 本ずつのスワイプ削除と違って取り消せないので、
@@ -249,9 +259,12 @@ struct PipelineView: View {
                 // **案内の画面は持たない。**
                 // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
                 // と思って 1 枚置いていた。いまは鎖の頭の帯（ConnectBanner）が
-                // 「別のアプリで少し鳴らしてから、コントロールセンターで EffectDeck を
-                // 選ぶ」と言っていて、音が来ていないあいだ出たままになる。
+                // 「コントロールセンターで EffectDeck を選ぶ」と言っていて、
+                // 音が来ていないあいだ出たままになる。
                 // 読む場所が 2 つあっても片方しか読まれない。
+                //
+                // ConnectionTipsView は案内ではない。選んでも繋がらなかったときに
+                // 開く画面で、始め方は書いていない。
                 //
                 // 撮るシートを指定されていればそれを出す。
                 if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name) {
@@ -336,7 +349,7 @@ struct PipelineView: View {
                 .padding(.vertical, 4)
 
             if !hasPeer {
-                ConnectBanner()
+                ConnectBanner(openTips: { sheet = .tips })
                     .padding(.horizontal, 14)
                     .padding(.top, 4)
                     .padding(.bottom, 8)
@@ -1190,6 +1203,8 @@ private struct PipelineToolbar: ToolbarContent {
 /// 拡張が繋がっていない間だけ、鎖の一番上に出る。
 /// 2本構成は普通ではないので、黙っていると詰まる。
 private struct ConnectBanner: View {
+    let openTips: () -> Void
+
     var body: some View {
         Card {
             HStack(alignment: .top, spacing: 12) {
@@ -1204,27 +1219,40 @@ private struct ConnectBanner: View {
                     // **やることをそのまま書く。**「送る」では、どこで何を
                     // 押せばよいのか画面から読めない。選ぶ場所を名指しする。
                     //
-                    // **この帯に押し所は無い。** RoutePicker は中身を空にしてある
+                    // **出力を選ぶ押し所はこの帯に無い。** RoutePicker は中身を空にしてある
                     // （RoutePicker.swift の頭。置くとこのアプリが共有の出力
                     // コンテキストへ参加して、帰還ループに引きずられる）。
                     // 出す先を選べるのはコントロールセンターだけ。
+                    // 右の Help は既知の制限の画面を開くだけ。
                     //
                     // **名乗っている名前は ET_ROUTE_NAME（EffectDeck）。**アプリ名と同じ字にしてある
                     // （Sources/Extension の displayName）。一覧に出る字と
                     // 揃えないと、どれを押せばよいのか分からない。
                     //
-                    // 鳴らしてから選ぶ順も落とさない。止まっていると系が
-                    // 1.5 秒で経路を戻す（README の If it says Unable to Connect）。
-                    Text("""
-                         Play audio in another app for a few seconds, then select \
-                         EffectDeck as the output in Control Center.
-                         """)
+                    // **鳴らしてから選ぶ順は書かない**（#1 の訂正）。止めている間に選んでも
+                    // 基本的に戻されない。一時停止が原因と確かめた失敗は無い。
+                    Text("Pick EffectDeck as the output in Control Center.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 4)
+
+                // **帯は選び損ねたときにも戻ってくる。**経路を戻されると繋がりが切れて
+                // hasPeer が落ちるので、失敗を見分ける仕掛けを持たなくてもここに出る。
+                // 原因は言わない。言わなければ外れることもない。
+                //
+                // 大きさは BypassBanner の Turn On に揃える（押せる面 44pt）。
+                // 主の操作ではないので bordered。
+                Button(action: openTips) {
+                    Text("Help")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Known limitations")
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

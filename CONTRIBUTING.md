@@ -20,8 +20,9 @@ account. `Scripts/build.sh` will not get past code signing without one.
 ## Issues
 
 Say what you were playing from (Spotify, Safari, a podcast app), what was in the chain,
-and what you heard. If the app never appeared in Control Center, read **If it says
-Unable to Connect** in the README first — it is usually Spotify's Canvas.
+and what you heard. If picking EffectDeck shows Unable to Connect or the output switches
+back, read **If it says Unable to Connect** in the README first — it is usually Spotify's
+Canvas.
 
 ## Pull requests
 

@@ -61,22 +61,26 @@ the output you had before (speaker / headphones / AirPods)
 ## If it says Unable to Connect
 
 Almost always **Spotify with Canvas on.** Canvas is the short looping video behind some
-tracks, and while one plays the session counts as video output, so iOS sends the route to
-AirPlay instead of here. It fails on the tracks that have a Canvas and works on the ones
-that do not, and Spotify does not have to be on screen for it. Turn Canvas off in
-Spotify's settings.
+tracks. While one plays, the session counts as video output, so iOS sends the route to
+AirPlay instead of here, finds no receiver, and puts it back where it was. A track with
+Canvas enabled cannot connect to EffectDeck, and Spotify does not have to be on screen for
+it. Turn Canvas off in Spotify's settings, then restart Spotify.
 
-Otherwise, **pick EffectDeck while music is playing, not while it is paused.** iOS decides
-whether a third-party output device gets the audio each time the device is activated, and
-it re-activates whenever playback stops and starts. What carries it in practice is the
-system's music voice-activity detector, which is only up while music plays. The other ways
-in are `MDESupportedProtocols` (no third-party app lists us) and
-`MDESupportsUniversalURLPlayback` (Safari sets it, which is why audio from a page gets
-through). When the decision goes the other way the system spends 1.5 seconds looking for
-an AirPlay receiver, finds none, and puts the route back where it was.
+Spotify sometimes cannot connect even on a track without a Canvas: when Spotify has a video
+(such as a Canvas) loaded, iOS treats it as playing video, even while paused. Restart
+Spotify, then connect to EffectDeck again.
 
-None of the arguments `MediaOutputDevice` takes are read when that decision is made, so
-there is nothing on this side to set.
+Playing a YouTube video may disconnect EffectDeck, depending on YouTube's playback state.
+Restart YouTube, then connect to EffectDeck again; the same video usually connects.
+
+Otherwise, try these in order:
+
+1. Restart the player app
+2. Restart EffectDeck
+3. Restart the iPhone
+
+The decision is made by iOS. None of the arguments `MediaOutputDevice` takes are read
+when it is made, so there is nothing on this side to set.
 
 ## The iOS 27 Media Device Extension
 
