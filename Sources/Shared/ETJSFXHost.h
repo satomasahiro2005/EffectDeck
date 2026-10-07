@@ -62,6 +62,8 @@ uint32_t ETJSFX_DeadlineTrips(const ETJSFX *host);
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *host);
 /// EEL の実行系（WDL の ns-eel.h の NSEEL_EXEC_*。0 は portable）。**測るためだけ。**アプリは既定のまま。
 /// この建て方で使えない番号は false で何も変えない。結果は 1 ビットも変わらない（速さだけ）。
+/// 保守（Reconfigure と同じ）の中で替える: 走っているブロックと @gfx が抜けるのを待ち、替わるのは次のブロックから。
+/// NSEEL_EXEC_REG（vm-reg）はここで全部の handle のプログラムを作り直す（音のスレッドから呼ばない）。
 bool ETJSFX_SetEELExecutor(ETJSFX *host, int32_t mode);
 int32_t ETJSFX_EELExecutor(const ETJSFX *host);
 /// 遅延（pdc_delay）が変わったか。遅延そのものは 0〜192000 サンプルに切ってある。

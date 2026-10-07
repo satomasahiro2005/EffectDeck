@@ -223,16 +223,31 @@ static void logger(intptr_t data, ysfx_log_level level, const char *message)
     if (!h->log.empty()) h->log += '\n'; h->log += message;
 }
 
+/// 音と @gfx を外す。**mode を書いてから audioActive・gfxActive を読む。**
+///
+/// 向こう（process・RunGFX）は印を立ててから mode を読む。互いに「書いて、相手の分を読む」形
+/// （Dekker）なので、4 つとも seq_cst にする。acq_rel / acquire では、両方が相手の書く前の値を読む
+/// （保守は音が居ないと見て入り、音は running と見て回る）ことを C++ は禁じない。
+/// arm64（ldar / stlr・casal）と x86_64（lock の付いた命令）は実際には並べ替えないので、
+/// 命令は変わらず、言語の約束だけを合わせる。
 static bool beginMaintenance(ETJSFX *h)
 {
     if (!h) return false;
-    uint8_t prior = h->mode.exchange((uint8_t)Mode::maintenance, std::memory_order_acq_rel);
-    while (h->audioActive.load(std::memory_order_acquire) || h->gfxActive.load(std::memory_order_acquire))
+    uint8_t prior = h->mode.exchange((uint8_t)Mode::maintenance, std::memory_order_seq_cst);
+    while (h->audioActive.load(std::memory_order_seq_cst) || h->gfxActive.load(std::memory_order_seq_cst))
         std::this_thread::yield();
     return prior != (uint8_t)Mode::automaticBypass;
 }
+/// 保守を抜ける。**保守のあいだに締切の診断が立っていたら automaticBypass へ。**
+///
+/// 保守に入った直後、まだ抜けていなかった process が締切を 3 回目に超えると、診断を立てる
+/// （mode は保守のものなので書き換えない。process を読むこと）。入る前の mode だけで決めると
+/// running に戻り、札は出ているのに音が通ったままになる。
 static void endMaintenance(ETJSFX *h, bool healthy)
-{ h->mode.store((uint8_t)(healthy ? Mode::running : Mode::automaticBypass), std::memory_order_release); }
+{
+    if (h->diagnostic.load(std::memory_order_acquire) != (uint8_t)Diagnostic::none) healthy = false;
+    h->mode.store((uint8_t)(healthy ? Mode::running : Mode::automaticBypass), std::memory_order_release);
+}
 
 namespace {
 /// 入口を通ったことを数える。Destroy はこれが抜けるまで delete しない。
@@ -323,8 +338,9 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
         !frames || frames > h->maxFrames) return -1;
     if (h->mode.load(std::memory_order_acquire) != (uint8_t)Mode::running) return 0;
     bool expected = false;
-    if (!h->audioActive.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return 0;
-    if (h->mode.load(std::memory_order_acquire) != (uint8_t)Mode::running) {
+    // 印を立ててから mode を読み直す。**どちらも seq_cst**（beginMaintenance を読むこと）。
+    if (!h->audioActive.compare_exchange_strong(expected, true, std::memory_order_seq_cst)) return 0;
+    if (h->mode.load(std::memory_order_seq_cst) != (uint8_t)Mode::running) {
         h->audioActive.store(false, std::memory_order_release); return 0;
     }
     auto began = std::chrono::steady_clock::now();
@@ -396,7 +412,13 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
         h->deadlineTrips.fetch_add(1, std::memory_order_relaxed);
         if (h->deadlineOverruns.fetch_add(1) + 1 >= 3) {
             h->diagnostic.store((uint8_t)Diagnostic::deadlineOverrun, std::memory_order_release);
-            h->mode.store((uint8_t)Mode::automaticBypass, std::memory_order_release);
+            // **running のときだけ automaticBypass へ（CAS）。**このブロックの最中に保守が mode を
+            // maintenance にしていたら書き換えない。素の store だと maintenance を automaticBypass で
+            // 上書きし、保守が終わる前に ClearDiagnostic がそれを running へ戻して、次のブロックが
+            // @init（Reconfigure）・プログラムの作り直し（SetEELExecutor）・ysfx_free（Destroy）と
+            // 同時に走る。保守は抜けるときに診断を見て automaticBypass へ落とす（endMaintenance）。
+            uint8_t running = (uint8_t)Mode::running;
+            h->mode.compare_exchange_strong(running, (uint8_t)Mode::automaticBypass, std::memory_order_acq_rel);
         }
     } else if (!over && !slidersRan) h->deadlineOverruns.store(0);
     h->audioActive.store(false, std::memory_order_release);
@@ -419,7 +441,9 @@ ETJSFX *create(const char *path, double rate, uint32_t maxFrames, char *error, s
     if (!sourceWithinBudgets(source, reason)) { errorCopy(error, cap, reason); return nullptr; }
     std::unique_ptr<ETJSFX, DestroyHost> h{new ETJSFX}; h->maxFrames = maxFrames; h->sampleRate = rate;
     h->usesTrigger = sourceUsesTrigger(source);
-    NSEEL_RAM_limitmem = kGlobalEEL;
+    // **1 度だけ書く。**WDL の大域で、ほかの effect の音のスレッドが __NSEEL_RAMAlloc で読む
+    // （同じ値でも書き直せば競合。TSan が拾った。Tests/Fuzz/tsan.sh --mode multi）。
+    static const bool limited = (NSEEL_RAM_limitmem = kGlobalEEL, true); (void)limited;
     h->config = ysfx_config_new();
     if (!h->config) { errorCopy(error, cap, "Could not create EEL2 runtime."); return nullptr; }
     ysfx_set_user_data(h->config, reinterpret_cast<intptr_t>(h.get())); ysfx_set_log_reporter(h->config, logger);
@@ -634,7 +658,22 @@ bool ETJSFX_ClearDiagnostic(ETJSFX *h)
 bool ETJSFX_IsRunning(const ETJSFX *h){return h&&h->mode.load(std::memory_order_acquire)==(uint8_t)Mode::running;}
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *h){return h?h->deadlineTrips.load(std::memory_order_relaxed):0;}
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *h){return h?h->deadlineWorst.load(std::memory_order_relaxed):0;}
-bool ETJSFX_SetEELExecutor(ETJSFX *h,int32_t mode){return h&&h->effect&&ysfx_set_eel_exec_mode(h->effect,mode);}
+/// 実行系を替える。**保守の中で替える。**
+///
+/// vm-reg（NSEEL_EXEC_REG）は ysfx_set_eel_exec_mode の中で全部の handle のプログラムを作り直し、
+/// 前のものをその場で放す（NSEEL_code_attach_program）。音のスレッドが @sample のプログラムを
+/// 回している最中に放せば解放済みを回す（TSan が拾った。Tests/Fuzz/tsan.sh）。作る方も、
+/// handle の backend_prog を書くのと音のスレッドが読むのが同時になる。
+/// 保守は音（audioActive）と @gfx（gfxActive）が抜けるのを待ってから入り、抜けるときの mode の
+/// release と process の acquire で、作ったプログラムと新しい番号が次のブロックに見える
+/// （ysfx は番号を relaxed で読むので、それだけでは足りない）。替わるのはブロックの切れ目だけ
+/// （process は 1 ブロックで番号を 1 回読む）。
+bool ETJSFX_SetEELExecutor(ETJSFX *h,int32_t mode)
+{
+    if(!h)return false;
+    try{Maintenance m(h);return m.live&&h->effect&&ysfx_set_eel_exec_mode(h->effect,mode);}
+    catch(...){return false;}
+}
 int32_t ETJSFX_EELExecutor(const ETJSFX *h){return h&&h->effect?ysfx_get_eel_exec_mode(h->effect):-1;}
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange(false);}
 bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
