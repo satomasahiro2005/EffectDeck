@@ -327,6 +327,10 @@ threaded code」も 3 つめに比べる。**アプリの既定は vm-goto-fpreg
 ファズ: `jsfxvmdiff` を最後に実行系を変えたあと（5487bff）、S2 の corpus から ASan・UBSan・`-fork=6` で 2,741 秒
 （うち親が corpus を読み直す 795 秒、6 本で 1,946 秒 ≈ 3.5 CPU 時間、113,105 回）。vm-reg と portable の違い・落ちは 0
 （時間切れ 56 は ASan の下で上限まで回る入れ子の loop）。設計 §12.9 の 24 CPU 時間にはまだ足りない。
+スレッド: `ETJSFX_SetEELExecutor` は保守の中で替える（vm-reg はそこでプログラムを作り直して前のものを放すので、
+音を外さずに呼ぶと回している最中のプログラムを解放していた）。`bash Tests/Fuzz/tsan.sh`（WSL・Linux）が
+ThreadSanitizer で音・つまみ・保守（実行系の切り替えを含む）・@gfx を同時に回し、出力を正解と 1 ビットまで比べる。
+見つけたもの・直したもの・残りは設計 §18。
 
 **iPhone 16 Beta（-Os）、2 回目**（vm-reg の括弧は 1 回目。1 ブロックの中央値 us / portable に対する速さ /
 vm-goto-fpreg に対する速さ / cpp の何倍遅いか）

@@ -2,6 +2,7 @@
 
 Status: **S0 (hook surface only), S1, S2 and S3 implemented** (2026-10-07; §15 = S0/S1, §16 = S2, §17 = S3: what
 exists, the deviations from this design and their reasons, oracle/fuzz results and measured numbers). S4+ not started.
+§18 (2026-10-08) audits and fixes building and running programs against the audio, maintenance and @gfx threads.
 The design text below is the original one; where S0–S3 deviate, §15.2 / §16.2 / §17.2 say so.
 Written against worktree `EffectDeck.jsfx-vm`, branch `perf/jsfx-vm`
 (HEAD 0915106 + the uncommitted stage-1 work: `NSEEL_code_execute_frames`, `NSEEL_EXEC_*`, `glue_port_vm.h`,
@@ -631,7 +632,7 @@ Beta committed under `docs/bench/`; never report -O0 numbers.
 - **musttail at -Os on Apple clang**: verify codegen (no frame setup in hot handlers) with `objdump` in S2.
 - **Real-world fallback rate** unknown until S1's coverage report on an external corpus; expected low (opcode 0 and
   `__dbg_getstackptr` are rare; IR budget mostly hit by huge @gfx which is excluded).
-- **Thread-safety of build vs processing** in ETJSFXHost reconfigure paths must be re-audited when wiring S2.
+- **Thread-safety of build vs processing** in ETJSFXHost reconfigure paths must be re-audited when wiring S2. Done: §18.
 - Open: should REG also replace stage-1 for @init (large table loops at load time)? Measure in S6.
 
 ---
@@ -1099,7 +1100,7 @@ handlers per tap), math 74 → 50 (while 7 → 3 per iteration), slow 11 → 4 (
   faster, both runs) and on M1 (1.27–5.26×).
 - §12.9 "≥ 24 CPU-hours of `jsfxvmdiff` after the last semantic change": not met (≈ 3.5 CPU-hours after the last semantic change, §17.3). Still open from S1/S2:
   the audit of building programs while the audio thread runs (§16.6 residual 2), the external corpus, and the
-  untested opcodes of §16.6 (4). vm-reg therefore stays default-off.
+  untested opcodes of §16.6 (4). vm-reg therefore stays default-off. (The thread audit is done: §18.)
 - Where JIT still wins (M1): fir 0.77× (inner loop 9 handlers per tap: 3 megabuf loads, 2 MACs, `k += 1`, `j -= 1`,
   compare-branch, loop-next) and math 0.86× (libm calls and 4-op trees). biquad is at parity (61 handlers, mostly
   3–4-op trees like `s1 = b1*x - a1*y + s2`).
@@ -1149,6 +1150,120 @@ outside the VM's bytecode writes a static data cell (ysfx writes registered vari
 pointers only to escaped cells or registered variables (stores through unknown pointers do not demote Const). A future
 ysfx/WDL change that breaks either assumption breaks `constcell` silently. (4) NaN+NaN payload choice inside the new
 fused handlers belongs to the same class as §15.2 (9); the grid checks single ops only.
+
+## 18. Thread safety of building and running programs (2026-10-08, audit of §16.5 / §16.6 residual 2 / §17.5)
+
+Line numbers in this section: "before" = e66753b, otherwise the tree after the fix; WDL/ysfx lines are the patched
+`Vendor/ysfx` (`nseel-compiler.c`, `nseel-ram.c`, `ysfx.cpp`).
+
+### 18.1 Who builds, frees and runs what, on which thread
+| Operation | Code | Thread (ETJSFXHost) | Programs |
+|---|---|---|---|
+| build after compile | `ysfx_compile` → `ysfx_build_eel_programs` (only when the mode is already REG) | loader, inside `ETJSFX_Create` before the host is returned | build + attach |
+| build on switch | `ysfx_set_eel_exec_mode(REG)` → builder → `NSEEL_code_attach_program` (frees the previous program at once, nseel-compiler.c:5330) | caller of `ETJSFX_SetEELExecutor` (bench, tests) | build, attach, **free** |
+| free | `NSEEL_code_free` (`ysfx_unload_code`: recompile, `ysfx_free`) | `ETJSFX_Destroy` (maintenance that never ends) | free |
+| run @init | `ysfx_init` (ysfx.cpp:1319, REG path) | audio (`must_compute_init` in `process`) or maintenance (Reconfigure, LoadState, `ysfx_load_state` → `ysfx_serialize`) | run |
+| run @slider/@block/@sample | `ysfx_process_generic` (mode loaded **once per block**, relaxed, ysfx.cpp:1630) | audio only | run |
+| run @gfx | `ysfx_gfx_run` → `NSEEL_code_execute` (ysfx.cpp:2176) | gfx thread, concurrently with audio | never (portable even if `ETVM_SetSectionMask` attaches one) |
+| run @serialize | `ysfx_serialize` → `NSEEL_code_execute` (ysfx.cpp:1906) | maintenance (SaveState, LoadState) | never |
+
+Audio and maintenance exclude each other through `mode` + `audioActive` (maintenance also waits for `gfxActive`), so
+**no handle runs on two threads at once**, and a program's frame/scratch (`ThreadedProgram::frame`/`scratch`,
+`Program::st`, one per program) needs no per-thread copy. Nothing is shared between the programs of different
+handles: WDL recompiles every user function into each handle (nseel-compiler.c:4592 resets `startptr` per compile)
+and the lifter inlines every FCALL, so code, worktable and frame are per handle. What *is* shared is EEL memory
+(variables, function locals, megabuf, gmem): @gfx reads and writes it while @sample runs, in every executor and in
+REAPER. vm-reg may keep a cell in a slot within a block (`cse`/`fwd`) or for a whole loop (`lkern`); that only changes
+the outcome of the script's own race (§17.6 residual 2). Builder-wide state is atomics (`gMask`, `gEngine`,
+`gPasses`) and the coverage counters under a mutex; lifter, selector and handler tables have no mutable statics, so
+two effects may build on two threads at once.
+
+### 18.2 Races found
+1. **Program freed or replaced under the audio thread** (real, use-after-free). `ETJSFX_SetEELExecutor` called
+   `ysfx_set_eel_exec_mode` directly (ETJSFXHost.cpp:637 before). With REG it rebuilt every program and freed the old
+   one while `process` could be inside it (`NSEEL_code_execute_frames` → `run(h->backend_prog …)`, nseel-compiler.c:5365);
+   the attach write (5332) races that read even on the first switch, and ysfx's relaxed load of the mode gives no
+   happens-before for the freshly built program. It also overlapped Reconfigure/LoadState (@init running on the
+   maintenance thread while its program was replaced) and RunGFX. TSan reported it on the first run of the stress test.
+2. **A deadline trip during maintenance could reopen audio** (real, narrow window). `process` stored
+   `automaticBypass` unconditionally (ETJSFXHost.cpp:399 before). If maintenance had switched `mode` to `maintenance`
+   while that block was still running, the store overwrote it, and `ETJSFX_ClearDiagnostic` (CAS
+   `automaticBypass → running`, ETJSFXHost.cpp:629 before) could then let the next block run while the maintenance
+   thread ran `ysfx_init`, rebuilt programs, or (Destroy) freed the effect. Without Re-enable, `endMaintenance`
+   (ETJSFXHost.cpp:235 before) restored `running` from the prior mode and the bypass label stayed up over a running effect.
+3. **Dekker pattern with acquire/release** (formal). Maintenance writes `mode` then reads `audioActive`/`gfxActive`;
+   `process` writes `audioActive` then reads `mode` (ETJSFXHost.cpp:229–230, 326–327 before). With `acq_rel`/`acquire`
+   C++ allows both sides to miss the other's write. arm64 (`casal`/`swpal` + `ldar`) and x86-64 (locked RMW) do not
+   reorder these, so it is not observable on the targets; the orders are now `seq_cst` (same instructions there).
+4. **`ETVM_Install` rewrote WDL/ysfx globals on every call** (ETVMLink.cpp:326–330 before; the bench calls it for each
+   vm-reg variant) while other effects' audio threads read `nseel_exec_backend`. Same value, still a data race.
+5. **`NSEEL_RAM_limitmem` was written on every `ETJSFX_Create`** (ETJSFXHost.cpp:422 before) while other effects'
+   audio threads read it in `__NSEEL_RAMAlloc` (nseel-ram.c:154). Not VM-specific; TSan reported it in `--mode multi`.
+6. Not a race, found on the way: the builder could throw (`bad_alloc`) through ysfx with a `Program` allocated but not
+   attached.
+
+### 18.3 Fixes (safe by construction)
+- `ETJSFX_SetEELExecutor` runs inside `Maintenance` (ETJSFXHost.cpp:671): it waits for the running block and @gfx,
+  builds, and publishes through `endMaintenance`'s release and `process`'s acquire of `mode`. A switch therefore takes
+  effect at the next block boundary, and programs are built or freed only while no thread runs any handle of that
+  effect. `ETJSFX_Create` already builds before publishing; `ETJSFX_Destroy` frees inside maintenance.
+- `process` moves `running → automaticBypass` by CAS only (ETJSFXHost.cpp:421); `endMaintenance` ends in
+  `automaticBypass` when a deadline diagnostic is set (ETJSFXHost.cpp:246).
+- `beginMaintenance` and `process` use `seq_cst` for the Dekker accesses (ETJSFXHost.cpp:236–237, 342–343; `RunGFX`
+  already used the `seq_cst` defaults).
+- `ETVM_Install` registers once (function-local static, ETVMLink.cpp:345); `NSEEL_RAM_limitmem` is written once
+  (ETJSFXHost.cpp:446).
+- `buildPrograms` is `noexcept` (ETVMLink.cpp:272): an allocation failure before linking keeps the existing programs
+  (still valid: Const cells never change); one inside a handle leaves that handle without a program (vm-goto-fpreg).
+- The contract is written in `ETVM.h` (`ETVM_Install`) and `ETJSFXHost.h` (`ETJSFX_SetEELExecutor`). The ysfx patch is
+  unchanged: `ysfx_set_eel_exec_mode` / `ysfx_compile` stay "call only while the effect is not processing", and
+  ETJSFXHost is the caller that guarantees it.
+
+### 18.4 ThreadSanitizer stress test
+`Tests/Fuzz/tsan.sh` (WSL/Linux; builds ysfx + WDL + `Sources/JSFXVM` + `ETJSFXHost.cpp` with `-fsanitize=thread`
+and links the swiftly toolchain's libdispatch, which its TSan runtime needs) runs `Tests/Fuzz/Native/jsfx_threads.cpp`:
+- `--mode reg`: audio thread (64-frame blocks; bursts of forced deadline overruns into automatic bypass), control
+  thread (SetSlider, ClearDiagnostic, SendTrigger, SliderInfo, Consume*), maintenance thread (Reconfigure, SaveState →
+  LoadState, `SetEELExecutor` among vm-reg / default / portable, `ETVM_SetPasses` none/all, `ETVM_SetEngine` reference
+  now and then, `ETVM_Install`), gfx thread (RunGFX, CopyGFX, mouse, window state).
+- `--mode default`: the same without executor switches (stage-1 default, `NSEEL_EXEC_GOTO_FPREG`).
+- `--mode multi`: 4 threads each create an effect, switch it to vm-reg, run blocks, switch again and destroy, so the
+  builders of different effects run at the same time (Create/Destroy serialised, §18.5).
+- Oracle: every block's output is bit-identical either to the input (block not run: maintenance or bypass) or to one
+  of 16 references computed single-threaded per (gain, taps) slider pair; the script resets its per-block state in
+  @block, so the output depends on nothing else. The script exercises loop kernels, while + compare, megabuf, a user
+  function with a local, `cell OP= k`, @serialize and @gfx.
+
+Results (WSL x86-64, clang 21.0.0 swiftlang, -O1, `-fsanitize=thread`):
+- Before the fixes TSan stopped within seconds of `--mode reg` on race 1 (`NSEEL_code_attach_program` write vs
+  `NSEEL_code_execute_frames` read of `backend_prog`); `--mode multi` reported race 5.
+- After (7cb4328, `--seconds 60 --seed 2`): `reg` 19.1 M blocks, 987,418 checked against a reference (653,559 of
+  them with vm-reg selected; the rest are pass-through blocks during maintenance), 35,569 executor switches
+  (23,616 program sets built), 11,968 Reconfigure, 11,797 save/load, 2,153 Re-enable after forced bypass, 91,548 @gfx
+  frames; `default` 5.9 M blocks (1,798,331 checked), 40,875 Reconfigure, 40,954 save/load; `multi` 26,255 effects,
+  210,040 blocks. TSan clean in all three, no output mismatch. A 30 s run with seed 1 gave the same.
+- Oracles after the change: `--diff` (Linux -Os) 72 compared, 0 mismatched, every executor; `--vm-opgrid` 75,825 cases,
+  0 mismatched (ir, threaded, threaded+S3; 40 NaN+NaN payload choices as before).
+- Fuzz after the change (ASan + UBSan, `-fork=4`, 300 s each): `jsfxvmdiff` replayed its S3 corpus (3,928 inputs,
+  2,949 kept by the merge) plus 56 new executions, no vm-reg/portable mismatch; `jsfxexec` (host API incl.
+  `SetEELExecutor` and Re-enable) 240,239 runs, no crash.
+
+### 18.5 Remaining limits
+- **EEL memory shared with @gfx** (JSFX semantics): `RunGFX`'s `cacheSliders` reads slider variables while the audio
+  thread's `applySliders`/@slider/@sample write them (`cacheSliders` → `ysfx_slider_get_value`), and any script that
+  touches one variable from @gfx and @sample races the same way. Same for every executor; it is the only entry in
+  `Tests/Fuzz/Native/jsfx_threads.tsan.supp`. The stress script keeps @gfx on its own variables.
+- **WDL's process-wide counters**: `nseel_evallib_stats` (nseel-compiler.c:5179–5183 in compile, 5442–5446 in free)
+  and `NSEEL_RAM_memused` (nseel-ram.c:157 under `NSEEL_HOSTSTUB_EnterMutex`, 535–537 in `NSEEL_VM_freeRAM` without it)
+  race when effects are created or destroyed on different threads at once (TSan, `--mode multi` without the
+  serialisation). Statistics and the 64 MiB global RAM budget only, executor-independent, not fixed (WDL: needs a patch
+  revision).
+- **ysfx API**: `ysfx_set_eel_exec_mode(REG)` and `ysfx_compile` are unsafe while the effect processes; only
+  ETJSFXHost serialises them. Any caller that bypasses ETJSFXHost must do the same.
+- TSan checks happens-before, not weak-memory reordering (race 3 is argued, not tested), and race 2's window (a trip in
+  the block that overlaps the start of maintenance, then Re-enable before the maintenance ends) is too narrow for the
+  stress test to hit on purpose; that fix is by construction.
+- The stress test runs on x86-64 Linux only; the Mac/iPhone builds share the code, not the test.
 
 ---
 
