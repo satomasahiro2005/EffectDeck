@@ -45,7 +45,8 @@ int ETVM_GetEngine(void);
 #define ETVM_PASS_OPTO (1u << 14)      /* opto: 行き先と左のオペランドが同じ升（cell OP= cell） */
 #define ETVM_PASS_MEMBI (1u << 15)     /* membi: megabuf の 頭 + 添字 の足し算を番地の命令に */
 #define ETVM_PASS_FUSE2 (1u << 16)     /* fuse2: 続いた四則 2 つ（a*b + c など）を 1 つに */
-#define ETVM_PASSES_ALL 0x0001ff1fu
+#define ETVM_PASS_LKERN (1u << 17)     /* lkern: 中身が cell OP= 定数／cell だけの loop を 1 つのハンドラで回す */
+#define ETVM_PASSES_ALL 0x0003ff1fu
 void ETVM_SetPasses(uint32_t passes);
 uint32_t ETVM_GetPasses(void);
 /// "-cse,-fwd" などを読んで、base から足し引きした値を返す（名前を知らなければ *bad に書く）。

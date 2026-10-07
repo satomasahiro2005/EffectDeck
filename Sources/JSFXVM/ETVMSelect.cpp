@@ -995,10 +995,52 @@ bool Builder::emit(ThreadedProgram &p)
         stubs.push_back(Stub{nextLabel, std::move(cs), t});
         return nextLabel++;
     };
+    // [lkern] 自分へ戻る loop のブロックで、出すものが「dst = dst op 定数／升」1 つと DecJ だけなら、
+    // loop を回し切るハンドラ 1 つに（数の升は phi とまとまっていて、戻る辺に写しが無いこと）
+    auto loopKernel = [&](int b) -> bool {
+        const Block &bl = fn.blocks[b];
+        const TermFuse &tf = term[b];
+        if (!on(ETVM_PASS_LKERN) || bl.term != Term::CondBr || tf.kind != TK::Dec || (int)bl.succ[0] != b) return false;
+        if (!edgeCopies(b, (int)bl.succPredIdx[0]).empty()) return false;
+        const Ins &D = bl.ins[tf.p0];
+        const VInfo &pv = vi[D.args[0]];
+        if (!pv.phi || pv.block != b || def[D.args[0]]->args[bl.succPredIdx[0]] != D.res) return false;
+        int q = -1, n = 0;
+        for (int i = 0; i < (int)bl.ins.size(); ++i)
+            if (executes(b, i) && !retarget[b][i] && fuse[b][i] != 1 && fuse[b][i] != 3) { q = i; ++n; }
+        if (n != 1) return false;
+        const Ins *H = nullptr;
+        bool filt = false;
+        if (fuse[b][q] == 0 && isArith(bl.ins[q].op)) H = &bl.ins[q];
+        else if (fuse[b][q] == 2 && groupKind[b][q] == GK::ArithF) { H = &bl.ins[groupMembers[b][q][0]]; filt = true; }
+        if (!H) return false;
+        double *dst = fdst(bl.ins[q].res);
+        if (fop(H->args[0]) != dst) return false;
+        const int ai = arithIndex(H->op), fi = filt ? 1 : 0;
+        static const HK kIT[2][4] = {{HK::LKAddIT, HK::LKSubIT, HK::LKMulIT, HK::LKDivIT},
+                                     {HK::LKAddITF, HK::LKSubITF, HK::LKMulITF, HK::LKDivITF}};
+        static const HK kT[2][4] = {{HK::LKAddT, HK::LKSubT, HK::LKMulT, HK::LKDivT},
+                                    {HK::LKAddTF, HK::LKSubTF, HK::LKMulTF, HK::LKDivTF}};
+        double k = 0;
+        if (on(ETVM_PASS_OPIMM) && immOf(H->args[1], k)) {
+            e.h(kIT[fi][ai]); e.s(sop(D.res)); e.s(sop(D.args[0])); e.d(dst); e.f(k);
+        } else {
+            double *pb = fop(H->args[1]);
+            if (pb == dst) return false;
+            e.h(kT[fi][ai]); e.s(sop(D.res)); e.s(sop(D.args[0])); e.d(dst); e.d(pb);
+        }
+        ++st.loopKernel;
+        return true;
+    };
     for (int b = 0; b < nb && ok; ++b) {
         if (absorbed[b]) continue;
         const Block &bl = fn.blocks[b];
         e.labelAt[(size_t)b] = e.code.size();
+        if (loopKernel(b)) {
+            const int t1 = edgeLabel(b, 1);
+            if (t1 != nextEmitted(b)) { e.h(HK::Jmp); e.label(t1); }
+            continue;
+        }
         for (int i = 0; i < (int)bl.ins.size() && ok; ++i) {
             if (!executes(b, i) || retarget[b][i] || fuse[b][i] == 1 || fuse[b][i] == 3) continue;
             if (fuse[b][i] == 2) { emitGroup(bl, groupKind[b][i], groupMembers[b][i]); continue; }
@@ -1139,6 +1181,9 @@ int immOperand(HK k)
     case HK::AddIT: case HK::SubIT: case HK::MulIT: case HK::DivIT:
     case HK::AddITF: case HK::SubITF: case HK::MulITF: case HK::DivITF:
         return 2;
+    case HK::LKAddIT: case HK::LKSubIT: case HK::LKMulIT: case HK::LKDivIT:
+    case HK::LKAddITF: case HK::LKSubITF: case HK::LKMulITF: case HK::LKDivITF:
+        return 4;
     default:
         return 0;
     }

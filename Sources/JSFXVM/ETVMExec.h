@@ -33,6 +33,7 @@ struct ThreadedStats {
     size_t opTo = 0;           // 行き先 = 左のオペランド
     size_t memBI = 0;          // megabuf の 頭 + 添字
     size_t fuse2 = 0;          // 続いた四則 2 つ
+    size_t loopKernel = 0;     // loop を回し切るハンドラ（lkern）
     size_t multiDirect = 0;    // じかに書いた升を、あとの使う所も読む（fwd・cse で増えた使う所）
 };
 

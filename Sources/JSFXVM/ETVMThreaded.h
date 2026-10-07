@@ -130,6 +130,10 @@ enum class HK : uint16_t {
     // 1 つのものは d a だけ）
     WLtJ, WLtJF, WGeJ, WGeJF, WEqCloseJ, WEqCloseJF, WNeCloseJ, WNeCloseJF, WEqJ, WEqJF, WNeJ, WNeJF,
     WTruthyJ, WTruthyJF, WFalsyJ, WFalsyJF,
+    // loop の中身が 1 つ（dst = dst op k／dst op *b）の loop を回し切る（s out, s in, d dst, x imm | d b）。
+    // 値はレジスタに置いて終わりに 1 回書く（IEEE の演算の並びは同じ。loop の間ほかに誰も回らない）
+    LKAddIT, LKSubIT, LKMulIT, LKDivIT, LKAddITF, LKSubITF, LKMulITF, LKDivITF,
+    LKAddT, LKSubT, LKMulT, LKDivT, LKAddTF, LKSubTF, LKMulTF, LKDivTF,
     // 続いた四則 2 つ（fuse2）: L は d = (a i b) o c、R は d = c o (a i b)。F は o の結果にフィルタ。d dst, d a, d b, d c
 #define ETVM_F2_ENUM(i, o) F2L##i##o, F2R##i##o, F2LF##i##o, F2RF##i##o,
     ETVM_FUSE2_LIST(ETVM_F2_ENUM)

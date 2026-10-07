@@ -86,7 +86,7 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
              thCoalesced[8] = {}, thCopies[8] = {}, thDead[8] = {};
     std::string thFirstError;
     // 段 S3: loop / while / cmpbr / opimm / opto / membi / fuse2 / constbr / multidirect
-    uint64_t s3[8][9] = {};
+    uint64_t s3[8][10] = {};
     etvm::OptStats optStats[8];
     const uint32_t passes = ETVM_GetPasses();
     std::map<std::string, uint64_t> reasons[8];
@@ -151,7 +151,7 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
                     thCoalesced[sec] += ts.coalesced; thCopies[sec] += ts.copies; thDead[sec] += ts.dead;
                     s3[sec][0] += ts.loopFused; s3[sec][1] += ts.whileFused; s3[sec][2] += ts.cmpBr;
                     s3[sec][3] += ts.opImm; s3[sec][4] += ts.opTo; s3[sec][5] += ts.memBI; s3[sec][6] += ts.fuse2;
-                    s3[sec][7] += ts.constBr; s3[sec][8] += ts.multiDirect;
+                    s3[sec][7] += ts.constBr; s3[sec][8] += ts.multiDirect; s3[sec][9] += ts.loopKernel;
                 } else if (thFirstError.empty()) thFirstError = std::string(base) + ": " + why;
                 std::printf("  %-12s lifted   nodes %6zu blocks %5zu insns %6zu  threaded %s %zu handlers\n", label,
                             hr.lift.nodes, hr.lift.fn.blocks.size(), hr.lift.fn.instructionCount(),
@@ -222,13 +222,13 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
                       ", \"s3\": {\"constCells\": %zu, \"folded\": %zu, \"cseLoads\": %zu, \"csePure\": %zu, "
                       "\"forwarded\": %zu, \"deadStores\": %zu, \"loopFused\": %" PRIu64 ", \"whileFused\": %" PRIu64
                       ", \"cmpBr\": %" PRIu64 ", \"opImm\": %" PRIu64 ", \"opTo\": %" PRIu64 ", \"memBI\": %" PRIu64
-                      ", \"fuse2\": %" PRIu64 ", \"constBr\": %" PRIu64 "}}}",
+                      ", \"fuse2\": %" PRIu64 ", \"constBr\": %" PRIu64 ", \"loopKernel\": %" PRIu64 "}}}",
                       jsonSections.empty() ? "" : ", ", kSectionNames[sec], handles[sec], lifted[sec], blocks[sec],
                       insns[sec], nodes[sec], rs.c_str(), thBuilt[sec], thIR[sec], thHandlers[sec], thDead[sec],
                       thFolded[sec], thDirect[sec], thFused[sec], thCoalesced[sec], thCopies[sec],
                       optStats[sec].constCells, optStats[sec].folded, optStats[sec].cseLoads, optStats[sec].csePure,
                       optStats[sec].forwarded, optStats[sec].deadStores, s3[sec][0], s3[sec][1], s3[sec][2], s3[sec][3],
-                      s3[sec][4], s3[sec][5], s3[sec][6], s3[sec][7]);
+                      s3[sec][4], s3[sec][5], s3[sec][6], s3[sec][7], s3[sec][9]);
         jsonSections += item;
     }
     std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %7.1f%%\n", "all", th, tl, th ? 100.0 * (double)tl / (double)th : 100.0);
@@ -246,14 +246,14 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
     std::printf("\nstage S3 (ETVM_PASSES = 0x%05x)\n", passes);
     std::printf("  %-10s %6s %6s %6s %6s %6s %6s %6s %6s | %6s %6s %6s %6s %6s %6s %6s %6s %6s\n", "section",
                 "const", "fold", "cseLd", "cseOp", "fwd", "dead", "vfail", "multi", "loop", "while", "cmpbr", "opimm",
-                "opto", "membi", "fuse2", "constb", "");
+                "opto", "membi", "fuse2", "constb", "lkern");
     for (int sec = 1; sec <= 6; ++sec) {
         const etvm::OptStats &o = optStats[sec];
         std::printf("  %-10s %6zu %6zu %6zu %6zu %6zu %6zu %6zu %6" PRIu64 " | %6" PRIu64 " %6" PRIu64 " %6" PRIu64
-                    " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 "\n", kSectionNames[sec],
+                    " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 "\n", kSectionNames[sec],
                     o.constCells, o.folded, o.cseLoads, o.csePure, o.forwarded, o.deadStores, o.verifyFailed,
                     s3[sec][8], s3[sec][0], s3[sec][1], s3[sec][2], s3[sec][3], s3[sec][4], s3[sec][5], s3[sec][6],
-                    s3[sec][7]);
+                    s3[sec][7], s3[sec][9]);
     }
     std::printf("  threaded built for %" PRIu64 " of %" PRIu64 " lifted handles%s%s\n", tb, tl,
                 thFirstError.empty() ? "" : "; first failure: ", thFirstError.c_str());

@@ -369,6 +369,7 @@ const PassName kPassNames[] = {
     {"promote", ETVM_PASS_PROMOTE}, {"ldfold", ETVM_PASS_LDFOLD}, {"direct", ETVM_PASS_DIRECT},
     {"fuse", ETVM_PASS_FUSE}, {"loop", ETVM_PASS_LOOP}, {"cmpbr", ETVM_PASS_CMPBR}, {"opimm", ETVM_PASS_OPIMM},
     {"opto", ETVM_PASS_OPTO}, {"membi", ETVM_PASS_MEMBI}, {"fuse2", ETVM_PASS_FUSE2},
+    {"lkern", ETVM_PASS_LKERN},
 };
 } // namespace
 

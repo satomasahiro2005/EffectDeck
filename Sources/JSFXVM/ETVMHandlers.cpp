@@ -645,6 +645,42 @@ ETVM_WCMP1(Truthy, etvm_truthy(a))
 ETVM_WCMP1(Falsy, etvm_falsy(a))
 #undef ETVM_WCMP1
 
+// ---- 段 S3: loop の中身が 1 つの loop（lkern。設計 §9.5 の loop kernel）。k は loop の中で変わらない
+// （中身が書くのは dst だけで、b は dst と別の升）。1 周ごとの演算と数の減らし方は AddIT・DecJ と同じ ---------
+#define ETVM_LK(name, kexpr, expr)                                                                            \
+    ETVM_H(name)                                                                                              \
+    {                                                                                                         \
+        double *const d = ip[3].d;                                                                            \
+        const double k = (kexpr);                                                                             \
+        double x = *d;                                                                                        \
+        int32_t c = (int32_t)ip[2].s->i;                                                                      \
+        for (;;) {                                                                                            \
+            x = (expr);                                                                                       \
+            c = (int32_t)((uint32_t)c - 1u);                                                                  \
+            if (!(c > 0)) break;                                                                              \
+        }                                                                                                     \
+        *d = x;                                                                                               \
+        ip[1].s->i = (int64_t)c;                                                                              \
+        ETVM_NEXT(4);                                                                                         \
+    }
+ETVM_LK(LKAddIT, ip[4].f, x + k)
+ETVM_LK(LKSubIT, ip[4].f, x - k)
+ETVM_LK(LKMulIT, ip[4].f, x * k)
+ETVM_LK(LKDivIT, ip[4].f, x / k)
+ETVM_LK(LKAddITF, ip[4].f, etvm_filter(x + k))
+ETVM_LK(LKSubITF, ip[4].f, etvm_filter(x - k))
+ETVM_LK(LKMulITF, ip[4].f, etvm_filter(x * k))
+ETVM_LK(LKDivITF, ip[4].f, etvm_filter(x / k))
+ETVM_LK(LKAddT, *ip[4].d, x + k)
+ETVM_LK(LKSubT, *ip[4].d, x - k)
+ETVM_LK(LKMulT, *ip[4].d, x * k)
+ETVM_LK(LKDivT, *ip[4].d, x / k)
+ETVM_LK(LKAddTF, *ip[4].d, etvm_filter(x + k))
+ETVM_LK(LKSubTF, *ip[4].d, etvm_filter(x - k))
+ETVM_LK(LKMulTF, *ip[4].d, etvm_filter(x * k))
+ETVM_LK(LKDivTF, *ip[4].d, etvm_filter(x / k))
+#undef ETVM_LK
+
 // ---- 段 S3: 続いた四則 2 つ（fuse2）。内側を先に計算し、その結果を外側の左（L）／右（R）に。縮約はしない -------
 #define ETVM_OPAdd +
 #define ETVM_OPSub -
@@ -709,6 +745,9 @@ const Entry kTable[] = {
     E(WLtJ, 5), E(WLtJF, 5), E(WGeJ, 5), E(WGeJF, 5), E(WEqCloseJ, 5), E(WEqCloseJF, 5), E(WNeCloseJ, 5),
     E(WNeCloseJF, 5), E(WEqJ, 5), E(WEqJF, 5), E(WNeJ, 5), E(WNeJF, 5),
     E(WTruthyJ, 4), E(WTruthyJF, 4), E(WFalsyJ, 4), E(WFalsyJF, 4),
+    E(LKAddIT, 4), E(LKSubIT, 4), E(LKMulIT, 4), E(LKDivIT, 4), E(LKAddITF, 4), E(LKSubITF, 4), E(LKMulITF, 4),
+    E(LKDivITF, 4), E(LKAddT, 4), E(LKSubT, 4), E(LKMulT, 4), E(LKDivT, 4), E(LKAddTF, 4), E(LKSubTF, 4),
+    E(LKMulTF, 4), E(LKDivTF, 4),
 #define ETVM_F2_E(i, o) E(F2L##i##o, 4), E(F2R##i##o, 4), E(F2LF##i##o, 4), E(F2RF##i##o, 4),
     ETVM_FUSE2_LIST(ETVM_F2_E)
 #undef ETVM_F2_E
