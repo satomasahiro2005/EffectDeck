@@ -111,6 +111,8 @@ SOURCE_ROLES = [
     ("Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/", ("app",),
      r"^nseel-(caltab|cfunc|compiler|eval|lextab|ram|yylex)\.c$", None),
     ("Vendor/ysfx/thirdparty/WDL/source/WDL/fft.c", ("app",), None, None),
+    # JSFX のレジスタ型 VM。project.yml では YSFX の中（拡張には入らない）。
+    ("Sources/JSFXVM/", ("app",), None, None),
     ("Vendor/ysfx/thirdparty/WDL/source/WDL/lice/", ("app",),
      r"^lice(_arc|_colorspace|_image|_line|_palette|_texgen|_text)?\.cpp$", None),
     # Note Spectrogram のモデル（Scripts/setup.sh が吐く）。.S は読まない（名前で引く口は書けない）。

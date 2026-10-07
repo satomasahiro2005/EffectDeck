@@ -175,6 +175,11 @@ targets:
           - lice_palette.cpp
           - lice_texgen.cpp
           - lice_text.cpp
+      # JSFX のレジスタ型 VM（docs/jsfx-regvm-design.md）。WDL の内側（ns-eel-int.h）を読むので YSFX に入れる。
+      # 拡張には入れない（Sources/Shared の外）。範囲の外の double → int は arm64 の fcvtzs と同じ飽和にする
+      # （Tests/Fuzz/run.sh・Tools/jsfx-bench/run.sh と同じ旗。arm64 では機械語は変わらない）。
+      - path: Sources/JSFXVM
+        compilerFlags: ["-fno-strict-float-cast-overflow"]
     settings:
       base:
         CLANG_CXX_LANGUAGE_STANDARD: "c++20"
