@@ -1,24 +1,32 @@
-// ETVMSelect.cpp — 中間表現から threaded code（ETVMHandlers.cpp のハンドラの列）を作る。段 S2。
-// docs/jsfx-regvm-design.md §9.1–9.5（tier 1: 中間表現の命令 1 つにハンドラ 1 つ、オペランドは全部が絶対番地）。
+// ETVMSelect.cpp — 中間表現から threaded code（ETVMHandlers.cpp のハンドラの列）を作る。段 S2・S3。
+// docs/jsfx-regvm-design.md §9.1–9.5（オペランドは全部が絶対番地）、§16・§17。
 //
-// 並べる前にすること（どれも「portable と同じ順・同じ番地で読み書きする」を崩さない範囲だけ）:
+// 並べる前にすること（どれも「portable と同じ順・同じ番地で読み書きする」を崩さない範囲だけ。[] は ETVM_PASS_*）:
 //   1. 使われない純な値は出さない（根 = 書く・呼ぶ・確保する命令と分かれ道の条件から辿れないもの）
-//   2. LoadCell をオペランドへ畳む: 同じブロックの中の使う所までに、その升へ書きうる命令が無ければ、
+//   2. [ldfold] LoadCell をオペランドへ畳む: 同じブロックの中の使う所までに、その升へ書きうる命令が無ければ、
 //      使う命令がその升を直に読む（設計 §9.2: 升も枠も同じ double *）
-//   3. 行き先をじかに: StoreCell(c, v) の v が同じブロックの演算 1 か所でしか使われず、その間に c を
-//      読む・書きうる命令が無ければ、演算が c へ書き、StoreCell は出さない（設計 §8.1 の 9 を前倒し）
-//   4. 並んだ 2 つを 1 つに: 四則 + フィルタ（フィルタ付きの代入）、megabuf の番地 + 読む／書く
-//      （間に何も出ないときだけ。読む・確保する時点は変わらない）
-//   5. 升: ブロックの外で使う値・phi は専用の升、ブロックの中だけの値は使い終わった升を使い回す。
-//      phi の引数が phi の最後の使用より後に作られ、ほかで使われなければ同じ升にする（loop の数の写しが消える）
+//   3. [direct] 行き先をじかに: StoreCell(c, v) の v を作る同じブロックの演算が c へ書き、StoreCell は出さない。
+//      v を作ってから StoreCell までに c を読む・書きうる命令が無いこと。v のほかの使う所（S3: fwd・cse で増える）は
+//      同じブロックで、c へ書きうる命令を挟まなければ c を読む
+//   4. [loop・cmpbr] ブロックの終わりの「数を減らして比べて跳ぶ」「loop の数を決めて 1 未満なら跳ぶ」
+//      「while の次」「比べて跳ぶ」を 1 つに（最後に回る命令どうしだけ。値を読む・書く時点は変わらない）
+//   5. 並んだ命令を 1 つに（間に回る命令が無いときだけ）: [fuse] 四則 + フィルタ、megabuf の番地 + 読む／書く、
+//      [membi] 頭 + 添字 → megabuf、[fuse2] 四則 2 つ（+ フィルタ）
+//   6. [opimm・opto] 四則のオペランドが定数（FConst）なら命令の中に、行き先が左のオペランドと同じ升なら 1 つ省く
+//   7. 升: ブロックの外で使う値・phi は専用の升、ブロックの中だけの値は使い終わった升を使い回す。
+//      [loop] phi と引数は、生きている範囲が重ならなければ同じ升に（loop・while の数の写しが消える）。
+//      切ったときは段 S2 の決め方（引数が phi の最後の使用より後に、引数の来るブロックで作られるとき）
 // 「書きうる・読みうる」はポインタの出所で決める: 定数の番地はその升だけ、megabuf・gmem の番地は升に重ならない、
 // それ以外（API の返り値・phi・min/max の参照・ユーザーの積み場）はどの升でもありうる。API の呼び出しは全部の升を
 // 読み書きしうる。
 #include "ETVMExec.h"
 #include "ETVMThreaded.h"
 
+#include "ETVM.h"
+
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -53,7 +61,7 @@ struct VInfo {
     bool live = false;
     bool folded = false;  // LoadCell をオペランドへ畳んだ（cell を読む）
     uint64_t cell = 0;
-    bool direct = false;  // 結果を dstCell へじかに書く
+    bool direct = false;  // 結果を dstCell へじかに書く（使う所も dstCell を読む）
     uint64_t dstCell = 0;
     bool fusedAway = false;
     bool global = false;
@@ -102,21 +110,39 @@ bool isCall(Op op)
     return op == Op::CallG || op == Op::CallGD || op == Op::CallGXD || op == Op::CallVarparm || op == Op::CallVarparmX;
 }
 
+bool isArith(Op op) { return op == Op::FAdd || op == Op::FSub || op == Op::FMul || op == Op::FDiv; }
+int arithIndex(Op op) { return op == Op::FAdd ? 0 : op == Op::FSub ? 1 : op == Op::FMul ? 2 : 3; }
+
+/// 並んだ命令を 1 つにした組（尾の位置に置く）
+enum class GK : uint8_t { None, ArithF, MemLoad, MemStore, MemAddrBI, MemLoadBI, MemStoreBI, Fuse2, Fuse2F };
+/// ブロックの終わりを 1 つにしたもの
+enum class TK : uint8_t { None, LoopInit, Dec, While, Cmp };
+
+struct TermFuse {
+    TK kind = TK::None;
+    int p0 = -1, p1 = -1; // 取り込んだ命令の位置
+    int x = -1;           // While: 取り込んだブロック（条件で跳ぶだけ）
+};
+
 struct Builder {
     const Function &fn;
     std::string &why;
+    const uint32_t passes;
     ThreadedStats st;
     std::vector<VInfo> vi;
     std::vector<const Ins *> def; // 値を作る命令（consts・phi・命令）
     // ブロック・位置ごと
     std::vector<std::vector<uint8_t>> insLive;  // 出す（または出したことにする）か
     std::vector<std::vector<uint8_t>> retarget; // StoreCell を出さない（演算がじかに書く）
-    std::vector<std::vector<int8_t>> fuse;      // 0 = 普通, 1 = 次と 1 つにした頭（出さない）, 2 = 1 つにした尾
-    std::vector<std::vector<HK>> fuseKind;
-    std::vector<std::vector<int>> fusePartner;  // 尾から頭の位置
+    std::vector<std::vector<int8_t>> fuse;      // 0 = 普通, 1 = 組の頭（出さない）, 2 = 組の尾, 3 = 終わりに取り込んだ
+    std::vector<std::vector<GK>> groupKind;     // 尾の位置
+    std::vector<std::vector<std::vector<int>>> groupMembers; // 尾の位置: 頭から尾まで
+    std::vector<TermFuse> term;
+    std::vector<uint8_t> absorbed;              // ブロックごと: While に取り込んだ（出さない）
 
-    Builder(const Function &f, std::string &w) : fn(f), why(w) {}
+    Builder(const Function &f, std::string &w, uint32_t p) : fn(f), why(w), passes(p) {}
 
+    bool on(uint32_t bit) const { return (passes & bit) != 0; }
     bool fail(const std::string &s) { why = s; return false; }
 
     Ptr ptrOf(uint32_t v, uint64_t &addr) const
@@ -149,12 +175,15 @@ struct Builder {
         }
     }
 
-    /// (b, i) の命令が升 c を読みうるか（畳んだ LoadCell はそれを使う命令の位置で読む）。
+    /// (b, i) の命令が升 c を読みうるか（畳んだ LoadCell はそれを使う命令の位置で読む。じかに書いた値を使う所は
+    /// その升を読む）。
     bool mayRead(int b, int i, uint64_t c) const
     {
         const Ins &in = fn.blocks[b].ins[i];
-        for (uint32_t a : in.args)
+        for (uint32_t a : in.args) {
             if (vi[a].folded && vi[a].cell == c) return true;
+            if (vi[a].direct && vi[a].dstCell == c && !(in.op == Op::StoreCell && retarget[b][i])) return true;
+        }
         switch (in.op) {
         case Op::LoadCell: return !vi[in.res].folded && in.imm[0] == c;
         case Op::Load: case Op::UStackPush: case Op::UStackExch: return aliases(in.args[0], c);
@@ -171,11 +200,23 @@ struct Builder {
         return true;
     }
 
+    /// 出す命令（回る命令のうち、じかに書いて消えた StoreCell を除く）の位置
+    std::vector<int> emitOrder(int b) const
+    {
+        std::vector<int> order;
+        for (size_t i = 0; i < fn.blocks[b].ins.size(); ++i)
+            if (executes(b, (int)i) && !retarget[b][i]) order.push_back((int)i);
+        return order;
+    }
+
     bool analyse();
     void liveness();
     void foldLoads();
     void directDest();
-    void fusePairs();
+    void fuseTerms();
+    void fuseGroups();
+    void coalesceS2();
+    void coalesceLive();
     bool assignSlots(ThreadedProgram &p);
     bool emit(ThreadedProgram &p);
 };
@@ -188,7 +229,9 @@ bool Builder::analyse()
     for (const Ins &c : fn.consts)
         if (c.res != kNoValue && c.res < nv) { def[c.res] = &c; vi[c.res].block = -1; }
     const int nb = (int)fn.blocks.size();
-    insLive.resize(nb); retarget.resize(nb); fuse.resize(nb); fuseKind.resize(nb); fusePartner.resize(nb);
+    insLive.resize(nb); retarget.resize(nb); fuse.resize(nb); groupKind.resize(nb); groupMembers.resize(nb);
+    term.assign(nb, TermFuse{});
+    absorbed.assign(nb, 0);
     for (int b = 0; b < nb; ++b) {
         const Block &bl = fn.blocks[b];
         for (const Ins &in : bl.phis) {
@@ -199,7 +242,7 @@ bool Builder::analyse()
         for (size_t i = 0; i < bl.ins.size(); ++i) {
             const Ins &in = bl.ins[i];
             if (in.op == Op::Phi || in.op == Op::PtrConst || in.op == Op::BoolConst || in.op == Op::I32Const ||
-                in.op >= Op::Count)
+                in.op == Op::FConst || in.op >= Op::Count)
                 return fail(std::string("unexpected op in block: ") + opName(in.op));
             if (in.res != kNoValue) {
                 if (in.res >= nv) return fail("value out of range");
@@ -209,7 +252,7 @@ bool Builder::analyse()
         }
         const size_t n = bl.ins.size();
         insLive[b].assign(n, 0); retarget[b].assign(n, 0); fuse[b].assign(n, 0);
-        fuseKind[b].assign(n, HK::Count); fusePartner[b].assign(n, -1);
+        groupKind[b].assign(n, GK::None); groupMembers[b].assign(n, {});
         if (bl.term == Term::None) return fail("block without terminator");
     }
     return true; // 定義の無い値（持ち上げで捨てた番号）は誰も使わない（verifier）
@@ -298,56 +341,306 @@ void Builder::directDest()
             if (S.op != Op::StoreCell || !insLive[b][s]) continue;
             const uint32_t v = S.args[0];
             VInfo &V = vi[v];
-            if (V.phi || V.block != (int)b || V.pos < 0 || V.pos >= (int)s || V.folded || V.uses.size() != 1) continue;
+            if (V.phi || V.block != (int)b || V.pos < 0 || V.pos >= (int)s || V.folded || V.direct) continue;
             const Ins &I = bl.ins[V.pos];
             if (!hasF64Dest(I.op)) continue;
             const uint64_t c = S.imm[0];
-            bool ok = true;
+            // ほかの使う所: 段 S2 は無いことが条件。S3 は同じブロックの S より後（または前の）普通の命令なら、
+            // その所まで c を書きうる命令が無ければ c を読む（multi）。
+            int maxOther = -1;
+            bool ok = true, multi = false;
+            for (const Use &u : V.uses) {
+                if (!u.phi && u.block == (int)b && u.pos == (int)s) continue;
+                multi = true;
+                if (u.phi || u.block != (int)b || u.pos >= (int)bl.ins.size() || !on(ETVM_PASS_FWD | ETVM_PASS_CSE)) {
+                    ok = false;
+                    break;
+                }
+                maxOther = std::max(maxOther, u.pos);
+            }
+            // V.uses が S を 1 回だけ含む（同じ値を 2 度同じ升へ、などは段 S2 と同じく断る）
+            int selfUses = 0;
+            for (const Use &u : V.uses) selfUses += !u.phi && u.block == (int)b && u.pos == (int)s;
+            if (!ok || selfUses != 1) continue;
+            // v を作ってから S まで: c を読む（古い c が要る。v を使う所は v がまだ direct でないので数えない）・
+            // 書く命令が無い。S から先の使う所まで: c を書く命令が無い（使う所は c = v を読む）
             for (int j = V.pos + 1; j < (int)s && ok; ++j)
                 if (executes((int)b, j) && (mayRead((int)b, j, c) || mayWrite((int)b, j, c))) ok = false;
+            for (int j = (int)s + 1; j < maxOther && ok; ++j)
+                if (executes((int)b, j) && mayWrite((int)b, j, c)) ok = false;
             if (!ok) continue;
             V.direct = true;
             V.dstCell = c;
             retarget[b][s] = 1;
             ++st.directDest;
+            if (multi) ++st.multiDirect;
         }
     }
 }
 
-void Builder::fusePairs()
+void Builder::fuseTerms()
+{
+    const int nb = (int)fn.blocks.size();
+    for (int b = 0; b < nb; ++b) {
+        const Block &bl = fn.blocks[b];
+        if (bl.term != Term::CondBr || absorbed[b]) continue;
+        const uint32_t cond = bl.cond;
+        if (!def[cond] || vi[cond].block != b || vi[cond].phi || vi[cond].uses.size() != 1) continue;
+        const std::vector<int> order = emitOrder(b);
+        const int n = (int)order.size();
+        if (n < 1 || order[n - 1] != vi[cond].pos) continue;
+        const Ins &I1 = bl.ins[order[n - 1]];
+        TermFuse tf;
+        if (on(ETVM_PASS_LOOP) && n >= 2) {
+            const Ins &I0 = bl.ins[order[n - 2]];
+            if (I1.op == Op::IGt0 && I0.op == Op::IDec && I1.args[0] == I0.res) {
+                tf = TermFuse{TK::Dec, order[n - 2], order[n - 1], -1};
+                // while: 真の行き先 X が「条件で H か E へ跳ぶだけ」のブロックで、偽の行き先が同じ E なら X ごと取り込む
+                const int X = (int)bl.succ[0], E = (int)bl.succ[1];
+                const Block &xb = fn.blocks[X];
+                bool w = X != b && X != E && xb.term == Term::CondBr && xb.preds.size() == 1 && (int)xb.succ[1] == E &&
+                         (int)xb.succ[0] != X && !absorbed[X];
+                if (w)
+                    for (size_t i = 0; i < xb.ins.size() && w; ++i) w = !executes(X, (int)i);
+                if (w)
+                    for (const Ins &P : xb.phis) w = w && !vi[P.res].live;
+                if (w) {
+                    // E の phi が D からも X からも同じ値を受け取る
+                    for (const Ins &P : fn.blocks[E].phis)
+                        if (vi[P.res].live && P.args[bl.succPredIdx[1]] != P.args[xb.succPredIdx[1]]) w = false;
+                    // X の条件は X の外で作られた値（X には回る命令が無い）
+                    if (vi[xb.cond].block == X) w = false;
+                }
+                if (w) { tf.kind = TK::While; tf.x = X; }
+            } else if (I1.op == Op::ILt1 && I0.op == Op::LoopCount && I1.args[0] == I0.res) {
+                tf = TermFuse{TK::LoopInit, order[n - 2], order[n - 1], -1};
+            }
+        }
+        if (tf.kind == TK::None && on(ETVM_PASS_CMPBR)) {
+            switch (I1.op) {
+            case Op::CmpLt: case Op::CmpGe: case Op::CmpEqClose: case Op::CmpNeClose: case Op::CmpEq: case Op::CmpNe:
+            case Op::Truthy: case Op::Falsy:
+                tf = TermFuse{TK::Cmp, order[n - 1], -1, -1};
+                break;
+            default: break;
+            }
+        }
+        if (tf.kind == TK::None) continue;
+        term[b] = tf;
+        vi[cond].fusedAway = true;
+        fuse[b][order[n - 1]] = 3;
+        if (tf.p0 >= 0 && tf.p0 != order[n - 1]) fuse[b][tf.p0] = 3;
+        if (tf.kind == TK::While) absorbed[tf.x] = 1;
+        switch (tf.kind) {
+        case TK::LoopInit: case TK::Dec: ++st.loopFused; break;
+        case TK::While: ++st.whileFused; break;
+        case TK::Cmp: ++st.cmpBr; break;
+        case TK::None: break;
+        }
+    }
+}
+
+void Builder::fuseGroups()
 {
     for (size_t b = 0; b < fn.blocks.size(); ++b) {
         const Block &bl = fn.blocks[b];
         std::vector<int> order;
-        for (size_t i = 0; i < bl.ins.size(); ++i)
-            if (executes((int)b, (int)i) && !retarget[b][i]) order.push_back((int)i);
-        for (size_t k = 0; k + 1 < order.size(); ++k) {
-            const int h = order[k], t = order[k + 1];
-            if (fuse[b][h]) continue;
-            const Ins &H = bl.ins[h], &T = bl.ins[t];
-            if (H.res == kNoValue || vi[H.res].uses.size() != 1 || vi[H.res].direct) continue;
-            HK kind = HK::Count;
-            if (T.op == Op::Filter && T.args[0] == H.res) {
-                switch (H.op) {
-                case Op::FAdd: kind = HK::FAddF; break;
-                case Op::FSub: kind = HK::FSubF; break;
-                case Op::FMul: kind = HK::FMulF; break;
-                case Op::FDiv: kind = HK::FDivF; break;
-                default: break;
-                }
-            } else if (H.op == Op::MemAddr && T.op == Op::Load && T.args[0] == H.res) {
-                kind = HK::MemLoad;
-            } else if (H.op == Op::MemAddr && T.op == Op::Store && T.args[0] == H.res && T.args[1] != H.res) {
-                kind = HK::MemStore;
+        for (int i : emitOrder((int)b))
+            if (fuse[b][i] == 0) order.push_back(i);
+        // 1 つの値が「次の命令だけで 1 回だけ使われる」
+        auto feeds = [&](int h, int t) {
+            const Ins &H = bl.ins[h];
+            if (H.res == kNoValue || vi[H.res].uses.size() != 1 || vi[H.res].direct) return false;
+            const Use &u = vi[H.res].uses[0];
+            return !u.phi && u.block == (int)b && u.pos == t;
+        };
+        auto group = [&](GK kind, std::vector<int> members) {
+            const int t = members.back();
+            for (size_t k = 0; k + 1 < members.size(); ++k) {
+                fuse[b][members[k]] = 1;
+                vi[bl.ins[members[k]].res].fusedAway = true;
             }
-            if (kind == HK::Count) continue;
-            fuse[b][h] = 1;
             fuse[b][t] = 2;
-            fuseKind[b][t] = kind;
-            fusePartner[b][t] = h;
-            vi[H.res].fusedAway = true;
-            ++st.fused;
-            ++k; // 尾は次の頭にしない
+            groupKind[b][t] = kind;
+            groupMembers[b][t] = std::move(members);
+        };
+        for (size_t k = 0; k < order.size(); ++k) {
+            const int h = order[k];
+            const int t1 = k + 1 < order.size() ? order[k + 1] : -1;
+            const int t2 = k + 2 < order.size() ? order[k + 2] : -1;
+            const Ins &H = bl.ins[h];
+            const Ins *T1 = t1 >= 0 ? &bl.ins[t1] : nullptr;
+            const Ins *T2 = t2 >= 0 ? &bl.ins[t2] : nullptr;
+            // [membi] 頭 + 添字 → megabuf（→ 読む／書く）
+            if (on(ETVM_PASS_MEMBI) && H.op == Op::FAdd && T1 && T1->op == Op::MemAddr && feeds(h, t1)) {
+                if (on(ETVM_PASS_FUSE) && T2 && feeds(t1, t2) && T2->op == Op::Load) {
+                    group(GK::MemLoadBI, {h, t1, t2}); ++st.memBI; ++st.fused; k += 2; continue;
+                }
+                if (on(ETVM_PASS_FUSE) && T2 && feeds(t1, t2) && T2->op == Op::Store && T2->args[0] == T1->res) {
+                    group(GK::MemStoreBI, {h, t1, t2}); ++st.memBI; ++st.fused; k += 2; continue;
+                }
+                group(GK::MemAddrBI, {h, t1}); ++st.memBI; k += 1; continue;
+            }
+            // [fuse] megabuf の番地 + 読む／書く
+            if (on(ETVM_PASS_FUSE) && H.op == Op::MemAddr && T1 && feeds(h, t1)) {
+                if (T1->op == Op::Load) { group(GK::MemLoad, {h, t1}); ++st.fused; k += 1; continue; }
+                if (T1->op == Op::Store && T1->args[0] == H.res) { group(GK::MemStore, {h, t1}); ++st.fused; k += 1; continue; }
+            }
+            // [fuse2] 四則 2 つ（+ フィルタ）
+            if (on(ETVM_PASS_FUSE2) && isArith(H.op) && T1 && isArith(T1->op) && feeds(h, t1)) {
+                if (on(ETVM_PASS_FUSE) && T2 && T2->op == Op::Filter && feeds(t1, t2)) {
+                    group(GK::Fuse2F, {h, t1, t2}); ++st.fuse2; ++st.fused; k += 2; continue;
+                }
+                group(GK::Fuse2, {h, t1}); ++st.fuse2; k += 1; continue;
+            }
+            // [fuse] 四則 + フィルタ
+            if (on(ETVM_PASS_FUSE) && isArith(H.op) && T1 && T1->op == Op::Filter && feeds(h, t1)) {
+                group(GK::ArithF, {h, t1}); ++st.fused; k += 1; continue;
+            }
+        }
+    }
+}
+
+/// 段 S2 の決め方: 引数がその phi の最後の使用より後に、引数の来るブロックで作られるとき。
+void Builder::coalesceS2()
+{
+    auto needsSlot = [&](uint32_t v) {
+        const VInfo &x = vi[v];
+        return x.live && x.block >= 0 && !x.folded && !x.direct && !x.fusedAway;
+    };
+    for (size_t b = 0; b < fn.blocks.size(); ++b) {
+        const Block &bl = fn.blocks[b];
+        for (const Ins &P : bl.phis) {
+            VInfo &pv = vi[P.res];
+            if (!pv.live || pv.uses.empty() || pv.slot == kNoSlot) continue;
+            for (size_t k = 0; k < P.args.size() && !pv.coalesced; ++k) {
+                const uint32_t a = P.args[k];
+                const int X = (int)bl.preds[k];
+                VInfo &av = vi[a];
+                if (!needsSlot(a) || av.phi || av.block != X || av.coalesced) continue;
+                int phiUses = 0;
+                bool ok = true;
+                for (const Use &u : av.uses) {
+                    if (u.phi) ++phiUses;
+                    else if (u.block != X) ok = false;
+                }
+                if (!ok || phiUses != 1) continue;
+                for (const Use &u : pv.uses)
+                    if (u.phi || u.block != X || u.pos > av.pos) { ok = false; break; }
+                if (!ok) continue;
+                av.slot = pv.slot;
+                av.global = true;
+                av.coalesced = pv.coalesced = true;
+                ++st.coalesced;
+            }
+        }
+    }
+}
+
+/// [loop] phi とその引数を、生きている範囲が重ならなければ同じ升に（SSA の値どうしの干渉:
+/// 片方がもう片方の定義の所で生きているか。phi の引数は来るブロックの終わりで使うとみなす）。
+void Builder::coalesceLive()
+{
+    const int nb = (int)fn.blocks.size();
+    auto needsSlot = [&](uint32_t v) {
+        const VInfo &x = vi[v];
+        return x.live && x.block >= 0 && !x.folded && !x.direct && !x.fusedAway && !x.uses.empty();
+    };
+    // 候補: 生きている phi と、その升の要る引数
+    std::vector<uint32_t> cand;
+    std::vector<int> candIdx(fn.values.size(), -1);
+    auto add = [&](uint32_t v) {
+        if (candIdx[v] < 0 && needsSlot(v)) { candIdx[v] = (int)cand.size(); cand.push_back(v); }
+    };
+    for (const Block &bl : fn.blocks)
+        for (const Ins &P : bl.phis) {
+            if (!needsSlot(P.res)) continue;
+            add(P.res);
+            for (uint32_t a : P.args) add(a);
+        }
+    if (cand.empty()) return;
+    if (cand.size() * (size_t)nb > (size_t)8 << 20) { coalesceS2(); return; } // 大きすぎる: 段 S2 の決め方
+    const size_t nc = cand.size();
+    std::vector<std::vector<uint8_t>> liveIn(nc), liveOut(nc);
+    for (size_t k = 0; k < nc; ++k) {
+        const uint32_t v = cand[k];
+        const int db = vi[v].block;
+        std::vector<uint8_t> &in = liveIn[k], &out = liveOut[k];
+        in.assign((size_t)nb, 0);
+        out.assign((size_t)nb, 0);
+        std::vector<int> work;
+        auto atEnd = [&](int p) {
+            if (out[p]) return;
+            out[p] = 1;
+            if (p != db && !in[p]) { in[p] = 1; work.push_back(p); }
+        };
+        for (const Use &u : vi[v].uses) {
+            if (u.phi) atEnd(u.block);
+            else if (u.block != db && !in[u.block]) { in[u.block] = 1; work.push_back(u.block); }
+        }
+        while (!work.empty()) {
+            const int bb = work.back();
+            work.pop_back();
+            for (uint32_t p : fn.blocks[bb].preds) atEnd((int)p);
+        }
+    }
+    // v が (B, pos) の命令のあとで生きているか（pos = -1 は B の phi の所）
+    auto liveAfter = [&](size_t k, int B, int pos) {
+        const uint32_t v = cand[k];
+        const VInfo &x = vi[v];
+        if (B == x.block) {
+            if (!x.phi && pos < x.pos) return false;
+        } else if (!liveIn[k][B]) {
+            return false;
+        }
+        if (liveOut[k][B]) return true;
+        for (const Use &u : x.uses)
+            if (!u.phi && u.block == B && u.pos > pos) return true;
+        return false;
+    };
+    auto interfere = [&](size_t i, size_t j) {
+        const VInfo &a = vi[cand[i]], &b = vi[cand[j]];
+        if (a.phi && b.phi && a.block == b.block) return true;
+        return liveAfter(i, b.block, b.phi ? -1 : b.pos) || liveAfter(j, a.block, a.phi ? -1 : a.pos);
+    };
+    std::vector<int> parent(nc);
+    std::vector<std::vector<int>> members(nc);
+    for (size_t k = 0; k < nc; ++k) { parent[k] = (int)k; members[k] = {(int)k}; }
+    auto find = [&](int k) {
+        while (parent[k] != k) k = parent[k] = parent[parent[k]];
+        return k;
+    };
+    for (const Block &bl : fn.blocks)
+        for (const Ins &P : bl.phis) {
+            if (candIdx[P.res] < 0) continue;
+            for (uint32_t a : P.args) {
+                if (candIdx[a] < 0) continue;
+                const int ra = find(candIdx[P.res]), rb = find(candIdx[a]);
+                if (ra == rb) continue;
+                bool ok = true;
+                for (int x : members[ra]) {
+                    for (int y : members[rb])
+                        if (interfere((size_t)x, (size_t)y)) { ok = false; break; }
+                    if (!ok) break;
+                }
+                if (!ok) continue;
+                parent[rb] = ra;
+                members[ra].insert(members[ra].end(), members[rb].begin(), members[rb].end());
+                members[rb].clear();
+                ++st.coalesced;
+            }
+        }
+    // 組ごとに 1 つの升（組の頭の phi の升。無ければ下で取る）
+    for (size_t k = 0; k < nc; ++k) {
+        if (find((int)k) != (int)k || members[k].size() < 2) continue;
+        int slot = kNoSlot;
+        for (int m : members[k]) if (vi[cand[m]].slot != kNoSlot) { slot = vi[cand[m]].slot; break; }
+        if (slot == kNoSlot) continue; // 呼ぶ側で phi の升を先に取ってある
+        for (int m : members[k]) {
+            VInfo &x = vi[cand[m]];
+            x.slot = slot;
+            x.global = true;
+            x.coalesced = true;
         }
     }
 }
@@ -372,37 +665,12 @@ bool Builder::assignSlots(ThreadedProgram &p)
     int nGlobal = 0;
     for (uint32_t v = 0; v < nv; ++v)
         if (needsSlot(v) && vi[v].phi) vi[v].slot = nGlobal++;
-    // phi と引数を同じ升に（引数がその phi の最後の使用より後に、引数の来るブロックで作られるとき）
-    for (size_t b = 0; b < fn.blocks.size(); ++b) {
-        const Block &bl = fn.blocks[b];
-        for (const Ins &P : bl.phis) {
-            VInfo &pv = vi[P.res];
-            if (!pv.live || pv.uses.empty()) continue;
-            for (size_t k = 0; k < P.args.size() && !pv.coalesced; ++k) {
-                const uint32_t a = P.args[k];
-                const int X = (int)bl.preds[k];
-                VInfo &av = vi[a];
-                if (!needsSlot(a) || av.phi || av.block != X || av.coalesced) continue;
-                int phiUses = 0;
-                bool ok = true;
-                for (const Use &u : av.uses) {
-                    if (u.phi) ++phiUses;
-                    else if (u.block != X) ok = false;
-                }
-                if (!ok || phiUses != 1) continue;
-                for (const Use &u : pv.uses)
-                    if (u.phi || u.block != X || u.pos > av.pos) { ok = false; break; }
-                if (!ok) continue;
-                av.slot = pv.slot;
-                av.global = true;
-                av.coalesced = pv.coalesced = true;
-                ++st.coalesced;
-            }
-        }
-    }
+    if (on(ETVM_PASS_LOOP)) coalesceLive();
+    else coalesceS2();
     for (uint32_t v = 0; v < nv; ++v)
         if (needsSlot(v) && vi[v].global && vi[v].slot == kNoSlot && !vi[v].uses.empty()) vi[v].slot = nGlobal++;
-    // ブロックの中だけの値: 使い終わった升を使い回す（同じ位置で放してから取る。ハンドラは読んでから書く）
+    // ブロックの中だけの値: 使い終わった升を使い回す（同じ位置で放してから取る。ハンドラは読んでから書く。
+    // 1 つにした組・終わりに取り込んだ命令の間には升を取る命令が無い）
     int nLocal = 0;
     for (size_t b = 0; b < fn.blocks.size(); ++b) {
         const Block &bl = fn.blocks[b];
@@ -449,6 +717,7 @@ struct Emitter {
     explicit Emitter(ThreadedProgram &prog) : p(prog), code(prog.code) {}
     void h(HK k) { Word w; w.h = handler(k); code.push_back(w); ++handlers; }
     void d(double *x) { Word w; w.d = x; code.push_back(w); }
+    void f(double x) { Word w; w.f = x; code.push_back(w); }
     void s(Slot *x) { Word w; w.s = x; code.push_back(w); }
     void x(uint64_t v) { Word w; w.u = v; code.push_back(w); }
     void ptr(void *v) { Word w; w.p = v; code.push_back(w); }
@@ -467,17 +736,18 @@ bool Builder::emit(ThreadedProgram &p)
             if (in.op == Op::CallVarparm || in.op == Op::CallVarparmX) maxVar = std::max(maxVar, in.args.size());
     p.scratch.assign(maxVar, nullptr);
 
+    // consts の番号（pos に入れておく）
+    for (size_t k = 0; k < fn.consts.size(); ++k) vi[fn.consts[k].res].pos = (int)k;
     auto slotOf = [&](uint32_t v) -> Slot * {
         const VInfo &x = vi[v];
-        if (x.block < 0) return &p.frame[p.poolBase + x.pos /* consts の番号は下で入れる */];
+        if (x.block < 0) return &p.frame[p.poolBase + (size_t)x.pos];
         if (x.slot == kNoSlot) return junk;
         return &p.frame[(size_t)x.slot];
     };
-    // consts の番号（pos に入れておく）
-    for (size_t k = 0; k < fn.consts.size(); ++k) vi[fn.consts[k].res].pos = (int)k;
     auto fop = [&](uint32_t v) -> double * {
         const VInfo &x = vi[v];
         if (x.folded) return (double *)(uintptr_t)x.cell;
+        if (x.direct) return (double *)(uintptr_t)x.dstCell;
         return &slotOf(v)->d;
     };
     auto fdst = [&](uint32_t v) -> double * {
@@ -486,8 +756,44 @@ bool Builder::emit(ThreadedProgram &p)
         return &slotOf(v)->d;
     };
     auto sop = [&](uint32_t v) -> Slot * { return slotOf(v); };
+    auto immOf = [&](uint32_t v, double &k) {
+        uint64_t bits;
+        if (!fn.constF64(v, bits)) return false;
+        std::memcpy(&k, &bits, 8);
+        return true;
+    };
     auto ok = true;
     std::string bad;
+
+    // 四則（+ フィルタ）: 定数のオペランドは命令の中へ（opimm）、行き先 = 左なら 1 つ省く（opto）
+    auto emitArith = [&](Op op, bool filt, double *dst, uint32_t a0, uint32_t a1) {
+        const int ai = arithIndex(op);
+        static const HK kPlain[2][4] = {{HK::FAdd, HK::FSub, HK::FMul, HK::FDiv}, {HK::FAddF, HK::FSubF, HK::FMulF, HK::FDivF}};
+        static const HK kImm[2][4] = {{HK::AddI, HK::SubI, HK::MulI, HK::DivI}, {HK::AddIF, HK::SubIF, HK::MulIF, HK::DivIF}};
+        static const HK kRImm[2][4] = {{HK::AddI, HK::RSubI, HK::MulI, HK::RDivI}, {HK::AddIF, HK::RSubIF, HK::MulIF, HK::RDivIF}};
+        static const HK kTo[2][4] = {{HK::AddT, HK::SubT, HK::MulT, HK::DivT}, {HK::AddTF, HK::SubTF, HK::MulTF, HK::DivTF}};
+        static const HK kImmTo[2][4] = {{HK::AddIT, HK::SubIT, HK::MulIT, HK::DivIT}, {HK::AddITF, HK::SubITF, HK::MulITF, HK::DivITF}};
+        const int fi = filt ? 1 : 0;
+        double k = 0;
+        double *pa = fop(a0), *pb = fop(a1);
+        if (on(ETVM_PASS_OPIMM) && immOf(a1, k)) {
+            ++st.opImm;
+            if (on(ETVM_PASS_OPTO) && dst == pa) { ++st.opTo; e.h(kImmTo[fi][ai]); e.d(dst); e.f(k); return; }
+            e.h(kImm[fi][ai]); e.d(dst); e.d(pa); e.f(k);
+            return;
+        }
+        // 左が定数: + * は入れ替える（NaN でない定数となら IEEE の + * は入れ替えても同じビット）。- / は R*
+        if (on(ETVM_PASS_OPIMM) && immOf(a0, k) && !std::isnan(k)) {
+            ++st.opImm;
+            if ((ai == 0 || ai == 2) && on(ETVM_PASS_OPTO) && dst == pb) {
+                ++st.opTo; e.h(kImmTo[fi][ai]); e.d(dst); e.f(k); return;
+            }
+            e.h(kRImm[fi][ai]); e.d(dst); e.d(pb); e.f(k);
+            return;
+        }
+        if (on(ETVM_PASS_OPTO) && dst == pa) { ++st.opTo; e.h(kTo[fi][ai]); e.d(dst); e.d(pb); return; }
+        e.h(kPlain[fi][ai]); e.d(dst); e.d(pa); e.d(pb);
+    };
 
     auto emitIns = [&](const Ins &in, int b, int i) {
         const uint32_t *a = in.args.data();
@@ -497,9 +803,9 @@ bool Builder::emit(ThreadedProgram &p)
         case Op::Load: e.h(HK::Load); e.d(fdst(in.res)); e.s(sop(a[0])); break;
         case Op::Store: e.h(HK::Store); e.s(sop(a[0])); e.d(fop(a[1])); break;
         case Op::Filter: e.h(HK::Filt); e.d(fdst(in.res)); e.d(fop(a[0])); break;
+        case Op::FAdd: case Op::FSub: case Op::FMul: case Op::FDiv: emitArith(in.op, false, fdst(in.res), a[0], a[1]); break;
 #define BIN(O) case Op::O: e.h(HK::O); e.d(fdst(in.res)); e.d(fop(a[0])); e.d(fop(a[1])); break;
-        BIN(FAdd) BIN(FSub) BIN(FMul) BIN(FDiv) BIN(FMin2) BIN(FMax2) BIN(IAnd) BIN(IOr) BIN(IXor) BIN(IMod)
-        BIN(IShl) BIN(IShr)
+        BIN(FMin2) BIN(FMax2) BIN(IAnd) BIN(IOr) BIN(IXor) BIN(IMod) BIN(IShl) BIN(IShr)
 #undef BIN
 #define UN(O) case Op::O: e.h(HK::O); e.d(fdst(in.res)); e.d(fop(a[0])); break;
         UN(FNeg) UN(FAbs) UN(FSqr) UN(FSign) UN(InvSqrt) UN(IOr0)
@@ -569,9 +875,55 @@ bool Builder::emit(ThreadedProgram &p)
         }
     };
 
+    auto emitGroup = [&](const Block &bl, GK kind, const std::vector<int> &m) {
+        const Ins &T = bl.ins[m.back()];
+        switch (kind) {
+        case GK::ArithF: {
+            const Ins &H = bl.ins[m[0]];
+            emitArith(H.op, true, fdst(T.res), H.args[0], H.args[1]);
+            break;
+        }
+        case GK::MemLoad: {
+            const Ins &H = bl.ins[m[0]];
+            e.h(HK::MemLoad); e.d(fdst(T.res)); e.d(fop(H.args[0])); e.x(H.imm[0]);
+            break;
+        }
+        case GK::MemStore: {
+            const Ins &H = bl.ins[m[0]];
+            e.h(HK::MemStore); e.d(fop(H.args[0])); e.d(fop(T.args[1])); e.x(H.imm[0]);
+            break;
+        }
+        case GK::MemAddrBI: {
+            const Ins &A = bl.ins[m[0]], &M = bl.ins[m[1]];
+            e.h(HK::MemAddrBI); e.s(sop(M.res)); e.d(fop(A.args[0])); e.d(fop(A.args[1])); e.x(M.imm[0]);
+            break;
+        }
+        case GK::MemLoadBI: {
+            const Ins &A = bl.ins[m[0]], &M = bl.ins[m[1]];
+            e.h(HK::MemLoadBI); e.d(fdst(T.res)); e.d(fop(A.args[0])); e.d(fop(A.args[1])); e.x(M.imm[0]);
+            break;
+        }
+        case GK::MemStoreBI: {
+            const Ins &A = bl.ins[m[0]], &M = bl.ins[m[1]];
+            e.h(HK::MemStoreBI); e.d(fop(A.args[0])); e.d(fop(A.args[1])); e.d(fop(T.args[1])); e.x(M.imm[0]);
+            break;
+        }
+        case GK::Fuse2: case GK::Fuse2F: {
+            const Ins &I = bl.ins[m[0]], &O = bl.ins[m[1]];
+            const bool right = O.args[1] == I.res;
+            const uint32_t c = right ? O.args[0] : O.args[1];
+            const int form = (right ? 1 : 0) + (kind == GK::Fuse2F ? 2 : 0);
+            const int idx = (int)HK::F2LAddAdd + (arithIndex(I.op) * 4 + arithIndex(O.op)) * 4 + form;
+            e.h((HK)idx); e.d(fdst(T.res)); e.d(fop(I.args[0])); e.d(fop(I.args[1])); e.d(fop(c));
+            break;
+        }
+        case GK::None: break;
+        }
+    };
+
     // phi の写し（並行の写しを順に。輪になったら一時の升を使う）
     struct Copy { Slot *dst; Slot *src; };
-    auto edgeCopies = [&](int from, int to, int predIdx) {
+    auto edgeCopies = [&](int to, int predIdx) {
         std::vector<Copy> cs;
         for (const Ins &P : fn.blocks[to].phis) {
             if (!vi[P.res].live || vi[P.res].uses.empty()) continue;
@@ -579,7 +931,6 @@ bool Builder::emit(ThreadedProgram &p)
             Slot *src = slotOf(P.args[predIdx]);
             if (dst != src) cs.push_back(Copy{dst, src});
         }
-        (void)from;
         return cs;
     };
     auto emitCopies = [&](std::vector<Copy> cs) {
@@ -609,49 +960,116 @@ bool Builder::emit(ThreadedProgram &p)
     struct Stub { int label; std::vector<Copy> copies; int target; };
     std::vector<Stub> stubs;
     int nextLabel = nb;
+    auto nextEmitted = [&](int b) {
+        int n = b + 1;
+        while (n < nb && absorbed[n]) ++n;
+        return n;
+    };
+    // 辺の行き先のラベル（写しがあれば写しのあとで跳ぶ切れ端）
+    auto edgeLabel = [&](int from, int k) {
+        const Block &fb = fn.blocks[from];
+        const int t = (int)fb.succ[k];
+        std::vector<Copy> cs = edgeCopies(t, (int)fb.succPredIdx[k]);
+        if (cs.empty()) return t;
+        stubs.push_back(Stub{nextLabel, std::move(cs), t});
+        return nextLabel++;
+    };
     for (int b = 0; b < nb && ok; ++b) {
+        if (absorbed[b]) continue;
         const Block &bl = fn.blocks[b];
         e.labelAt[(size_t)b] = e.code.size();
         for (int i = 0; i < (int)bl.ins.size() && ok; ++i) {
-            if (!executes(b, i) || retarget[b][i] || fuse[b][i] == 1) continue;
-            const Ins &in = bl.ins[i];
-            if (fuse[b][i] == 2) {
-                const Ins &H = bl.ins[fusePartner[b][i]];
-                const HK k = fuseKind[b][i];
-                e.h(k);
-                if (k == HK::MemLoad) { e.d(fdst(in.res)); e.d(fop(H.args[0])); e.x(H.imm[0]); }
-                else if (k == HK::MemStore) { e.d(fop(H.args[0])); e.d(fop(in.args[1])); e.x(H.imm[0]); }
-                else { e.d(fdst(in.res)); e.d(fop(H.args[0])); e.d(fop(H.args[1])); }
-                continue;
-            }
-            emitIns(in, b, i);
+            if (!executes(b, i) || retarget[b][i] || fuse[b][i] == 1 || fuse[b][i] == 3) continue;
+            if (fuse[b][i] == 2) { emitGroup(bl, groupKind[b][i], groupMembers[b][i]); continue; }
+            emitIns(bl.ins[i], b, i);
         }
         if (!ok) break;
+        const int next = nextEmitted(b);
         switch (bl.term) {
         case Term::Ret: e.h(HK::Ret); break;
         case Term::Br: {
             const int t = (int)bl.succ[0];
-            emitCopies(edgeCopies(b, t, (int)bl.succPredIdx[0]));
-            if (t != b + 1) { e.h(HK::Jmp); e.label(t); }
+            emitCopies(edgeCopies(t, (int)bl.succPredIdx[0]));
+            if (t != next) { e.h(HK::Jmp); e.label(t); }
             break;
         }
         case Term::CondBr: {
-            int target[2];
-            for (int k = 0; k < 2; ++k) {
+            uint64_t kc = 0;
+            const Ins *ci = fn.constIns(bl.cond);
+            if (ci && ci->op == Op::BoolConst) {
+                // 条件が定数（fold）: 跳ぶ方の辺だけ
+                kc = ci->imm[0];
+                const int k = kc ? 0 : 1;
                 const int t = (int)bl.succ[k];
-                std::vector<Copy> cs = edgeCopies(b, t, (int)bl.succPredIdx[k]);
-                if (cs.empty()) target[k] = t;
-                else { stubs.push_back(Stub{nextLabel, std::move(cs), t}); target[k] = nextLabel++; }
+                emitCopies(edgeCopies(t, (int)bl.succPredIdx[k]));
+                if (t != next) { e.h(HK::Jmp); e.label(t); }
+                ++st.constBr;
+                break;
             }
-            Slot *c = sop(bl.cond);
-            if (target[0] == target[1]) {
-                if (target[0] != b + 1) { e.h(HK::Jmp); e.label(target[0]); }
-            } else if (target[1] == b + 1) {
-                e.h(HK::BrT); e.s(c); e.label(target[0]);
-            } else if (target[0] == b + 1) {
-                e.h(HK::BrF); e.s(c); e.label(target[1]);
+            const TermFuse &tf = term[b];
+            int t0, t1; // 真・偽のラベル
+            if (tf.kind == TK::While) {
+                // 真: X の真の行き先（H）へ X→H の写し、偽: E（D→E と X→E の写しは同じ）
+                const int X = tf.x;
+                t0 = edgeLabel(X, 0);
+                t1 = edgeLabel(b, 1);
             } else {
-                e.h(HK::Br); e.s(c); e.label(target[0]); e.label(target[1]);
+                t0 = edgeLabel(b, 0);
+                t1 = edgeLabel(b, 1);
+            }
+            // jump(真なら跳ぶ?, ラベル)
+            auto jump = [&](bool ifTrue, int label) {
+                switch (tf.kind) {
+                case TK::None: e.h(ifTrue ? HK::BrT : HK::BrF); e.s(sop(bl.cond)); break;
+                case TK::LoopInit: {
+                    const Ins &L = bl.ins[tf.p0];
+                    e.h(ifTrue ? HK::LoopInitJ : HK::LoopInitJF); e.s(sop(L.res)); e.d(fop(L.args[0]));
+                    break;
+                }
+                case TK::Dec: {
+                    const Ins &D = bl.ins[tf.p0];
+                    e.h(ifTrue ? HK::DecJ : HK::DecJF); e.s(sop(D.res)); e.s(sop(D.args[0]));
+                    break;
+                }
+                case TK::While: {
+                    const Ins &D = bl.ins[tf.p0];
+                    e.h(ifTrue ? HK::WhileJ : HK::WhileJF); e.s(sop(D.res)); e.s(sop(D.args[0]));
+                    e.s(sop(fn.blocks[tf.x].cond));
+                    break;
+                }
+                case TK::Cmp: {
+                    const Ins &C = bl.ins[tf.p0];
+                    HK k = HK::Count;
+                    switch (C.op) {
+                    case Op::CmpLt: k = ifTrue ? HK::JLt : HK::JNLt; break;
+                    case Op::CmpGe: k = ifTrue ? HK::JGe : HK::JNGe; break;
+                    case Op::CmpEqClose: k = ifTrue ? HK::JEqClose : HK::JNEqClose; break;
+                    case Op::CmpNeClose: k = ifTrue ? HK::JNeClose : HK::JNNeClose; break;
+                    case Op::CmpEq: k = ifTrue ? HK::JEq : HK::JNEq; break;
+                    case Op::CmpNe: k = ifTrue ? HK::JNe : HK::JNNe; break;
+                    case Op::Truthy: k = ifTrue ? HK::JTruthy : HK::JNTruthy; break;
+                    case Op::Falsy: k = ifTrue ? HK::JFalsy : HK::JNFalsy; break;
+                    default: break;
+                    }
+                    e.h(k);
+                    e.d(fop(C.args[0]));
+                    if (C.args.size() == 2) e.d(fop(C.args[1]));
+                    break;
+                }
+                }
+                e.label(label);
+            };
+            if (tf.kind == TK::None && t0 == t1) {
+                if (t0 != next) { e.h(HK::Jmp); e.label(t0); }
+            } else if (t1 == next) {
+                jump(true, t0);
+            } else if (t0 == next) {
+                jump(false, t1);
+            } else if (tf.kind == TK::None) {
+                e.h(HK::Br); e.s(sop(bl.cond)); e.label(t0); e.label(t1);
+            } else {
+                jump(true, t0);
+                e.h(HK::Jmp); e.label(t1);
             }
             break;
         }
@@ -672,17 +1090,33 @@ bool Builder::emit(ThreadedProgram &p)
     return true;
 }
 
+/// 命令の中に置いた定数のオペランドの番号（1 から。無ければ 0）
+int immOperand(HK k)
+{
+    switch (k) {
+    case HK::AddI: case HK::SubI: case HK::RSubI: case HK::MulI: case HK::DivI: case HK::RDivI:
+    case HK::AddIF: case HK::SubIF: case HK::RSubIF: case HK::MulIF: case HK::DivIF: case HK::RDivIF:
+        return 3;
+    case HK::AddIT: case HK::SubIT: case HK::MulIT: case HK::DivIT:
+    case HK::AddITF: case HK::SubITF: case HK::MulITF: case HK::DivITF:
+        return 2;
+    default:
+        return 0;
+    }
+}
+
 } // namespace
 
-ThreadedProgram *buildThreaded(const Function &fn, std::string &why, ThreadedStats *stats)
+ThreadedProgram *buildThreaded(const Function &fn, std::string &why, ThreadedStats *stats, uint32_t passes)
 {
     if (fn.blocks.empty()) { why = "no blocks"; return nullptr; }
-    Builder b(fn, why);
+    Builder b(fn, why, passes);
     if (!b.analyse()) return nullptr;
     b.liveness();
-    b.foldLoads();
-    b.directDest();
-    b.fusePairs();
+    if (b.on(ETVM_PASS_LDFOLD)) b.foldLoads();
+    if (b.on(ETVM_PASS_DIRECT)) b.directDest();
+    b.fuseTerms();
+    b.fuseGroups();
     auto *p = new ThreadedProgram;
     if (!b.assignSlots(*p) || !b.emit(*p)) { delete p; return nullptr; }
     for (const Block &bl : fn.blocks) b.st.irInstructions += bl.phis.size() + bl.ins.size() + 1;
@@ -736,7 +1170,17 @@ std::string disassembleThreaded(const ThreadedProgram *p, CellNamer namer, void 
         if (k == HK::CallVPX) n = 6 + (int)p->code[at + 5].u;
         std::snprintf(buf, sizeof buf, "  @%-5zu %-10s", at, handlerName(k));
         out += buf;
-        for (int j = 1; j <= n; ++j) out += (j == 1 ? " " : ", ") + operand(p->code[at + (size_t)j]);
+        const int imm = immOperand(k);
+        for (int j = 1; j <= n; ++j) {
+            std::string o;
+            if (j == imm) {
+                std::snprintf(buf, sizeof buf, "=%.17g", p->code[at + (size_t)j].f);
+                o = buf;
+            } else {
+                o = operand(p->code[at + (size_t)j]);
+            }
+            out += (j == 1 ? " " : ", ") + o;
+        }
         out += "\n";
         at += 1 + (size_t)n;
     }

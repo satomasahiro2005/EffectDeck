@@ -24,10 +24,22 @@ struct ThreadedStats {
     size_t fused = 0;          // 演算 + フィルタ、megabuf + 読み書きを 1 つに
     size_t coalesced = 0;      // phi と引数を同じ升にした（写しが消えた）
     size_t copies = 0;         // phi の写し（Mov）
+    // 段 S3（ETVM_PASS_*）
+    size_t loopFused = 0;      // loop の入口・次の周を 1 つに（LoopInitJ・DecJ）
+    size_t whileFused = 0;     // while の次を 1 つに（WhileJ）
+    size_t cmpBr = 0;          // 比べ + 分かれ道
+    size_t constBr = 0;        // 条件が定数の分かれ道（跳ぶだけ）
+    size_t opImm = 0;          // 定数のオペランドを命令の中に
+    size_t opTo = 0;           // 行き先 = 左のオペランド
+    size_t memBI = 0;          // megabuf の 頭 + 添字
+    size_t fuse2 = 0;          // 続いた四則 2 つ
+    size_t multiDirect = 0;    // じかに書いた升を、あとの使う所も読む（fwd・cse で増えた使う所）
 };
 
 /// だめなら nullptr と理由（中間表現に知らない命令がある、など）。fn は verify を通ったもの。
-ThreadedProgram *buildThreaded(const Function &fn, std::string &why, ThreadedStats *stats = nullptr);
+/// passes は ETVM_PASS_*（並べる段だけを見る。中間表現の段は ETVMOpt.h の optimize が先にする）。
+ThreadedProgram *buildThreaded(const Function &fn, std::string &why, ThreadedStats *stats = nullptr,
+                               uint32_t passes = 0xffffffffu);
 using ThreadedFrameCallback = void (*)(void *ctx, unsigned int frame);
 /// pre(ctx, i) → プログラム → post(ctx, i) を i = 0..nframes-1（NSEEL_code_execute_frames と同じ約束）。
 void runThreaded(const ThreadedProgram *p, unsigned int nframes, ThreadedFrameCallback pre, ThreadedFrameCallback post,

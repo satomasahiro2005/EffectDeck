@@ -3,6 +3,7 @@
 
 #include "ETVM.h"
 #include "ETVMExec.h"
+#include "ETVMOpt.h"
 #include "ETVMOps.h"
 #include "WDL/eel2/ns-eel.h"
 #include "ysfx.h"
@@ -116,13 +117,16 @@ struct Analyser {
                 case Op::LoadCell: cell(in.imm[0]).loaded = true; break;
                 case Op::StoreCell: cell(in.imm[0]).storedDirect = true; break;
                 case Op::Load: case Op::UStackPush:
-                    for (uint64_t c : pts[in.args[0]].cells) cell(c).loaded = true;
+                    for (uint64_t c : pts[in.args[0]].cells) cell(c).loaded = cell(c).loadedIndirect = true;
                     break;
                 case Op::PtrMin: case Op::PtrMax:
-                    for (uint32_t a : in.args) for (uint64_t c : pts[a].cells) cell(c).loaded = true;
+                    for (uint32_t a : in.args) for (uint64_t c : pts[a].cells) cell(c).loaded = cell(c).loadedIndirect = true;
                     break;
                 case Op::Store: case Op::UStackPop: case Op::UStackExch:
-                    for (uint64_t c : pts[in.args[0]].cells) cell(c).storedIndirect = true;
+                    for (uint64_t c : pts[in.args[0]].cells) {
+                        cell(c).storedIndirect = true;
+                        if (in.op == Op::UStackExch) cell(c).loadedIndirect = true; // 入れ替える＝読む
+                    }
                     if (pts[in.args[0]].unknown) ++rep.unknownStores;
                     break;
                 case Op::CallG: case Op::CallGD: case Op::CallGXD: case Op::CallVarparm: case Op::CallVarparmX:
@@ -260,6 +264,8 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
     LinkReport rep = link(vm, handles, sections, count);
     const uint32_t mask = gMask.load(std::memory_order_relaxed);
     const int engine = gEngine.load(std::memory_order_relaxed);
+    const uint32_t passes = ETVM_GetPasses();
+    const CellFacts facts = cellFacts(rep);
     std::lock_guard<std::mutex> lock(gCoverageMutex);
     for (uint32_t i = 0; i < count; ++i) {
         if (!handles[i]) continue;
@@ -272,6 +278,10 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
         }
         Program *p = nullptr;
         if (hr.present && hr.lift.ok() && (mask & (1u << sec))) {
+            // 段 S3 の中間表現の最適化（参照の解釈も同じ形を回す: vm-reg-ref が違えば最適化、vm-reg だけ違えば並べ方）
+            OptStats os;
+            optimize(hr.lift.fn, passes, facts, &os);
+            gCoverage.opt[sec] += os;
             p = new Program;
             p->engine = engine;
             if (engine == ETVM_ENGINE_REFERENCE) {
@@ -280,7 +290,7 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
             } else {
                 std::string why;
                 ThreadedStats ts;
-                p->threaded = buildThreaded(hr.lift.fn, why, &ts);
+                p->threaded = buildThreaded(hr.lift.fn, why, &ts, passes);
                 if (!p->threaded) {
                     // 並べられない（知らない命令）。プログラムを付けない＝ vm-goto-fpreg で回る。
                     ++gCoverage.buildFailed[sec];

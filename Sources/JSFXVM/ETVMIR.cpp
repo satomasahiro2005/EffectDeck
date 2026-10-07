@@ -11,7 +11,7 @@ namespace etvm {
 const char *opName(Op op)
 {
     static const char *const names[] = {
-        "ptrconst", "boolconst", "i32const", "loadcell", "storecell", "load", "store",
+        "ptrconst", "boolconst", "i32const", "fconst", "loadcell", "storecell", "load", "store",
         "fadd", "fsub", "fmul", "fdiv", "fneg", "fabs", "fsqr", "fsign", "invsqrt", "fmin2", "fmax2", "filter",
         "iand", "ior", "ixor", "ior0", "imod", "ishl", "ishr", "callf1", "callf2",
         "cmpeqclose", "cmpneclose", "cmpeq", "cmpne", "cmplt", "cmpge", "truthy", "falsy",
@@ -43,6 +43,7 @@ OpSig opSig(Op op)
     case Op::PtrConst: return {0, T::Void, T::Ptr, 1};
     case Op::BoolConst: return {0, T::Void, T::Bool, 1};
     case Op::I32Const: return {0, T::Void, T::I32, 1};
+    case Op::FConst: return {0, T::Void, T::F64, 1};
     case Op::LoadCell: return {0, T::Void, T::F64, 1};
     case Op::StoreCell: return {1, T::F64, T::Void, 1};
     case Op::Load: return {1, T::Ptr, T::F64, 0};
@@ -104,6 +105,21 @@ bool Function::constAddr(uint32_t v, uint64_t &addr) const
     if (c.op != Op::PtrConst) return false;
     addr = c.imm[0];
     return true;
+}
+
+bool Function::constF64(uint32_t v, uint64_t &bits) const
+{
+    const Ins *c = constIns(v);
+    if (!c || c->op != Op::FConst) return false;
+    bits = c->imm[0];
+    return true;
+}
+
+const Ins *Function::constIns(uint32_t v) const
+{
+    if (v >= values.size() || values[v].block != -1 || values[v].index >= consts.size()) return nullptr;
+    const Ins &c = consts[values[v].index];
+    return c.res == v ? &c : nullptr;
 }
 
 size_t Function::instructionCount() const
@@ -303,7 +319,9 @@ struct Verifier {
             }
         }
         for (const Ins &c : fn.consts) {
-            if (c.op != Op::PtrConst && c.op != Op::BoolConst && c.op != Op::I32Const) return fail("non-const in consts");
+            if (c.op != Op::PtrConst && c.op != Op::BoolConst && c.op != Op::I32Const && c.op != Op::FConst)
+                return fail("non-const in consts");
+            if (c.ty != opSig(c.op).ret) return fail("const type");
             if (c.res == kNoValue || c.res >= fn.values.size() || fn.values[c.res].block != -1) return fail("const value");
         }
         if (!buildDominators()) return false;
@@ -324,7 +342,8 @@ struct Verifier {
             }
             for (size_t i = 0; i < bl.ins.size(); ++i) {
                 const Ins &in = bl.ins[i];
-                if (in.op == Op::Phi || in.op == Op::PtrConst || in.op == Op::BoolConst || in.op == Op::I32Const)
+                if (in.op == Op::Phi || in.op == Op::PtrConst || in.op == Op::BoolConst || in.op == Op::I32Const ||
+                    in.op == Op::FConst)
                     return fail("phi/const in body of b" + std::to_string(b));
                 if (!def(in.res)) return fail("value defined twice");
                 if (!checkIns(in, b, (long)i)) return false;
@@ -366,6 +385,13 @@ std::string print(const Function &fn, CellNamer namer, void *user)
         case Op::PtrConst: s += " " + addr(in.imm[0]); break;
         case Op::BoolConst: case Op::I32Const:
             std::snprintf(buf, sizeof buf, " %" PRId64, (int64_t)in.imm[0]); s += buf; break;
+        case Op::FConst: {
+            double d;
+            std::memcpy(&d, &in.imm[0], 8);
+            std::snprintf(buf, sizeof buf, " %.17g", d);
+            s += buf;
+            break;
+        }
         case Op::LoadCell: case Op::StoreCell: s += " " + addr(in.imm[0]); break;
         case Op::MemAddr: case Op::GMemAddr: case Op::CallF1: case Op::CallF2: case Op::UStackPeekTop: case Op::UStackExch:
             std::snprintf(buf, sizeof buf, " [0x%" PRIx64 "]", in.imm[0]); s += buf; break;
@@ -384,7 +410,9 @@ std::string print(const Function &fn, CellNamer namer, void *user)
         }
         for (size_t k = 0; k < in.args.size(); ++k) s += (k ? ", " : " ") + val(in.args[k]);
         std::snprintf(buf, sizeof buf, "    ; pc %u", in.pc);
-        if (in.op != Op::PtrConst && in.op != Op::BoolConst && in.op != Op::I32Const && in.op != Op::Phi) s += buf;
+        if (in.op != Op::PtrConst && in.op != Op::BoolConst && in.op != Op::I32Const && in.op != Op::FConst &&
+            in.op != Op::Phi)
+            s += buf;
         return s + "\n";
     };
     std::snprintf(buf, sizeof buf, "fn code=0x%" PRIx64 " blocks=%zu values=%zu insns=%zu\n", fn.codeBase,

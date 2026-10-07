@@ -9,6 +9,7 @@
 
 #include "ETVMIR.h"
 #include "ETVMLift.h"
+#include "ETVMOpt.h"
 
 #include <cstdint>
 #include <map>
@@ -23,6 +24,7 @@ const char *cellClassName(CellClass c);
 struct CellInfo {
     CellClass cls = CellClass::Volatile;
     bool loaded = false, storedDirect = false, storedIndirect = false, escaped = false;
+    bool loadedIndirect = false; // ポインタ越しに読まれうる（Load・min/max の参照・ユーザーの積み場の push）
     std::string name;     // Var の名前
 };
 
@@ -62,6 +64,7 @@ struct Coverage {
     uint64_t buildFailed[8] = {};      // threaded code を並べられなかった（vm-goto-fpreg で回る）
     uint64_t irInstructions[8] = {};   // threaded にした handle の中間表現の命令
     uint64_t threadedHandlers[8] = {}; // 並べたハンドラ
+    OptStats opt[8];                   // 段 S3 の中間表現の最適化
     std::string firstBuildError;
 };
 Coverage coverage();

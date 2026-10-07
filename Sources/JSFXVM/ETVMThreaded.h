@@ -42,6 +42,7 @@ union Slot {
 
 union Word {
     Handler h;
+    double f; // 命令の中に置いた定数（段 S3 の opimm）
     double *d;
     Slot *s;
     const Word *t;
@@ -58,6 +59,11 @@ struct Ctx {
     FrameCallback pre, post;
     void *user;
 };
+
+/// fuse2 の組（内側 i, 外側 o）。
+#define ETVM_FUSE2_LIST(X)                                                                                    \
+    X(Add, Add) X(Add, Sub) X(Add, Mul) X(Add, Div) X(Sub, Add) X(Sub, Sub) X(Sub, Mul) X(Sub, Div)             \
+    X(Mul, Add) X(Mul, Sub) X(Mul, Mul) X(Mul, Div) X(Div, Add) X(Div, Sub) X(Div, Mul) X(Div, Div)
 
 /// ハンドラの種類（ETVMHandlers.cpp の表の順）。コメントはオペランドの並び（d = double *、s = Slot *、
 /// t = 跳び先、x = 即値）。
@@ -102,6 +108,28 @@ enum class HK : uint16_t {
     UExch,      // s p, x sptr
     LoopCount,  // s dst, d a
     ILt1, IDec, IGt0, // s dst, s a
+    // ---- 段 S3 ----
+    // loop・while（J は条件が真なら t へ、JF は偽なら t へ。もう片方は次の命令）
+    LoopInitJ, LoopInitJF, // s cnt, d n, t: cnt = loop の数(n)。cnt < 1 が真（J）／偽（JF）なら t
+    DecJ, DecJF,           // s out, s in, t: out = in - 1。out > 0 が真／偽なら t
+    WhileJ, WhileJF,       // s out, s in, s cond, t: out = in - 1。(out > 0 && cond) が真／偽なら t
+    // 比べ + 分かれ道（d a, d b, t。式は中間表現の Cmp* と同じ a0, a1 の順）
+    JLt, JNLt, JGe, JNGe, JEqClose, JNEqClose, JNeClose, JNNeClose, JEq, JNEq, JNe, JNNe,
+    JTruthy, JNTruthy, JFalsy, JNFalsy, // d a, t
+    // 定数のオペランド（d dst, d a, x imm）: a op imm、R* は imm op a
+    AddI, SubI, RSubI, MulI, DivI, RDivI, AddIF, SubIF, RSubIF, MulIF, DivIF, RDivIF,
+    // 行き先 = 左（d dst, d b: dst = dst op b）
+    AddT, SubT, MulT, DivT, AddTF, SubTF, MulTF, DivTF,
+    // 行き先 = 左、右は定数（d dst, x imm: dst = dst op imm）
+    AddIT, SubIT, MulIT, DivIT, AddITF, SubITF, MulITF, DivITF,
+    // megabuf の 頭 + 添字（idx = (unsigned)((a + b) + 1e-5) と同じ式）
+    MemAddrBI,  // s dst, d a, d b, x rt
+    MemLoadBI,  // d dst, d a, d b, x rt
+    MemStoreBI, // d a, d b, d v, x rt
+    // 続いた四則 2 つ（fuse2）: L は d = (a i b) o c、R は d = c o (a i b)。F は o の結果にフィルタ。d dst, d a, d b, d c
+#define ETVM_F2_ENUM(i, o) F2L##i##o, F2R##i##o, F2LF##i##o, F2RF##i##o,
+    ETVM_FUSE2_LIST(ETVM_F2_ENUM)
+#undef ETVM_F2_ENUM
     Count
 };
 

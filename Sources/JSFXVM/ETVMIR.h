@@ -3,7 +3,7 @@
 // - 値は f64・ptr（EEL_F の番地）・bool（portable の p1 が NULL か）・i32（loop の数）。
 // - 変数・定数・関数の局所・作業表の一時はどれも「番地の決まった升（cell）」のまま。読み書きは
 //   LoadCell / StoreCell として、バイトコードと同じ順に並ぶ。SSA になるのは浮動小数の積み場と p1〜p3 だけ。
-// - 定数（PtrConst・BoolConst・I32Const）は Function::consts に置き、入口で 1 回だけ作る（全部を支配する）。
+// - 定数（PtrConst・BoolConst・I32Const・FConst）は Function::consts に置き、入口で 1 回だけ作る（全部を支配する）。
 // - 各ブロックは phi の列 → 命令の列 → 終わり（Br・CondBr・Ret）。
 #pragma once
 
@@ -20,6 +20,7 @@ enum class Op : uint8_t {
     PtrConst,  // imm[0] = 番地（そのまま。varparm の数も来る）
     BoolConst, // imm[0] = 0 / 1
     I32Const,  // imm[0]
+    FConst,    // imm[0] = double のビット（段 S3 の constcell・fold が作る。Const の升の値・畳んだ値）
     // 升・番地
     LoadCell,  // imm[0] = 升 -> f64
     StoreCell, // imm[0] = 升, a0 = f64
@@ -109,6 +110,10 @@ struct Function {
     uint32_t newValue(Ty ty) { values.push_back(ValueInfo{ty}); return (uint32_t)values.size() - 1; }
     /// 値が PtrConst なら番地を返す。
     bool constAddr(uint32_t v, uint64_t &addr) const;
+    /// 値が FConst ならビットを返す。
+    bool constF64(uint32_t v, uint64_t &bits) const;
+    /// 定数の命令（consts の中）。定数でなければ nullptr。
+    const Ins *constIns(uint32_t v) const;
     size_t instructionCount() const;
     /// succPredIdx と values[].block/index を作り直す（phi・命令を動かしたあと）。
     void finalize();

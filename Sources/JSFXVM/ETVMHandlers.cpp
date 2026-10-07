@@ -420,6 +420,218 @@ ETVM_H(IGt0)
     ETVM_NEXT(2);
 }
 
+// ---- 段 S3: loop・while（設計 §9.5。数の式は IDec・IGt0・ILt1・LoopCount と同じ） ------------------------
+ETVM_H(LoopInitJ)
+{
+    const int32_t c = etvm_loop_count(*ip[2].d);
+    ip[1].s->i = (int64_t)c;
+    if (c < 1) ETVM_GO(ip[3].t);
+    ETVM_NEXT(3);
+}
+ETVM_H(LoopInitJF)
+{
+    const int32_t c = etvm_loop_count(*ip[2].d);
+    ip[1].s->i = (int64_t)c;
+    if (!(c < 1)) ETVM_GO(ip[3].t);
+    ETVM_NEXT(3);
+}
+ETVM_H(DecJ)
+{
+    const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);
+    ip[1].s->i = (int64_t)c;
+    if (c > 0) ETVM_GO(ip[3].t);
+    ETVM_NEXT(3);
+}
+ETVM_H(DecJF)
+{
+    const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);
+    ip[1].s->i = (int64_t)c;
+    if (!(c > 0)) ETVM_GO(ip[3].t);
+    ETVM_NEXT(3);
+}
+ETVM_H(WhileJ)
+{
+    const bool cond = ip[3].s->u != 0;
+    const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);
+    ip[1].s->i = (int64_t)c;
+    if (c > 0 && cond) ETVM_GO(ip[4].t);
+    ETVM_NEXT(4);
+}
+ETVM_H(WhileJF)
+{
+    const bool cond = ip[3].s->u != 0;
+    const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);
+    ip[1].s->i = (int64_t)c;
+    if (!(c > 0 && cond)) ETVM_GO(ip[4].t);
+    ETVM_NEXT(4);
+}
+
+// ---- 段 S3: 比べ + 分かれ道（式は ETVM_CMP と同じ） ------------------------------------------------------
+#define ETVM_JCMP(name, expr)                                                                                 \
+    ETVM_H(J##name)                                                                                           \
+    {                                                                                                         \
+        const double a = *ip[1].d, b = *ip[2].d;                                                              \
+        if (expr) ETVM_GO(ip[3].t);                                                                           \
+        ETVM_NEXT(3);                                                                                         \
+    }                                                                                                         \
+    ETVM_H(JN##name)                                                                                          \
+    {                                                                                                         \
+        const double a = *ip[1].d, b = *ip[2].d;                                                              \
+        if (!(expr)) ETVM_GO(ip[3].t);                                                                        \
+        ETVM_NEXT(3);                                                                                         \
+    }
+ETVM_JCMP(Lt, a < b)
+ETVM_JCMP(Ge, a >= b)
+ETVM_JCMP(EqClose, etvm_eq_close(a, b))
+ETVM_JCMP(NeClose, etvm_ne_close(a, b))
+ETVM_JCMP(Eq, a == b)
+ETVM_JCMP(Ne, a != b)
+#undef ETVM_JCMP
+#define ETVM_JUN(name, expr)                                                                                  \
+    ETVM_H(name)                                                                                              \
+    {                                                                                                         \
+        const double a = *ip[1].d;                                                                            \
+        if (expr) ETVM_GO(ip[2].t);                                                                           \
+        ETVM_NEXT(2);                                                                                         \
+    }
+ETVM_JUN(JTruthy, etvm_truthy(a))
+ETVM_JUN(JNTruthy, !etvm_truthy(a))
+ETVM_JUN(JFalsy, etvm_falsy(a))
+ETVM_JUN(JNFalsy, !etvm_falsy(a))
+#undef ETVM_JUN
+
+// ---- 段 S3: 定数のオペランド（opimm）・行き先 = 左（opto） ------------------------------------------------
+#define ETVM_BINI(name, expr)                                                                                 \
+    ETVM_H(name)                                                                                              \
+    {                                                                                                         \
+        const double a = *ip[2].d, k = ip[3].f;                                                               \
+        *ip[1].d = (expr);                                                                                    \
+        ETVM_NEXT(3);                                                                                         \
+    }
+ETVM_BINI(AddI, a + k)
+ETVM_BINI(SubI, a - k)
+ETVM_BINI(RSubI, k - a)
+ETVM_BINI(MulI, a * k)
+ETVM_BINI(DivI, a / k)
+ETVM_BINI(RDivI, k / a)
+ETVM_BINI(AddIF, etvm_filter(a + k))
+ETVM_BINI(SubIF, etvm_filter(a - k))
+ETVM_BINI(RSubIF, etvm_filter(k - a))
+ETVM_BINI(MulIF, etvm_filter(a * k))
+ETVM_BINI(DivIF, etvm_filter(a / k))
+ETVM_BINI(RDivIF, etvm_filter(k / a))
+#undef ETVM_BINI
+#define ETVM_BINT(name, expr)                                                                                 \
+    ETVM_H(name)                                                                                              \
+    {                                                                                                         \
+        double *const d = ip[1].d;                                                                            \
+        const double a = *d, b = *ip[2].d;                                                                    \
+        *d = (expr);                                                                                          \
+        ETVM_NEXT(2);                                                                                         \
+    }
+ETVM_BINT(AddT, a + b)
+ETVM_BINT(SubT, a - b)
+ETVM_BINT(MulT, a * b)
+ETVM_BINT(DivT, a / b)
+ETVM_BINT(AddTF, etvm_filter(a + b))
+ETVM_BINT(SubTF, etvm_filter(a - b))
+ETVM_BINT(MulTF, etvm_filter(a * b))
+ETVM_BINT(DivTF, etvm_filter(a / b))
+#undef ETVM_BINT
+#define ETVM_BINIT(name, expr)                                                                                \
+    ETVM_H(name)                                                                                              \
+    {                                                                                                         \
+        double *const d = ip[1].d;                                                                            \
+        const double a = *d, k = ip[2].f;                                                                     \
+        *d = (expr);                                                                                          \
+        ETVM_NEXT(2);                                                                                         \
+    }
+ETVM_BINIT(AddIT, a + k)
+ETVM_BINIT(SubIT, a - k)
+ETVM_BINIT(MulIT, a * k)
+ETVM_BINIT(DivIT, a / k)
+ETVM_BINIT(AddITF, etvm_filter(a + k))
+ETVM_BINIT(SubITF, etvm_filter(a - k))
+ETVM_BINIT(MulITF, etvm_filter(a * k))
+ETVM_BINIT(DivITF, etvm_filter(a / k))
+#undef ETVM_BINIT
+
+// ---- 段 S3: megabuf の 頭 + 添字（足し算は FAdd と同じ 1 回の足し算、そのあと MEGABUF と同じ式） --------------
+__attribute__((noinline)) HRet h_MemAddrBISlow(const Word *ip, Ctx *cx)
+{
+    ip[1].s->p = megabufSlow(ip[4].p, *ip[2].d + *ip[3].d);
+    ETVM_NEXT(4);
+}
+__attribute__((noinline)) HRet h_MemLoadBISlow(const Word *ip, Ctx *cx)
+{
+    *ip[1].d = *megabufSlow(ip[4].p, *ip[2].d + *ip[3].d);
+    ETVM_NEXT(4);
+}
+__attribute__((noinline)) HRet h_MemStoreBISlow(const Word *ip, Ctx *cx)
+{
+    EEL_F *p = megabufSlow(ip[4].p, *ip[1].d + *ip[2].d);
+    *p = *ip[3].d;
+    ETVM_NEXT(4);
+}
+ETVM_H(MemAddrBI)
+{
+    ETVM_MEGABUF_FAST(ip[4].p, *ip[2].d + *ip[3].d, p);
+    if (!p) ETVM_TAIL(h_MemAddrBISlow);
+    ip[1].s->p = p;
+    ETVM_NEXT(4);
+}
+ETVM_H(MemLoadBI)
+{
+    ETVM_MEGABUF_FAST(ip[4].p, *ip[2].d + *ip[3].d, p);
+    if (!p) ETVM_TAIL(h_MemLoadBISlow);
+    *ip[1].d = *p;
+    ETVM_NEXT(4);
+}
+ETVM_H(MemStoreBI)
+{
+    ETVM_MEGABUF_FAST(ip[4].p, *ip[1].d + *ip[2].d, p);
+    if (!p) ETVM_TAIL(h_MemStoreBISlow);
+    *p = *ip[3].d;
+    ETVM_NEXT(4);
+}
+
+// ---- 段 S3: 続いた四則 2 つ（fuse2）。内側を先に計算し、その結果を外側の左（L）／右（R）に。縮約はしない -------
+#define ETVM_OPAdd +
+#define ETVM_OPSub -
+#define ETVM_OPMul *
+#define ETVM_OPDiv /
+#define ETVM_F2_DEF(i, o)                                                                                     \
+    ETVM_H(F2L##i##o)                                                                                         \
+    {                                                                                                         \
+        const double a = *ip[2].d, b = *ip[3].d, c = *ip[4].d;                                                \
+        const double t = a ETVM_OP##i b;                                                                      \
+        *ip[1].d = t ETVM_OP##o c;                                                                            \
+        ETVM_NEXT(4);                                                                                         \
+    }                                                                                                         \
+    ETVM_H(F2R##i##o)                                                                                         \
+    {                                                                                                         \
+        const double a = *ip[2].d, b = *ip[3].d, c = *ip[4].d;                                                \
+        const double t = a ETVM_OP##i b;                                                                      \
+        *ip[1].d = c ETVM_OP##o t;                                                                            \
+        ETVM_NEXT(4);                                                                                         \
+    }                                                                                                         \
+    ETVM_H(F2LF##i##o)                                                                                        \
+    {                                                                                                         \
+        const double a = *ip[2].d, b = *ip[3].d, c = *ip[4].d;                                                \
+        const double t = a ETVM_OP##i b;                                                                      \
+        *ip[1].d = etvm_filter(t ETVM_OP##o c);                                                               \
+        ETVM_NEXT(4);                                                                                         \
+    }                                                                                                         \
+    ETVM_H(F2RF##i##o)                                                                                        \
+    {                                                                                                         \
+        const double a = *ip[2].d, b = *ip[3].d, c = *ip[4].d;                                                \
+        const double t = a ETVM_OP##i b;                                                                      \
+        *ip[1].d = etvm_filter(c ETVM_OP##o t);                                                               \
+        ETVM_NEXT(4);                                                                                         \
+    }
+ETVM_FUSE2_LIST(ETVM_F2_DEF)
+#undef ETVM_F2_DEF
+
 struct Entry { Handler h; const char *name; int nops; };
 #define E(name, n) {h_##name, #name, n}
 const Entry kTable[] = {
@@ -436,6 +648,17 @@ const Entry kTable[] = {
     E(CallVP, -1), E(CallVPX, -1),
     E(UPush, 4), E(UPop, 4), E(UPopFast, 4), E(UPeek, 5), E(UPeekInt, 5), E(UPeekTop, 2), E(UExch, 2),
     E(LoopCount, 2), E(ILt1, 2), E(IDec, 2), E(IGt0, 2),
+    E(LoopInitJ, 3), E(LoopInitJF, 3), E(DecJ, 3), E(DecJF, 3), E(WhileJ, 4), E(WhileJF, 4),
+    E(JLt, 3), E(JNLt, 3), E(JGe, 3), E(JNGe, 3), E(JEqClose, 3), E(JNEqClose, 3), E(JNeClose, 3), E(JNNeClose, 3),
+    E(JEq, 3), E(JNEq, 3), E(JNe, 3), E(JNNe, 3), E(JTruthy, 2), E(JNTruthy, 2), E(JFalsy, 2), E(JNFalsy, 2),
+    E(AddI, 3), E(SubI, 3), E(RSubI, 3), E(MulI, 3), E(DivI, 3), E(RDivI, 3),
+    E(AddIF, 3), E(SubIF, 3), E(RSubIF, 3), E(MulIF, 3), E(DivIF, 3), E(RDivIF, 3),
+    E(AddT, 2), E(SubT, 2), E(MulT, 2), E(DivT, 2), E(AddTF, 2), E(SubTF, 2), E(MulTF, 2), E(DivTF, 2),
+    E(AddIT, 2), E(SubIT, 2), E(MulIT, 2), E(DivIT, 2), E(AddITF, 2), E(SubITF, 2), E(MulITF, 2), E(DivITF, 2),
+    E(MemAddrBI, 4), E(MemLoadBI, 4), E(MemStoreBI, 4),
+#define ETVM_F2_E(i, o) E(F2L##i##o, 4), E(F2R##i##o, 4), E(F2LF##i##o, 4), E(F2RF##i##o, 4),
+    ETVM_FUSE2_LIST(ETVM_F2_E)
+#undef ETVM_F2_E
 };
 #undef E
 static_assert(sizeof kTable / sizeof *kTable == (size_t)HK::Count, "handler table");

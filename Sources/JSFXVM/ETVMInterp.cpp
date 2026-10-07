@@ -190,7 +190,7 @@ ETVM_NO_SANITIZE_FUNCTION void interpret(const Function &fn, InterpState &st)
             case Op::ILt1: r = (int32_t)(uint32_t)V[a[0]] < 1; break;
             case Op::IDec: r = (uint64_t)(uint32_t)((int32_t)(uint32_t)V[a[0]] - 1); break;
             case Op::IGt0: r = (int32_t)(uint32_t)V[a[0]] > 0; break;
-            case Op::PtrConst: case Op::BoolConst: case Op::I32Const: case Op::Phi: case Op::Count:
+            case Op::PtrConst: case Op::BoolConst: case Op::I32Const: case Op::FConst: case Op::Phi: case Op::Count:
                 break;
             }
             if (in.res != kNoValue) V[in.res] = r;
