@@ -15,7 +15,7 @@ JSFX の実行系（いまは WDL の portable の解釈）を、同じ入力・
 | `vm-goto` | vm-block の switch を computed goto に（ラベルの番地の表、各命令の終わりで次へ飛ぶ。実行時に機械語は作らない） | Mac・iPhone |
 | `vm-goto-fpreg` | vm-goto + 浮動小数の積み場の先頭をローカル（レジスタ）に置く。**アプリの既定** | Mac・iPhone |
 | `vm-goto-fpreg-mask` | vm-goto-fpreg + 表を 128 に取って番号の下 7 bit で引く（範囲の比較を省く） | Mac・iPhone |
-| `vm-reg` | レジスタ型 VM（`Sources/JSFXVM`、`docs/jsfx-regvm-design.md`）。バイトコードを持ち上げた中間表現から並べた threaded code（段 S2: 命令 1 つにハンドラ 1 つ、`[[clang::musttail]]` で次へ。オペランドは升・枠の絶対番地）。@sample は 1 ブロック 1 回の入口。**アプリの既定には入れない**（台だけ） | Mac・iPhone |
+| `vm-reg` | レジスタ型 VM（`Sources/JSFXVM`、`docs/jsfx-regvm-design.md`）。バイトコードを持ち上げた中間表現から並べた threaded code（段 S3: 中間表現を最適化してから並べ、loop・比べて跳ぶ・四則 2 つなどを 1 つのハンドラに。`[[clang::musttail]]` で次へ。オペランドは升・枠の絶対番地）。@sample は 1 ブロック 1 回の入口。**アプリの既定には入れない**（台だけ） | Mac・iPhone |
 
 実行系は `kVariants` に 1 行足す。最初の行（portable か wdl-jit）が照合の基準で、
 vm-* は `Check::exact`（1 ビットも違ってはいけない）。cpp は差 `1e-6` まで許す（いまはどれも一致）。
@@ -305,3 +305,63 @@ M1 の -O3 は vm-reg が -Os とほぼ同じ（合計 516.0。1 本ごとには
 - 測ったあいだ Mac では `ANECompilerService` が 1 コアを使っていた（実行系は 16 ブロックごとに入れ替えるので比は崩れない）
 
 JSON は `docs/bench/2026-10-07-s2-*`。
+
+## 段 2 の S3: 最適化と 1 つにまとめた命令（2026-10-07、5487bff）
+
+vm-reg に段 S3 を足した（`docs/jsfx-regvm-design.md` §17）。中間表現の上でブロックの中だけ: どの handle も書かない升を
+定数に（constcell）、定数だけの演算を畳む（fold。NaN・非正規化数・invsqrt・libm は畳まない）、同じ升の読み直しと
+同じ演算を 1 つに（cse）、書いた値をそのまま使う（fwd）、外へ漏れない作業表の升の書き込みを消す（promote）。
+並べる段で: loop の入口・次の周・while の次（条件の比べごと）を 1 つ、比べ + 分かれ道を 1 つ、定数のオペランドを
+命令の中に・行き先 = 左（`cell OP= 定数／cell`）、megabuf の頭 + 添字、続いた四則 2 つ（+ フィルタ）、中身が
+`cell OP= 定数／cell` 1 つの loop を 1 つのハンドラで回し切る（loop kernel。値はレジスタに置いて最後に 1 回書く）。
+loop の数の升は phi と生きている範囲で合わせ、写しが消える。
+1 つずつ `ETVM_PASSES` で切れる（`ETVM_PASSES=-cse,-lkern`、`none,+loop`、`all`。中身は `Sources/JSFXVM/ETVM.h`）。
+`--vm-dump` は段 S3 の数え（畳んだ升・まとめた数）も出し、`--vm-opgrid` は「書かない升を Const として最適化した
+threaded code」も 3 つめに比べる。**アプリの既定は vm-goto-fpreg のまま。**
+
+照合: `--vm-opgrid` 75,825 組・`--diff` 65/65 が Linux x86-64 と M1 の -Os・-O3 で 1 ビットまで一致（Linux -Os では
+最適化を 1 つずつ外した版・全部外した版も 65/65）。iPhone の台 7 本も 2 回とも bit-exact。
+ファズ: `jsfxvmdiff` を最後に実行系を変えたあと（5487bff）、S2 の corpus から ASan・UBSan・`-fork=6` で 2,741 秒
+（うち親が corpus を読み直す 795 秒、6 本で 1,946 秒 ≈ 3.5 CPU 時間、113,105 回）。vm-reg と portable の違い・落ちは 0
+（時間切れ 56 は ASan の下で上限まで回る入れ子の loop）。設計 §12.9 の 24 CPU 時間にはまだ足りない。
+
+**iPhone 16 Beta（-Os）、2 回目**（vm-reg の括弧は 1 回目。1 ブロックの中央値 us / portable に対する速さ /
+vm-goto-fpreg に対する速さ / cpp の何倍遅いか）
+
+| スクリプト | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| gain | 2.3 | 1.7 | 1.2 (1.2) | 1.90x | 1.41x | 4.1 | 0.3 |
+| filter_drive | 22.1 | 15.8 | 5.9 (5.9) | 3.73x | 2.66x | 7.9 | 0.8 |
+| stereo_delay | 18.5 | 12.2 | 4.3 (4.3) | 4.32x | 2.85x | 4.7 | 0.9 |
+| slow | 130.3 | 92.7 | 21.8 (21.7) | 5.99x | 4.26x | 1.1 | 20.5 |
+| biquad | 49.1 | 32.2 | 10.2 (10.8) | 4.79x | 3.14x | 7.2 | 1.4 |
+| fir | 391.5 | 283.9 | 111.5 (104.9) | 3.51x | 2.55x | 3.5 | 31.5 |
+| math | 58.2 | 44.2 | 25.0 (24.9) | 2.33x | 1.77x | 2.4 | 10.5 |
+| 7 本の合計 | 672.1 | 482.8 | 180.0 (173.6) | 3.73x | 2.68x | | 65.8 |
+
+**M1 CLI -Os**（`vs jit` は wdl-jit ÷ vm-reg）
+
+| スクリプト | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp | wdl-jit | vs jit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gain | 4.2 | 2.3 | 1.8 | 2.27x | 1.27x | 4.9 | 0.4 | 9.4 | 5.11x |
+| filter_drive | 43.2 | 28.2 | 10.2 | 4.22x | 2.75x | 8.5 | 1.2 | 16.2 | 1.58x |
+| stereo_delay | 37.7 | 27.2 | 7.7 | 4.92x | 3.55x | 5.8 | 1.3 | 15.1 | 1.97x |
+| slow | 363.4 | 177.2 | 33.7 | 10.79x | 5.26x | 1.1 | 30.7 | 183.9 | 5.46x |
+| biquad | 96.2 | 68.3 | 21.2 | 4.53x | 3.22x | 10.4 | 2.0 | 21.5 | 1.01x |
+| fir | 973.8 | 583.7 | 164.9 | 5.91x | 3.54x | 3.5 | 46.6 | 127.1 | 0.77x |
+| math | 106.1 | 67.5 | 43.7 | 2.43x | 1.54x | 2.7 | 15.9 | 37.4 | 0.86x |
+| 7 本の合計 | 1624.5 | 954.5 | 283.2 | 5.74x | 3.37x | | 98.2 | 410.6 | |
+
+M1 の -O3 は vm-reg が -Os と ±2% 以内（slow だけ 22.3 と速い。loop kernel の回し方が締まる）。
+
+- **全部のスクリプトで vm-goto-fpreg より速い**（iPhone 1.41〜4.27x、M1 1.27〜5.26x）。設計 §12.9 の「段 1 の既定より
+  5% を超えて遅いものが無い」を満たす。S2 で 18% 遅かった slow は loop kernel で cpp とほぼ同じ
+- loop の次の周 1 つ化だけでは slow は M1 で速くならない（`i` を升に書いて次の周で読む鎖が 1 周の時間を決める。
+  vm-goto-fpreg も同じ）。iPhone では 140 → 124 us、loop kernel で 22 us
+- M1 の wdl-jit はまだ fir（0.77x）と math（0.86x）で速い。biquad は並んだ。fir の内側は 1 周 9 ハンドラ
+  （megabuf の読み 3・積和 2・`k += 1`・`j -= 1`・比べて跳ぶ・次の周）
+- 1 つずつ足したときの効き（M1 -Os、7 本の合計 us）: S2 の組 528.7 → loop 508.0 → cmpbr 492.1 →
+  constcell・opimm・opto 486.1 → membi 455.2 → fuse2 425.0 → lkern 282.6 → 中間表現の fold・cse・fwd・promote 281.0
+  （`docs/bench/2026-10-07-s3-passes-mac-m1-Os.json`）
+
+JSON は `docs/bench/2026-10-07-s3-*`。

@@ -1,8 +1,8 @@
 # EffectDeck JSFX register VM (stage 2/3) — design
 
-Status: **S0 (hook surface only), S1 and S2 implemented** (2026-10-07; §15 = S0/S1, §16 = S2: what exists, the
-deviations from this design and their reasons, oracle/fuzz results and measured numbers). S3+ not started. The design
-text below is the original one; where S0–S2 deviate, §15.2 / §16.2 say so.
+Status: **S0 (hook surface only), S1, S2 and S3 implemented** (2026-10-07; §15 = S0/S1, §16 = S2, §17 = S3: what
+exists, the deviations from this design and their reasons, oracle/fuzz results and measured numbers). S4+ not started.
+The design text below is the original one; where S0–S3 deviate, §15.2 / §16.2 / §17.2 say so.
 Written against worktree `EffectDeck.jsfx-vm`, branch `perf/jsfx-vm`
 (HEAD 0915106 + the uncommitted stage-1 work: `NSEEL_code_execute_frames`, `NSEEL_EXEC_*`, `glue_port_vm.h`,
 `ysfx_set_eel_exec_mode`, `ETJSFX_SetEELExecutor`, `Tools/jsfx-bench/diff.cpp`).
@@ -603,7 +603,7 @@ slow 357/184/31; iPhone 16 Beta portable: 21.7, 47.4, 374.7, 57.2, 130.5, gain 2
 | S0 | Agree hook surface with stage 1 (§5.2), `ETVMOps.h` shared semantics in the patch, marker/.old.diff update | ±0 (invsqrt note) | 0.5–1 | low |
 | S1 | Lifter + IR + verifier + printer + reference IR interpreter + link-step analysis; `jsfx-vm-dump` CLI; oracle tests (12.1–12.2) on bench/fixtures/corpus | none (infrastructure); coverage report | 5–7 | medium (stack→SSA corner cases: stale p1, varparm, while caps) |
 | S2 | Threaded executor, tier-1 handlers, frame allocation, block @sample loop (stage-1 pre/post), megabuf inline fast path, `vm-reg` bench line, `jsfxvmdiff` target | fd ~15–20, bq ~30–40, fir ~250–350, math ~45–55, slow ~120–170, gain ~1–2 (≈ WDL JIT; 2–3× portable). **Measured (§16.4)**: fd 14.3, bq 31.8, fir 230.9, math 50.4, slow 177.0, gain 1.9 (2.0–4.1× portable; JIT is still faster on bq/fir/math) | 5–7 | medium-low |
-| S3 | Passes 2–9 (const cells, folding, copy-prop, load CSE/forwarding, CSE, DCE, temp promotion, direct dest), fused compare-branch, loop-next, `cell OP= lit`, megabuf base+index | fd ~10–12, bq ~18–25, fir ~180–220, math ~35–40, slow ~100–130 | 4–6 | medium (alias rules — guarded by differential) |
+| S3 | Passes 2–9 (const cells, folding, copy-prop, load CSE/forwarding, CSE, DCE, temp promotion, direct dest), fused compare-branch, loop-next, `cell OP= lit`, megabuf base+index | fd ~10–12, bq ~18–25, fir ~180–220, math ~35–40, slow ~100–130. **Measured (§17.4)**: fd 10.2, bq 21.2, fir 164.9, math 43.7, slow 33.7 (loop kernel pulled forward from S5), gain 1.8 (2.3–10.8× portable, 1.3–5.3× vm-goto-fpreg; JIT still faster on fir and math) | 4–6 | medium (alias rules — guarded by differential) |
 | S4 | Tier-2 generated trees + tier-3 corpus kernels + BURS selection + select speculation; typed io descriptor for framing | fd ~5–8, bq ~9–15, fir ~110–150, math ~25–35, slow ~100–120 | 6–9 | medium (generator/matcher bugs, code size ~50–150 KB) |
 | S5 | Loops: LICM, megabuf induction with guards, loop kernels, unrolling; pinned-register experiment | fir ~60–100, slow ~50–80, others −10–20 % | 5–8 | medium-high (guards) |
 | S6 | Coverage & rollout: subroutines for huge functions instead of inline budget, @init/@slider/@block on by default, telemetry, Beta default after gates | — | 3–5 + soak | low-medium |
@@ -898,7 +898,7 @@ vm-goto-fpreg's `LOOP_END` decrements and branches in one opcode. S3's fused loo
 two of the four handlers and the slot round trips. WDL JIT is still 1.4–1.9× faster than vm-reg on biquad, fir and
 math (memory round trips per IR value, one dispatch per op), as the staging table expected for S2.
 
-### 16.5 What remains (S3/S4)
+### 16.5 What remains (S3/S4) — S3 is done, see §17
 - S3: fused loop-next and compare-branch (fixes `slow`, the iPhone regression vs vm-goto-fpreg), `cell OP= literal`,
   megabuf base+index, const-cell folding + constant folding (with `ETVMOps.h` shared with `glue_port.h`, the
   `invsqrt` re-baseline), load CSE / store→load forwarding, temp promotion, pure CSE; passes switchable for bisecting
@@ -944,6 +944,170 @@ have a handle portable may run into undefined bytes (deviation 4), so those inpu
 (4) Still not executed by any corpus: `POP_P1`, `MOVE_STACKPTR_TO_P2/P3`, `SET_P2/P3_FROM_WTP`,
 `PUSH_VAL_AT_P2/P3_TO_FPSTACK` (WDL only emits index 0 for the last one) and `GENERIC2XPARM_RETD` (only
 `NSEEL_addfunc_varparm_ctxptr2`, which ysfx does not use).
+
+---
+
+## 17. Implemented: S3 (passes, fused control flow, operand forms) — 2026-10-07
+
+Commits on `perf/jsfx-vm`: 68808ca (IR passes + selection rules + handlers), 5287044 (opgrid third side, dump
+counters), 93f7197 (while + condition compare), 5487bff (loop kernel; the measured build). `vm-reg` stays
+**default-off in the app**. The patch is unchanged by S3 (a0d4003, a parallel fix of the patch itself, landed in
+between; all S3 numbers and oracles are on top of it).
+
+### 17.1 What exists
+- **Pass switches** (§12.3 "every pass can be disabled"): `ETVM_PASS_*` in `ETVM.h`, `ETVM_SetPasses` /
+  `ETVM_GetPasses`, environment `ETVM_PASSES` read once (`"-cse,-loop"`, `"none,+loop"`, `"all"`, `"ir"`). Default:
+  all. Every combination below is exact (`--diff` with each pass removed alone, with none, with the S2 set, with the IR
+  passes only: all 65 files bit-exact on Linux -Os).
+- **IR passes** (`ETVMOpt.cpp`, run by the backend between lift and selection; the reference interpreter `vm-reg-ref`
+  runs the same optimised IR, so a `vm-reg-ref` mismatch points at an IR pass and a `vm-reg`-only one at selection).
+  New IR op `FConst` (lives in `Function::consts`). All block-local, one forward walk:
+  - `constcell`: `LoadCell(c)` of a **Const** cell (§5.3: no handle stores to it, directly or through any pointer,
+    and its address never escapes; requires every handle of the VM to lift) → `FConst` of the value read at build time.
+  - `fold`: pure ops whose inputs are all constants, evaluated by the same `ETVMOps.h` functions as the handlers;
+    never when an input or the result is NaN or subnormal (FPCR may differ between threads); never `invsqrt`, libm or
+    rand; integer ops only for |x| < 2^31; `LoopCount`/`ILt1`/`IGt0`/`IDec`/`BNot`/`BoolToF`/compares fold to
+    `I32Const`/`BoolConst`. A `CondBr` on a `BoolConst` is emitted as a jump (selection).
+  - `cse`: a second `LoadCell(c)` with no possible write to `c` in between → the first value; pure ops with identical
+    (op, type, argument values) → the first (argument order is part of the key; nothing is commuted).
+  - `fwd`: `LoadCell(c)` after `StoreCell(c, v)` with no possible write in between → `v` (filtered stores store the
+    filtered value, so that is what is forwarded).
+  - `promote`: forwarding for **private temps** (worktable cells whose address never escapes and that are never read
+    or written through a pointer — new link flag `loadedIndirect`), then every store to a private temp that no
+    `LoadCell` reads any more is deleted (worktable contents are not observable: §15.2 item 10).
+  - "Possible write" follows §7.3: `StoreCell(c)` → `c`; `Store`/`ustack.pop`/`ustack.exch` through a constant
+    address → that cell, through megabuf/gmem/bool pointers → no cell, otherwise → every cell; API calls → every cell.
+    Volatile cells are never reused. The optimised IR must pass the verifier, otherwise the unoptimised IR is kept
+    (`vfail` counter; never seen).
+- **Selection rules** (`ETVMSelect.cpp`) and handlers (`ETVMHandlers.cpp`, 73 → 222 handlers, the fuse2 family is
+  64 of them, generated by an X-macro):
+  - `loop`: `LoopCount → ILt1 → CondBr` = `LoopInitJ(F)`, `IDec → IGt0 → CondBr` = `DecJ(F)`, and for `while` the
+    pattern "D: … `IDec → IGt0 → CondBr(X, E)`; X: nothing that executes, `CondBr(c, H, E)`" = `WhileJ(F)` with X
+    absorbed (not emitted). Phi coalescing is now **SSA interference-based** (values coalesce when neither is live at
+    the other's definition; phi arguments count as used at the end of their predecessor), so the loop counter, its
+    `LoopCount` entry value and its `IDec` latch value share one slot: no phi copies, no stubs.
+  - `cmpbr`: a compare / `Truthy` / `Falsy` that is the block's last executing instruction and whose only use is the
+    `CondBr` → `J<cmp>` / `JN<cmp>`. Also folded into the while form: `W<cmp>J(F)` (the compare executes right before
+    the `IDec`; neither touches a cell, so reading its operands at the end is the same).
+  - `opimm` / `opto`: `+ - * /` (and their filtered forms) with an `FConst` operand put the literal in the instruction
+    (`AddI`, `RSubI`, …); when the destination is the left operand's cell: `AddT d, b` / `AddIT d, k` (`cell OP= cell`,
+    `cell OP= literal`). A literal on the left of `+`/`*` is moved to the right only when it is not NaN (IEEE `+ *` are
+    commutative except for the NaN-payload choice).
+  - `membi`: `FAdd(base, idx) → MemAddr [→ Load | Store]` = `MemAddrBI` / `MemLoadBI` / `MemStoreBI`
+    (`(unsigned)((*a + *b) + 1e-5)`: the same single IEEE add, then the same `MEGABUF` expression and slow path).
+  - `fuse2`: two adjacent `+ - * /` where the first result is used once, by the second (left or right operand),
+    optionally followed by `Filter`: `F2{L,R}{,F}<inner><outer>`, e.g. `acc = filt(acc + l0 * c)` =
+    `F2RFMulAdd`. No contraction (`-ffp-contract=off` + pragma), the two roundings stay.
+  - `lkern` (loop kernel, §9.5, pulled forward from S5): a self-loop block whose only emitted handler is
+    `d = d op k` / `d = d op *b` (b ≠ d) plus `DecJ`, with no copies on the back edge, becomes one handler that runs the
+    whole loop with `d` in a register and stores it once at the end (`LKAddIT` …): the same sequence of IEEE ops and the
+    same counter arithmetic, and nothing else executes during the loop.
+  - `direct` with more uses: a value stored by `StoreCell(c, v)` that is also used later in the same block (which
+    `fwd`/`cse` create) is still written straight into `c` and its other uses read `c`, as long as nothing may write `c`
+    up to those uses (and, as in S2, nothing reads or writes `c` between the producer and the store). Without this,
+    forwarding would turn one direct op into op + `Mov`.
+- **Oracles**: `--vm-opgrid` has a third lifted side, "threaded + S3 IR passes, every cell the snippet does not store
+  to treated as Const" (exercises `constcell`, `fold` incl. constant loop counts and constant branches, `opimm`, the loop
+  kernel with NaN / negative / capped counts). `--vm-dump` prints per-section S3 counters (and JSON `s3`), and the IR it
+  prints is the optimised one.
+
+### 17.2 Deviations from the design (and why)
+1. **Fused forms are selection rules, not IR ops.** Loop-next, compare-branch, `cell OP= literal`, megabuf base+index
+   and the loop kernel need no new IR (only `FConst`); the reference interpreter therefore checks the IR passes and
+   the threaded side checks selection, which keeps the two oracle layers separate.
+2. IR passes are **block-local** (no dominator-based memory-SSA, no global value numbering). In this executor every
+   operand is already a memory pointer, so cross-block reuse buys no handler; inside a block, CSE/forwarding mainly
+   remove re-computations (`2*k`, `1 - cross`, `0.3*lfo + 0.6`) and enable folds.
+3. **"Temp promotion"** is forwarding + dead-store removal for private temps; the bench scripts have no temps in
+   their hot paths (one store removed in the whole corpus).
+4. **ETVMOps.h is still not shared with `glue_port.h`**: the folder needs one definition shared by folder, interpreter
+   and handlers, which `ETVMOps.h` already is (and the grid proves it equal to `GLUE_CALL_CODE`). The folder never folds
+   `invsqrt` (contraction differs per TU), so no re-baseline of portable's `invsqrt` was needed and the patch did not
+   change. Sharing with `glue_port.h` stays open (S6 cleanup).
+5. **Pulled forward**: `fuse2` (a 64-handler subset of tier 2: two-op trees whose ops are adjacent) and the loop kernel
+   (S5). The kernel was required by the gate: with loop-next alone `slow` was 2 handlers per iteration on the iPhone and
+   still 16 % slower than vm-goto-fpreg (123.6 vs 106.9 µs), because `i` goes through memory every iteration
+   (store → load forwarding chain), exactly as in vm-goto-fpreg.
+6. Pass-off defaults keep S2 behaviour bit-for-bit in selection (`none,+ldfold,+direct,+fuse` emits the S2 stream;
+   `direct` with several uses only when `fwd` or `cse` is on).
+7. Const cells are read when the program is built: at the end of `ysfx_compile` (before @init) or at
+   `ysfx_set_eel_exec_mode(REG)`. Nothing writes a Const cell by definition, so either time gives the same value.
+
+### 17.3 Oracle and fuzz results
+| Layer | Linux x86-64, clang 21.0.0 (swiftlang), -Os / -O3 | Mac M1 arm64, Apple clang 21.0.0, -Os / -O3 | iPhone 16 Beta |
+|---|---|---|---|
+| §12.1 op grid, 4-way (portable / reference IR / threaded / threaded + S3 IR passes with Const cells) | 75,825 cases, 0 mismatched (40 NaN+NaN choices, same cases on every side) | 75,825 cases, 0 mismatched (24 NaN+NaN choices) | — |
+| §12.2–12.4 `--diff` (65 files; vm-reg, vm-reg-ref and all stage-1 modes; profile build too) | 65/65 bit-exact; also with each pass removed alone, none, S2 set, IR passes only | 65/65 bit-exact | bench 7 scripts `portable,vm-goto-fpreg,vm-reg,cpp`, 2 runs: all `bit-exact ok` |
+| §12.7 `jsfxvmdiff` (ASan + UBSan, `-fork=6`) | After the last semantic change (5487bff), corpus seeded from S2 (3,372 inputs): 2,741 s wall, of which 795 s replaying the corpus in the parent and 1,946 s × 6 workers of fuzzing ≈ 3.5 CPU-hours, 113,105 executions, coverage 10,280 edges, corpus 3,928: **no mismatch, no crash**; 56 timeouts (nested loops at the cap under ASan, not failures). A 5-minute run on the build before the while-compare and loop-kernel commits (corpus replay + 52 runs) was also clean | — | — |
+
+### 17.4 Measured numbers (median µs per 256-frame block)
+Columns as in §16.4. JSON: `docs/bench/2026-10-07-s3-*` (Mac: `mac-m1-cli-{Os,O3}-{portable,jit}`; iPhone:
+`iphone16-beta-run{1,2}`; per-pass: `passes-mac-m1-Os`; coverage: `vm-coverage-mac-m1-Os`). git 5487bff.
+
+**M1 CLI -Os**
+
+| script | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp | wdl-jit | vs jit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gain | 4.2 | 2.3 | 1.8 | 2.27× | 1.27× | 4.9 | 0.4 | 9.4 | 5.11× |
+| filter_drive | 43.2 | 28.2 | 10.2 | 4.22× | 2.75× | 8.5 | 1.2 | 16.2 | 1.58× |
+| stereo_delay | 37.7 | 27.2 | 7.7 | 4.92× | 3.55× | 5.8 | 1.3 | 15.1 | 1.97× |
+| slow | 363.4 | 177.2 | 33.7 | 10.79× | 5.26× | 1.1 | 30.7 | 183.9 | 5.46× |
+| biquad | 96.2 | 68.3 | 21.2 | 4.53× | 3.22× | 10.4 | 2.0 | 21.5 | 1.01× |
+| fir | 973.8 | 583.7 | 164.9 | 5.91× | 3.54× | 3.5 | 46.6 | 127.1 | 0.77× |
+| math | 106.1 | 67.5 | 43.7 | 2.43× | 1.54× | 2.7 | 15.9 | 37.4 | 0.86× |
+| sum of 7 | 1624.5 | 954.5 | 283.2 | 5.74× | 3.37× | | 98.2 | 410.6 | |
+
+**M1 CLI -O3**: vm-reg gain 1.7, fd 10.1, sd 7.5, slow 22.3, bq 21.0, fir 167.5, math 43.9 (sum 274.0; within ±2 % of
+-Os except slow, whose kernel loop is tighter at -O3: 22.3 vs cpp 30.5). vs portable 2.23–13.38×, vs JIT 0.76× (fir),
+0.84× (math), 1.01× (biquad), 1.58–8.23× on the rest.
+
+**iPhone 16 Beta (-Os), run 2** (run 1 in parentheses for vm-reg; the two runs agree within ±6 %)
+
+| script | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| gain | 2.3 | 1.7 | 1.2 (1.2) | 1.90× | 1.41× | 4.1 | 0.3 |
+| filter_drive | 22.1 | 15.8 | 5.9 (5.9) | 3.73× | 2.66× | 7.9 | 0.8 |
+| stereo_delay | 18.5 | 12.2 | 4.3 (4.3) | 4.32× | 2.85× | 4.7 | 0.9 |
+| slow | 130.3 | 92.7 | 21.8 (21.7) | 5.99× | 4.26× | 1.1 | 20.5 |
+| biquad | 49.1 | 32.2 | 10.2 (10.8) | 4.79× | 3.14× | 7.2 | 1.4 |
+| fir | 391.5 | 283.9 | 111.5 (104.9) | 3.51× | 2.55× | 3.5 | 31.5 |
+| math | 58.2 | 44.2 | 25.0 (24.9) | 2.33× | 1.77× | 2.4 | 10.5 |
+| sum of 7 | 672.1 | 482.8 | 180.0 (173.6) | 3.73× | 2.68× | | 65.8 |
+
+**Per-pass contribution** (M1 CLI -Os, vm-reg µs, passes added cumulatively, 2 s per variant;
+`passes-mac-m1-Os.json`):
+
+| passes | gain | fd | sd | slow | bq | fir | math | sum |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| S2 set (`ldfold,direct,fuse`) | 1.9 | 14.7 | 10.8 | 180.2 | 32.9 | 236.1 | 52.1 | 528.7 |
+| + `loop` | 1.9 | 14.6 | 10.8 | 180.5 | 32.4 | 215.7 | 52.1 | 508.0 |
+| + `cmpbr` | 1.9 | 14.6 | 10.2 | 171.5 | 32.4 | 210.0 | 51.5 | 492.1 |
+| + `constcell,opimm,opto` | 1.8 | 14.1 | 9.9 | 170.2 | 32.4 | 206.0 | 51.7 | 486.1 |
+| + `membi` | 1.8 | 13.8 | 9.0 | 170.1 | 32.4 | 176.3 | 51.8 | 455.2 |
+| + `fuse2` | 1.8 | 10.3 | 7.8 | 173.0 | 23.2 | 166.0 | 42.9 | 425.0 |
+| + `lkern` | 1.8 | 10.1 | 7.6 | 33.0 | 23.1 | 162.8 | 42.2 | 282.6 |
+| + `fold,cse,fwd,promote` (= all) | 1.8 | 10.0 | 7.7 | 33.0 | 20.8 | 162.7 | 43.0 | 281.0 |
+
+On the M1, `loop`/`cmpbr` alone do not help `slow` (the `i` store→load chain bounds it at ~10 cycles/iteration,
+like vm-goto-fpreg); on the iPhone they took it from 140 to 124 µs and the kernel to 22 µs. The IR passes mostly
+matter through `constcell` (it feeds `opimm`); `cse`/`fwd` save 2 µs on biquad and are noise elsewhere.
+Handlers per frame in @sample (`--vm-dump`): fd 38 → 28, sd 39 → 26, bq 83 → 61, fir 38 → 23 (inner loop 18 → 9
+handlers per tap), math 74 → 50 (while 7 → 3 per iteration), slow 11 → 4 (loop 4 → 1 for the whole loop).
+
+### 17.5 Gate status and what remains
+- §12.9 "no script slower than the stage-1 default by > 5 %": **met** on the iPhone (vm-reg / vm-goto-fpreg 1.41–4.27×
+  faster, both runs) and on M1 (1.27–5.26×).
+- §12.9 "≥ 24 CPU-hours of `jsfxvmdiff` after the last semantic change": not met (≈ 3.5 CPU-hours after the last semantic change, §17.3). Still open from S1/S2:
+  the audit of building programs while the audio thread runs (§16.6 residual 2), the external corpus, and the
+  untested opcodes of §16.6 (4). vm-reg therefore stays default-off.
+- Where JIT still wins (M1): fir 0.77× (inner loop 9 handlers per tap: 3 megabuf loads, 2 MACs, `k += 1`, `j -= 1`,
+  compare-branch, loop-next) and math 0.86× (libm calls and 4-op trees). biquad is at parity (61 handlers, mostly
+  3–4-op trees like `s1 = b1*x - a1*y + s2`).
+- **S4**: tier-2/3 kernels with BURS covering (3–4-op trees for biquad/math; the MAC kernel
+  `acc = filt(acc + c * mem[base + j])` for fir), compare with a literal operand, typed io descriptor (gain: the
+  two `pre/post` calls per frame dominate; vm-reg 1.2 µs vs cpp 0.3 µs on the iPhone).
+- **S5**: loop kernels for multi-instruction bodies (register-carried values across a body, e.g. fir's `k`, `j`, the
+  two accumulators), LICM, megabuf induction with guards.
 
 ---
 
