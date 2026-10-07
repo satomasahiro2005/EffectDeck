@@ -7,11 +7,15 @@ EffectDeck が足したもの（上流に無い）:
   glue_port_vm.h ほか  EEL の実行系を実行時に選ぶ（ns-eel.h の NSEEL_EXEC_*。バイトコードはそのまま）。
                         ysfx は @slider・@block・@sample をその実行系で回す（ysfx_set_eel_exec_mode）。
                         NSEEL_rand_reset は比べ合わせのため（rand の列を最初からにする）
+  NSEEL_exec_backend   NSEEL_EXEC_REG: 外の実行系（EffectDeck の Sources/JSFXVM）を登録し、handle ごとの
+                        プログラムを付ける（codeHandleType::backend_prog。NSEEL_code_free が放す）。
+                        ysfx は NSEEL_EXEC_REG のとき @init も同じ実行系で回し、プログラムを作る口
+                        （ysfx_set_eel_program_builder）と handle を並べる口（ysfx_get_eel_handles）を持つ
 diff --git a/include/ysfx.h b/include/ysfx.h
-index 49296d4..a8d7e7c 100644
+index 49296d4..a35b0d0 100644
 --- a/include/ysfx.h
 +++ b/include/ysfx.h
-@@ -351,6 +351,10 @@ YSFX_API bool ysfx_fetch_want_undopoint(ysfx_t *fx);
+@@ -351,6 +351,20 @@ YSFX_API bool ysfx_fetch_want_undopoint(ysfx_t *fx);
  
  // process a cycle in 32-bit float
  YSFX_API void ysfx_process_float(ysfx_t *fx, const float *const *ins, float *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames);
@@ -19,11 +23,21 @@ index 49296d4..a8d7e7c 100644
 +// 使えない番号は false で何も変えない。どれでも結果は 1 ビットも変わらない（速さだけ）。
 +YSFX_API bool ysfx_set_eel_exec_mode(ysfx_t *fx, int mode);
 +YSFX_API int ysfx_get_eel_exec_mode(ysfx_t *fx);
++// EffectDeck: NSEEL_EXEC_REG のプログラムを作る口（プロセスに 1 つ。EffectDeck の Sources/JSFXVM が登録する）。
++// vm は NSEEL_VMCTX、handles[i] は NSEEL_CODEHANDLE（NULL もある）、sections[i] は ysfx_section_type_t
++// （@init は import ごとに 1 つずつ、先に読むものから）。作ったプログラムは NSEEL_code_attach_program で付ける。
++// ysfx_set_eel_exec_mode(fx, NSEEL_EXEC_REG) と、その実行系のときの ysfx_compile の終わりに呼ぶ。
++// NSEEL_EXEC_REG のときは @init も同じ実行系で回す（@gfx・@serialize は付いていても NSEEL_code_execute）。
++typedef void (*ysfx_eel_program_builder_t)(void *vm, void *const *handles, const int *sections, uint32_t count);
++YSFX_API void ysfx_set_eel_program_builder(ysfx_eel_program_builder_t builder);
++// EffectDeck: 全部の EEL の handle を上と同じ並びで（照合・数えるため）。数を返す（max を超えた分は書かない）。
++// *vm には NSEEL_VMCTX。コンパイルしていなければ 0。
++YSFX_API uint32_t ysfx_get_eel_handles(ysfx_t *fx, void **vm, void **handles, int *sections, uint32_t max);
  // process a cycle in 64-bit float
  YSFX_API void ysfx_process_double(ysfx_t *fx, const double *const *ins, double *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames);
  
 diff --git a/sources/ysfx.cpp b/sources/ysfx.cpp
-index 740d1dd..c83ca5f 100644
+index 740d1dd..68382ad 100644
 --- a/sources/ysfx.cpp
 +++ b/sources/ysfx.cpp
 @@ -186,6 +186,7 @@ ysfx_t *ysfx_new(ysfx_config_t *config)
@@ -34,7 +48,16 @@ index 740d1dd..c83ca5f 100644
      AUTOVAR(mouse_x, 0);
      AUTOVAR(mouse_y, 0);
      AUTOVAR(mouse_cap, 0);
-@@ -452,13 +453,15 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
+@@ -430,6 +431,8 @@ bool ysfx_load_file(ysfx_t *fx, const char *filepath, uint32_t loadopts)
+     return true;
+ }
+ 
++static void ysfx_build_eel_programs(ysfx_t *fx); // EffectDeck: NSEEL_EXEC_REG
++
+ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
+ {
+     ysfx_unload_code(fx);
+@@ -452,13 +455,15 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
      {
          uint32_t maxmem = fx->source.main->header.options.maxmem;
          if (maxmem == 0)
@@ -54,7 +77,17 @@ index 740d1dd..c83ca5f 100644
          };
  
          ysfx_gmem_attach(fx, fx->source.main->header.options.gmem);
-@@ -574,6 +577,7 @@ void ysfx_reinitialize_vars(ysfx_t *fx)
+@@ -535,6 +540,9 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
+     ///
+     ysfx_eel_string_context_update_named_vars(fx->string_ctx.get(), vm);
+ 
++    if (fx->eel_exec_mode.load(std::memory_order_relaxed) == NSEEL_EXEC_REG)
++        ysfx_build_eel_programs(fx);
++
+     fail_guard.disarm();
+     return true;
+ }
+@@ -574,6 +582,7 @@ void ysfx_reinitialize_vars(ysfx_t *fx)
                  && strcmp(name, "mouse_wheel")
                  && strcmp(name, "mouse_hwheel")
                  && strcmp(name, "gfx_ext_retina")
@@ -62,7 +95,20 @@ index 740d1dd..c83ca5f 100644
              )
          ) {
              found = true;
-@@ -1484,6 +1488,49 @@ uint64_t ysfx_get_slider_visibility(ysfx_t *fx, uint8_t slider_group_index)
+@@ -1306,7 +1315,11 @@ void ysfx_init(ysfx_t *fx)
+     {
+         // TODO: @init should never run concurrently with any other thread
+         if (!no_init) {
+-            NSEEL_code_execute(fx->code.init[i].get());
++            // EffectDeck: NSEEL_EXEC_REG は @init もその実行系で（ほかの実行系は今までどおり）。
++            if (fx->eel_exec_mode.load(std::memory_order_acquire) == NSEEL_EXEC_REG)
++                NSEEL_code_execute_frames(fx->code.init[i].get(), NSEEL_EXEC_REG, 1, nullptr, nullptr, nullptr);
++            else
++                NSEEL_code_execute(fx->code.init[i].get());
+         }
+     };
+ 
+@@ -1484,6 +1497,90 @@ uint64_t ysfx_get_slider_visibility(ysfx_t *fx, uint8_t slider_group_index)
      return fx->slider.visible_mask[slider_group_index].load();
  }
  
@@ -96,11 +142,52 @@ index 740d1dd..c83ca5f 100644
 +        io->outs[ch][i] = (Real)*spl[ch];
 +}
 +
++static ysfx_eel_program_builder_t ysfx_eel_program_builder;
++
++void ysfx_set_eel_program_builder(ysfx_eel_program_builder_t builder)
++{
++    ysfx_eel_program_builder = builder;
++}
++
++uint32_t ysfx_get_eel_handles(ysfx_t *fx, void **vm, void **handles, int *sections, uint32_t max)
++{
++    if (vm) *vm = fx ? fx->vm.get() : nullptr;
++    if (!fx || !fx->code.compiled)
++        return 0;
++    uint32_t n = 0;
++    auto add = [&](void *h, int section) {
++        if (n < max) { handles[n] = h; sections[n] = section; }
++        ++n;
++    };
++    for (auto &h : fx->code.init) add(h.get(), ysfx_section_init);
++    add(fx->code.slider.get(), ysfx_section_slider);
++    add(fx->code.block.get(), ysfx_section_block);
++    add(fx->code.sample.get(), ysfx_section_sample);
++    add(fx->code.gfx.get(), ysfx_section_gfx);
++    add(fx->code.serialize.get(), ysfx_section_serialize);
++    return n;
++}
++
++// EffectDeck: 全部の handle を渡してプログラムを作らせる（NSEEL_EXEC_REG）。音を回していないときだけ。
++static void ysfx_build_eel_programs(ysfx_t *fx)
++{
++    if (!ysfx_eel_program_builder || !fx->code.compiled)
++        return;
++    void *vm = nullptr;
++    const uint32_t n = ysfx_get_eel_handles(fx, &vm, nullptr, nullptr, 0);
++    std::vector<void *> handles(n);
++    std::vector<int> sections(n);
++    ysfx_get_eel_handles(fx, &vm, handles.data(), sections.data(), n);
++    ysfx_eel_program_builder(vm, handles.data(), sections.data(), n);
++}
++
 +bool ysfx_set_eel_exec_mode(ysfx_t *fx, int mode)
 +{
 +    if (!fx || !NSEEL_code_exec_mode_available(mode))
 +        return false;
-+    fx->eel_exec_mode.store(mode, std::memory_order_relaxed);
++    if (mode == NSEEL_EXEC_REG)
++        ysfx_build_eel_programs(fx);
++    fx->eel_exec_mode.store(mode, std::memory_order_release);
 +    return true;
 +}
 +
@@ -112,7 +199,7 @@ index 740d1dd..c83ca5f 100644
  template <class Real>
  void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames)
  {
-@@ -1529,18 +1576,32 @@ void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs,
+@@ -1529,18 +1626,32 @@ void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs,
          *fx->var.samplesblock = (EEL_F)num_frames;
          *fx->var.num_ch = (EEL_F)num_ins;
  
@@ -148,7 +235,7 @@ index 740d1dd..c83ca5f 100644
              EEL_F **spl = fx->var.spl;
              for (uint32_t i = 0; i < num_frames; ++i) {
                  for (uint32_t ch = 0; ch < num_ins; ++ch)
-@@ -1700,6 +1761,7 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+@@ -1700,6 +1811,7 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
          return nullptr;
  
      std::string buffer;
@@ -156,7 +243,7 @@ index 740d1dd..c83ca5f 100644
  
      // invoke @serialize
      {
-@@ -1710,9 +1772,14 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+@@ -1710,9 +1822,14 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
          lock.unlock();
          ysfx_serialize(fx);
          lock.lock();
@@ -2034,11 +2121,23 @@ index 0000000..56ff423
 +#undef EEL_VM_GOTO
 +#undef EEL_VM_FPREG
 +#undef EEL_VM_MASK
+diff --git a/thirdparty/WDL/source/WDL/eel2/ns-eel-int.h b/thirdparty/WDL/source/WDL/eel2/ns-eel-int.h
+index 83b53ed..04b1951 100644
+--- a/thirdparty/WDL/source/WDL/eel2/ns-eel-int.h
++++ b/thirdparty/WDL/source/WDL/eel2/ns-eel-int.h
+@@ -158,6 +158,7 @@ typedef struct {
+ 
+   int workTable_size; // size (minus padding/extra space) of workTable -- only used if EEL_VALIDATE_WORKTABLE_USE set, but might be handy to have around too
+   int compile_flags;
++  void *backend_prog; // EffectDeck: NSEEL_EXEC_REG のプログラム（NSEEL_code_attach_program。NSEEL_code_free が放す）
+ } codeHandleType;
+ 
+ typedef struct
 diff --git a/thirdparty/WDL/source/WDL/eel2/ns-eel.h b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
-index 6590a81..08b5612 100644
+index 6590a81..e736bbd 100644
 --- a/thirdparty/WDL/source/WDL/eel2/ns-eel.h
 +++ b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
-@@ -182,6 +182,42 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
+@@ -182,6 +182,55 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
  char *NSEEL_code_getcodeerror(NSEEL_VMCTX ctx);
  int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx);
  void NSEEL_code_execute(NSEEL_CODEHANDLE code);
@@ -2051,7 +2150,8 @@ index 6590a81..08b5612 100644
 +#define NSEEL_EXEC_GOTO 2       // computed goto（ラベルの番地の表）+ 1 回の入口
 +#define NSEEL_EXEC_GOTO_FPREG 3 // NSEEL_EXEC_GOTO + 浮動小数の積み場の先頭をレジスタに
 +#define NSEEL_EXEC_GOTO_FPREG_MASK 4 // NSEEL_EXEC_GOTO_FPREG + 表を 128 に取って範囲の比較を省く
-+#define NSEEL_EXEC_COUNT 5
++#define NSEEL_EXEC_REG 5        // 外の実行系（NSEEL_set_exec_backend）。プログラムの無い handle は NSEEL_EXEC_GOTO_FPREG
++#define NSEEL_EXEC_COUNT 6
 +// アプリが使う既定（ysfx_new が読む）。速さを測って 1 ビットも違わないものの中から選んだ（docs/jsfx-bench.md）。
 +// iPhone 16 では _MASK と並び（7 本の合計は GOTO_FPREG が少し速い）、_MASK は表の外の番号が別の命令に
 +// 化けうるので GOTO_FPREG にした。
@@ -2065,7 +2165,19 @@ index 6590a81..08b5612 100644
 +                               NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx);
 +// rand() の列を最初からにする（全部の VM で 1 つの列。比べるためだけ）。
 +void NSEEL_rand_reset(void);
-+// この建て方で使えるか（JIT の建て方は NSEEL_EXEC_PORTABLE だけ）。
++// NSEEL_EXEC_REG の実行系（EffectDeck の Sources/JSFXVM）。handle ごとのプログラムを回す・放す。
++// run は pre(ctx, i) → プログラム → post(ctx, i) を i = 0..nframes-1（NSEEL_code_execute_frames と同じ約束）。
++typedef struct {
++  void (*run)(void *prog, unsigned int nframes, NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx);
++  void (*free_prog)(void *prog);
++} NSEEL_exec_backend;
++// 1 回だけ（音を回す前に）。NULL で外す。登録が在るときだけ NSEEL_EXEC_REG を使える。
++void NSEEL_set_exec_backend(const NSEEL_exec_backend *backend);
++const NSEEL_exec_backend *NSEEL_get_exec_backend(void);
++// handle にプログラムを付ける（前のものは free_prog で放す。NULL で外すだけ）。音を回していないときだけ。
++void NSEEL_code_attach_program(NSEEL_CODEHANDLE code, void *prog);
++void *NSEEL_code_get_program(NSEEL_CODEHANDLE code);
++// この建て方で使えるか（JIT の建て方は NSEEL_EXEC_PORTABLE だけ。NSEEL_EXEC_REG は実行系の登録が要る）。
 +int NSEEL_code_exec_mode_available(int mode);
 +const char *NSEEL_code_exec_mode_name(int mode);
 +#ifdef NSEEL_VM_PROFILE
@@ -2110,7 +2222,7 @@ index 4ac7059..1d2579f 100644
      unsigned int mti = __idx;
  
 diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
-index 5dee9a7..f27badc 100644
+index 5dee9a7..ea30249 100644
 --- a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
 +++ b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
 @@ -672,7 +672,11 @@ functionType *nseel_getFunctionByName(compileContext *ctx, const char *name, int
@@ -2165,7 +2277,7 @@ index 5dee9a7..f27badc 100644
        __clear_cache(handle->code,writeptr);
  #endif
      }
-@@ -5217,6 +5222,147 @@ void NSEEL_code_execute(NSEEL_CODEHANDLE code)
+@@ -5217,6 +5222,183 @@ void NSEEL_code_execute(NSEEL_CODEHANDLE code)
  
  }
  
@@ -2252,6 +2364,33 @@ index 5dee9a7..f27badc 100644
 +#endif
 +#endif
 +
++static const NSEEL_exec_backend *nseel_exec_backend;
++
++void NSEEL_set_exec_backend(const NSEEL_exec_backend *backend)
++{
++  nseel_exec_backend = backend;
++}
++
++const NSEEL_exec_backend *NSEEL_get_exec_backend(void)
++{
++  return nseel_exec_backend;
++}
++
++void NSEEL_code_attach_program(NSEEL_CODEHANDLE code, void *prog)
++{
++  codeHandleType *h = (codeHandleType *)code;
++  if (!h) return;
++  if (h->backend_prog && h->backend_prog != prog && nseel_exec_backend && nseel_exec_backend->free_prog)
++    nseel_exec_backend->free_prog(h->backend_prog);
++  h->backend_prog = prog;
++}
++
++void *NSEEL_code_get_program(NSEEL_CODEHANDLE code)
++{
++  codeHandleType *h = (codeHandleType *)code;
++  return h ? h->backend_prog : NULL;
++}
++
 +void NSEEL_code_execute_frames(NSEEL_CODEHANDLE code, int mode, unsigned int nframes,
 +                               NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx)
 +{
@@ -2274,6 +2413,13 @@ index 5dee9a7..f27badc 100644
 +      case NSEEL_EXEC_GOTO_FPREG_MASK:
 +        nseel_vm_goto_fpreg_mask((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
 +      return;
++      case NSEEL_EXEC_REG:
++        // プログラムの無い handle（作れなかった・付けていない）は GOTO_FPREG（どれも portable と 1 ビットも違わない）。
++        if (h->backend_prog && nseel_exec_backend)
++          nseel_exec_backend->run(h->backend_prog,nframes,pre,post,ctx);
++        else
++          nseel_vm_goto_fpreg((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
++      return;
 +      default: break;
 +    }
 +  }
@@ -2291,6 +2437,7 @@ index 5dee9a7..f27badc 100644
 +int NSEEL_code_exec_mode_available(int mode)
 +{
 +#if defined(EEL_TARGET_PORTABLE) && !defined(EEL_PORTABLE_TAILCALL)
++  if (mode == NSEEL_EXEC_REG) return nseel_exec_backend != NULL;
 +  return mode >= 0 && mode < NSEEL_EXEC_COUNT;
 +#else
 +  return mode == NSEEL_EXEC_PORTABLE;
@@ -2306,6 +2453,7 @@ index 5dee9a7..f27badc 100644
 +    case NSEEL_EXEC_GOTO: return "vm-goto";
 +    case NSEEL_EXEC_GOTO_FPREG: return "vm-goto-fpreg";
 +    case NSEEL_EXEC_GOTO_FPREG_MASK: return "vm-goto-fpreg-mask";
++    case NSEEL_EXEC_REG: return "vm-reg";
 +  }
 +  return "?";
 +}
@@ -2313,7 +2461,17 @@ index 5dee9a7..f27badc 100644
  int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx)
  {
    compileContext *c=(compileContext *)ctx;
-@@ -5708,7 +5854,7 @@ opcodeRec *nseel_createFunctionByName(compileContext *ctx, const char *name, int
+@@ -5257,6 +5439,9 @@ void NSEEL_code_free(NSEEL_CODEHANDLE code)
+     nseel_evallib_stats[3]-=h->code_stats[3];
+     nseel_evallib_stats[4]--;
+ 
++    // EffectDeck: handle は blocks_data の中に在るので、先にプログラムを放す。
++    NSEEL_code_attach_program(code, NULL);
++
+     freeBlocks(&h->blocks_code,1);
+     freeBlocks(&h->blocks_data,0);
+   }
+@@ -5708,7 +5893,7 @@ opcodeRec *nseel_createFunctionByName(compileContext *ctx, const char *name, int
        return o;
      }
      f++;

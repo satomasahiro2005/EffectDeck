@@ -1,0 +1,23 @@
+desc:Fuzz megabuf tail（命令列の最後の x[] が先にインラインにした関数の中身を潰さないか。Tools/jsfx-bench/diff と同じ）
+out_pin:L
+out_pin:R
+
+@init
+buf = 1000;
+buf[2] = 0.25;
+buf[6] = 0.5;
+function f(i) (i * 2);
+function g(i) (buf[f(i)]);
+
+@block
+// g の中身は f をインラインにしてから buf[] で終わる。直す前は buf[] の __NSEEL_RAMAlloc が
+// 先に作った f の中身の頭に書かれ、下の f(3) が壊れた命令を写していた
+x = g(1);
+z = f(3);
+// 文の最後が buf[] でも同じ（max の結果へ代入）
+max(m1, m2) = buf[f(3)];
+w = f(4);
+
+@sample
+spl0 = x + z * 0.01 + w * 0.001;
+spl1 = m1 + m2;

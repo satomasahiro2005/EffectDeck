@@ -808,8 +808,23 @@ in the bench it is now a default variant (no longer opt-in). The patch is unchan
    **uninitialised bytes in the @block bytecode** where an inlined user-function body belongs (the bytes differ from
    run to run in the ASan build; the -Os build happens to hold valid code there). The second is a WDL code-generator
    bug that portable and the stage-1 executors (the app default) share; vm-reg does not change the exposure (the
-   lifter refuses the handle, which then runs on vm-goto-fpreg). Not investigated further in S2; the inputs are kept
-   under `build/fuzz/` only (not committed).
+   lifter refuses the handle, which then runs on vm-goto-fpreg). **Root cause (fixed after S2, patch marker
+   `GLUE_MEGABUF_NO_IMMEDIATE`)**: for `x[i]` `nseel-compiler.c` (`FN_MEMORY` in `nseel_getBuiltinFunctionAddress`)
+   hands `compileNativeFunctionCall` a replacement list `{__NSEEL_RAMAlloc}`, but portable's `_asm_megabuf` has no
+   immediate slot (`BC_DECLASM_N2(megabuf,MEGABUF,0)`; the handler reads the block table from `rt`). So
+   `EEL_GLUE_set_immediate` writes 8 bytes right after the 4-byte MEGABUF opcode, or up to 5 bytes further when those
+   bytes are not zero (its give-up test `!mv` never fires: `mv-- > 0` leaves -1). Normally the next instruction
+   overwrites them; when MEGABUF is at the end of a buffer (last, or one 4-byte instruction before the end), the write
+   lands past it, on the tmp block that follows. During the emission of a statement or function body that next block is the body of a function
+   inlined for the first time in that section, so every later inlined copy of that function in the section starts
+   with a broken instruction (e.g. `function g(i) (buf[f(i)]);` then `f(3)` elsewhere in @block). Whether it breaks
+   depends on what the heap left in those bytes: ASan's 0xbe fill always; a fresh process on Linux or macOS never;
+   macOS arm64 -Os after one other effect (biquad.jsfx) was compiled and freed: the reproducer crashes (SIGSEGV/
+   SIGBUS) on portable and all four stage-1 executors, and `x = g(1); z = f(3);` gives z = 0 instead of 6. So in the
+   app it is a heap-history-dependent crash or wrong output with ordinary code. Upstream WDL (d30c30b,
+   2026-10-04) has the same code. The patch drops the replacement list when the glue defines
+   `GLUE_MEGABUF_NO_IMMEDIATE` (portable only; bytecode unchanged). Reproducer: `Tools/jsfx-bench/diff/megabuf_tail.jsfx`
+   (also a `jsfxexec` seed).
 5. **API calls are `no_sanitize("function")`** in the handlers and the reference interpreter: WDL registers API
    functions whose first parameter is `void *`, `EEL_F **`, `ysfx_t *`… and calls all of them as
    `(void *, EEL_F *…)` (same registers); UBSan's `function` check flagged `eel_fft`. `nseel-*.c` is already built
