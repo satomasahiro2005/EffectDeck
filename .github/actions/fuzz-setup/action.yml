@@ -1,0 +1,56 @@
+# fuzz-long.yml の各ジョブが checkout のあとに通る下ごしらえ（swift:6.4.0-noble のコンテナの中。ci.yml の fuzz と同じ）。
+#   python3、Vendor/ysfx、clang++ の libFuzzer（x86-64 でも arm64 でも）、nightly が育てた corpus の復元。
+# 置き場は FUZZ_HOME（= $HOME/.cache/effectdeck-fuzz。run.sh の既定）を env に出す。
+name: fuzz-setup
+description: fuzz-long の下ごしらえ
+runs:
+  using: composite
+  steps:
+    # make_package.py が使う。swift の image には入っていない。
+    - name: python3
+      shell: bash
+      run: |
+        if ! command -v python3 >/dev/null 2>&1; then
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends python3 >/dev/null
+        fi
+        python3 --version
+        echo "FUZZ_HOME=$HOME/.cache/effectdeck-fuzz" >> "$GITHUB_ENV"
+    - name: submodule（Vendor/ysfx）
+      shell: bash
+      run: |
+        # checkout した木の持ち主はコンテナの外の利用者で、コンテナの root の git は持ち主の違いで断る。
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        git submodule update --init --depth 1 Vendor/ysfx
+        git submodule status Vendor/ysfx
+    # swift の image の clang が -fsanitize=fuzzer,address,undefined で libFuzzer まで建てられるか、
+    # この arch で先に確かめる。建てられなければ Ubuntu の clang-18 + compiler-rt を入れて先頭に置く。
+    - name: clang と libFuzzer
+      shell: bash
+      run: |
+        uname -m
+        clang++ --version | head -1
+        probe="$RUNNER_TEMP/probe"
+        mkdir -p "$probe"
+        printf 'extern "C" int LLVMFuzzerTestOneInput(const unsigned char *, unsigned long) { return 0; }\n' > "$probe/p.cpp"
+        if clang++ -fsanitize=fuzzer,address,undefined "$probe/p.cpp" -o "$probe/p" && "$probe/p" -runs=1 >/dev/null 2>&1; then
+          echo "swift の clang で libFuzzer が建つ"
+        else
+          echo "::warning::swift の clang で libFuzzer が建たない。Ubuntu の clang-18 を入れる"
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends clang-18 libclang-rt-18-dev >/dev/null
+          mkdir -p /opt/fuzz-clang/bin
+          ln -sf "$(command -v clang-18)" /opt/fuzz-clang/bin/clang
+          ln -sf "$(command -v clang++-18)" /opt/fuzz-clang/bin/clang++
+          echo /opt/fuzz-clang/bin >> "$GITHUB_PATH"
+          PATH="/opt/fuzz-clang/bin:$PATH" clang++ -fsanitize=fuzzer,address,undefined "$probe/p.cpp" -o "$probe/p"
+          "$probe/p" -runs=1 >/dev/null
+        fi
+    # 鍵は回ごとに違う（dsp.yml の fuzz-long が残す）。頭で引いて一番新しいものを戻す。無くても回る。
+    # path の書き方は ci.yml・dsp.yml と同じ（違うと別のキャッシュになる）。
+    - name: nightly が育てた corpus を戻す
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/effectdeck-fuzz/ci/corpus
+        key: fuzz-corpus-${{ github.run_id }}
+        restore-keys: fuzz-corpus-

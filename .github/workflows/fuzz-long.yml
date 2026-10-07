@@ -1,0 +1,320 @@
+# 手で回す長いファズ（libFuzzer、ASan + UBSan）。x86-64 と arm64 の runner に並べて、的を何時間も回す。
+#   plan         入力の検査と、1 的あたりの秒数・ジョブ番号の一覧
+#   fuzz         arch ごとに jobs 個。Tests/Fuzz/run.sh --target <的> --time <秒> を、ジョブごとに別の -seed で。
+#                -fork は nproc 本。育った corpus・落ちた入力（crash-* / timeout-* / oom-*）・数字を artifact に残す
+#   replay       corpus の再生（docs/jsfx-regvm-design.md §12.6）。Tests/Fuzz/Corpus/jsfxexec・見本・nightly の corpus を
+#                jsfxvmdiff / jsfxexec の判定に 1 度ずつ通す（変異なし、Tests/Fuzz/replay.sh）。
+#                arm64（FMA 縮約・fcvtzs の飽和が端末と同じ）で必ず通す
+#   merge        育った corpus を和集合にして corpus-merged に残し、ジョブごとの回数を step summary に
+#   replay-grown 和集合を同じ判定で再生（x86-64 で育った入力を arm64 でも通す）
+# 落ちたら: そのジョブの findings-<arch>-<n> に crash-*（照合の食い違いも "fuzz oracle:" で abort するのでここ）。
+# 手元の再現は bash Tests/Fuzz/run.sh --target jsfxvmdiff --repro <入力>。
+# 1 ジョブは 4 vCPU（public repo の標準 runner）。6 時間の上限に建てる時間も入れるので、hours は 5.5 まで。
+# 回し方: gh workflow run fuzz-long.yml --ref <branch> [-f target=jsfxvmdiff -f hours=5.5 -f jobs=6]
+name: Fuzz long
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 的（run.sh の --target。カンマで複数。時間は的で等分）
+        default: jsfxvmdiff
+      hours:
+        description: ファズの長さ（時間、最大 5.5）
+        default: "5.5"
+      jobs:
+        description: arch ごとの並列ジョブ数（1 から 10）
+        default: "6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-long
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+      seconds: ${{ steps.plan.outputs.seconds }}
+      step_minutes: ${{ steps.plan.outputs.step_minutes }}
+    steps:
+      - id: plan
+        env:
+          TARGET: ${{ inputs.target }}
+          HOURS: ${{ inputs.hours }}
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          python3 - <<'PY'
+          import json, math, os, re, sys
+          target = os.environ["TARGET"].strip()
+          if not re.fullmatch(r"[a-z]+(,[a-z]+)*", target):
+              sys.exit("target は的の名前のカンマ区切り: %r" % target)
+          hours = min(max(float(os.environ["HOURS"]), 0.05), 5.5)
+          jobs = min(max(int(float(os.environ["JOBS"])), 1), 10)
+          ntargets = len(target.split(","))
+          per_target = max(int(hours * 3600) // ntargets, 30)
+          # fuzz の段の持ち時間 = 的ごとの秒 × 的の数 + 建て直し・子の後始末の余裕（job は 360 分）
+          step_minutes = math.ceil(per_target * ntargets / 60) + 15
+          out = {"jobs": json.dumps(list(range(1, jobs + 1))), "seconds": str(per_target),
+                 "step_minutes": str(step_minutes)}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              for k, v in out.items():
+                  f.write("%s=%s\n" % (k, v))
+          print("target %s, %d s per target, %d jobs per arch, step %d min" % (target, per_target, jobs, step_minutes))
+          PY
+
+  fuzz:
+    name: fuzz ${{ matrix.arch }} #${{ matrix.n }}
+    needs: plan
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 360
+    # ci.yml の fuzz・dsp.yml の fuzz-long と同じツールチェーン（arm64 の image もある）。
+    container: swift:6.4.0-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86-64, arm64]
+        n: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    env:
+      RUN_NAME: long-${{ matrix.arch }}-${{ matrix.n }}
+      TARGET: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/fuzz-setup
+      # nightly が育てた corpus（jsfxexec も）を出発点にする。jsfxvmdiff は jsfxexec の入力も食う。
+      - name: 出発点の corpus
+        run: |
+          src="$FUZZ_HOME/ci/corpus"
+          echo "戻した corpus: $(find "$src" -type f 2>/dev/null | wc -l) 個"
+          IFS=, read -r -a targets <<< "$TARGET"
+          for t in "${targets[@]}"; do
+            mkdir -p "$FUZZ_HOME/$RUN_NAME/corpus/$t"
+            froms=("$t")
+            if [ "$t" = jsfxvmdiff ]; then froms+=(jsfxexec); fi
+            for from in "${froms[@]}"; do
+              if [ -d "$src/$from" ]; then cp -R -n "$src/$from/." "$FUZZ_HOME/$RUN_NAME/corpus/$t/" || true; fi
+            done
+          done
+      - name: 建てる（ysfx 約 30 本 + 的）
+        timeout-minutes: 45
+        run: FUZZ_JOBS="$(nproc)" bash Tests/Fuzz/run.sh --name "$RUN_NAME" --target "$TARGET" --build-only
+      - name: ファズ（Tests/Fuzz/run.sh）
+        timeout-minutes: ${{ fromJSON(needs.plan.outputs.step_minutes) }}
+        env:
+          SECONDS_PER_TARGET: ${{ needs.plan.outputs.seconds }}
+          ARCH: ${{ matrix.arch }}
+          N: ${{ matrix.n }}
+        run: |
+          # 別々の乱数: 回ごとに違う run_id を、arch と番号でずらす（libFuzzer の -seed は 32 bit、0 は無効）
+          off=0
+          if [ "$ARCH" = arm64 ]; then off=32; fi
+          seed=$(( (GITHUB_RUN_ID % 1000003) * 64 + off + N ))
+          echo "seed $seed, fork $(nproc), ${SECONDS_PER_TARGET}s per target"
+          FUZZ_FORK="$(nproc)" FUZZ_JOBS="$(nproc)" \
+            bash Tests/Fuzz/run.sh --name "$RUN_NAME" --target "$TARGET" --time "$SECONDS_PER_TARGET" -- -seed="$seed"
+      - name: 数字
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+          N: ${{ matrix.n }}
+        run: |
+          mkdir -p stats
+          s="stats/$RUN_NAME.txt"
+          dir="build/fuzz/$RUN_NAME"
+          log="build/fuzz-$RUN_NAME-build.log"
+          crashes=$(find "$dir" -name 'crash-*' 2>/dev/null | wc -l)
+          timeouts=$(find "$dir" -name 'timeout-*' 2>/dev/null | wc -l)
+          ooms=$(find "$dir" -name 'oom-*' 2>/dev/null | wc -l)
+          {
+            echo "arch=$ARCH n=$N crashes=$crashes timeouts=$timeouts ooms=$ooms"
+            grep '^== FUZZ [a-z]*:' "$log" 2>/dev/null | sed 's/^== //' || true
+          } > "$s"
+          {
+            echo "### $RUN_NAME"
+            echo '```'
+            cat "$s"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: 落ちた入力とログを残す
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: findings-${{ matrix.arch }}-${{ matrix.n }}
+          path: |
+            build/fuzz/
+            build/fuzz-*.log
+          retention-days: 30
+          if-no-files-found: ignore
+      - name: 育った corpus を残す
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: corpus-${{ matrix.arch }}-${{ matrix.n }}
+          path: ${{ env.FUZZ_HOME }}/${{ env.RUN_NAME }}/corpus
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: 数字を残す
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stats-${{ matrix.arch }}-${{ matrix.n }}
+          path: stats/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  # corpus の再生（§12.6）。ファズと並べて、最初の数十分で食い違いを見る。
+  replay:
+    name: replay ${{ matrix.arch }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    container: swift:6.4.0-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86-64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/fuzz-setup
+      - name: 建てる（jsfxvmdiff・jsfxexec）
+        timeout-minutes: 45
+        run: FUZZ_JOBS="$(nproc)" bash Tests/Fuzz/run.sh --name replay --target jsfxexec,jsfxvmdiff --build-only
+      - name: 再生（Corpus/jsfxexec・見本・nightly の corpus）
+        run: |
+          mkdir -p build
+          fail=0
+          for bin in jsfx_vmdiff jsfx_exec; do
+            bash Tests/Fuzz/replay.sh --out "build/fuzz-replay/$bin" "$FUZZ_HOME/replay/native/$bin" \
+              Tests/Fuzz/Corpus/jsfxexec Tests/Fixtures/JSFX Debug/JSFXBench Tools/jsfx-bench/diff \
+              "$FUZZ_HOME/ci/corpus/jsfxexec" "$FUZZ_HOME/ci/corpus/jsfxvmdiff" 2>&1 | tee -a "build/replay-$bin.log" || fail=1
+          done
+          { echo "### replay ${{ matrix.arch }}"; echo '```'; grep -h '^== REPLAY' build/replay-*.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$fail"
+      - name: 落ちた入力とログを残す
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay-${{ matrix.arch }}
+          path: |
+            build/fuzz-replay/
+            build/replay-*.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+  merge:
+    needs: [plan, fuzz]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: stats-*
+          path: stats
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: corpus-*
+          path: corpora
+      - name: 数字の表
+        run: |
+          mkdir -p stats
+          {
+            echo "## fuzz long"
+            echo
+            echo "| ジョブ | 回数 | cov | corpus | crash | timeout | oom |"
+            echo "|---|---:|---:|---:|---:|---:|---:|"
+            for f in $(find stats -name '*.txt' 2>/dev/null | sort -V); do
+              head=$(head -1 "$f")
+              arch=$(sed -n 's/^arch=\([^ ]*\) .*/\1/p' <<< "$head")
+              n=$(sed -n 's/.* n=\([0-9]*\) .*/\1/p' <<< "$head")
+              crashes=$(sed -n 's/.* crashes=\([0-9]*\).*/\1/p' <<< "$head")
+              timeouts=$(sed -n 's/.* timeouts=\([0-9]*\).*/\1/p' <<< "$head")
+              ooms=$(sed -n 's/.* ooms=\([0-9]*\).*/\1/p' <<< "$head")
+              while IFS= read -r line; do
+                t=$(sed -n 's/^FUZZ \([a-z]*\):.*/\1/p' <<< "$line")
+                [ -n "$t" ] || continue
+                runs=$(sed -n 's/.*runs \([0-9?]*\).*/\1/p' <<< "$line")
+                cov=$(sed -n 's/.*cov: \([0-9]*\).*/\1/p' <<< "$line")
+                corpus=$(sed -n 's/.*corpus \([0-9]*\).*/\1/p' <<< "$line")
+                echo "| ${arch} #${n} ${t} | ${runs} | ${cov} | ${corpus} | ${crashes} | ${timeouts} | ${ooms} |"
+              done < <(tail -n +2 "$f")
+            done
+            echo
+            total=$(cat stats/*.txt 2>/dev/null | sed -n 's/^FUZZ [a-z]*:.*runs \([0-9]*\).*/\1/p' | awk '{s += $1} END {print s + 0}')
+            echo "回数の合計: ${total}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: corpus の和集合
+        run: |
+          mkdir -p merged
+          for d in corpora/corpus-*/*/; do
+            [ -d "$d" ] || continue
+            t=$(basename "$d")
+            mkdir -p "merged/$t"
+            find "$d" -type f -exec cp -n -t "merged/$t" {} + || true
+          done
+          {
+            echo "### corpus の和集合"
+            for d in merged/*/; do
+              [ -d "$d" ] || continue
+              echo "- $(basename "$d"): $(find "$d" -type f | wc -l) 個"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: corpus-merged
+          path: merged
+          retention-days: 30
+          if-no-files-found: ignore
+
+  # 和集合の再生: x86-64 の runner で育った入力も arm64 の判定に通す。
+  replay-grown:
+    name: replay-grown ${{ matrix.arch }}
+    needs: [plan, merge]
+    if: always() && needs.merge.result == 'success' && contains(inputs.target, 'jsfx')
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    container: swift:6.4.0-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86-64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/fuzz-setup
+      - uses: actions/download-artifact@v8
+        with:
+          name: corpus-merged
+          path: merged
+      - name: 建てる（jsfxvmdiff・jsfxexec）
+        timeout-minutes: 45
+        run: FUZZ_JOBS="$(nproc)" bash Tests/Fuzz/run.sh --name replay --target jsfxexec,jsfxvmdiff --build-only
+      - name: 再生（育った corpus の和集合）
+        run: |
+          mkdir -p build
+          fail=0
+          for bin in jsfx_vmdiff jsfx_exec; do
+            bash Tests/Fuzz/replay.sh --out "build/fuzz-replay/$bin" "$FUZZ_HOME/replay/native/$bin" \
+              merged/jsfxvmdiff merged/jsfxexec 2>&1 | tee -a "build/replay-$bin.log" || fail=1
+          done
+          { echo "### replay-grown ${{ matrix.arch }}"; echo '```'; grep -h '^== REPLAY' build/replay-*.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$fail"
+      - name: 落ちた入力とログを残す
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay-grown-${{ matrix.arch }}
+          path: |
+            build/fuzz-replay/
+            build/replay-*.log
+          retention-days: 30
+          if-no-files-found: ignore

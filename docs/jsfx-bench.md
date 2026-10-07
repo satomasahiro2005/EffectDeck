@@ -261,6 +261,8 @@ portable 自身のもの（API の呼び方の型、ユーザーの積み場の�
 親が子の落ちを数えないこと）で、どれも直した（設計 §16.2・§16.3）。調べるときは `JSFXVMDIFF_TRACE=1`（歩みごとの
 時間・持ち上げの理由・断った handle のバイトコード）、`JSFXVMDIFF_SECTIONS=0x10`（vm-reg にする節を絞る）。
 `FUZZ_FORK=6` で子を 6 つ回せる。
+長い回は手で回す `.github/workflows/fuzz-long.yml`（`gh workflow run fuzz-long.yml --ref <ブランチ>`。x86-64 と arm64 の runner に 6 本ずつ、5.5 時間。
+落ちた入力は artifact `findings-*`、育った corpus は `corpus-merged`）。corpus の再生（設計 §12.6）は `Tests/Fuzz/replay.sh`、arm64 でも同じ workflow が通す。
 
 1 ブロック（256 フレーム）の中央値（us） / portable に対する速さ / vm-goto-fpreg に対する速さ / cpp の何倍遅いか。
 
