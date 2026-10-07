@@ -14,6 +14,11 @@
 name: Fuzz long
 
 on:
+  # push は GitHub にこの workflow を登録させるためだけ（default branch に無い workflow_dispatch の
+  # workflow は、一度も走らないと API から呼べない）。どのジョブも workflow_dispatch のときしか走らない。
+  push:
+    branches: [perf/jsfx-vm]
+    paths: [.github/workflows/fuzz-long.yml]
   workflow_dispatch:
     inputs:
       target:
@@ -39,6 +44,7 @@ defaults:
 
 jobs:
   plan:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -173,6 +179,7 @@ jobs:
   # corpus の再生（§12.6）。ファズと並べて、最初の数十分で食い違いを見る。
   replay:
     name: replay ${{ matrix.arch }}
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     container: swift:6.4.0-noble
