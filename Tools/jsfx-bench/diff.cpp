@@ -12,8 +12,8 @@
 // 比べるもの: 毎ブロックの出力（bit）、出てきた MIDI、つまみの変化・自動化・見える印、最後の変数の全部
 // （ysfx_enum_vars、bit）、EEL のメモリ全部、@serialize の中身（ysfx_save_state）、ysfx の口から見えない
 // VM の升（定数・関数の局所・#字）とユーザーの積み場の位置（etvm::stateHash）。基準は NSEEL_EXEC_PORTABLE。
-// vm-reg（NSEEL_EXEC_REG、Sources/JSFXVM の参照の解釈）が違ったら、節を 1 つずつ vm-reg にして回し直し、
-// どの節で違うかを出す（ETVM_SetSectionMask）。
+// vm-reg（NSEEL_EXEC_REG、Sources/JSFXVM の threaded code）と vm-reg-ref（同じ中間表現の参照の解釈）も比べる。
+// どちらかが違ったら、節を 1 つずつ vm-reg にして回し直し、どの節で違うかを出す（ETVM_SetSectionMask）。
 // 回ごとに rand() の列を最初からにする。gmem はプロセスの中で共有され前の回の残りが見えるので、
 // 書く前に gmem を読むスクリプトは portable どうしでも違う（ET_DIFF_MODES=0 で確かめられる）。
 // 違ったら終了値 1。
@@ -266,8 +266,10 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
     } else {
         for (int m = 1; m < NSEEL_EXEC_COUNT; ++m) if (NSEEL_code_exec_mode_available(m)) modes.push_back(m);
     }
+    const bool hasReg = std::find(modes.begin(), modes.end(), NSEEL_EXEC_REG) != modes.end();
     std::printf("jsfx-bench --diff: %zu files, %u blocks each, modes", files.size(), blocks);
     for (int m : modes) std::printf(" %s", NSEEL_code_exec_mode_name(m));
+    if (hasReg) std::printf(" vm-reg-ref");
     std::printf(" vs portable\n");
     if (modes.empty()) { std::printf("RESULT FAIL (no executor other than portable in this build)\n"); return 1; }
     int failures = 0, compared = 0, skipped = 0;
@@ -286,7 +288,11 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
         }
         std::string line;
         bool fileOk = true;
-        for (int m : modes) {
+        for (size_t ri = 0; ri < modes.size() + (hasReg ? 1 : 0); ++ri) {
+            // vm-reg は 2 回: threaded code（段 S2、既定）と、中間表現の参照の解釈（段 S1、"vm-reg-ref"）。
+            const bool refEngine = ri == modes.size();
+            const int m = refEngine ? NSEEL_EXEC_REG : modes[ri];
+            ETVM_SetEngine(refEngine ? ETVM_ENGINE_REFERENCE : ETVM_ENGINE_THREADED);
             const Run r = runOnce(file, m, blocks);
             std::string why = compare(ref, r);
             // vm-reg が違ったら、節を 1 つずつ vm-reg にして回し直す（ほかの節は GOTO_FPREG）。
@@ -302,7 +308,9 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
                 ETVM_SetSectionMask(saved);
                 why += "[sections: " + (which.empty() ? std::string("only together") : which) + "] ";
             }
-            line += std::string(" ") + NSEEL_code_exec_mode_name(m) + "=" + (why.empty() ? "ok" : why);
+            ETVM_SetEngine(ETVM_ENGINE_THREADED);
+            line += std::string(" ") + (refEngine ? "vm-reg-ref" : NSEEL_code_exec_mode_name(m)) + "=" +
+                    (why.empty() ? "ok" : why);
             if (!why.empty()) fileOk = false;
         }
         ++compared;
@@ -316,11 +324,20 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
         // vm-reg の回で作ったプログラムの数え（節ごと。持ち上げられなかった理由も）。
         const etvm::Coverage c = etvm::coverage();
         static const char *const names[] = {"?", "init", "slider", "block", "sample", "gfx", "serialize", "?"};
-        std::printf("vm-reg programs (handles / lifted / attached):");
-        for (int sec = 1; sec <= 6; ++sec)
-            std::printf(" %s %llu/%llu/%llu", names[sec], (unsigned long long)c.handles[sec],
-                        (unsigned long long)c.lifted[sec], (unsigned long long)c.attached[sec]);
+        std::printf("vm-reg programs (handles / lifted / attached / threaded build failed):");
+        uint64_t failedBuilds = 0;
+        for (int sec = 1; sec <= 6; ++sec) {
+            std::printf(" %s %llu/%llu/%llu/%llu", names[sec], (unsigned long long)c.handles[sec],
+                        (unsigned long long)c.lifted[sec], (unsigned long long)c.attached[sec],
+                        (unsigned long long)c.buildFailed[sec]);
+            failedBuilds += c.buildFailed[sec];
+        }
         std::printf("\n");
+        if (failedBuilds) {
+            std::printf("  threaded build failed %llu times (first: %s)\n", (unsigned long long)failedBuilds,
+                        c.firstBuildError.c_str());
+            ++failures;
+        }
         for (int sec = 1; sec <= 6; ++sec)
             for (size_t k = 1; k < (size_t)etvm::Fallback::Count; ++k)
                 if (c.reasons[sec][k])

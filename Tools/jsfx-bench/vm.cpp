@@ -3,12 +3,13 @@
 //   jsfx-bench --vm-dump [--vm-ir] [--vm-json out.json] <file.jsfx|dir> ...
 //       ysfx で読んでコンパイルし、全部の handle（@gfx・@serialize も）を持ち上げる。handle ごとに
 //       持ち上がったか（だめなら理由と位置）・ブロック・命令・升の数を出し、節ごとの割合と理由の表を出す。
-//       --vm-ir は中間表現も出す（升は変数名・const(値)・temp・static・volatile で）。
+//       --vm-ir は中間表現と、そこから並べた threaded code（段 S2）も出す（升は変数名・const(値)・temp・
+//       static・volatile で）。節ごとに threaded code にできた handle とハンドラの数・畳んだ数も数える。
 //   jsfx-bench --vm-opgrid
 //       設計 §12.1: 命令 1 つ（とその前後の最小限）のバイトコードを手で組み、値の格子（±0・非正規化数・
 //       closefactor のきわ・2^31・2^63・±Inf・NaN の 2 つのペイロード・-NaN …）の全部の組で、
 //       portable（NSEEL_code_execute = WDL の GLUE_CALL_CODE そのもの）と、持ち上げた中間表現の参照の
-//       解釈を回し、出力の升を 1 ビットまで比べる。megabuf は VM を 2 つ作って、書いた先（塊と位置、
+//       解釈・threaded code（段 S2）を回し、出力の升を 1 ビットまで比べる。megabuf は VM を 2 つ作って、書いた先（塊と位置、
 //       または nseel_ramalloc_onfail）を比べる。
 #include "ysfx.h"
 #include "WDL/eel2/ns-eel.h"
@@ -16,6 +17,7 @@
 
 #include "ETVMBytecode.h"
 #include "ETVMLink.h"
+#include "ETVMExec.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -78,6 +80,9 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
     std::vector<std::string> files;
     for (const auto &p : paths) listInputs(p, files);
     uint64_t handles[8] = {}, lifted[8] = {}, blocks[8] = {}, insns[8] = {}, nodes[8] = {};
+    uint64_t thBuilt[8] = {}, thHandlers[8] = {}, thIR[8] = {}, thFolded[8] = {}, thDirect[8] = {}, thFused[8] = {},
+             thCoalesced[8] = {}, thCopies[8] = {}, thDead[8] = {};
+    std::string thFirstError;
     std::map<std::string, uint64_t> reasons[8];
     uint64_t cellClasses[5] = {}, filesCompiled = 0, filesAllLifted = 0, filesNoConst = 0;
     double linkMsTotal = 0, linkMsMax = 0;
@@ -125,9 +130,22 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
                 ++lifted[sec];
                 blocks[sec] += hr.lift.fn.blocks.size();
                 insns[sec] += hr.lift.fn.instructionCount();
-                std::printf("  %-12s lifted   nodes %6zu blocks %5zu insns %6zu\n", label, hr.lift.nodes,
-                            hr.lift.fn.blocks.size(), hr.lift.fn.instructionCount());
-                if (printIR) std::fputs(etvm::print(hr.lift.fn, cellNamer, (void *)&rep).c_str(), stdout);
+                std::string why;
+                etvm::ThreadedStats ts;
+                etvm::ThreadedProgram *tp = etvm::buildThreaded(hr.lift.fn, why, &ts);
+                if (tp) {
+                    ++thBuilt[sec]; thHandlers[sec] += ts.handlers; thIR[sec] += ts.irInstructions;
+                    thFolded[sec] += ts.foldedLoads; thDirect[sec] += ts.directDest; thFused[sec] += ts.fused;
+                    thCoalesced[sec] += ts.coalesced; thCopies[sec] += ts.copies; thDead[sec] += ts.dead;
+                } else if (thFirstError.empty()) thFirstError = std::string(base) + ": " + why;
+                std::printf("  %-12s lifted   nodes %6zu blocks %5zu insns %6zu  threaded %s %zu handlers\n", label,
+                            hr.lift.nodes, hr.lift.fn.blocks.size(), hr.lift.fn.instructionCount(),
+                            tp ? "ok" : ("FAIL " + why).c_str(), ts.handlers);
+                if (printIR) {
+                    std::fputs(etvm::print(hr.lift.fn, cellNamer, (void *)&rep).c_str(), stdout);
+                    if (tp) std::fputs(etvm::disassembleThreaded(tp, cellNamer, (void *)&rep).c_str(), stdout);
+                }
+                if (tp) etvm::freeThreaded(tp);
             } else {
                 ++reasons[sec][etvm::fallbackName(hr.lift.reason)];
                 std::printf("  %-12s FALLBACK %s at pc %" PRIu64 ": %s\n", label, etvm::fallbackName(hr.lift.reason),
@@ -163,14 +181,30 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
             std::printf("      fallback %-18s %" PRIu64 "\n", why.c_str(), cnt);
             rs += (rs.empty() ? "" : ", ") + std::string("\"") + why + "\": " + std::to_string(cnt);
         }
-        char item[512];
+        char item[1024];
         std::snprintf(item, sizeof item, "%s\"%s\": {\"handles\": %" PRIu64 ", \"lifted\": %" PRIu64 ", \"blocks\": %" PRIu64
-                      ", \"insns\": %" PRIu64 ", \"nodes\": %" PRIu64 ", \"fallbacks\": {%s}}",
+                      ", \"insns\": %" PRIu64 ", \"nodes\": %" PRIu64 ", \"fallbacks\": {%s}, \"threaded\": {\"built\": %" PRIu64
+                      ", \"ir\": %" PRIu64 ", \"handlers\": %" PRIu64 ", \"dead\": %" PRIu64 ", \"foldedLoads\": %" PRIu64
+                      ", \"directDest\": %" PRIu64 ", \"fused\": %" PRIu64 ", \"coalesced\": %" PRIu64 ", \"copies\": %" PRIu64 "}}",
                       jsonSections.empty() ? "" : ", ", kSectionNames[sec], handles[sec], lifted[sec], blocks[sec],
-                      insns[sec], nodes[sec], rs.c_str());
+                      insns[sec], nodes[sec], rs.c_str(), thBuilt[sec], thIR[sec], thHandlers[sec], thDead[sec],
+                      thFolded[sec], thDirect[sec], thFused[sec], thCoalesced[sec], thCopies[sec]);
         jsonSections += item;
     }
     std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %7.1f%%\n", "all", th, tl, th ? 100.0 * (double)tl / (double)th : 100.0);
+    std::printf("\nthreaded code (stage S2; lifted handles -> handlers)\n");
+    std::printf("  %-10s %8s %8s %9s %7s %7s %7s %7s %7s %7s %7s\n", "section", "built", "IR", "handlers", "h/IR",
+                "dead", "folded", "direct", "fused", "coal", "copies");
+    uint64_t tb = 0;
+    for (int sec = 1; sec <= 6; ++sec) {
+        tb += thBuilt[sec];
+        std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %9" PRIu64 " %7.2f %7" PRIu64 " %7" PRIu64 " %7" PRIu64 " %7" PRIu64
+                    " %7" PRIu64 " %7" PRIu64 "\n", kSectionNames[sec], thBuilt[sec], thIR[sec], thHandlers[sec],
+                    thIR[sec] ? (double)thHandlers[sec] / (double)thIR[sec] : 0.0, thDead[sec], thFolded[sec],
+                    thDirect[sec], thFused[sec], thCoalesced[sec], thCopies[sec]);
+    }
+    std::printf("  threaded built for %" PRIu64 " of %" PRIu64 " lifted handles%s%s\n", tb, tl,
+                thFirstError.empty() ? "" : "; first failure: ", thFirstError.c_str());
     std::printf("  cells: var %" PRIu64 " const %" PRIu64 " static %" PRIu64 " temp %" PRIu64 " volatile %" PRIu64 "\n",
                 cellClasses[0], cellClasses[1], cellClasses[2], cellClasses[3], cellClasses[4]);
     std::printf("  link (lift every handle + classify cells): total %.2f ms, max %.3f ms (%s)\n", linkMsTotal, linkMsMax,
@@ -189,7 +223,7 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
         std::printf("json: %s\n", jsonPath.c_str());
     }
     // 割合は数えるだけ（断るのは正しい振る舞い）。照合は --vm-opgrid と --diff。
-    return filesCompiled ? 0 : 1;
+    return filesCompiled && tb == tl ? 0 : 1;
 #endif
 }
 
@@ -254,8 +288,8 @@ void runPortable(const Asm &a, Machine &m)
     NSEEL_code_execute(&h);
 }
 
-/// 持ち上げて参照の解釈で回す。だめなら理由。
-std::string runLifted(const Asm &a, Machine &m)
+/// 持ち上げて参照の解釈（threaded = false）か threaded code（段 S2）で回す。だめなら理由。
+std::string runLifted(const Asm &a, Machine &m, bool threaded = false)
 {
     etvm::LiftInput in;
     in.code = a.b.data();
@@ -279,6 +313,15 @@ std::string runLifted(const Asm &a, Machine &m)
             }
     }
     if (!r.ok()) return std::string(etvm::fallbackName(r.reason)) + ": " + r.detail;
+    if (threaded) {
+        std::string why;
+        etvm::ThreadedProgram *p = etvm::buildThreaded(r.fn, why);
+        if (!p) return "threaded: " + why;
+        if (debug) std::fputs(etvm::disassembleThreaded(p).c_str(), stderr);
+        etvm::runThreaded(p, 1, nullptr, nullptr, nullptr);
+        etvm::freeThreaded(p);
+        return std::string();
+    }
     etvm::InterpState st;
     etvm::interpret(r.fn, st);
     return std::string();
@@ -286,7 +329,8 @@ std::string runLifted(const Asm &a, Machine &m)
 
 struct Tally {
     uint64_t cases = 0, bad = 0, liftFail = 0, nanPair = 0;
-    std::string first;
+    uint64_t badTh = 0, nanPairTh = 0; // threaded code（段 S2）と portable
+    std::string first, firstTh;
 };
 
 bool isNaNBits(uint64_t b) { return (b & 0x7ff0000000000000ull) == 0x7ff0000000000000ull && (b & 0xfffffffffffffull); }
@@ -302,37 +346,45 @@ void check(const char *name, std::map<std::string, Tally> &t, const std::vector<
     Machine mach; // megabuf を使わない組は 1 つで足りる（rt は読まない）
     for (size_t i = 0; i < grid.size(); ++i)
         for (size_t j = 0; j < ny; ++j) {
-            Cells c[2];
-            for (int side = 0; side < 2; ++side) {
+            // 0 = portable、1 = 中間表現の参照の解釈、2 = threaded code（段 S2）
+            Cells c[3];
+            bool lifted = true;
+            for (int side = 0; side < 3 && lifted; ++side) {
                 c[side] = Cells{grid[i], grid[j % grid.size()], grid[i], 0.0, 12345.678};
                 std::memset(mach.wt, 0, sizeof mach.wt);
                 Asm a;
                 build(a, c[side]);
                 if (side == 0) runPortable(a, mach);
                 else {
-                    const std::string why = runLifted(a, mach);
+                    const std::string why = runLifted(a, mach, side == 2);
                     if (!why.empty()) {
                         if (!ta.liftFail++ && ta.first.empty()) ta.first = "lift: " + why;
-                        continue;
+                        lifted = false;
                     }
                 }
             }
+            if (!lifted) continue;
             ++ta.cases;
             const uint64_t pc[4] = {bitsOf(c[0].x), bitsOf(c[0].y), bitsOf(c[0].z), bitsOf(c[0].o)};
-            const uint64_t ic[4] = {bitsOf(c[1].x), bitsOf(c[1].y), bitsOf(c[1].z), bitsOf(c[1].o)};
-            bool same = true, onlyNaNPayload = true;
-            for (int k = 0; k < 4; ++k)
-                if (pc[k] != ic[k]) { same = false; onlyNaNPayload &= isNaNBits(pc[k]) && isNaNBits(ic[k]); }
             // 2 つの入力がどちらも NaN のとき、どちらのペイロードが残るかは C コンパイラが + * のオペランドを
             // どちらの順に置いたかで決まる（portable の TU の中でも決まっていない）。分けて数える。
             const bool twoNaNs = arity >= 2 && isNaNBits(bitsOf(grid[i])) && isNaNBits(bitsOf(grid[j % grid.size()]));
-            if (!same && twoNaNs && onlyNaNPayload) { ++ta.nanPair; continue; }
-            if (!same && !ta.bad++) {
-                char b[400];
-                std::snprintf(b, sizeof b, "x=%a y=%a: portable x,y,z,o=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
-                              ",%016" PRIx64 " / ir %016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
-                              grid[i], grid[j % grid.size()], pc[0], pc[1], pc[2], pc[3], ic[0], ic[1], ic[2], ic[3]);
-                ta.first = b;
+            for (int side = 1; side < 3; ++side) {
+                const uint64_t ic[4] = {bitsOf(c[side].x), bitsOf(c[side].y), bitsOf(c[side].z), bitsOf(c[side].o)};
+                bool same = true, onlyNaNPayload = true;
+                for (int k = 0; k < 4; ++k)
+                    if (pc[k] != ic[k]) { same = false; onlyNaNPayload &= isNaNBits(pc[k]) && isNaNBits(ic[k]); }
+                uint64_t &bad = side == 1 ? ta.bad : ta.badTh;
+                std::string &first = side == 1 ? ta.first : ta.firstTh;
+                if (!same && twoNaNs && onlyNaNPayload) { ++(side == 1 ? ta.nanPair : ta.nanPairTh); continue; }
+                if (!same && !bad++) {
+                    char b[400];
+                    std::snprintf(b, sizeof b, "x=%a y=%a: portable x,y,z,o=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+                                  ",%016" PRIx64 " / %s %016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
+                                  grid[i], grid[j % grid.size()], pc[0], pc[1], pc[2], pc[3],
+                                  side == 1 ? "ir" : "threaded", ic[0], ic[1], ic[2], ic[3]);
+                    first = b;
+                }
             }
         }
 }
@@ -500,9 +552,9 @@ int ETJSFXBenchVMOpGridMain()
     {
         Tally &ta = t["MEGABUF"];
         for (double x : grid) {
-            std::string where[2];
+            std::string where[3];
             bool lifted = true;
-            for (int side = 0; side < 2; ++side) {
+            for (int side = 0; side < 3; ++side) {
                 Machine mach;
                 nseel_ramalloc_onfail = 0;
                 double cx = x, mark = 777.25;
@@ -511,7 +563,7 @@ int ETJSFXBenchVMOpGridMain()
                 a.op(ETBC_MOV_FPTOP_DV); a.ptr(&mark); a.op(ETBC_ASSIGN_FAST_FROMFP); a.op(ETBC_RET);
                 if (side == 0) runPortable(a, mach);
                 else {
-                    const std::string why = runLifted(a, mach);
+                    const std::string why = runLifted(a, mach, side == 2);
                     if (!why.empty()) { lifted = false; if (!ta.liftFail++) ta.first = "lift: " + why; break; }
                 }
                 where[side] = megabufTarget(mach, mark);
@@ -524,22 +576,31 @@ int ETJSFXBenchVMOpGridMain()
                 std::snprintf(b, sizeof b, "x=%a: portable %s / ir %s", x, where[0].c_str(), where[1].c_str());
                 ta.first = b;
             }
+            if (where[0] != where[2] && !ta.badTh++) {
+                char b[160];
+                std::snprintf(b, sizeof b, "x=%a: portable %s / threaded %s", x, where[0].c_str(), where[2].c_str());
+                ta.firstTh = b;
+            }
         }
     }
-    uint64_t total = 0, bad = 0, fails = 0, nanPairs = 0;
-    std::printf("jsfx-bench --vm-opgrid: %zu values; portable (GLUE_CALL_CODE) vs lifted IR (reference interpreter)\n",
-                grid.size());
+    uint64_t total = 0, bad = 0, badTh = 0, fails = 0, nanPairs = 0, nanPairsTh = 0;
+    std::printf("jsfx-bench --vm-opgrid: %zu values; portable (GLUE_CALL_CODE) vs lifted IR (reference interpreter) "
+                "and vs threaded code (stage S2)\n", grid.size());
     for (const auto &[name, ta] : t) {
-        total += ta.cases; bad += ta.bad; fails += ta.liftFail; nanPairs += ta.nanPair;
-        std::printf("  %-22s %6" PRIu64 " cases  %s", name.c_str(), ta.cases, ta.bad || ta.liftFail ? "MISMATCH" : "ok");
-        if (ta.nanPair) std::printf("  (NaN+NaN payload choice: %" PRIu64 ")", ta.nanPair);
+        total += ta.cases; bad += ta.bad; badTh += ta.badTh; fails += ta.liftFail; nanPairs += ta.nanPair;
+        nanPairsTh += ta.nanPairTh;
+        std::printf("  %-22s %6" PRIu64 " cases  %s", name.c_str(), ta.cases,
+                    ta.bad || ta.badTh || ta.liftFail ? "MISMATCH" : "ok");
+        if (ta.nanPair || ta.nanPairTh)
+            std::printf("  (NaN+NaN payload choice: ir %" PRIu64 ", threaded %" PRIu64 ")", ta.nanPair, ta.nanPairTh);
         if (!ta.first.empty()) std::printf("  %s", ta.first.c_str());
+        if (!ta.firstTh.empty()) std::printf("  %s", ta.firstTh.c_str());
         std::printf("\n");
     }
-    std::printf("total %" PRIu64 " cases, %" PRIu64 " mismatched, %" PRIu64 " not lifted, %" PRIu64
-                " NaN+NaN payload choices (operand order of the C compiler; not counted as mismatches)\n",
-                total, bad, fails, nanPairs);
-    std::printf(bad || fails ? "RESULT FAIL\n" : "RESULT ok\n");
-    return bad || fails ? 1 : 0;
+    std::printf("total %" PRIu64 " cases, mismatched: ir %" PRIu64 ", threaded %" PRIu64 "; %" PRIu64 " not lifted; "
+                "NaN+NaN payload choices ir %" PRIu64 ", threaded %" PRIu64 " (operand order of the C compiler; not "
+                "counted as mismatches)\n", total, bad, badTh, fails, nanPairs, nanPairsTh);
+    std::printf(bad || badTh || fails ? "RESULT FAIL\n" : "RESULT ok\n");
+    return bad || badTh || fails ? 1 : 0;
 #endif
 }

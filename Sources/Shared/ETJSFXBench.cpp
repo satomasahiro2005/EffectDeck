@@ -115,7 +115,7 @@ bool selectExecutor(ETJSFX *host, std::string &error)
     return false;
 }
 extern "C" void ETVM_Install(void); // Sources/JSFXVM/ETVM.h（YSFX の中。アプリの既定では呼ばない）
-/// vm-reg（NSEEL_EXEC_REG = 5）。段 S1 は持ち上げた中間表現の参照の解釈（遅い。照合のためだけ）。
+/// vm-reg（NSEEL_EXEC_REG = 5）。持ち上げた中間表現から並べた threaded code（段 S2。Sources/JSFXVM）。
 bool selectReg(ETJSFX *host, std::string &error)
 {
     ETVM_Install();
@@ -146,7 +146,7 @@ const Variant kVariants[] = {
     {"vm-goto", true, Check::exact, 0, hostVariant<selectExecutor<2>>},
     {"vm-goto-fpreg", true, Check::exact, 0, hostVariant<selectExecutor<3>>},
     {"vm-goto-fpreg-mask", true, Check::exact, 0, hostVariant<selectExecutor<4>>},
-    {"vm-reg", true, Check::exact, 0, hostVariant<selectReg>, true},
+    {"vm-reg", true, Check::exact, 0, hostVariant<selectReg>},
     {"cpp", false, Check::tolerance, 1e-6, cppVariant},
 };
 

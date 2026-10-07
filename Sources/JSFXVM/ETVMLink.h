@@ -59,6 +59,10 @@ struct Coverage {
     uint64_t lifted[8] = {};
     uint64_t attached[8] = {};
     uint64_t reasons[8][(size_t)Fallback::Count] = {};
+    uint64_t buildFailed[8] = {};      // threaded code を並べられなかった（vm-goto-fpreg で回る）
+    uint64_t irInstructions[8] = {};   // threaded にした handle の中間表現の命令
+    uint64_t threadedHandlers[8] = {}; // 並べたハンドラ
+    std::string firstBuildError;
 };
 Coverage coverage();
 void resetCoverage();

@@ -1,7 +1,8 @@
-// ETVMLink.cpp — VM 全体のつなぎ（升の分類）、NSEEL_EXEC_REG の実行系（段 S1: 参照の解釈）、数え。
+// ETVMLink.cpp — VM 全体のつなぎ（升の分類）、NSEEL_EXEC_REG の実行系（段 S2 の threaded code・段 S1 の参照の解釈）、数え。
 #include "ETVMLink.h"
 
 #include "ETVM.h"
+#include "ETVMExec.h"
 #include "ETVMOps.h"
 #include "WDL/eel2/ns-eel.h"
 #include "ysfx.h"
@@ -220,16 +221,25 @@ uint64_t stateHash(void *vm, void *const *handles, const int *sections, uint32_t
     return h;
 }
 
-// ---- NSEEL_EXEC_REG の実行系（段 S1: 参照の解釈） --------------------------------------------------------
+// ---- NSEEL_EXEC_REG の実行系 ------------------------------------------------------------------------------
+// 既定は段 S2 の threaded code（ETVMSelect.cpp・ETVMHandlers.cpp）。ETVM_SetEngine(ETVM_ENGINE_REFERENCE) で
+// 段 S1 の参照の解釈（照合のため。遅い）。作るときに選び、プログラムが自分の種類を持つ。
 namespace {
 struct Program {
-    Function fn;
+    int engine = ETVM_ENGINE_THREADED;
+    Function fn;               // 参照の解釈のとき
     InterpState st;
+    ThreadedProgram *threaded = nullptr;
+    ~Program() { if (threaded) freeThreaded(threaded); }
 };
 
 void runProgram(void *prog, unsigned int nframes, NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx)
 {
     Program *p = (Program *)prog;
+    if (p->threaded) {
+        runThreaded(p->threaded, nframes, pre, post, ctx);
+        return;
+    }
     for (unsigned int i = 0; i < nframes; ++i) {
         if (pre) pre(ctx, i);
         interpret(p->fn, p->st);
@@ -241,6 +251,7 @@ void freeProgram(void *prog) { delete (Program *)prog; }
 
 const NSEEL_exec_backend kBackend = {runProgram, freeProgram};
 std::atomic<uint32_t> gMask{ETVM_SECTIONS_DEFAULT};
+std::atomic<int> gEngine{ETVM_ENGINE_THREADED};
 std::mutex gCoverageMutex;
 Coverage gCoverage;
 
@@ -248,6 +259,7 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
 {
     LinkReport rep = link(vm, handles, sections, count);
     const uint32_t mask = gMask.load(std::memory_order_relaxed);
+    const int engine = gEngine.load(std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(gCoverageMutex);
     for (uint32_t i = 0; i < count; ++i) {
         if (!handles[i]) continue;
@@ -258,15 +270,31 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
             if (hr.lift.ok()) ++gCoverage.lifted[sec];
             else ++gCoverage.reasons[sec][(size_t)hr.lift.reason];
         }
+        Program *p = nullptr;
         if (hr.present && hr.lift.ok() && (mask & (1u << sec))) {
-            Program *p = new Program;
-            p->fn = std::move(hr.lift.fn);
-            p->st.vals.resize(p->fn.values.size());
-            NSEEL_code_attach_program(handles[i], p);
-            ++gCoverage.attached[sec];
-        } else {
-            NSEEL_code_attach_program(handles[i], nullptr);
+            p = new Program;
+            p->engine = engine;
+            if (engine == ETVM_ENGINE_REFERENCE) {
+                p->fn = std::move(hr.lift.fn);
+                p->st.vals.resize(p->fn.values.size());
+            } else {
+                std::string why;
+                ThreadedStats ts;
+                p->threaded = buildThreaded(hr.lift.fn, why, &ts);
+                if (!p->threaded) {
+                    // 並べられない（知らない命令）。プログラムを付けない＝ vm-goto-fpreg で回る。
+                    ++gCoverage.buildFailed[sec];
+                    if (gCoverage.firstBuildError.empty()) gCoverage.firstBuildError = why;
+                    delete p;
+                    p = nullptr;
+                } else {
+                    gCoverage.irInstructions[sec] += ts.irInstructions;
+                    gCoverage.threadedHandlers[sec] += ts.handlers;
+                }
+            }
         }
+        NSEEL_code_attach_program(handles[i], p);
+        if (p) ++gCoverage.attached[sec];
     }
 }
 } // namespace
@@ -293,3 +321,9 @@ extern "C" void ETVM_Install(void)
 
 extern "C" void ETVM_SetSectionMask(uint32_t mask) { etvm::gMask.store(mask, std::memory_order_relaxed); }
 extern "C" uint32_t ETVM_GetSectionMask(void) { return etvm::gMask.load(std::memory_order_relaxed); }
+extern "C" void ETVM_SetEngine(int engine)
+{
+    etvm::gEngine.store(engine == ETVM_ENGINE_REFERENCE ? ETVM_ENGINE_REFERENCE : ETVM_ENGINE_THREADED,
+                        std::memory_order_relaxed);
+}
+extern "C" int ETVM_GetEngine(void) { return etvm::gEngine.load(std::memory_order_relaxed); }
