@@ -21,7 +21,7 @@
 //      既定が portable の建て方では何もしない。締切を一度でも超えたら比べない（外れたかが時刻で変わる）。
 //      プロセスで共有されて前の回の残りが見えるもの（名前の無い gmem・time()・time_precise()）を
 //      ソースが書いていたら比べない。範囲の外の番地が指す 1 語（nseel_ramalloc_onfail）は回ごとに 0 に戻す。
-//      3 つめに vm-reg（NSEEL_EXEC_REG = Sources/JSFXVM の、持ち上げた中間表現の参照の解釈）も同じに回して
+//      3 つめに vm-reg（NSEEL_EXEC_REG = Sources/JSFXVM の threaded code。段 S2）も同じに回して
 //      portable と比べる（docs/jsfx-regvm-design.md §12.2）
 //
 // 標本化率・ブロック長・つまみの値・画の大きさは入力の FNV-1a から決める（同じ入力は同じ回り方）。

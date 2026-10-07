@@ -270,7 +270,7 @@ for bin in "${bins[@]}"; do
   if [ "$eel" = portable ]; then variants=; else variants=wdl-jit,cpp; fi
   out="$work/$label-$opt-$eel.json"
   args=(--dir "$repo/Debug/JSFXBench" --seconds "$seconds" --json "$out"
-        --config "cli-$opt" --sha "$sha" --flags "clang -$opt -fsigned-char ($eel; ysfx, host and harness)")
+        --config "cli-$opt" --sha "$sha" --flags "clang -$opt -fsigned-char -fno-strict-float-cast-overflow ($eel; ysfx, host and harness)")
   [ -n "$variants" ] && args+=(--variants "$variants")
   [ -n "$scripts" ] && args+=(--scripts "$scripts")
   echo "== run $name"
