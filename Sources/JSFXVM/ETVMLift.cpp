@@ -14,8 +14,10 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <unordered_map>
+#include <vector>
 
 namespace etvm {
 
@@ -809,7 +811,10 @@ private:
                 const uint32_t top = fpPop(s);
                 uint32_t &top2 = fpTop(s);
                 const Op op = n.op == ETBC_ADD ? Op::FAdd : n.op == ETBC_SUB ? Op::FSub : n.op == ETBC_MUL ? Op::FMul : Op::FDiv;
-                top2 = emit(op, Ty::F64, {top2, top});
+                // + * は portable が機械の 1 つめにした方を左に（NaN が 2 つのときのペイロード。portableNaNOrder）
+                const PortableNaNOrder &no = portableNaNOrder();
+                const bool topFirst = n.op == ETBC_ADD ? no.addTopFirst : n.op == ETBC_MUL ? no.mulTopFirst : false;
+                top2 = topFirst ? emit(op, Ty::F64, {top, top2}) : emit(op, Ty::F64, {top2, top});
                 break;
             }
             case ETBC_AND: case ETBC_OR: case ETBC_XOR: {
@@ -828,7 +833,11 @@ private:
                 const Op op = (k == ETBC_ADD_OP || k == ETBC_ADD_OP_FAST) ? Op::FAdd
                             : (k == ETBC_SUB_OP || k == ETBC_SUB_OP_FAST) ? Op::FSub
                             : (k == ETBC_MUL_OP || k == ETBC_MUL_OP_FAST) ? Op::FMul : Op::FDiv;
-                uint32_t r = emit(op, Ty::F64, {old, v});
+                // + * は portable の _FAST が機械の 1 つめにした方を左に（フィルタの在る方は NaN が 0 になるので
+                // どちらでもよいが、同じにしておく）
+                const PortableNaNOrder &no = portableNaNOrder();
+                const bool valueFirst = op == Op::FAdd ? no.addOpValueFirst : op == Op::FMul ? no.mulOpValueFirst : false;
+                uint32_t r = valueFirst ? emit(op, Ty::F64, {v, old}) : emit(op, Ty::F64, {old, v});
                 if (k == ETBC_ADD_OP || k == ETBC_SUB_OP || k == ETBC_MUL_OP || k == ETBC_DIV_OP)
                     r = emit(Op::Filter, Ty::F64, {r});
                 storeVia(s.p[1], r);
@@ -1085,6 +1094,65 @@ private:
 };
 
 } // namespace
+
+namespace {
+#if defined(EEL_TARGET_PORTABLE)
+/// 1 = 後の方（top・降ろした値）が残った、0 = 先の方、-1 = どちらでもない
+int probeNaNPair(int op, bool opAssign)
+{
+    const uint64_t first = 0x7ff8000000000001ull, second = 0xfff800000000beefull;
+    double x, y, o = 0;
+    std::memcpy(&x, &first, 8);
+    std::memcpy(&y, &second, 8);
+    std::vector<unsigned char> code;
+    auto put = [&](const void *p, size_t n) { code.insert(code.end(), (const unsigned char *)p, (const unsigned char *)p + n); };
+    auto opc = [&](int v) { put(&v, 4); };
+    auto ptr = [&](const void *p) { const uint64_t v = (uint64_t)(uintptr_t)p; put(&v, 8); };
+    if (opAssign) {
+        // 升 x に += / *= y（_FAST）。結果は x に
+        opc(ETBC_MOV_P2_DV); ptr(&x); opc(ETBC_MOV_FPTOP_DV); ptr(&y); opc(op);
+    } else {
+        // x を積み、y を積み（top）、1 つにして o へ
+        opc(ETBC_MOV_FPTOP_DV); ptr(&x); opc(ETBC_MOV_FPTOP_DV); ptr(&y); opc(op); opc(ETBC_POP_FPSTACK_TO_PTR); ptr(&o);
+    }
+    opc(ETBC_RET);
+    static EEL_F *blocks[NSEEL_RAM_BLOCKS];
+    EEL_F wt[64 + 48] = {};
+    codeHandleType h;
+    std::memset(&h, 0, sizeof h);
+    h.code = code.data();
+    h.workTable = wt;
+    h.ramPtr = blocks;
+    NSEEL_code_execute(&h);
+    uint64_t r;
+    std::memcpy(&r, opAssign ? (const void *)&x : (const void *)&o, 8);
+    // 静かにしたもの（どちらも静かな NaN なので同じ）と比べる
+    return r == second ? 1 : r == first ? 0 : -1;
+}
+#endif
+} // namespace
+
+const PortableNaNOrder &portableNaNOrder()
+{
+    static const PortableNaNOrder order = [] {
+        PortableNaNOrder o;
+#if defined(EEL_TARGET_PORTABLE)
+        struct { const char *name; int op; bool opAssign; bool *out; } probes[] = {
+            {"ADD", ETBC_ADD, false, &o.addTopFirst}, {"MUL", ETBC_MUL, false, &o.mulTopFirst},
+            {"ADD_OP_FAST", ETBC_ADD_OP_FAST, true, &o.addOpValueFirst},
+            {"MUL_OP_FAST", ETBC_MUL_OP_FAST, true, &o.mulOpValueFirst},
+        };
+        for (const auto &p : probes) {
+            const int r = probeNaNPair(p.op, p.opAssign);
+            *p.out = r == 1;
+            if (r < 0) o.note += std::string(o.note.empty() ? "" : ", ") + p.name + ": neither NaN";
+        }
+        o.probed = true;
+#endif
+        return o;
+    }();
+    return order;
+}
 
 LiftResult lift(const LiftInput &in, const LiftOptions &opt)
 {

@@ -1,0 +1,24 @@
+desc:jsfx-bench --diff: + * のオペランドが 2 つとも NaN（fuzz-long の vm-reg と portable の違い 2 つ）
+// 符号の違う NaN を足す・掛けると、残る NaN は機械の命令の 1 つめのオペランドで決まる。portable（glue_port.h の C）
+// はコンパイラが順を選ぶ（x86-64 の Linux の版は top を 1 つめにしていた）。vm-reg は中間表現の左を 1 つめにしていて、
+// 符号が逆になった（Sources/JSFXVM/ETVMOps.h の etvm_fadd、ETVMLift.cpp の portableNaNOrder）。
+// ふつうの代入はフィルタで NaN を 0 にするので、フィルタを通らない所で見る: 関数の引数の升と ^=（pow の書き戻し）。
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+function f1(p, q) ( t * t + 1; );
+function nanp() ( z / z );
+function nann() ( -(z / z) );
+z = 0;
+@sample
+// fuzz-long の 1 つめ（x86-64）: 引数の升に -(x) + pow(8, x)。x が NaN なら NaN + NaN
+i = slider(f1(-(spl0) + pow(8, spl0), pow(m, f[] * 2)));
+f1(-(nanp()) + pow(8, nanp()), 1);
+f1(nann() + nanp(), nanp() + nann());
+// fuzz-long の 2 つめ（x86-64）: i ^= (… + …)。pow(i, NaN) は NaN をそのまま返し、^= はフィルタを通らない
+v ^= spl1 + -spl1;
+w = 1; w ^= nanp() + nann();
+u = 1; u ^= nann() + nanp();
+spl0 = spl1 = 0;

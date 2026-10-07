@@ -813,6 +813,13 @@ bool Builder::emit(ThreadedProgram &p)
             return;
         }
         if (on(ETVM_PASS_OPTO) && dst == pa) { ++st.opTo; e.h(kTo[fi][ai]); e.d(dst); e.d(pb); return; }
+        // 行き先 = 右の + *: 左を機械の 1 つめのまま（AddTR・MulTR）。フィルタが在れば NaN は 0 になるので
+        // 入れ替えて AddTF・MulTF でよい
+        if (on(ETVM_PASS_OPTO) && dst == pb && (ai == 0 || ai == 2)) {
+            ++st.opTo;
+            e.h(filt ? kTo[1][ai] : ai == 0 ? HK::AddTR : HK::MulTR); e.d(dst); e.d(pa);
+            return;
+        }
         e.h(kPlain[fi][ai]); e.d(dst); e.d(pa); e.d(pb);
     };
 
@@ -1015,17 +1022,23 @@ bool Builder::emit(ThreadedProgram &p)
         else if (fuse[b][q] == 2 && groupKind[b][q] == GK::ArithF) { H = &bl.ins[groupMembers[b][q][0]]; filt = true; }
         if (!H) return false;
         double *dst = fdst(bl.ins[q].res);
-        if (fop(H->args[0]) != dst) return false;
         const int ai = arithIndex(H->op), fi = filt ? 1 : 0;
+        // 行き先が右の + *（dst = a op dst）: 左が NaN でない定数か、フィルタが在れば入れ替えてよい（NaN が
+        // 2 つにならない・NaN が 0 になる）。そうでなければ回し切らない（WDL は定数でない + * をフィルタ無しで
+        // 升へ戻さない: ADD_OP_FAST・MUL_OP_FAST は定数のときだけ）
+        const bool right = fop(H->args[0]) != dst && fop(H->args[1]) == dst && (ai == 0 || ai == 2);
+        if (fop(H->args[0]) != dst && !right) return false;
+        const uint32_t other = right ? H->args[0] : H->args[1];
         static const HK kIT[2][4] = {{HK::LKAddIT, HK::LKSubIT, HK::LKMulIT, HK::LKDivIT},
                                      {HK::LKAddITF, HK::LKSubITF, HK::LKMulITF, HK::LKDivITF}};
         static const HK kT[2][4] = {{HK::LKAddT, HK::LKSubT, HK::LKMulT, HK::LKDivT},
                                     {HK::LKAddTF, HK::LKSubTF, HK::LKMulTF, HK::LKDivTF}};
         double k = 0;
-        if (on(ETVM_PASS_OPIMM) && immOf(H->args[1], k)) {
+        if (on(ETVM_PASS_OPIMM) && immOf(other, k) && !(right && !filt && std::isnan(k))) {
             e.h(kIT[fi][ai]); e.s(sop(D.res)); e.s(sop(D.args[0])); e.d(dst); e.f(k);
         } else {
-            double *pb = fop(H->args[1]);
+            if (right && !filt) return false;
+            double *pb = fop(other);
             if (pb == dst) return false;
             e.h(kT[fi][ai]); e.s(sop(D.res)); e.s(sop(D.args[0])); e.d(dst); e.d(pb);
         }

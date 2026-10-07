@@ -1,0 +1,37 @@
+desc:jsfx-bench --diff: NaN + NaN・NaN * NaN をハンドラの形ごとに（vm_nan_pair.jsfx の続き）
+// FAdd・FMul、行き先 = 左（AddT・MulT）と右（AddTR・MulTR）、fuse2 の L・R、?: の合流、loop、varparm の引数。
+// 引数の升（フィルタを通らない）・megabuf（mem_set_values はそのまま書く）・^= で見る。
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+slider1:2<0,8,1>N
+@init
+function k1(p) ( p );
+function k2(p, q) ( p + q );
+function nanp() ( z / z );
+function nann() ( -(z / z) );
+z = 0; one = 1;
+@block
+// + と *（左右とも）
+k1(nanp() + nann()); k1(nann() + nanp());
+k1(nanp() * nann()); k1(nann() * nanp());
+// 行き先 = 左・右（内側の k1 が引数の升に書き、外側が同じ升へ足す・掛ける）
+k1(k1(nanp()) + nann()); k1(nann() + k1(nanp()));
+k1(k1(nann()) * nanp()); k1(nanp() * k1(nann()));
+// fuse2（a * b + c、c + a * b、a + b - c など）
+k2(nanp() * one + nann(), nann() + nanp() * one);
+k2((nanp() + nann()) * one, one * (nann() + nanp()));
+k2(nanp() * nann() + nanp(), nann() - nanp() * nann());
+// ?: の合流と loop の中
+k1((slider1 > 4 ? nanp() : nann()) + (slider1 > 4 ? nann() : nanp()));
+loop(slider1, k1(k1(nanp()) + nann()));
+x = 1; loop(slider1, x ^= nann() + nanp());
+// megabuf へそのまま（mem_set_values）
+mem_set_values(100, nanp() + nann(), nann() + nanp(), nanp() * nann(), nann() * nanp());
+y = 1; y ^= k2(nanp(), nann());
+@sample
+// 入力の NaN（jsfx-bench --diff・jsfxvmdiff はときどき NaN を入れる）
+k1(spl0 + -spl0); k1(-spl1 * spl1);
+s ^= spl0 * -spl0;
+spl0 = spl1 = 0;

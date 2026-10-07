@@ -696,6 +696,8 @@ Commits on `perf/jsfx-vm`: a700e2a (S0 patch revision), 0558811 (Sources/JSFXVM)
    interpreters have the same exposure. The IR keeps source order; the grid counts these cases separately
    (x86-64: 40, arm64: 24 of 75,825) and does not call them mismatches. A single NaN operand, NaN vs number, and all
    other ops are bit-exact.
+   **Fixed 2026-10-08 (§16.2 item 10):** the patch pins the order in portable and in the stage-1 executors, the VM pins
+   it in its handlers and probes portable once; the grid no longer exempts NaN pairs.
 10. The state hash leaves out worktable and user-stack *contents*: both are `malloc`ed and never initialised, so
     portable-vs-portable already differs there. Static cells (constants, function locals, `#strings`) are
     initialised at compile time and are hashed.
@@ -843,6 +845,34 @@ in the bench it is now a default variant (no longer opt-in). The patch is unchan
    argument pointer (`file_riff` also zeroes `nch`/`samplerate`, as its other failure branches do); no other
    `ysfx_api_*` pointer-returning function has a NULL path. Reproducer: `Tools/jsfx-bench/diff/file_null.jsfx` (also a
    `jsfxexec` seed). The handle is rounded as `(int)(h + 0.0001)`, so -1 becomes 0 and only h <= -2 is negative.
+10. **NaN + NaN operand order (`fuzz-long` run 37642674891, both x86-64 findings).** With both operands NaN, `+` and
+    `*` return the NaN of the machine instruction's first operand (x86-64 `addsd`/`mulsd`: the first, quieted; arm64
+    `fadd`/`fmul`: a signalling NaN first, then the first). C lets the compiler commute `a + b`, so each executor had
+    its own answer: on Linux x86-64 portable kept `top` (the later push), vm-block and vm-goto kept `top2`, the VM's
+    handlers kept the IR's left operand (`top2`). `jsfxvmdiff` saw it as a static cell (a function parameter, which is
+    stored unfiltered: `f1(-(spl0) + pow(8, spl0))`) and a variable written by `^=` (`pow(i, NaN)` returns that NaN
+    unfiltered): `0x7ff8…` vs `0xfff8…`. Root cause: the operand order was never pinned (§15.2 item 9 accepted it).
+    Fix, at the instruction level everywhere: the patch (marker `effectdeck_nan_order`) writes `ADD`, `MUL`,
+    `ADD_OP_FAST`, `MUL_OP_FAST` in `glue_port.h` and `glue_port_vm.h` as one `addsd`/`mulsd` (x86-64) or
+    `fadd`/`fmul` (arm64) in `asm` with the expression's left operand (`top2`, the cell) first; `ETVMOps.h` has the same
+    (`etvm_fadd`/`etvm_fmul`, and `_m` forms that keep x86's memory operand) and every unfiltered `+`/`*` handler uses
+    it (`FAdd`, `FMul`, `AddI`, `MulI`, `AddT`, `MulT`, `AddIT`, `MulIT`, the unfiltered loop kernels and fuse2 forms,
+    and the reference interpreter). Filtered forms stay plain C (the filter turns any NaN into 0). The lifter still
+    asks portable which operand it puts first (`etvm::portableNaNOrder()`: one `+`/`*`/`+=`/`*=` of two NaN payloads
+    through `GLUE_CALL_CODE`, once per process) and orders `FAdd`/`FMul` accordingly, so a build without the patch also
+    matches; with the patch it reports `top2`/cell. Selection got `AddTR`/`MulTR` (destination = right operand, left
+    still first) so a swapped orientation keeps the `opto` form; loop kernels whose destination is the right operand
+    of an unfiltered `+`/`*` are not formed unless the other operand is a non-NaN constant (WDL only emits unfiltered
+    `+=`/`*=` with a constant). `--vm-opgrid` now compares NaN pairs bit for bit (75,825 cases, 0 mismatched, Linux
+    -Os/-O3) and prints the probed order. Tests: `Tools/jsfx-bench/diff/vm_nan_pair.jsfx` (both findings with
+    deterministic NaNs `z/z` and `-(z/z)`) and `vm_nan_pair_forms.jsfx` (every handler form above, `?:` merge, loop,
+    `mem_set_values`); both are also `jsfxexec` seeds. Before the fix they fail vm-reg, vm-reg-ref, vm-block and
+    vm-goto in `--diff` (vm-goto-fpreg happened to match); after, all executors are bit-exact. `jsfxvmdiff` accepts
+    `JSFXVMDIFF_SEED=<n>` (fixed block plan while reducing) and prints both values of a differing cell or variable.
+11. **`strcat`/`strncat` of an empty string onto itself** (`fuzz-long` arm64 finding): `_eel_strncat` copies the
+    destination first when source and destination are the same string; copying an empty `WDL_FastString` called
+    `memcpy(NULL, NULL, 0)` (`heapbuf.h`, UBSan nonnull). The patch skips the copy for 0 bytes. Seed:
+    `Tests/Fuzz/Corpus/jsfxexec/strings_empty.jsfx`.
 
 ### 16.3 Oracle and fuzz results (vm-reg = threaded code)
 | Layer | Linux x86-64, clang 21.0.0 (swiftlang), -Os / -O3 | Mac M1 arm64, Apple clang 21.0.0, -Os / -O3 | iPhone 16 Beta |
@@ -945,7 +975,7 @@ extension does not list it; `test_check_release_binary`/`test_release_config` pa
 committed JSON (the executor did not change after d6b26a0); the -O3 sentence above was corrected (it said ±3 %).
 
 Residual: (1) NaN+NaN payload choice for `+`/`*` differs from portable (§15.2; filtered stores turn NaN into 0, so it
-survives only through `_FAST` stores, outputs and API arguments). (2) A program's frame is per handle: executing the
+survives only through `_FAST` stores, outputs and API arguments). **Fixed: §16.2 item 10.** (2) A program's frame is per handle: executing the
 same handle from two threads at once, or rebuilding programs (`ysfx_set_eel_exec_mode(REG)` twice, `ysfx_compile`)
 while the audio thread runs it, is unsafe — still the open audit of §16.5. (3) `jsfxvmdiff` skips whole inputs that
 have a handle portable may run into undefined bytes (deviation 4), so those inputs' other handles are not compared.
@@ -1156,7 +1186,8 @@ possibly mid-loop. Both executors race there; only the outcome of the race diffe
 outside the VM's bytecode writes a static data cell (ysfx writes registered variables only) and that API calls return
 pointers only to escaped cells or registered variables (stores through unknown pointers do not demote Const). A future
 ysfx/WDL change that breaks either assumption breaks `constcell` silently. (4) NaN+NaN payload choice inside the new
-fused handlers belongs to the same class as §15.2 (9); the grid checks single ops only.
+fused handlers belongs to the same class as §15.2 (9); the grid checks single ops only. **Fixed: §16.2 item 10** (the
+fused and loop-kernel handlers use the same pinned instructions; `vm_nan_pair_forms.jsfx` covers them).
 
 ## 18. Thread safety of building and running programs (2026-10-08, audit of §16.5 / §16.6 residual 2 / §17.5)
 

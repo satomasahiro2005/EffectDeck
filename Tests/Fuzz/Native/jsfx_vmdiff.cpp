@@ -265,6 +265,14 @@ uint64_t ustackPos(const void *h)
                                               : ~0ull;
 }
 
+/// " (portable 0x…, vm-reg 0x…)"（違った値の bit。縮めるときに何が違うかを見る）
+std::string bitsPair(uint64_t a, uint64_t b)
+{
+    char t[64];
+    std::snprintf(t, sizeof t, " (portable 0x%016llx, vm-reg 0x%016llx)", (unsigned long long)a, (unsigned long long)b);
+    return t;
+}
+
 /// A と B の歩みのあとの状態を比べる（違えば理由）。
 std::string compareInst(Inst &a, Inst &b)
 {
@@ -279,7 +287,7 @@ std::string compareInst(Inst &a, Inst &b)
     const auto va = vars(a), vb = vars(b);
     if (va.size() != vb.size()) return "var count";
     for (size_t i = 0; i < va.size(); ++i)
-        if (va[i] != vb[i]) return "var " + va[i].first;
+        if (va[i] != vb[i]) return "var " + va[i].first + bitsPair(va[i].second, vb[i].second);
     const auto *ra = ((compileContext *)a.vm)->ram_state, *rb = ((compileContext *)b.vm)->ram_state;
     for (int i = 0; i < NSEEL_RAM_BLOCKS; ++i) {
         if (!ra->blocks[i] != !rb->blocks[i]) return "ram block allocation " + std::to_string(i);
@@ -289,7 +297,8 @@ std::string compareInst(Inst &a, Inst &b)
     if (a.staticCells.size() != b.staticCells.size()) return "static cell count";
     for (size_t i = 0; i < a.staticCells.size(); ++i)
         if (std::memcmp((const void *)(uintptr_t)a.staticCells[i], (const void *)(uintptr_t)b.staticCells[i], 8) != 0)
-            return "static cell #" + std::to_string(i);
+            return "static cell #" + std::to_string(i) +
+                   bitsPair(*(const uint64_t *)(uintptr_t)a.staticCells[i], *(const uint64_t *)(uintptr_t)b.staticCells[i]);
     if (a.handles.size() != b.handles.size()) return "handle count";
     for (size_t i = 0; i < a.handles.size(); ++i)
         if (ustackPos(a.handles[i]) != ustackPos(b.handles[i])) return "user stack position (handle " + std::to_string(i) + ")";
@@ -539,7 +548,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         if (size) std::fwrite(data, 1, size, f);
         std::fclose(f);
     }
-    Rng r{fnv1a(data, size)};
+    // JSFXVMDIFF_SEED=<n>: 歩みの乱数（つまみ・入力・ブロック長）をソースのハッシュでなく n から（縮めるとき、
+    // ソースを変えても同じ入力で回すため）
+    static const char *seedEnv = std::getenv("JSFXVMDIFF_SEED");
+    Rng r{seedEnv ? (uint64_t)std::strtoull(seedEnv, nullptr, 0) : fnv1a(data, size)};
     static const double rates[] = {48000, 44100, 96000, 22050};
     const double rate = rates[r.below(4)];
     const uint32_t blockSize = 1 + r.below(kMaxFrames);

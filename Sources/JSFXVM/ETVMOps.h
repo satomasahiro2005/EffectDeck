@@ -35,6 +35,44 @@
 
 static inline double etvm_filter(double a) { return denormal_filter_double2(a); }
 
+// + と *（EEL_BC_ADD・MUL・ADD_OP_FAST・MUL_OP_FAST）。オペランドが 2 つとも NaN のとき、どちらのペイロード
+// （と符号）が残るかは機械の命令の 1 つめのオペランドで決まる（x86-64 の addsd・mulsd は 1 つめを静かにしたもの、
+// arm64 の fadd・fmul は信号の NaN が先で、そのあと 1 つめ）。C の a + b はコンパイラがオペランドを入れ替えて
+// よい（NaN のペイロードの他は入れ替えても同じなので）。ここは命令を asm で書いて a を必ず 1 つめにする。
+// パッチの glue_port.h（portable）と glue_port_vm.h も同じく式の左を 1 つめにしている（effectdeck_nan_order_fadd）。
+// 持ち上げは portable がどちらを 1 つめにしたかを etvm::portableNaNOrder() で調べて、中間表現の左をそれに
+// する（パッチの無い建て方でも合うように。ETVMLift.cpp、設計 §15.2 の 9）。
+// NaN が 1 つ以下なら C の a + b と同じビット。フィルタを通す結果（ADD_OP など）は NaN が 0 になるので順は
+// 効かず、C のままでよい。_m は 2 つめをメモリから（x86 はメモリのオペランドを畳む。asm の "xm" は clang が
+// 積み場へ写すので使わない）。
+#if (defined(__clang__) || defined(__GNUC__)) && defined(__x86_64__)
+static inline double etvm_fadd(double a, double b) { __asm__("addsd %1, %0" : "+x"(a) : "x"(b)); return a; }
+static inline double etvm_fmul(double a, double b) { __asm__("mulsd %1, %0" : "+x"(a) : "x"(b)); return a; }
+static inline double etvm_fadd_m(double a, const double *b) { __asm__("addsd %1, %0" : "+x"(a) : "m"(*b)); return a; }
+static inline double etvm_fmul_m(double a, const double *b) { __asm__("mulsd %1, %0" : "+x"(a) : "m"(*b)); return a; }
+#elif (defined(__clang__) || defined(__GNUC__)) && defined(__aarch64__)
+static inline double etvm_fadd(double a, double b)
+{
+    double r;
+    __asm__("fadd %d0, %d1, %d2" : "=w"(r) : "w"(a), "w"(b));
+    return r;
+}
+static inline double etvm_fmul(double a, double b)
+{
+    double r;
+    __asm__("fmul %d0, %d1, %d2" : "=w"(r) : "w"(a), "w"(b));
+    return r;
+}
+static inline double etvm_fadd_m(double a, const double *b) { return etvm_fadd(a, *b); }
+static inline double etvm_fmul_m(double a, const double *b) { return etvm_fmul(a, *b); }
+#else
+// ほかの機械・コンパイラ: 1 つめを決められない（NaN が 2 つのときだけ portable と違いうる）
+static inline double etvm_fadd(double a, double b) { return a + b; }
+static inline double etvm_fmul(double a, double b) { return a * b; }
+static inline double etvm_fadd_m(double a, const double *b) { return a + *b; }
+static inline double etvm_fmul_m(double a, const double *b) { return a * *b; }
+#endif
+
 // EEL_BC_AND / OR / XOR: (EEL_F)(((WDL_INT64)top) op (WDL_INT64)(top2))
 static inline double etvm_iand(double a, double b) { return (double)(((WDL_INT64)a) & (WDL_INT64)(b)); }
 static inline double etvm_ior(double a, double b) { return (double)(((WDL_INT64)a) | (WDL_INT64)(b)); }

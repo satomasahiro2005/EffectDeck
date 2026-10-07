@@ -53,9 +53,9 @@ ETVM_NO_SANITIZE_FUNCTION void interpret(const Function &fn, InterpState &st)
             case Op::StoreCell: std::memcpy(AS<void>(in.imm[0]), &V[a[0]], 8); break;
             case Op::Load: std::memcpy(&r, AS<void>(V[a[0]]), 8); break;
             case Op::Store: std::memcpy(AS<void>(V[a[0]]), &V[a[1]], 8); break;
-            case Op::FAdd: r = B(F(V[a[0]]) + F(V[a[1]])); break;
+            case Op::FAdd: r = B(etvm_fadd(F(V[a[0]]), F(V[a[1]]))); break;
             case Op::FSub: r = B(F(V[a[0]]) - F(V[a[1]])); break;
-            case Op::FMul: r = B(F(V[a[0]]) * F(V[a[1]])); break;
+            case Op::FMul: r = B(etvm_fmul(F(V[a[0]]), F(V[a[1]]))); break;
             case Op::FDiv: r = B(F(V[a[0]]) / F(V[a[1]])); break;
             case Op::FNeg: r = B(-F(V[a[0]])); break;
             case Op::FAbs: r = B(fabs(F(V[a[0]]))); break;

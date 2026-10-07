@@ -159,10 +159,9 @@ ETVM_H(GMemAddr)
         *ip[1].d = (expr);                                                                                    \
         ETVM_NEXT(3);                                                                                         \
     }
-ETVM_BIN(FAdd, a + b)
 ETVM_BIN(FSub, a - b)
-ETVM_BIN(FMul, a * b)
 ETVM_BIN(FDiv, a / b)
+// + * は左を機械の 1 つめに（ETVMOps.h の etvm_fadd）。フィルタを通すものは NaN が 0 になるので C のまま
 ETVM_BIN(FAddF, etvm_filter(a + b))
 ETVM_BIN(FSubF, etvm_filter(a - b))
 ETVM_BIN(FMulF, etvm_filter(a * b))
@@ -176,6 +175,16 @@ ETVM_BIN(IMod, etvm_imod(a, b))
 ETVM_BIN(IShl, etvm_ishl(a, b))
 ETVM_BIN(IShr, etvm_ishr(a, b))
 #undef ETVM_BIN
+#define ETVM_BINM(name, fn)                                                                                   \
+    ETVM_H(name)                                                                                              \
+    {                                                                                                         \
+        double *const d = ip[1].d;                                                                            \
+        *d = fn(*ip[2].d, ip[3].d);                                                                           \
+        ETVM_NEXT(3);                                                                                         \
+    }
+ETVM_BINM(FAdd, etvm_fadd_m)
+ETVM_BINM(FMul, etvm_fmul_m)
+#undef ETVM_BINM
 
 #define ETVM_UN(name, expr)                                                                                   \
     ETVM_H(name)                                                                                              \
@@ -508,10 +517,8 @@ ETVM_JUN(JNFalsy, !etvm_falsy(a))
         *ip[1].d = (expr);                                                                                    \
         ETVM_NEXT(3);                                                                                         \
     }
-ETVM_BINI(AddI, a + k)
 ETVM_BINI(SubI, a - k)
 ETVM_BINI(RSubI, k - a)
-ETVM_BINI(MulI, a * k)
 ETVM_BINI(DivI, a / k)
 ETVM_BINI(RDivI, k / a)
 ETVM_BINI(AddIF, etvm_filter(a + k))
@@ -521,6 +528,18 @@ ETVM_BINI(MulIF, etvm_filter(a * k))
 ETVM_BINI(DivIF, etvm_filter(a / k))
 ETVM_BINI(RDivIF, etvm_filter(k / a))
 #undef ETVM_BINI
+ETVM_H(AddI)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fadd_m(*ip[2].d, &ip[3].f);
+    ETVM_NEXT(3);
+}
+ETVM_H(MulI)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fmul_m(*ip[2].d, &ip[3].f);
+    ETVM_NEXT(3);
+}
 #define ETVM_BINT(name, expr)                                                                                 \
     ETVM_H(name)                                                                                              \
     {                                                                                                         \
@@ -529,15 +548,38 @@ ETVM_BINI(RDivIF, etvm_filter(k / a))
         *d = (expr);                                                                                          \
         ETVM_NEXT(2);                                                                                         \
     }
-ETVM_BINT(AddT, a + b)
 ETVM_BINT(SubT, a - b)
-ETVM_BINT(MulT, a * b)
 ETVM_BINT(DivT, a / b)
 ETVM_BINT(AddTF, etvm_filter(a + b))
 ETVM_BINT(SubTF, etvm_filter(a - b))
 ETVM_BINT(MulTF, etvm_filter(a * b))
 ETVM_BINT(DivTF, etvm_filter(a / b))
 #undef ETVM_BINT
+// 行き先 = 左の + *（dst が 1 つめ）と、行き先 = 右の + *（AddTR・MulTR: b が 1 つめ、dst が 2 つめ）
+ETVM_H(AddT)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fadd_m(*d, ip[2].d);
+    ETVM_NEXT(2);
+}
+ETVM_H(MulT)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fmul_m(*d, ip[2].d);
+    ETVM_NEXT(2);
+}
+ETVM_H(AddTR)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fadd_m(*ip[2].d, d);
+    ETVM_NEXT(2);
+}
+ETVM_H(MulTR)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fmul_m(*ip[2].d, d);
+    ETVM_NEXT(2);
+}
 #define ETVM_BINIT(name, expr)                                                                                \
     ETVM_H(name)                                                                                              \
     {                                                                                                         \
@@ -546,15 +588,25 @@ ETVM_BINT(DivTF, etvm_filter(a / b))
         *d = (expr);                                                                                          \
         ETVM_NEXT(2);                                                                                         \
     }
-ETVM_BINIT(AddIT, a + k)
 ETVM_BINIT(SubIT, a - k)
-ETVM_BINIT(MulIT, a * k)
 ETVM_BINIT(DivIT, a / k)
 ETVM_BINIT(AddITF, etvm_filter(a + k))
 ETVM_BINIT(SubITF, etvm_filter(a - k))
 ETVM_BINIT(MulITF, etvm_filter(a * k))
 ETVM_BINIT(DivITF, etvm_filter(a / k))
 #undef ETVM_BINIT
+ETVM_H(AddIT)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fadd_m(*d, &ip[2].f);
+    ETVM_NEXT(2);
+}
+ETVM_H(MulIT)
+{
+    double *const d = ip[1].d;
+    *d = etvm_fmul_m(*d, &ip[2].f);
+    ETVM_NEXT(2);
+}
 
 // ---- 段 S3: megabuf の 頭 + 添字（足し算は FAdd と同じ 1 回の足し算、そのあと MEGABUF と同じ式） --------------
 __attribute__((noinline)) HRet h_MemAddrBISlow(const Word *ip, Ctx *cx)
@@ -663,17 +715,17 @@ ETVM_WCMP1(Falsy, etvm_falsy(a))
         ip[1].s->i = (int64_t)c;                                                                              \
         ETVM_NEXT(4);                                                                                         \
     }
-ETVM_LK(LKAddIT, ip[4].f, x + k)
+ETVM_LK(LKAddIT, ip[4].f, etvm_fadd(x, k))
 ETVM_LK(LKSubIT, ip[4].f, x - k)
-ETVM_LK(LKMulIT, ip[4].f, x * k)
+ETVM_LK(LKMulIT, ip[4].f, etvm_fmul(x, k))
 ETVM_LK(LKDivIT, ip[4].f, x / k)
 ETVM_LK(LKAddITF, ip[4].f, etvm_filter(x + k))
 ETVM_LK(LKSubITF, ip[4].f, etvm_filter(x - k))
 ETVM_LK(LKMulITF, ip[4].f, etvm_filter(x * k))
 ETVM_LK(LKDivITF, ip[4].f, etvm_filter(x / k))
-ETVM_LK(LKAddT, *ip[4].d, x + k)
+ETVM_LK(LKAddT, *ip[4].d, etvm_fadd(x, k))
 ETVM_LK(LKSubT, *ip[4].d, x - k)
-ETVM_LK(LKMulT, *ip[4].d, x * k)
+ETVM_LK(LKMulT, *ip[4].d, etvm_fmul(x, k))
 ETVM_LK(LKDivT, *ip[4].d, x / k)
 ETVM_LK(LKAddTF, *ip[4].d, etvm_filter(x + k))
 ETVM_LK(LKSubTF, *ip[4].d, etvm_filter(x - k))
@@ -682,23 +734,33 @@ ETVM_LK(LKDivTF, *ip[4].d, etvm_filter(x / k))
 #undef ETVM_LK
 
 // ---- 段 S3: 続いた四則 2 つ（fuse2）。内側を先に計算し、その結果を外側の左（L）／右（R）に。縮約はしない -------
+// フィルタの無い形の + * は左を機械の 1 つめに（ETVMOps.h の etvm_fadd。OPM は右をメモリから、OPR は値から）。
+// フィルタの在る形は、内側の NaN も外側を通って NaN のまま 0 になるので C のまま。
 #define ETVM_OPAdd +
 #define ETVM_OPSub -
 #define ETVM_OPMul *
 #define ETVM_OPDiv /
+#define ETVM_OPMAdd(x, py) etvm_fadd_m(x, py)
+#define ETVM_OPMSub(x, py) ((x) - *(py))
+#define ETVM_OPMMul(x, py) etvm_fmul_m(x, py)
+#define ETVM_OPMDiv(x, py) ((x) / *(py))
+#define ETVM_OPRAdd(x, y) etvm_fadd(x, y)
+#define ETVM_OPRSub(x, y) ((x) - (y))
+#define ETVM_OPRMul(x, y) etvm_fmul(x, y)
+#define ETVM_OPRDiv(x, y) ((x) / (y))
 #define ETVM_F2_DEF(i, o)                                                                                     \
     ETVM_H(F2L##i##o)                                                                                         \
     {                                                                                                         \
-        const double a = *ip[2].d, b = *ip[3].d, c = *ip[4].d;                                                \
-        const double t = a ETVM_OP##i b;                                                                      \
-        *ip[1].d = t ETVM_OP##o c;                                                                            \
+        double *const d = ip[1].d;                                                                            \
+        const double t = ETVM_OPM##i(*ip[2].d, ip[3].d);                                                      \
+        *d = ETVM_OPM##o(t, ip[4].d);                                                                         \
         ETVM_NEXT(4);                                                                                         \
     }                                                                                                         \
     ETVM_H(F2R##i##o)                                                                                         \
     {                                                                                                         \
-        const double a = *ip[2].d, b = *ip[3].d, c = *ip[4].d;                                                \
-        const double t = a ETVM_OP##i b;                                                                      \
-        *ip[1].d = c ETVM_OP##o t;                                                                            \
+        double *const d = ip[1].d;                                                                            \
+        const double t = ETVM_OPM##i(*ip[2].d, ip[3].d);                                                      \
+        *d = ETVM_OPR##o(*ip[4].d, t);                                                                        \
         ETVM_NEXT(4);                                                                                         \
     }                                                                                                         \
     ETVM_H(F2LF##i##o)                                                                                        \
@@ -717,6 +779,18 @@ ETVM_LK(LKDivTF, *ip[4].d, etvm_filter(x / k))
     }
 ETVM_FUSE2_LIST(ETVM_F2_DEF)
 #undef ETVM_F2_DEF
+#undef ETVM_OPAdd
+#undef ETVM_OPSub
+#undef ETVM_OPMul
+#undef ETVM_OPDiv
+#undef ETVM_OPMAdd
+#undef ETVM_OPMSub
+#undef ETVM_OPMMul
+#undef ETVM_OPMDiv
+#undef ETVM_OPRAdd
+#undef ETVM_OPRSub
+#undef ETVM_OPRMul
+#undef ETVM_OPRDiv
 
 struct Entry { Handler h; const char *name; int nops; };
 #define E(name, n) {h_##name, #name, n}
@@ -748,6 +822,7 @@ const Entry kTable[] = {
     E(LKAddIT, 4), E(LKSubIT, 4), E(LKMulIT, 4), E(LKDivIT, 4), E(LKAddITF, 4), E(LKSubITF, 4), E(LKMulITF, 4),
     E(LKDivITF, 4), E(LKAddT, 4), E(LKSubT, 4), E(LKMulT, 4), E(LKDivT, 4), E(LKAddTF, 4), E(LKSubTF, 4),
     E(LKMulTF, 4), E(LKDivTF, 4),
+    E(AddTR, 2), E(MulTR, 2),
 #define ETVM_F2_E(i, o) E(F2L##i##o, 4), E(F2R##i##o, 4), E(F2LF##i##o, 4), E(F2RF##i##o, 4),
     ETVM_FUSE2_LIST(ETVM_F2_E)
 #undef ETVM_F2_E

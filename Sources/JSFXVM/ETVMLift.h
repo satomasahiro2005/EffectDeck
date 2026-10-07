@@ -66,4 +66,19 @@ struct LiftResult {
 
 LiftResult lift(const LiftInput &in, const LiftOptions &opt = LiftOptions());
 
+/// portable（GLUE_CALL_CODE）の + * が機械の命令のどちらのオペランドを 1 つめにしたか。2 つとも NaN のときに
+/// 残るペイロードがこれで決まる（ETVMOps.h の etvm_fadd の注、設計 §15.2 の 9）。パッチの glue_port.h は式の左
+/// （top2・升の値）に決めているが、パッチの無い建て方では C のコンパイラが決めるので、建てたものごとに 1 度、
+/// portable で NaN を 2 つ足して・掛けて調べる（どのスレッドからでもよい）。持ち上げは中間表現の FAdd・FMul の
+/// 左を portable の 1 つめにする。
+struct PortableNaNOrder {
+    bool addTopFirst = false;     // EEL_BC_ADD: top（後から積んだ方）が 1 つめ
+    bool mulTopFirst = false;     // EEL_BC_MUL
+    bool addOpValueFirst = false; // EEL_BC_ADD_OP_FAST: 降ろした値が 1 つめ（升の値が 2 つめ）
+    bool mulOpValueFirst = false; // EEL_BC_MUL_OP_FAST
+    bool probed = false;          // 調べた（portable の建て方だけ。JIT の建て方では portable が無い）
+    std::string note;             // どちらの NaN でもなかった命令（既定の NaN を返す機械なら順は効かない）
+};
+const PortableNaNOrder &portableNaNOrder();
+
 } // namespace etvm

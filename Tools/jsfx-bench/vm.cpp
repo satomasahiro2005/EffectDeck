@@ -403,13 +403,11 @@ std::string runLifted(const Asm &a, Machine &m, int side)
 }
 
 struct Tally {
-    uint64_t cases = 0, bad = 0, liftFail = 0, nanPair = 0;
-    uint64_t badTh = 0, nanPairTh = 0; // threaded code（段 S2）と portable
-    uint64_t badOpt = 0, nanPairOpt = 0; // threaded code + 段 S3 の中間表現の最適化（升を Const に）と portable
+    uint64_t cases = 0, bad = 0, liftFail = 0;
+    uint64_t badTh = 0; // threaded code（段 S2）と portable
+    uint64_t badOpt = 0; // threaded code + 段 S3 の中間表現の最適化（升を Const に）と portable
     std::string first, firstTh, firstOpt;
 };
-
-bool isNaNBits(uint64_t b) { return (b & 0x7ff0000000000000ull) == 0x7ff0000000000000ull && (b & 0xfffffffffffffull); }
 
 /// 升 X・Y・Z・O と印 M を使う 1 つの組を両方で回し、升を比べる。
 struct Cells { double x, y, z, o, m; };
@@ -442,20 +440,15 @@ void check(const char *name, std::map<std::string, Tally> &t, const std::vector<
             if (!lifted) continue;
             ++ta.cases;
             const uint64_t pc[4] = {bitsOf(c[0].x), bitsOf(c[0].y), bitsOf(c[0].z), bitsOf(c[0].o)};
-            // 2 つの入力がどちらも NaN のとき、どちらのペイロードが残るかは C コンパイラが + * のオペランドを
-            // どちらの順に置いたかで決まる（portable の TU の中でも決まっていない）。分けて数える。
-            const bool twoNaNs = arity >= 2 && isNaNBits(bitsOf(grid[i])) && isNaNBits(bitsOf(grid[j % grid.size()]));
+            // 2 つの入力がどちらも NaN のときも 1 ビットまで（+ * のペイロードは、持ち上げが portable の機械の
+            // オペランドの順を調べて合わせる。etvm::portableNaNOrder）
             for (int side = 1; side < 4; ++side) {
                 const uint64_t ic[4] = {bitsOf(c[side].x), bitsOf(c[side].y), bitsOf(c[side].z), bitsOf(c[side].o)};
-                bool same = true, onlyNaNPayload = true;
+                bool same = true;
                 for (int k = 0; k < 4; ++k)
-                    if (pc[k] != ic[k]) { same = false; onlyNaNPayload &= isNaNBits(pc[k]) && isNaNBits(ic[k]); }
+                    if (pc[k] != ic[k]) same = false;
                 uint64_t &bad = side == 1 ? ta.bad : side == 2 ? ta.badTh : ta.badOpt;
                 std::string &first = side == 1 ? ta.first : side == 2 ? ta.firstTh : ta.firstOpt;
-                if (!same && twoNaNs && onlyNaNPayload) {
-                    ++(side == 1 ? ta.nanPair : side == 2 ? ta.nanPairTh : ta.nanPairOpt);
-                    continue;
-                }
                 if (!same && !bad++) {
                     char b[400];
                     std::snprintf(b, sizeof b, "x=%a y=%a: portable x,y,z,o=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
@@ -667,27 +660,26 @@ int ETJSFXBenchVMOpGridMain()
             }
         }
     }
-    uint64_t total = 0, bad = 0, badTh = 0, badOpt = 0, fails = 0, nanPairs = 0, nanPairsTh = 0, nanPairsOpt = 0;
+    uint64_t total = 0, bad = 0, badTh = 0, badOpt = 0, fails = 0;
+    const etvm::PortableNaNOrder &no = etvm::portableNaNOrder();
+    std::printf("portable NaN+NaN operand order (first operand of the machine op): ADD %s, MUL %s, ADD_OP_FAST %s, "
+                "MUL_OP_FAST %s%s%s\n", no.addTopFirst ? "top" : "top2", no.mulTopFirst ? "top" : "top2",
+                no.addOpValueFirst ? "value" : "cell", no.mulOpValueFirst ? "value" : "cell", no.note.empty() ? "" : "; ",
+                no.note.c_str());
     std::printf("jsfx-bench --vm-opgrid: %zu values; portable (GLUE_CALL_CODE) vs lifted IR (reference interpreter) "
                 "and vs threaded code (passes 0x%05x; threaded+s3 also treats unwritten cells as Const)\n", grid.size(),
                 ETVM_GetPasses());
     for (const auto &[name, ta] : t) {
         total += ta.cases; bad += ta.bad; badTh += ta.badTh; badOpt += ta.badOpt; fails += ta.liftFail;
-        nanPairs += ta.nanPair; nanPairsTh += ta.nanPairTh; nanPairsOpt += ta.nanPairOpt;
         std::printf("  %-22s %6" PRIu64 " cases  %s", name.c_str(), ta.cases,
                     ta.bad || ta.badTh || ta.badOpt || ta.liftFail ? "MISMATCH" : "ok");
-        if (ta.nanPair || ta.nanPairTh || ta.nanPairOpt)
-            std::printf("  (NaN+NaN payload choice: ir %" PRIu64 ", threaded %" PRIu64 ", +s3 %" PRIu64 ")", ta.nanPair,
-                        ta.nanPairTh, ta.nanPairOpt);
         if (!ta.first.empty()) std::printf("  %s", ta.first.c_str());
         if (!ta.firstTh.empty()) std::printf("  %s", ta.firstTh.c_str());
         if (!ta.firstOpt.empty()) std::printf("  %s", ta.firstOpt.c_str());
         std::printf("\n");
     }
     std::printf("total %" PRIu64 " cases, mismatched: ir %" PRIu64 ", threaded %" PRIu64 ", threaded+s3 %" PRIu64
-                "; %" PRIu64 " not lifted; NaN+NaN payload choices ir %" PRIu64 ", threaded %" PRIu64 ", +s3 %" PRIu64
-                " (operand order of the C compiler; not counted as mismatches)\n", total, bad, badTh, badOpt, fails,
-                nanPairs, nanPairsTh, nanPairsOpt);
+                "; %" PRIu64 " not lifted\n", total, bad, badTh, badOpt, fails);
     const bool failed = bad || badTh || badOpt || fails;
     std::printf(failed ? "RESULT FAIL\n" : "RESULT ok\n");
     return failed ? 1 : 0;

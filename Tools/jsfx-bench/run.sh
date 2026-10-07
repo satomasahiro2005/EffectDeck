@@ -103,7 +103,7 @@ cp -R "$repo/Vendor/ysfx/include" "$repo/Vendor/ysfx/sources" "$ysfx.new/"
 cp -R "$repo/Vendor/ysfx/thirdparty/WDL/source/WDL" "$ysfx.new/thirdparty/WDL/source/"
 # Windows の写し（core.autocrlf）からでも LF にそろえる。BSD の sed -i は形が違うので perl で。
 find "$ysfx.new" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -exec perl -pi -e 's/\r$//' {} +
-if ! grep -q effectdeck_file_retptr "$ysfx.new/sources/ysfx_api_file.cpp"; then
+if ! grep -q effectdeck_nan_order "$ysfx.new/thirdparty/WDL/source/WDL/eel2/glue_port.h"; then
   perl -pe 's/\r$//' "$repo/Patches/ysfx-effectdeck-ios.diff" \
     | (cd "$ysfx.new" && GIT_CEILING_DIRECTORIES="$(dirname "$ysfx.new")" git apply -p1 -) >> "$log" 2>&1 \
     || die "ysfx-effectdeck-ios.diff が写しに当たらない（Vendor/ysfx の版。Scripts/setup.sh を読むこと）"

@@ -134,6 +134,9 @@ enum class HK : uint16_t {
     // 値はレジスタに置いて終わりに 1 回書く（IEEE の演算の並びは同じ。loop の間ほかに誰も回らない）
     LKAddIT, LKSubIT, LKMulIT, LKDivIT, LKAddITF, LKSubITF, LKMulITF, LKDivITF,
     LKAddT, LKSubT, LKMulT, LKDivT, LKAddTF, LKSubTF, LKMulTF, LKDivTF,
+    // 行き先 = 右（+ * だけ。d dst, d a: dst = a op dst。a が機械の 1 つめ: NaN が 2 つのときのペイロード、
+    // ETVMOps.h の etvm_fadd）
+    AddTR, MulTR,
     // 続いた四則 2 つ（fuse2）: L は d = (a i b) o c、R は d = c o (a i b)。F は o の結果にフィルタ。d dst, d a, d b, d c
 #define ETVM_F2_ENUM(i, o) F2L##i##o, F2R##i##o, F2LF##i##o, F2RF##i##o,
     ETVM_FUSE2_LIST(ETVM_F2_ENUM)
