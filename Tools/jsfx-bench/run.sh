@@ -11,8 +11,9 @@
 #                既定。project.yml は YSFX に書いていない）。O3 は比べるための別の段。既定 both
 #   --no-jit     JIT 版を建てない・回さない
 #   --label      出力の名前の頭（build/jsfx-bench/<label>-<opt>-<eel>.json）。既定は機種名
-#   --diff       速さを測らず、portable の版で Tests/Fixtures/JSFX・Tests/Fuzz/Corpus/jsfxexec・
-#                Debug/JSFXBench を EEL の実行系ごとに回し、portable と 1 ビットまで比べる（diff.cpp）
+#   --diff       速さを測らず、portable の版（--opt の段と、命令を数える版）で Tests/Fixtures/JSFX・
+#                Tests/Fuzz/Corpus/jsfxexec・Debug/JSFXBench・Tools/jsfx-bench/diff を EEL の実行系ごとに回し、
+#                portable と 1 ビットまで比べる（diff.cpp）。数える版は通らなかった命令も出す
 #   --profile    速さを測らず、-DNSEEL_VM_PROFILE の版（-Os）で Debug/JSFXBench を 1 本ずつ vm-goto で回し、
 #                命令の数と続いた 2 つの組を数える（build/jsfx-bench/opcodes/*.json → opcodes.py）
 #
@@ -51,7 +52,7 @@ while [ $# -gt 0 ]; do
     --clean) clean=1; shift ;;
     --diff) mode=diff; shift ;;
     --profile) mode=profile; shift ;;
-    -h|--help) sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "知らない引数: $1（--help）" ;;
   esac
 done
@@ -91,7 +92,7 @@ cp -R "$repo/Vendor/ysfx/include" "$repo/Vendor/ysfx/sources" "$ysfx.new/"
 cp -R "$repo/Vendor/ysfx/thirdparty/WDL/source/WDL" "$ysfx.new/thirdparty/WDL/source/"
 # Windows の写し（core.autocrlf）からでも LF にそろえる。BSD の sed -i は形が違うので perl で。
 find "$ysfx.new" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -exec perl -pi -e 's/\r$//' {} +
-if ! grep -q NSEEL_code_execute_frames "$ysfx.new/thirdparty/WDL/source/WDL/eel2/ns-eel.h"; then
+if ! grep -q NSEEL_EXEC_GOTO_FPREG_MASK "$ysfx.new/thirdparty/WDL/source/WDL/eel2/ns-eel.h"; then
   perl -pe 's/\r$//' "$repo/Patches/ysfx-effectdeck-ios.diff" \
     | (cd "$ysfx.new" && GIT_CEILING_DIRECTORIES="$(dirname "$ysfx.new")" git apply -p1 -) >> "$log" 2>&1 \
     || die "ysfx-effectdeck-ios.diff が写しに当たらない（Vendor/ysfx の版。Scripts/setup.sh を読むこと）"
@@ -201,11 +202,14 @@ echo "== built: ${bins[*]}"
 [ "$build_only" = 1 ] && exit 0
 
 if [ "$mode" = diff ]; then
+  # 命令の数を取る版も足す（同じ比べ合わせをして、通らなかった命令を出す）。
+  b=$(build_bin profile Os) || exit 1
+  bins+=("$b")
   status=0
   for bin in "${bins[@]}"; do
     echo "== diff $(basename "$bin")"
     set +e
-    "$bin" --diff "$repo/Tests/Fixtures/JSFX" "$repo/Tests/Fuzz/Corpus/jsfxexec" "$repo/Debug/JSFXBench" \
+    "$bin" --diff "$repo/Tests/Fixtures/JSFX" "$repo/Tests/Fuzz/Corpus/jsfxexec" "$repo/Debug/JSFXBench" "$here/diff" \
       | tee "$work/$label-$(basename "$bin")-diff.txt"
     [ "${PIPESTATUS[0]}" = 0 ] || status=1
     set -e

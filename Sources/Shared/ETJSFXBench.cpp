@@ -137,6 +137,7 @@ const Variant kVariants[] = {
     {"vm-block", true, Check::exact, 0, hostVariant<selectExecutor<1>>},
     {"vm-goto", true, Check::exact, 0, hostVariant<selectExecutor<2>>},
     {"vm-goto-fpreg", true, Check::exact, 0, hostVariant<selectExecutor<3>>},
+    {"vm-goto-fpreg-mask", true, Check::exact, 0, hostVariant<selectExecutor<4>>},
     {"cpp", false, Check::tolerance, 1e-6, cppVariant},
 };
 
@@ -521,14 +522,14 @@ char *ETJSFXBench_Table(const ETJSFXBenchReport *r)
                 r->options.chunkBlocks, r->policy.obtained.c_str(), optimizeLevel(), r->wallSeconds);
     if (!r->compilerFlags.empty()) t += "  flags: " + r->compilerFlags + "\n";
     if (!r->error.empty()) t += "  ERROR: " + r->error + "\n";
-    t += format("%-13s %-13s %9s %9s %9s %9s %8s %7s %7s %6s %8s %8s  %s\n", "script", "variant", "med_us", "p90_us",
+    t += format("%-13s %-18s %9s %9s %9s %9s %8s %7s %7s %6s %8s %8s  %s\n", "script", "variant", "med_us", "p90_us",
                 "p99_us", "max_us", "ns/smp", "%bud", "%b_p99", "host_pm", "vs_ref", "x_cpp", "check");
     for (const auto &s : r->scripts) {
         const VariantResult *ref = find(s, s.reference);
         const VariantResult *cpp = find(s, "cpp");
         for (const auto &v : s.variants) {
             if (!v.created) {
-                t += format("%-13s %-13s  not run: %s\n", s.name.c_str(), v.name.c_str(), v.error.c_str());
+                t += format("%-13s %-18s  not run: %s\n", s.name.c_str(), v.name.c_str(), v.error.c_str());
                 continue;
             }
             std::string host = v.host ? format("%u", v.hostWorst) : "-";
@@ -540,7 +541,7 @@ char *ETJSFXBench_Table(const ETJSFXBenchReport *r)
             else check = format("maxdiff %.3g (%llu smp)", v.maxAbsDiff, (unsigned long long)v.mismatched);
             if (!v.against.empty()) check += v.checkPass ? " ok" : " FAIL";
             if (v.recoveries) check += format(" bypassed x%u", v.recoveries);
-            t += format("%-13s %-13s %9.1f %9.1f %9.1f %9.1f %8.2f %6.2f%% %6.2f%% %6s %8s %8s  %s\n",
+            t += format("%-13s %-18s %9.1f %9.1f %9.1f %9.1f %8.2f %6.2f%% %6.2f%% %6s %8s %8s  %s\n",
                         s.name.c_str(), v.name.c_str(), v.medianNs / 1000, v.p90Ns / 1000, v.p99Ns / 1000,
                         v.maxNs / 1000, v.meanNs / kFrames, v.medianNs / budgetNs * 100, v.p99Ns / budgetNs * 100,
                         host.c_str(), vsRef.c_str(), xCpp.c_str(), check.c_str());

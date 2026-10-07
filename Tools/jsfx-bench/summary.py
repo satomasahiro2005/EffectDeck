@@ -73,6 +73,29 @@ def main(paths):
                 "%.1fx" % (j["medianNs"] / jc["medianNs"]) if j and jc else "-",
                 "%.2fx" % (p["medianNs"] / j["medianNs"]) if p and j else "-",
                 same, "; ".join(checks)))
+        # portable の回に入っている EEL の実行系（vm-*）。同じ回の portable・cpp と比べる。
+        if port:
+            vms = []
+            for s in port["scripts"]:
+                for v in s["variants"]:
+                    if v.get("created") and v["name"] not in ("portable", "cpp") and v["name"] not in vms:
+                        vms.append(v["name"])
+            if vms:
+                print("%-13s" % "med_us" + "".join(" %11s" % n[:11] for n in ["portable"] + vms + ["cpp"]) +
+                      "   vs portable / x cpp / check")
+                for name in names:
+                    p, pc = variant(port, name, "portable"), variant(port, name, "cpp")
+                    row = [variant(port, name, n) for n in vms]
+                    notes = []
+                    for n, v in zip(vms, row):
+                        if not v:
+                            continue
+                        c = v["check"]
+                        notes.append("%s %s/%s/%s" % (
+                            n, "%.2fx" % (p["medianNs"] / v["medianNs"]) if p else "-",
+                            "%.1fx" % (v["medianNs"] / pc["medianNs"]) if pc else "-",
+                            ("bit-exact" if c["mismatchedSamples"] == 0 else "DIFF") + ("" if c["pass"] else " FAIL")))
+                    print("%-13s" % name + "".join(" %11s" % us(v) for v in [p] + row + [pc]) + "   " + "; ".join(notes))
         pol = base["policy"]["obtained"]
         print("   policy %s; wall %s s; passed %s" % (
             pol, ", ".join("%s %.1f" % (k, r["wallSeconds"]) for k, r in sorted(runs.items())),

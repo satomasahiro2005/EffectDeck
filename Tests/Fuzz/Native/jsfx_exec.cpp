@@ -16,6 +16,9 @@
 //   6. SaveState → LoadState（同じバイト）→ 1 ブロック → 値を崩した状態で LoadState → 1 ブロック
 //   7. @gfx があれば小さい画で RunGFX → CopyGFX → マウス・キー・窓の状態 → もう 1 枚
 //   8. ETJSFX_Destroy
+//   9. 1/4 で実行系の差分: 同じソースを 2 つ作り、アプリの既定の実行系（ETJSFX_EELExecutor）と
+//      portable（GLUE_CALL_CODE そのもの）に同じつまみと同じブロックを渡して、出力が 1 ビットまで同じか。
+//      既定が portable の建て方では何もしない。締切を一度でも超えたら比べない（外れたかが時刻で変わる）
 //
 // 標本化率・ブロック長・つまみの値・画の大きさは入力の FNV-1a から決める（同じ入力は同じ回り方）。
 // 入力の全体が JSFX のソースになるので、種（.jsfx）はそのまま読める。
@@ -37,6 +40,7 @@
 
 #include "ETJSFXHost.h"
 #include "ETExternalProcessor.h"
+#include "WDL/eel2/ns-eel.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -437,6 +441,46 @@ void exercise(ETJSFX *h, Stream &s, Rng &r)
     runGFX(h, r);
     ETJSFX_SetGFXMenuCallback(h, nullptr, nullptr);
 }
+
+/// 9. 実行系の差分。rand() は全部の VM で 1 つの列なので、2 つを並べずに 1 つずつ最初から回す。
+void differential(double sampleRate, uint32_t maxFrames, uint64_t seed)
+{
+    std::vector<std::vector<float>> outs[2];
+    for (int pass = 0; pass < 2; ++pass) {
+        NSEEL_rand_reset();
+        char error[kErrorCapacity] = {};
+        ETJSFX *h = ETJSFX_Create(sourcePath().c_str(), sampleRate, maxFrames, error, sizeof error);
+        if (!h) {
+            if (pass == 1) broken("差分: 同じソースの 2 つめだけ Create が断った", error);
+            return;
+        }
+        if (pass == 0 && ETJSFX_EELExecutor(h) == NSEEL_EXEC_PORTABLE) { ETJSFX_Destroy(h); return; }
+        if (pass == 1 && !ETJSFX_SetEELExecutor(h, NSEEL_EXEC_PORTABLE)) harness("portable を選べない");
+        Rng r{seed};
+        std::vector<Parameter> params = readParameters(h);
+        ETExternalProcessor processor = ETJSFX_Processor(h);
+        double time = 0;
+        std::vector<float> planar;
+        for (uint32_t b = 0; b < 4 && ETJSFX_IsRunning(h); ++b) {
+            if (r.oneIn(2)) setSomeSliders(h, params, r);
+            const uint32_t frames = 1 + r.below(std::min<uint32_t>(maxFrames, 256));
+            planar.assign((size_t)2 * frames, 0.0f);
+            for (float &v : planar) v = sampleValue(r);
+            if (ETExternalProcessor_Process(&processor, planar.data(), 2, frames, sampleRate, time) != 0)
+                broken("差分: process が 0 以外を返した");
+            outs[pass].push_back(planar);
+            time += frames / sampleRate;
+        }
+        const bool tripped = ETJSFX_DeadlineTrips(h) != 0;
+        ETJSFX_Destroy(h);
+        if (tripped) return;
+    }
+    const size_t n = std::min(outs[0].size(), outs[1].size());
+    for (size_t b = 0; b < n; ++b)
+        if (outs[0][b].size() != outs[1][b].size() ||
+            std::memcmp(outs[0][b].data(), outs[1][b].data(), outs[0][b].size() * sizeof(float)) != 0)
+            broken("差分: 既定の実行系と portable の出力が違う", "block " + std::to_string(b));
+}
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
@@ -457,7 +501,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         if (length == sizeof error) broken("Create の理由が NUL で終わっていない");
         return 0;
     }
+    const double firstRate = s.sampleRate;
+    const uint32_t firstFrames = s.maxFrames;
     exercise(h, s, r);
     ETJSFX_Destroy(h);
+    if (r.oneIn(4)) differential(firstRate, firstFrames, r.next());
     return 0;
 }

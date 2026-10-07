@@ -5,7 +5,8 @@ EffectDeck が ysfx 5c3452f に当てる差分（Scripts/setup.sh が当てる�
   f31b13bfc             引数の数を間違えた tan(x,y) で関数表の外を読む
 EffectDeck が足したもの（上流に無い）:
   glue_port_vm.h ほか  EEL の実行系を実行時に選ぶ（ns-eel.h の NSEEL_EXEC_*。バイトコードはそのまま）。
-                        ysfx は @slider・@block・@sample をその実行系で回す（ysfx_set_eel_exec_mode）
+                        ysfx は @slider・@block・@sample をその実行系で回す（ysfx_set_eel_exec_mode）。
+                        NSEEL_rand_reset は比べ合わせのため（rand の列を最初からにする）
 diff --git a/include/ysfx.h b/include/ysfx.h
 index 49296d4..a8d7e7c 100644
 --- a/include/ysfx.h
@@ -1224,10 +1225,10 @@ index e7d06f3..926cd67 100644
          }
 diff --git a/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h b/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
 new file mode 100644
-index 0000000..7411c23
+index 0000000..56ff423
 --- /dev/null
 +++ b/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
-@@ -0,0 +1,781 @@
+@@ -0,0 +1,805 @@
 +// glue_port_vm.h — EffectDeck: glue_port.h のバイトコードを解く別の実行系（ns-eel.h の NSEEL_EXEC_*）。
 +//
 +// **バイトコードと字句・構文・compile は WDL のまま。**解き方だけ替える。
@@ -1236,6 +1237,9 @@ index 0000000..7411c23
 +//   EEL_VM_GOTO   0: switch（GLUE_CALL_CODE と同じ）。1: computed goto（ラベルの番地の表。各命令の終わりで
 +//                 次を引いて飛ぶ。実行時に機械語は作らない）
 +//   EEL_VM_FPREG  1: 浮動小数の積み場の先頭をローカル（レジスタ）に置く。メモリには先頭より下だけ
++//   EEL_VM_MASK   1: goto の表を 128 に取り、番号の下 7 bit で引く（範囲の比較と選択を省く）。0..127 は
++//                 比べる版と同じ（表の空きは何もしない）。128 以上と負の番号は別の命令に化けるが、
++//                 compile が書く番号は EEL_BC_*（1..EEL_BC_DBG_GETSTACKPTR）だけで、即値は各命令が飛ばす
 +// どれも 1 回の呼び出しで nframes 回まわす。GLUE_CALL_CODE の用意（64 KiB の積み場。Darwin の arm64 は
 +// ___chkstk_darwin で頁ごとに触る）は 1 回だけ。各回の頭の状態は GLUE_CALL_CODE を呼び直したのと同じ
 +// （iptr・stackptr・p1..p3・wtp・積み場の深さ。積み場の中身は前の回の残り＝もとも前の呼び出しの残り）。
@@ -1263,13 +1267,20 @@ index 0000000..7411c23
 +  #define VM_PROFILE(inst) do { } while (0)
 +#endif
 +
++#if EEL_VM_GOTO && EEL_VM_MASK
++  #define VM_TAB_SIZE 128
++  #define VM_TAB_INDEX(inst) ((unsigned int)(inst) & (VM_TAB_SIZE - 1))
++#elif EEL_VM_GOTO
++  #define VM_TAB_SIZE EEL_VM_NOPS
++  #define VM_TAB_INDEX(inst) ((unsigned int)(inst) < EEL_VM_NOPS ? (unsigned int)(inst) : 0)
++#endif
 +#if EEL_VM_GOTO
 +  // 表の外（0 と知らない番号）は switch で当たる case が無いのと同じく何もしない。
 +  #define VM_DISPATCH() do { \
 +      inst = *(EEL_BC_TYPE *)iptr; \
 +      iptr += sizeof(EEL_BC_TYPE); \
 +      VM_PROFILE(inst); \
-+      goto *vm_tab[(unsigned int)inst < EEL_VM_NOPS ? (unsigned int)inst : 0]; \
++      goto *vm_tab[VM_TAB_INDEX(inst)]; \
 +    } while (0)
 +#endif
 +
@@ -1311,7 +1322,15 @@ index 0000000..7411c23
 +  unsigned int vm_prev;
 +#endif
 +#if EEL_VM_GOTO
-+  static const void *const vm_tab[EEL_VM_NOPS] = {
++#if EEL_VM_MASK
++  // 空きを先に「何もしない」で埋めて、命令の分を上書きする。
++  #pragma clang diagnostic push
++  #pragma clang diagnostic ignored "-Winitializer-overrides"
++#endif
++  static const void *const vm_tab[VM_TAB_SIZE] = {
++#if EEL_VM_MASK
++    [0 ... VM_TAB_SIZE - 1] = &&vm_op_unknown,
++#endif
 +    [0] = &&vm_op_unknown,
 +    [EEL_BC_NOP] = &&vm_op_NOP,
 +    [EEL_BC_RET] = &&vm_op_RET,
@@ -1426,6 +1445,9 @@ index 0000000..7411c23
 +    [EEL_BC_USERSTACK_EXCH] = &&vm_op_USERSTACK_EXCH,
 +    [EEL_BC_DBG_GETSTACKPTR] = &&vm_op_DBG_GETSTACKPTR,
 +  };
++#if EEL_VM_MASK
++  #pragma clang diagnostic pop
++#endif
 +#endif
 +
 +  for (frame = 0; frame < nframes; ++frame)
@@ -2000,6 +2022,8 @@ index 0000000..7411c23
 +#undef VM_NEXT
 +#undef VM_PROFILE
 +#undef VM_DISPATCH
++#undef VM_TAB_SIZE
++#undef VM_TAB_INDEX
 +#undef fp_top
 +#undef fp_top2
 +#undef fp_push
@@ -2009,11 +2033,12 @@ index 0000000..7411c23
 +#undef EEL_VM_FUNC
 +#undef EEL_VM_GOTO
 +#undef EEL_VM_FPREG
++#undef EEL_VM_MASK
 diff --git a/thirdparty/WDL/source/WDL/eel2/ns-eel.h b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
-index 6590a81..852a865 100644
+index 6590a81..8157831 100644
 --- a/thirdparty/WDL/source/WDL/eel2/ns-eel.h
 +++ b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
-@@ -182,6 +182,37 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
+@@ -182,6 +182,40 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
  char *NSEEL_code_getcodeerror(NSEEL_VMCTX ctx);
  int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx);
  void NSEEL_code_execute(NSEEL_CODEHANDLE code);
@@ -2025,16 +2050,19 @@ index 6590a81..852a865 100644
 +#define NSEEL_EXEC_BLOCK 1      // 同じ switch。nframes 回を 1 回の入口で（積み場の用意が 1 回）
 +#define NSEEL_EXEC_GOTO 2       // computed goto（ラベルの番地の表）+ 1 回の入口
 +#define NSEEL_EXEC_GOTO_FPREG 3 // NSEEL_EXEC_GOTO + 浮動小数の積み場の先頭をレジスタに
-+#define NSEEL_EXEC_COUNT 4
++#define NSEEL_EXEC_GOTO_FPREG_MASK 4 // NSEEL_EXEC_GOTO_FPREG + 表を 128 に取って範囲の比較を省く
++#define NSEEL_EXEC_COUNT 5
 +// アプリが使う既定（ysfx_new が読む）。速さを測って 1 ビットも違わないものの中から選んだ（docs/jsfx-bench.md）。
 +#ifndef NSEEL_EXEC_DEFAULT
-+#define NSEEL_EXEC_DEFAULT NSEEL_EXEC_PORTABLE
++#define NSEEL_EXEC_DEFAULT NSEEL_EXEC_GOTO_FPREG_MASK
 +#endif
 +typedef void (*NSEEL_FRAME_CALLBACK)(void *ctx, unsigned int frame);
 +// pre(ctx, i) → code を 1 回 → post(ctx, i) を i = 0..nframes-1。pre / post は NULL でもよい。
 +// code が NULL・中身が空のときも pre / post は呼ぶ（NSEEL_code_execute が何もしないのと同じ）。
 +void NSEEL_code_execute_frames(NSEEL_CODEHANDLE code, int mode, unsigned int nframes,
 +                               NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx);
++// rand() の列を最初からにする（全部の VM で 1 つの列。比べるためだけ）。
++void NSEEL_rand_reset(void);
 +// この建て方で使えるか（JIT の建て方は NSEEL_EXEC_PORTABLE だけ）。
 +int NSEEL_code_exec_mode_available(int mode);
 +const char *NSEEL_code_exec_mode_name(int mode);
@@ -2051,8 +2079,36 @@ index 6590a81..852a865 100644
  void NSEEL_code_free(NSEEL_CODEHANDLE code);
  int *NSEEL_code_getstats(NSEEL_CODEHANDLE code); // 4 ints...source bytes, static code bytes, call code bytes, data bytes
    
+diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c b/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c
+index 4ac7059..1d2579f 100644
+--- a/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c
++++ b/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c
+@@ -39,6 +39,15 @@
+ #define UPPER_MASK 0x80000000UL /* most significant w-r bits */
+ #define LOWER_MASK 0x7fffffffUL /* least significant r bits */
+ 
++// EffectDeck: 種の位置を関数の外へ出した（NSEEL_rand_reset が 0 に戻す。0 は次の rand で同じ種から作り直す）。
++static unsigned int __idx;
++
++// EffectDeck: rand の列を最初からにする（実行系どうしを比べるときに、同じ列を引かせるため。音の道では呼ばない）。
++void NSEEL_rand_reset(void)
++{
++  __idx = 0;
++}
++
+ static unsigned int genrand_int32(void)
+ {
+ 
+@@ -47,7 +56,6 @@ static unsigned int genrand_int32(void)
+     /* mag01[x] = x * MATRIX_A  for x=0,1 */
+ 
+     static unsigned int mt[N]; /* the array for the state vector  */
+-    static unsigned int __idx;
+ 
+     unsigned int mti = __idx;
+ 
 diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
-index 5dee9a7..259218b 100644
+index 5dee9a7..f27badc 100644
 --- a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
 +++ b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
 @@ -672,7 +672,11 @@ functionType *nseel_getFunctionByName(compileContext *ctx, const char *name, int
@@ -2107,7 +2163,7 @@ index 5dee9a7..259218b 100644
        __clear_cache(handle->code,writeptr);
  #endif
      }
-@@ -5217,6 +5222,133 @@ void NSEEL_code_execute(NSEEL_CODEHANDLE code)
+@@ -5217,6 +5222,147 @@ void NSEEL_code_execute(NSEEL_CODEHANDLE code)
  
  }
  
@@ -2115,6 +2171,7 @@ index 5dee9a7..259218b 100644
 +// EffectDeck: 実行系を選ぶ（ns-eel.h の NSEEL_EXEC_*、glue_port_vm.h）。
 +#if defined(EEL_TARGET_PORTABLE) && !defined(EEL_PORTABLE_TAILCALL)
 +#define EEL_VM_NOPS ((unsigned int)EEL_BC_DBG_GETSTACKPTR + 1u)
++typedef char nseel_vm_mask_table_fits[EEL_VM_NOPS <= 128 ? 1 : -1]; // EEL_VM_MASK の表は 128
 +#ifdef NSEEL_VM_PROFILE
 +static unsigned long long nseel_vm_profile_ops[EEL_VM_NOPS];
 +static unsigned long long nseel_vm_profile_pairs[EEL_VM_NOPS][EEL_VM_NOPS];
@@ -2123,16 +2180,25 @@ index 5dee9a7..259218b 100644
 +#define EEL_VM_FUNC nseel_vm_switch
 +#define EEL_VM_GOTO 0
 +#define EEL_VM_FPREG 0
++#define EEL_VM_MASK 0
 +#include "glue_port_vm.h"
 +
 +#define EEL_VM_FUNC nseel_vm_goto
 +#define EEL_VM_GOTO 1
 +#define EEL_VM_FPREG 0
++#define EEL_VM_MASK 0
 +#include "glue_port_vm.h"
 +
 +#define EEL_VM_FUNC nseel_vm_goto_fpreg
 +#define EEL_VM_GOTO 1
 +#define EEL_VM_FPREG 1
++#define EEL_VM_MASK 0
++#include "glue_port_vm.h"
++
++#define EEL_VM_FUNC nseel_vm_goto_fpreg_mask
++#define EEL_VM_GOTO 1
++#define EEL_VM_FPREG 1
++#define EEL_VM_MASK 1
 +#include "glue_port_vm.h"
 +
 +#ifdef NSEEL_VM_PROFILE
@@ -2203,6 +2269,9 @@ index 5dee9a7..259218b 100644
 +      case NSEEL_EXEC_GOTO_FPREG:
 +        nseel_vm_goto_fpreg((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
 +      return;
++      case NSEEL_EXEC_GOTO_FPREG_MASK:
++        nseel_vm_goto_fpreg_mask((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
++      return;
 +      default: break;
 +    }
 +  }
@@ -2234,6 +2303,7 @@ index 5dee9a7..259218b 100644
 +    case NSEEL_EXEC_BLOCK: return "vm-block";
 +    case NSEEL_EXEC_GOTO: return "vm-goto";
 +    case NSEEL_EXEC_GOTO_FPREG: return "vm-goto-fpreg";
++    case NSEEL_EXEC_GOTO_FPREG_MASK: return "vm-goto-fpreg-mask";
 +  }
 +  return "?";
 +}
@@ -2241,7 +2311,7 @@ index 5dee9a7..259218b 100644
  int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx)
  {
    compileContext *c=(compileContext *)ctx;
-@@ -5708,7 +5840,7 @@ opcodeRec *nseel_createFunctionByName(compileContext *ctx, const char *name, int
+@@ -5708,7 +5854,7 @@ opcodeRec *nseel_createFunctionByName(compileContext *ctx, const char *name, int
        return o;
      }
      f++;

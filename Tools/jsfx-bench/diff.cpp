@@ -10,6 +10,8 @@
 //   - ときどきつまみを動かし（範囲の中と外）、trigger と再生位置も送る
 // 比べるもの: 毎ブロックの出力（bit）、最後の変数の全部（ysfx_enum_vars、bit）、EEL のメモリ全部、
 // @serialize の中身（ysfx_save_state）。基準は NSEEL_EXEC_PORTABLE。
+// 回ごとに rand() の列を最初からにする。gmem はプロセスの中で共有され前の回の残りが見えるので、
+// 書く前に gmem を読むスクリプトは portable どうしでも違う（ET_DIFF_MODES=0 で確かめられる）。
 // 違ったら終了値 1。
 #include "ysfx.h"
 #include "WDL/eel2/ns-eel.h"
@@ -18,6 +20,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <map>
@@ -73,6 +76,8 @@ double specialValue(uint64_t r)
 Run runOnce(const std::string &path, int mode, uint32_t blocks)
 {
     Run r;
+    // rand() の列は全部の VM で 1 つ。回ごとに最初からにする（同じ順に引けば同じ値）。
+    NSEEL_rand_reset();
     ysfx_config_t *config = ysfx_config_new();
     ysfx_t *fx = ysfx_new(config);
     ysfx_config_free(config);
@@ -184,7 +189,18 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
     std::vector<std::string> files;
     for (const auto &p : paths) listInputs(p, files);
     std::vector<int> modes;
-    for (int m = 1; m < NSEEL_EXEC_COUNT; ++m) if (NSEEL_code_exec_mode_available(m)) modes.push_back(m);
+    // ET_DIFF_MODES=0,2 のように番号を並べると、その実行系だけ（0 なら portable どうし＝スクリプト自身が決まった値を返すか）。
+    if (const char *list = std::getenv("ET_DIFF_MODES")) {
+        for (const char *p = list; *p;) {
+            char *end = nullptr;
+            const long m = std::strtol(p, &end, 10);
+            if (end == p) break;
+            if (NSEEL_code_exec_mode_available((int)m)) modes.push_back((int)m);
+            p = *end == ',' ? end + 1 : end;
+        }
+    } else {
+        for (int m = 1; m < NSEEL_EXEC_COUNT; ++m) if (NSEEL_code_exec_mode_available(m)) modes.push_back(m);
+    }
     std::printf("jsfx-bench --diff: %zu files, %u blocks each, modes", files.size(), blocks);
     for (int m : modes) std::printf(" %s", NSEEL_code_exec_mode_name(m));
     std::printf(" vs portable\n");
@@ -237,6 +253,17 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
                     line.c_str(), fileOk ? "" : "  MISMATCH");
     }
     std::printf("compared %d, not compiled %d, mismatched %d\n", compared, skipped, failures);
+#if defined(NSEEL_VM_PROFILE)
+    // 命令の数を取る建て方なら、どの命令を一度も通らなかったかを出す（比べ合わせが見ていないところ）。
+    // 数えるのは vm-*（glue_port_vm.h）だけ。portable の GLUE_CALL_CODE は数えない。
+    {
+        const int nops = NSEEL_vm_profile_nops();
+        const unsigned long long *ops = NSEEL_vm_profile_ops();
+        std::string never;
+        for (int i = 1; i < nops; ++i) if (!ops[i]) never += std::string(" ") + NSEEL_vm_profile_opname(i);
+        std::printf("opcodes never executed by the vm-* runs:%s\n", never.empty() ? " (none)" : never.c_str());
+    }
+#endif
     std::printf(failures ? "RESULT FAIL\n" : "RESULT ok\n");
     return failures ? 1 : 0;
 }
