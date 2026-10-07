@@ -175,9 +175,12 @@ class ReleaseConfigTest(unittest.TestCase):
         beta = m.group(1)
         self.assertIn("ET_APPICON: EffectDeckPublicBeta", beta)
         self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ET_BETA"', beta)
+        # C++（ベンチの足場）も見るので、GCC_PREPROCESSOR_DEFINITIONS にも同じ構成で渡す。
+        self.assertIn('GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) ET_BETA=1"', beta)
         # ET_BETA は Beta 構成のほかに書かない。紫のアイコンも同じ。
         code = [l for l in yml.splitlines() if not l.lstrip().startswith("#")]
-        self.assertEqual(sum("ET_BETA" in l for l in code), 1)
+        self.assertEqual(sum("ET_BETA" in l for l in code), 2)
+        self.assertEqual(sum("ET_BETA" in l for l in beta.splitlines()), 2)
         self.assertEqual(sum("ET_APPICON: EffectDeckPublicBeta" in l for l in code), 1)
         self.assertEqual(len(re.findall(r"(?m)^\s*ET_APPICON:", yml)), 2)
         # 既定の ET_APPICON は青。
