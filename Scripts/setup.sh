@@ -46,7 +46,7 @@ fi
 # 前の版が当たった木（一度でも build.sh を通した Mac）を「当たっている」と
 # 見て黙って飛ばし、新しく足した分（gfx の座標の切り詰めなど）が建たない。
 # パッチを変えたら、目印もその版で足したものに替えること（Tests/Fuzz/run.sh も同じ目印を見る）。
-if grep -q "effectdeck_gfx_alpha" Vendor/ysfx/sources/ysfx_api_gfx_lice.hpp 2>/dev/null; then
+if grep -q "NSEEL_code_execute_frames" Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/ns-eel.h 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
   YSFX_PATCHED=1
 else
@@ -62,6 +62,8 @@ else
       echo "!! Vendor/ysfx を戻せない。git -C Vendor/ysfx status を確かめること"
       exit 1
     }
+    # パッチが新しく作るファイル（追跡していないので checkout では消えない）。
+    rm -f Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
   elif [ $YSFX_DIFF -ne 0 ] \
       && grep -q "YSFX_EFFECTDECK_SANDBOX" Vendor/ysfx/sources/ysfx_api_file.cpp 2>/dev/null; then
     # **git が開けない写しでは、前の版の差分を逆に当てて外す。**Mac へ送った木は

@@ -60,6 +60,10 @@ bool ETJSFX_ClearDiagnostic(ETJSFX *host);
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *host);
 /// 1 ブロックの持ち時間に対して使った割合の最大値（1/1000）。1000 で使い切り。
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *host);
+/// EEL の実行系（WDL の ns-eel.h の NSEEL_EXEC_*。0 は portable）。**測るためだけ。**アプリは既定のまま。
+/// この建て方で使えない番号は false で何も変えない。結果は 1 ビットも変わらない（速さだけ）。
+bool ETJSFX_SetEELExecutor(ETJSFX *host, int32_t mode);
+int32_t ETJSFX_EELExecutor(const ETJSFX *host);
 /// 遅延（pdc_delay）が変わったか。遅延そのものは 0〜192000 サンプルに切ってある。
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);

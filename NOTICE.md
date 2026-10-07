@@ -56,8 +56,10 @@ the EEL2 interpreter (portable, no JIT), LICE (drawing for `@gfx`) and `fft.c`.
 Copyright (C) 2005 and later Cockos Incorporated. Portions copyright other contributors,
 see each source file. `fft.c` is based on DJBFFT, Copyright 1999 D. J. Bernstein.
 
-zlib license. Full text in `Vendor/ysfx/thirdparty/WDL/LICENSE.txt`. Altered:
-`eel2/nseel-compiler.c` and `lice/lice.cpp`, by `Patches/ysfx-effectdeck-ios.diff`.
+zlib license. Full text in `Vendor/ysfx/thirdparty/WDL/LICENSE.txt`. Altered by
+`Patches/ysfx-effectdeck-ios.diff` (the patch lists every file, among them `eel2/nseel-compiler.c`,
+`eel2/ns-eel.h` and `lice/lice.cpp`). `eel2/glue_port_vm.h` is not from WDL: EffectDeck added it to
+run WDL's portable bytecode in other ways (the bytecode itself is unchanged).
 
 ## DPF Base64
 

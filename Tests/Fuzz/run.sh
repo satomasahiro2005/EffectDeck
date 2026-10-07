@@ -188,7 +188,7 @@ if [ "$exec_needed" = 1 ]; then
   find "$ysfx.new" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) \
     -exec sed -i 's/\r$//' {} +
   # 当たっているかの目印は Scripts/setup.sh と同じ（パッチの今の版が初めて足したもの）。
-  if ! grep -q effectdeck_gfx_alpha "$ysfx.new/sources/ysfx_api_gfx_lice.hpp"; then
+  if ! grep -q NSEEL_code_execute_frames "$ysfx.new/thirdparty/WDL/source/WDL/eel2/ns-eel.h"; then
     # patch(1) は CI の swift の image に無いことがあるので git apply で当てる。写しの上の
     # ディレクトリにリポジトリを探しに行かせない（GIT_CEILING_DIRECTORIES）。
     sed 's/\r$//' "$repo/Patches/ysfx-effectdeck-ios.diff" \

@@ -3,6 +3,11 @@
 //   jsfx-bench --dir Debug/JSFXBench [--seconds 5] [--warmup 0.5] [--chunk 16]
 //              [--scripts gain,fir] [--variants portable,cpp] [--json out.json]
 //              [--config <字>] [--sha <字>] [--flags <字>] [--no-rt] [--spin <ミリ秒>]
+//              [--profile-out ops.json]
+//   jsfx-bench --diff [--diff-blocks 48] <file.jsfx|dir> ...
+//
+// --diff は速さではなく、EEL の実行系ごとの結果が portable と 1 ビットまで同じかを見る（diff.cpp）。
+// --profile-out は -DNSEEL_VM_PROFILE で建てたものだけ。回した命令の数と続いた 2 つの組を JSON に書く。
 //
 // 表を stdout に出し、--json に JSON を書く。照合が落ちたら終了値 1。
 // JIT（-DET_JSFX_BENCH_JIT_PROBE）で建てたものは、先に「書いた頁を実行できるか」を確かめる
@@ -17,6 +22,13 @@
 #include <cstring>
 #include <string>
 #include <unistd.h>
+#include <vector>
+
+#if defined(NSEEL_VM_PROFILE)
+#include "WDL/eel2/ns-eel.h"
+#endif
+
+int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks);
 
 #if defined(ET_JSFX_BENCH_JIT_PROBE)
 #include <sys/mman.h>
@@ -79,7 +91,10 @@ int main(int argc, char **argv)
 
     ETJSFXBenchOptions o;
     ETJSFXBench_DefaultOptions(&o);
-    std::string dir = "Debug/JSFXBench", json, scripts, variants, config, sha, flags;
+    std::string dir = "Debug/JSFXBench", json, scripts, variants, config, sha, flags, profileOut;
+    bool diff = false;
+    uint32_t diffBlocks = 48;
+    std::vector<std::string> diffPaths;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&](const char *name) -> std::string {
@@ -98,8 +113,22 @@ int main(int argc, char **argv)
         else if (a == "--flags") flags = next("--flags");
         else if (a == "--no-rt") o.realtimePolicy = false;
         else if (a == "--spin") o.cpuWarmupMilliseconds = std::atof(next("--spin").c_str());
+        else if (a == "--profile-out") profileOut = next("--profile-out");
+        else if (a == "--diff") diff = true;
+        else if (a == "--diff-blocks") diffBlocks = (uint32_t)std::atoi(next("--diff-blocks").c_str());
+        else if (diff && a.size() && a[0] != '-') diffPaths.push_back(a);
         else { std::fprintf(stderr, "jsfx-bench: unknown argument %s\n", a.c_str()); return 2; }
     }
+    if (diff) {
+        gStage = "diff";
+        if (diffPaths.empty()) { std::fprintf(stderr, "jsfx-bench: --diff needs files or directories\n"); return 2; }
+        return ETJSFXBenchDiffMain(diffPaths, diffBlocks);
+    }
+#if defined(NSEEL_VM_PROFILE)
+    NSEEL_vm_profile_reset();
+#else
+    if (!profileOut.empty()) { std::fprintf(stderr, "jsfx-bench: --profile-out needs a -DNSEEL_VM_PROFILE build\n"); return 2; }
+#endif
     std::string probe = "not built";
 #if defined(ET_JSFX_BENCH_JIT_PROBE)
     gStage = "JIT probe";
@@ -126,6 +155,31 @@ int main(int argc, char **argv)
         std::fputs(text, f); std::fclose(f);
         std::printf("json: %s\n", json.c_str());
     }
+#if defined(NSEEL_VM_PROFILE)
+    if (!profileOut.empty()) {
+        FILE *f = std::fopen(profileOut.c_str(), "wb");
+        if (!f) { std::fprintf(stderr, "jsfx-bench: cannot write %s\n", profileOut.c_str()); return 2; }
+        const int nops = NSEEL_vm_profile_nops();
+        const unsigned long long *ops = NSEEL_vm_profile_ops(), *pairs = NSEEL_vm_profile_pairs();
+        std::fprintf(f, "{\n  \"scripts\": \"%s\", \"variants\": \"%s\", \"seconds\": %g, \"warmupSeconds\": %g,\n",
+                     scripts.c_str(), variants.c_str(), o.seconds, o.warmupSeconds);
+        std::fprintf(f, "  \"names\": [");
+        for (int i = 0; i < nops; ++i) std::fprintf(f, "%s\"%s\"", i ? ", " : "", NSEEL_vm_profile_opname(i));
+        std::fprintf(f, "],\n  \"ops\": [");
+        for (int i = 0; i < nops; ++i) std::fprintf(f, "%s%llu", i ? ", " : "", ops[i]);
+        std::fprintf(f, "],\n  \"pairs\": [");
+        bool first = true;
+        for (int a = 0; a < nops; ++a)
+            for (int b = 0; b < nops; ++b)
+                if (pairs[a * nops + b]) {
+                    std::fprintf(f, "%s[%d, %d, %llu]", first ? "" : ", ", a, b, pairs[a * nops + b]);
+                    first = false;
+                }
+        std::fprintf(f, "]\n}\n");
+        std::fclose(f);
+        std::printf("profile: %s\n", profileOut.c_str());
+    }
+#endif
     const bool passed = ETJSFXBench_Passed(report);
     ETJSFXBench_FreeString(table); ETJSFXBench_FreeString(text); ETJSFXBench_Free(report);
     return passed ? 0 : 1;

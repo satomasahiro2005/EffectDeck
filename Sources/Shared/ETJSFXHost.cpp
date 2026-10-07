@@ -634,6 +634,8 @@ bool ETJSFX_ClearDiagnostic(ETJSFX *h)
 bool ETJSFX_IsRunning(const ETJSFX *h){return h&&h->mode.load(std::memory_order_acquire)==(uint8_t)Mode::running;}
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *h){return h?h->deadlineTrips.load(std::memory_order_relaxed):0;}
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *h){return h?h->deadlineWorst.load(std::memory_order_relaxed):0;}
+bool ETJSFX_SetEELExecutor(ETJSFX *h,int32_t mode){return h&&h->effect&&ysfx_set_eel_exec_mode(h->effect,mode);}
+int32_t ETJSFX_EELExecutor(const ETJSFX *h){return h&&h->effect?ysfx_get_eel_exec_mode(h->effect):-1;}
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *h){return h&&h->latencyChanged.exchange(false);}
 bool ETJSFX_ConsumeSliderChange(ETJSFX *h){return h&&h->sliderChanged.exchange(false);}
 

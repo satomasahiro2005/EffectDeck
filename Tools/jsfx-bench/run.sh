@@ -3,7 +3,7 @@
 # JSFX の実行系を机の上で比べる（Mac・Linux。docs/jsfx-bench.md）。
 #
 #   bash Tools/jsfx-bench/run.sh [--seconds <秒>] [--scripts a,b] [--opt Os|O3|both] [--no-jit]
-#                                [--label <名前>] [--build-only] [--clean]
+#                                [--label <名前>] [--build-only] [--clean] [--diff] [--profile]
 #
 #   --seconds    測る長さ（音の秒）。既定 5
 #   --scripts    Debug/JSFXBench のうち回すもの（拡張子なし）。既定は全部
@@ -11,9 +11,13 @@
 #                既定。project.yml は YSFX に書いていない）。O3 は比べるための別の段。既定 both
 #   --no-jit     JIT 版を建てない・回さない
 #   --label      出力の名前の頭（build/jsfx-bench/<label>-<opt>-<eel>.json）。既定は機種名
+#   --diff       速さを測らず、portable の版で Tests/Fixtures/JSFX・Tests/Fuzz/Corpus/jsfxexec・
+#                Debug/JSFXBench を EEL の実行系ごとに回し、portable と 1 ビットまで比べる（diff.cpp）
+#   --profile    速さを測らず、-DNSEEL_VM_PROFILE の版（-Os）で Debug/JSFXBench を 1 本ずつ vm-goto で回し、
+#                命令の数と続いた 2 つの組を数える（build/jsfx-bench/opcodes/*.json → opcodes.py）
 #
 # 建てるもの（どれも Sources/Shared/ETJSFXBench.cpp + ETJSFXHost.cpp + ysfx/WDL）:
-#   jsfx-bench-portable-<opt>  EEL_TARGET_PORTABLE（iOS と同じ解釈）。実行系 portable と cpp
+#   jsfx-bench-portable-<opt>  EEL_TARGET_PORTABLE（iOS と同じ解釈）。実行系 portable・vm-*・cpp
 #   jsfx-bench-jit-<opt>       EEL_TARGET_PORTABLE なし（WDL の glue_aarch64.h の JIT）。実行系 wdl-jit と cpp。
 #                              arm64 だけ。OS が実行できる頁を断ったら、何が断られたかを出して止まる
 # ysfx は Vendor/ysfx の写しにアプリと同じパッチを当てて、project.yml の YSFX と同じ組・同じ定義で建てる
@@ -31,6 +35,7 @@ jit=1
 label=
 build_only=0
 clean=0
+mode=bench
 
 die() { echo "run.sh: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
@@ -44,7 +49,9 @@ while [ $# -gt 0 ]; do
     --label) [ $# -ge 2 ] || die "--label に値が無い"; label=$2; shift 2 ;;
     --build-only) build_only=1; shift ;;
     --clean) clean=1; shift ;;
-    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --diff) mode=diff; shift ;;
+    --profile) mode=profile; shift ;;
+    -h|--help) sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "知らない引数: $1（--help）" ;;
   esac
 done
@@ -66,7 +73,7 @@ label=$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '_')
 jobs=$( (sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) | head -1)
 if command -v shasum >/dev/null 2>&1; then hash_cmd=(shasum); else hash_cmd=(sha1sum); fi
 sha=$(git -C "$repo" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-if [ -n "$(git -C "$repo" status --porcelain -- Sources/Shared Tools/jsfx-bench Debug/JSFXBench 2>/dev/null)" ]; then
+if [ -n "$(git -C "$repo" status --porcelain -- Sources/Shared Tools/jsfx-bench Debug/JSFXBench Patches 2>/dev/null)" ]; then
   sha="$sha-dirty"
 fi
 
@@ -84,7 +91,7 @@ cp -R "$repo/Vendor/ysfx/include" "$repo/Vendor/ysfx/sources" "$ysfx.new/"
 cp -R "$repo/Vendor/ysfx/thirdparty/WDL/source/WDL" "$ysfx.new/thirdparty/WDL/source/"
 # Windows の写し（core.autocrlf）からでも LF にそろえる。BSD の sed -i は形が違うので perl で。
 find "$ysfx.new" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -exec perl -pi -e 's/\r$//' {} +
-if ! grep -q effectdeck_gfx_alpha "$ysfx.new/sources/ysfx_api_gfx_lice.hpp"; then
+if ! grep -q NSEEL_code_execute_frames "$ysfx.new/thirdparty/WDL/source/WDL/eel2/ns-eel.h"; then
   perl -pe 's/\r$//' "$repo/Patches/ysfx-effectdeck-ios.diff" \
     | (cd "$ysfx.new" && GIT_CEILING_DIRECTORIES="$(dirname "$ysfx.new")" git apply -p1 -) >> "$log" 2>&1 \
     || die "ysfx-effectdeck-ios.diff が写しに当たらない（Vendor/ysfx の版。Scripts/setup.sh を読むこと）"
@@ -121,12 +128,16 @@ compile_one() {
 export -f compile_one
 export ET_CC="$cc" ET_CXX="$cxx" ET_YSFX="$ysfx"
 
-# $1=portable|jit $2=Os|O3。建てた実行ファイルのパスを出す。
+# $1=portable|jit|profile $2=Os|O3。建てた実行ファイルのパスを出す。
 build_bin() {
   local eel=$1 opt=$2 defs flags objs key bin eel_name
   flags=(-"$opt" -fsigned-char -g)
   defs=("${common_defs[@]}")
-  if [ "$eel" = portable ]; then defs+=(-DEEL_TARGET_PORTABLE); eel_name=portable; else eel_name=wdl-jit; fi
+  case $eel in
+    portable) defs+=(-DEEL_TARGET_PORTABLE); eel_name=portable ;;
+    profile) defs+=(-DEEL_TARGET_PORTABLE -DNSEEL_VM_PROFILE); eel_name=portable ;;
+    *) eel_name=wdl-jit ;;
+  esac
   objs="$work/obj-$eel-$opt"
   key=$({ "$cxx" --version | head -1; "${hash_cmd[@]}" < "${BASH_SOURCE[0]}"
           echo "${defs[*]} ${flags[*]} ${ysfx_srcs[*]}"
@@ -152,7 +163,7 @@ build_bin() {
   if ! { "$cc" "${flags[@]}" -I "$repo/Sources/Shared" -c "$repo/Sources/Shared/ETExternalProcessor.c" \
            -o "$objs/ETExternalProcessor.o" &&
          "$cxx" -std=c++20 "${flags[@]}" "${defs[@]}" "${extra[@]}" "${inc[@]}" -I "$repo/Sources/Shared" \
-           "$here/main.cpp" "$repo/Sources/Shared/ETJSFXBench.cpp" "$repo/Sources/Shared/ETJSFXBenchPorts.cpp" \
+           "$here/main.cpp" "$here/diff.cpp" "$repo/Sources/Shared/ETJSFXBench.cpp" "$repo/Sources/Shared/ETJSFXBenchPorts.cpp" \
            "$repo/Sources/Shared/ETJSFXHost.cpp" "$repo/Tests/Fuzz/Native/et_lice_font_linux.cpp" \
            "$objs/ETExternalProcessor.o" "$objs"/*.c.o "$objs"/*.cpp.o -pthread -o "$bin"; } >> "$log" 2>&1; then
     tail -30 "$log" >&2
@@ -161,11 +172,27 @@ build_bin() {
   echo "$bin"
 }
 
+if [ "$mode" = profile ]; then
+  b=$(build_bin profile Os) || exit 1
+  echo "== built: $b"
+  [ "$build_only" = 1 ] && exit 0
+  mkdir -p "$work/opcodes"
+  rm -f "$work"/opcodes/*.json
+  list=${scripts:-gain,filter_drive,stereo_delay,slow,biquad,fir,math}
+  for s in $(printf '%s' "$list" | tr ',' ' '); do
+    echo "== profile $s"
+    "$b" --dir "$repo/Debug/JSFXBench" --seconds 1 --warmup 0 --scripts "$s" --variants vm-goto --no-rt --spin 0 \
+      --profile-out "$work/opcodes/$s.json" > "$work/opcodes/$s.txt" 2>&1 || { cat "$work/opcodes/$s.txt"; exit 1; }
+  done
+  python3 "$here/opcodes.py" "$work"/opcodes/*.json
+  exit 0
+fi
+
 bins=()
 for opt in "${opts[@]}"; do
   b=$(build_bin portable "$opt") || exit 1
   bins+=("$b")
-  if [ "$jit" = 1 ]; then
+  if [ "$jit" = 1 ] && [ "$mode" = bench ]; then
     b=$(build_bin jit "$opt") || exit 1
     bins+=("$b")
   fi
@@ -173,15 +200,30 @@ done
 echo "== built: ${bins[*]}"
 [ "$build_only" = 1 ] && exit 0
 
+if [ "$mode" = diff ]; then
+  status=0
+  for bin in "${bins[@]}"; do
+    echo "== diff $(basename "$bin")"
+    set +e
+    "$bin" --diff "$repo/Tests/Fixtures/JSFX" "$repo/Tests/Fuzz/Corpus/jsfxexec" "$repo/Debug/JSFXBench" \
+      | tee "$work/$label-$(basename "$bin")-diff.txt"
+    [ "${PIPESTATUS[0]}" = 0 ] || status=1
+    set -e
+  done
+  exit "$status"
+fi
+
 jsons=()
 status=0
 for bin in "${bins[@]}"; do
   name=$(basename "$bin")            # jsfx-bench-<eel>-<opt>
   eel=${name#jsfx-bench-}; opt=${eel##*-}; eel=${eel%-*}
-  if [ "$eel" = portable ]; then variants=portable,cpp; else variants=wdl-jit,cpp; fi
+  # portable の版は全部（portable・vm-*・cpp）。JIT の版は wdl-jit と cpp だけ（vm-* は作れない）。
+  if [ "$eel" = portable ]; then variants=; else variants=wdl-jit,cpp; fi
   out="$work/$label-$opt-$eel.json"
-  args=(--dir "$repo/Debug/JSFXBench" --seconds "$seconds" --variants "$variants" --json "$out"
+  args=(--dir "$repo/Debug/JSFXBench" --seconds "$seconds" --json "$out"
         --config "cli-$opt" --sha "$sha" --flags "clang -$opt -fsigned-char ($eel; ysfx, host and harness)")
+  [ -n "$variants" ] && args+=(--variants "$variants")
   [ -n "$scripts" ] && args+=(--scripts "$scripts")
   echo "== run $name"
   set +e

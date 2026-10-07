@@ -1,4 +1,4 @@
-前の版の ysfx-effectdeck-ios.diff（f32c716 で入れたもの）。当てるものではない。
+前の版の ysfx-effectdeck-ios.diff（3cee65a で入れたもの）。当てるものではない。
 git が開けない写しに当たっているこの版を、Scripts/setup.sh が逆に当てて外すためだけに置く。
 EffectDeck が ysfx 5c3452f に当てる差分（Scripts/setup.sh が当てる）。
 上流 WDL から取り込んだもの:
@@ -247,7 +247,7 @@ index 7a115e7..954e4de 100644
  
      NSEEL_addfunc_retptr("gfx_lineto", 3, NSEEL_PProc_THIS, &ysfx_api_gfx_lineto);
 diff --git a/sources/ysfx_api_gfx_lice.hpp b/sources/ysfx_api_gfx_lice.hpp
-index 94252e1..827bbe3 100644
+index 94252e1..9eaf5e8 100644
 --- a/sources/ysfx_api_gfx_lice.hpp
 +++ b/sources/ysfx_api_gfx_lice.hpp
 @@ -36,6 +36,7 @@
@@ -273,7 +273,7 @@ index 94252e1..827bbe3 100644
  static void LICE__DestroyFont(LICE_IFont *bm)
  {
    delete bm;
-@@ -109,12 +110,81 @@ static bool LICE__resize(LICE_IBitmap *bm, int w, int h)
+@@ -109,12 +110,93 @@ static bool LICE__resize(LICE_IBitmap *bm, int w, int h)
    return bm->resize(w,h);
  }
  
@@ -338,6 +338,18 @@ index 94252e1..827bbe3 100644
 +  return true;
 +}
 +
++// **gfx_a は LICE に渡す前に ±8 へ収める。** LICE は alpha*256 を int にして、合成(lice_combine.h)で
++// 色・画素の alpha と掛ける。LICE_FillRect はその値を画素の alpha にも入れるので積は (alpha*256)^2*255
++// まで育ち、乗算・オーバーレイは |gfx_a| が 11 余りで、写し・加算は巨大な値で int を溢れる(未定義。
++// 範囲外の double は arm64 で INT_MAX に張り付く)。±8 なら LICE の合成に届く整数は全部 ±2048 に収まる
++// (lice.cpp の gradBlit も同じ幅に収める)。ふつうは 0..1 で、±8 の中は何も変えない。NaN は今までどおり 0。
++// **スクリプトの gfx_a を LICE に渡す口は全部これを通す。**スクリプトから見える gfx_a は変えない。
++static float effectdeck_gfx_alpha(EEL_F v)
++{
++  if (v != v) return 0.0f;
++  return (float)(v < -8.0 ? -8.0 : v > 8.0 ? 8.0 : v);
++}
++
  static LICE_IBitmap *__LICE_CreateBitmap(int mode, int w, int h)
  {
 -  if (mode==1) return new LICE_SysBitmap(w,h);
@@ -356,7 +368,7 @@ index 94252e1..827bbe3 100644
  class eel_lice_state
  {
  public:
-@@ -123,8 +193,12 @@ public:
+@@ -123,8 +205,12 @@ public:
    ~eel_lice_state();
  
    LICE_IBitmap *m_framebuffer, *m_framebuffer_extra;
@@ -369,7 +381,7 @@ index 94252e1..827bbe3 100644
    struct gfxFontStruct {
      LICE_IFont *font;
      char last_fontname[128];
-@@ -143,7 +217,7 @@ public:
+@@ -143,7 +229,7 @@ public:
    };
  
    int m_gfx_font_active; // -1 for default, otherwise index into gfx_fonts (NOTE: this differs from the exposed API, which defines 0 as default, 1-n)
@@ -378,7 +390,7 @@ index 94252e1..827bbe3 100644
  
    LICE_IBitmap *GetImageForIndex(EEL_F idx, const char *callername) 
    { 
-@@ -222,6 +296,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+@@ -222,6 +308,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
    m_gfx_images.Resize(image_slots);
    memset(m_gfx_images.Get(),0,m_gfx_images.GetSize()*sizeof(m_gfx_images.Get()[0]));
    m_framebuffer=m_framebuffer_extra=0;
@@ -391,7 +403,7 @@ index 94252e1..827bbe3 100644
    m_framebuffer_dirty=0;
  
    m_gfx_r = NSEEL_VM_regvar(vm,"gfx_r");
-@@ -250,6 +330,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+@@ -250,6 +342,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
  }
  eel_lice_state::~eel_lice_state()
  {
@@ -401,7 +413,7 @@ index 94252e1..827bbe3 100644
    if (LICE_FUNCTION_VALID(LICE__Destroy)) 
    {
      LICE__Destroy(m_framebuffer_extra);
-@@ -262,6 +345,7 @@ eel_lice_state::~eel_lice_state()
+@@ -262,6 +357,7 @@ eel_lice_state::~eel_lice_state()
    }
    if (LICE_FUNCTION_VALID(LICE__DestroyFont))
    {
@@ -409,7 +421,7 @@ index 94252e1..827bbe3 100644
      int x;
      for (x=0;x<m_gfx_fonts.GetSize();x++)
      {
-@@ -386,9 +470,13 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
+@@ -386,9 +482,13 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
    if (ctx) 
    {
  #ifndef EEL_LICE_NO_RAM
@@ -426,7 +438,7 @@ index 94252e1..827bbe3 100644
      const int sz = divw*divh*2;
  
  #ifdef EEL_LICE_RAMFUNC
-@@ -398,6 +486,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
+@@ -398,6 +498,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
      EEL_F **blocks = ctx->m_vmref ? ((compileContext*)ctx->m_vmref)->ram_state->blocks : 0;
      if (!blocks || np < 8) return 0.0;
  
@@ -434,7 +446,7 @@ index 94252e1..827bbe3 100644
      const int addr1= (int) (parms[7][0]+0.5);
      EEL_F *d=__NSEEL_RAMAlloc(blocks,addr1);
      if (sz>NSEEL_RAM_ITEMSPERBLOCK)
-@@ -422,7 +511,8 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_circle(void *opaque, INT_PTR np, EEL_F
+@@ -422,7 +523,8 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_circle(void *opaque, INT_PTR np, EEL_F
    bool aa = true, fill = false;
    if (np>3) fill = parms[3][0] > 0.5;
    if (np>4) aa = parms[4][0] > 0.5;
@@ -444,7 +456,7 @@ index 94252e1..827bbe3 100644
    return 0.0;
  }
  
-@@ -619,8 +709,10 @@ void eel_lice_state::gfx_lineto(EEL_F xpos, EEL_F ypos, EEL_F aaflag)
+@@ -619,13 +721,15 @@ void eel_lice_state::gfx_lineto(EEL_F xpos, EEL_F ypos, EEL_F aaflag)
    LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_lineto");
    if (!dest) return;
  
@@ -457,7 +469,25 @@ index 94252e1..827bbe3 100644
        LICE_FUNCTION_VALID(LICE_ClipLine) && 
        LICE_ClipLine(&x1,&y1,&x2,&y2,0,0,LICE__GetWidth(dest),LICE__GetHeight(dest))) 
    {
-@@ -658,8 +750,10 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
+     SetImageDirty(dest);
+-    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),(float) *m_gfx_a,getCurMode(),aaflag > 0.5);
++    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode(),aaflag > 0.5);
+   }
+   *m_gfx_x = xpos;
+   *m_gfx_y = ypos;
+@@ -641,9 +745,9 @@ void eel_lice_state::gfx_circle(float x, float y, float r, bool fill, bool aafla
+   {
+     SetImageDirty(dest);
+     if(fill)
+-      LICE_FillCircle(dest, x, y, r, getCurColor(), (float) *m_gfx_a, getCurMode(), aaflag);
++      LICE_FillCircle(dest, x, y, r, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aaflag);
+     else
+-      LICE_Circle(dest, x, y, r, getCurColor(), (float) *m_gfx_a, getCurMode(), aaflag);
++      LICE_Circle(dest, x, y, r, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aaflag);
+   }
+ }
+ 
+@@ -658,8 +762,10 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
      {        
        if (!LICE_FUNCTION_VALID(LICE_FillTriangle)) return;
  
@@ -466,11 +496,11 @@ index 94252e1..827bbe3 100644
 +      LICE_FillTriangle(dest, (int)effectdeck_gfx_coord(parms[0][0]), (int)effectdeck_gfx_coord(parms[1][0]),
 +          (int)effectdeck_gfx_coord(parms[2][0]), (int)effectdeck_gfx_coord(parms[3][0]),
 +          (int)effectdeck_gfx_coord(parms[4][0]), (int)effectdeck_gfx_coord(parms[5][0]),
-+          getCurColor(), (float)*m_gfx_a, getCurMode());
++          getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode());
      }
      else
      {
-@@ -671,8 +765,8 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
+@@ -671,11 +777,11 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
        int x[maxpt], y[maxpt];
        for (i=0; i < n; i++)
        {
@@ -480,17 +510,23 @@ index 94252e1..827bbe3 100644
 +        y[i]=(int)effectdeck_gfx_coord(parms[rdi++][0]);
        }
  
-       LICE_FillConvexPolygon(dest, x, y, n, getCurColor(), (float)*m_gfx_a, getCurMode());
-@@ -692,6 +786,8 @@ void eel_lice_state::gfx_rectto(EEL_F xpos, EEL_F ypos)
+-      LICE_FillConvexPolygon(dest, x, y, n, getCurColor(), (float)*m_gfx_a, getCurMode());
++      LICE_FillConvexPolygon(dest, x, y, n, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode());
+     }
+   }
+ }
+@@ -692,7 +798,9 @@ void eel_lice_state::gfx_rectto(EEL_F xpos, EEL_F ypos)
    if (LICE_FUNCTION_VALID(LICE_FillRect) && x2-x1 > 0.5 && y2-y1 > 0.5)
    {
      SetImageDirty(dest);
+-    LICE_FillRect(dest,(int)x1,(int)y1,(int)(x2-x1),(int)(y2-y1),getCurColor(),(float)*m_gfx_a,getCurMode());
 +    x1=effectdeck_gfx_coord(x1); y1=effectdeck_gfx_coord(y1);
 +    x2=effectdeck_gfx_coord(x2); y2=effectdeck_gfx_coord(y2);
-     LICE_FillRect(dest,(int)x1,(int)y1,(int)(x2-x1),(int)(y2-y1),getCurColor(),(float)*m_gfx_a,getCurMode());
++    LICE_FillRect(dest,(int)x1,(int)y1,(int)(x2-x1),(int)(y2-y1),getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode());
    }
    *m_gfx_x = xpos;
-@@ -704,8 +800,10 @@ void eel_lice_state::gfx_line(int np, EEL_F **parms)
+   *m_gfx_y = ypos;
+@@ -704,14 +812,16 @@ void eel_lice_state::gfx_line(int np, EEL_F **parms)
    LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_line");
    if (!dest) return;
  
@@ -503,7 +539,14 @@ index 94252e1..827bbe3 100644
        LICE_FUNCTION_VALID(LICE__GetHeight) && 
        LICE_FUNCTION_VALID(LICE_Line) && 
        LICE_FUNCTION_VALID(LICE_ClipLine) && LICE_ClipLine(&x1,&y1,&x2,&y2,0,0,LICE__GetWidth(dest),LICE__GetHeight(dest))) 
-@@ -720,7 +818,9 @@ void eel_lice_state::gfx_rect(int np, EEL_F **parms)
+   {
+     SetImageDirty(dest);
+-    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),(float)*m_gfx_a,getCurMode(),np< 5 || parms[4][0] > 0.5);
++    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode(),np< 5 || parms[4][0] > 0.5);
+   } 
+ }
+ 
+@@ -720,14 +830,16 @@ void eel_lice_state::gfx_rect(int np, EEL_F **parms)
    LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_rect");
    if (!dest) return;
  
@@ -514,28 +557,37 @@ index 94252e1..827bbe3 100644
    int filled=(np < 5 || parms[4][0] > 0.5);
  
    if (LICE_FUNCTION_VALID(LICE_FillRect) && LICE_FUNCTION_VALID(LICE_DrawRect) && w>0 && h>0)
-@@ -741,7 +841,9 @@ void eel_lice_state::gfx_roundrect(int np, EEL_F **parms)
+   {
+     SetImageDirty(dest);
+-    if (filled) LICE_FillRect(dest,x1,y1,w,h,getCurColor(),(float)*m_gfx_a,getCurMode());
+-    else LICE_DrawRect(dest, x1, y1, w-1, h-1, getCurColor(), (float)*m_gfx_a, getCurMode());
++    if (filled) LICE_FillRect(dest,x1,y1,w,h,getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode());
++    else LICE_DrawRect(dest, x1, y1, w-1, h-1, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode());
+   }
+ }
+ 
+@@ -741,7 +853,9 @@ void eel_lice_state::gfx_roundrect(int np, EEL_F **parms)
    if (LICE_FUNCTION_VALID(LICE_RoundRect) && parms[2][0]>0 && parms[3][0]>0)
    {
      SetImageDirty(dest);
 -    LICE_RoundRect(dest, (float)parms[0][0], (float)parms[1][0], (float)parms[2][0], (float)parms[3][0], (int)parms[4][0], getCurColor(), (float)*m_gfx_a, getCurMode(), aa);
 +    EEL_F fx=parms[0][0], fy=parms[1][0], fw=parms[2][0], fh=parms[3][0];
 +    effectdeck_gfx_span(&fx,&fw); effectdeck_gfx_span(&fy,&fh);
-+    LICE_RoundRect(dest, (float)fx, (float)fy, (float)fw, (float)fh, (int)effectdeck_gfx_coord(parms[4][0]), getCurColor(), (float)*m_gfx_a, getCurMode(), aa);
++    LICE_RoundRect(dest, (float)fx, (float)fy, (float)fw, (float)fh, (int)effectdeck_gfx_coord(parms[4][0]), getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aa);
    }
  }
  
-@@ -755,7 +857,8 @@ void eel_lice_state::gfx_arc(int np, EEL_F **parms)
+@@ -755,7 +869,8 @@ void eel_lice_state::gfx_arc(int np, EEL_F **parms)
    if (LICE_FUNCTION_VALID(LICE_Arc))
    {
      SetImageDirty(dest);
 -    LICE_Arc(dest, (float)parms[0][0], (float)parms[1][0], (float)parms[2][0], (float)parms[3][0], (float)parms[4][0], getCurColor(), (float)*m_gfx_a, getCurMode(), aa);
 +    LICE_Arc(dest, (float)effectdeck_gfx_coord(parms[0][0]), (float)effectdeck_gfx_coord(parms[1][0]),
-+             (float)effectdeck_gfx_coord(parms[2][0]), (float)parms[3][0], (float)parms[4][0], getCurColor(), (float)*m_gfx_a, getCurMode(), aa);
++             (float)effectdeck_gfx_coord(parms[2][0]), (float)parms[3][0], (float)parms[4][0], getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aa);
    }
  }
  
-@@ -764,7 +867,9 @@ void eel_lice_state::gfx_grad_or_muladd_rect(int whichmode, int np, EEL_F **parm
+@@ -764,7 +879,9 @@ void eel_lice_state::gfx_grad_or_muladd_rect(int whichmode, int np, EEL_F **parm
    LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,whichmode==0?"gfx_gradrect":"gfx_muladdrect");
    if (!dest) return;
  
@@ -546,16 +598,16 @@ index 94252e1..827bbe3 100644
  
    if (w>0 && h>0)
    {
-@@ -802,7 +907,7 @@ void eel_lice_state::gfx_setpixel(EEL_F r, EEL_F g, EEL_F b)
+@@ -802,7 +919,7 @@ void eel_lice_state::gfx_setpixel(EEL_F r, EEL_F g, EEL_F b)
    if (LICE_FUNCTION_VALID(LICE_PutPixel)) 
    {
      SetImageDirty(dest);
 -    LICE_PutPixel(dest,(int)*m_gfx_x, (int)*m_gfx_y,LICE_RGBA(red,green,blue,255), (float)*m_gfx_a,getCurMode());
-+    LICE_PutPixel(dest,(int)effectdeck_gfx_coord(*m_gfx_x), (int)effectdeck_gfx_coord(*m_gfx_y),LICE_RGBA(red,green,blue,255), (float)*m_gfx_a,getCurMode());
++    LICE_PutPixel(dest,(int)effectdeck_gfx_coord(*m_gfx_x), (int)effectdeck_gfx_coord(*m_gfx_y),LICE_RGBA(red,green,blue,255), effectdeck_gfx_alpha(*m_gfx_a),getCurMode());
    }
  }
  
-@@ -857,13 +962,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+@@ -857,13 +974,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
    int use_w = (int)*w;
    int use_h = (int)*h;
    if (use_w<1 || use_h < 1) use_w=use_h=0;
@@ -584,7 +636,7 @@ index 94252e1..827bbe3 100644
      if (!bm) 
      {
        m_gfx_images.Get()[img] = bm = __LICE_CreateBitmap(1,use_w,use_h);
-@@ -873,6 +991,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+@@ -873,6 +1003,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
      {
        rv=LICE__resize(bm,use_w,use_h);
      }
@@ -600,7 +652,7 @@ index 94252e1..827bbe3 100644
    }
  
    return rv?1.0:0.0;
-@@ -889,13 +1016,17 @@ void eel_lice_state::gfx_blurto(EEL_F x, EEL_F y)
+@@ -889,13 +1028,17 @@ void eel_lice_state::gfx_blurto(EEL_F x, EEL_F y)
  
    SetImageDirty(dest);
    
@@ -625,14 +677,14 @@ index 94252e1..827bbe3 100644
    *m_gfx_x = x;
    *m_gfx_y = y;
  }
-@@ -942,12 +1073,15 @@ void eel_lice_state::gfx_transformblit(EEL_F **parms, int div_w, int div_h, EEL_
+@@ -942,12 +1085,15 @@ void eel_lice_state::gfx_transformblit(EEL_F **parms, int div_w, int div_h, EEL_
          1.0f,LICE_BLIT_MODE_COPY);      
      }
    }
 -  LICE_TransformBlit2(dest,bm,(int)floor(parms[1][0]),(int)floor(parms[2][0]),(int)floor(parms[3][0]),(int)floor(parms[4][0]),tab,div_w,div_h, (float)*m_gfx_a,getCurModeForBlit(isFromFB));
 +  EEL_F fx=floor(parms[1][0]), fy=floor(parms[2][0]), fw=floor(parms[3][0]), fh=floor(parms[4][0]);
 +  effectdeck_gfx_span(&fx,&fw); effectdeck_gfx_span(&fy,&fh);
-+  LICE_TransformBlit2(dest,bm,(int)fx,(int)fy,(int)fw,(int)fh,tab,div_w,div_h, (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++  LICE_TransformBlit2(dest,bm,(int)fx,(int)fy,(int)fw,(int)fh,tab,div_w,div_h, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
  }
  
  EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
@@ -643,7 +695,7 @@ index 94252e1..827bbe3 100644
  
    if (a>=0 && a < m_gfx_fonts.GetSize())
    {
-@@ -1006,58 +1140,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
+@@ -1006,58 +1152,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
          if (!s->font) s->font=LICE_CreateFont();
          if (s->font)
          {
@@ -705,7 +757,7 @@ index 94252e1..827bbe3 100644
          }
        }
      }
-@@ -1118,6 +1205,9 @@ void eel_lice_state::gfx_blitext2(int np, EEL_F **parms, int blitmode)
+@@ -1118,6 +1217,9 @@ void eel_lice_state::gfx_blitext2(int np, EEL_F **parms, int blitmode)
    coords[5]=np > 6 ? parms[6][0] : *m_gfx_y;
    coords[6]=np > 7 ? parms[7][0] : coords[2]*sc;
    coords[7]=np > 8 ? parms[8][0] : coords[3]*sc;
@@ -715,18 +767,33 @@ index 94252e1..827bbe3 100644
   
    const bool isFromFB = bm == m_framebuffer;
    SetImageDirty(dest);
-@@ -1156,8 +1246,8 @@ void eel_lice_state::gfx_blitext2(int np, EEL_F **parms, int blitmode)
+@@ -1149,20 +1251,20 @@ void eel_lice_state::gfx_blitext2(int np, EEL_F **parms, int blitmode)
+                 np > 12 ? (float)parms[12][0]:1.0f, // dtdy
+                 np > 13 ? (float)parms[13][0]:0.0f, // dsdxdy
+                 np > 14 ? (float)parms[14][0]:0.0f, // dtdxdy
+-                np <= 15 || parms[15][0] > 0.5, (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++                np <= 15 || parms[15][0] > 0.5, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+   }
+   else if (fabs(angle)>0.000000001)
+   {
      LICE_RotatedBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
        (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3],
-       (float)angle,true, (float)*m_gfx_a,getCurModeForBlit(isFromFB),
+-      (float)angle,true, (float)*m_gfx_a,getCurModeForBlit(isFromFB),
 -       np > 9 ? (float)parms[9][0] : 0.0f,
 -       np > 10 ? (float)parms[10][0] : 0.0f);
++      (float)angle,true, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB),
 +       np > 9 ? (float)effectdeck_gfx_coord(parms[9][0]) : 0.0f,
 +       np > 10 ? (float)effectdeck_gfx_coord(parms[10][0]) : 0.0f);
    }
    else
    {
-@@ -1179,6 +1269,13 @@ void eel_lice_state::gfx_blitext(EEL_F img, EEL_F *coords, EEL_F angle)
+     LICE_ScaledBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+-      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+   }
+ }
+ 
+@@ -1179,6 +1281,13 @@ void eel_lice_state::gfx_blitext(EEL_F img, EEL_F *coords, EEL_F angle)
    LICE_IBitmap *bm=GetImageForIndex(img,"gfx_blitext:src");
    if (!bm) return;
    
@@ -740,7 +807,23 @@ index 94252e1..827bbe3 100644
    SetImageDirty(dest);
    const bool isFromFB = bm == m_framebuffer;
   
-@@ -1230,7 +1327,7 @@ void eel_lice_state::gfx_getpixel(EEL_F *r, EEL_F *g, EEL_F *b)
+@@ -1203,13 +1312,13 @@ void eel_lice_state::gfx_blitext(EEL_F img, EEL_F *coords, EEL_F angle)
+   {
+     LICE_RotatedBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+       (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3],(float)angle,
+-      true, (float)*m_gfx_a,getCurModeForBlit(isFromFB),
++      true, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB),
+           (float)coords[8],(float)coords[9]);
+   }
+   else
+   {
+     LICE_ScaledBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+-      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+   }
+ }
+ 
+@@ -1230,7 +1339,7 @@ void eel_lice_state::gfx_getpixel(EEL_F *r, EEL_F *g, EEL_F *b)
    LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_getpixel");
    if (!dest) return;
  
@@ -749,7 +832,7 @@ index 94252e1..827bbe3 100644
  
    *r=LICE_GETR(ret)/255.0;
    *g=LICE_GETG(ret)/255.0;
-@@ -1258,7 +1355,9 @@ static int __drawTextWithFont(LICE_IBitmap *dest, const RECT *rect, LICE_IFont *
+@@ -1258,7 +1367,9 @@ static int __drawTextWithFont(LICE_IBitmap *dest, const RECT *rect, LICE_IFont *
        int lineh = LICE__DrawText(font,dest,buf,thislen?thislen:1,&r,DT_SINGLELINE|DT_NOPREFIX|DT_CALCRECT);
        if (!measureOnly)
        {
@@ -760,7 +843,7 @@ index 94252e1..827bbe3 100644
          lineh = LICE__DrawText(font,dest,buf,thislen?thislen:1,&tr,DT_SINGLELINE|DT_NOPREFIX|flags);
          if (wantYoutput) *wantYoutput = tr.top;
        }
-@@ -1266,7 +1365,7 @@ static int __drawTextWithFont(LICE_IBitmap *dest, const RECT *rect, LICE_IFont *
+@@ -1266,7 +1377,7 @@ static int __drawTextWithFont(LICE_IBitmap *dest, const RECT *rect, LICE_IFont *
        {
          if (r.right > maxx) maxx=r.right;
        }
@@ -769,7 +852,13 @@ index 94252e1..827bbe3 100644
  
        buflen -= thislen+1;
        buf += thislen+1;      
-@@ -1412,14 +1511,14 @@ void eel_lice_state::gfx_drawstr(void *opaque, EEL_F **parms, int nparms, int fo
+@@ -1407,22 +1518,22 @@ void eel_lice_state::gfx_drawstr(void *opaque, EEL_F **parms, int nparms, int fo
+       {
+         RECT r={0,0,0,0};
+         __drawTextWithFont(dest,&r,GetActiveFont(),s,s_len,
+-          getCurColor(),getCurMode(),(float)*m_gfx_a,0,NULL,fmtparms);
++          getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),0,NULL,fmtparms);
+       }
      }
      else
      {    
@@ -786,8 +875,12 @@ index 94252e1..827bbe3 100644
 +        r.bottom=(int)effectdeck_gfx_coord(*parms[3]);
        }
        *m_gfx_x=__drawTextWithFont(dest,&r,GetActiveFont(),s,s_len,
-         getCurColor(),getCurMode(),(float)*m_gfx_a,flags,m_gfx_y,NULL);
-@@ -1440,7 +1539,7 @@ void eel_lice_state::gfx_drawchar(EEL_F ch)
+-        getCurColor(),getCurMode(),(float)*m_gfx_a,flags,m_gfx_y,NULL);
++        getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),flags,m_gfx_y,NULL);
+     }
+   }
+ }
+@@ -1440,10 +1551,10 @@ void eel_lice_state::gfx_drawchar(EEL_F ch)
    char buf[32];
    const int buflen = WDL_MakeUTFChar(buf, a, sizeof(buf));
  
@@ -795,8 +888,12 @@ index 94252e1..827bbe3 100644
 +  RECT r={(int)floor(effectdeck_gfx_coord(*m_gfx_x)),(int)floor(effectdeck_gfx_coord(*m_gfx_y)),0,0};
    *m_gfx_x = __drawTextWithFont(dest,&r,
                           GetActiveFont(),buf,buflen,
-                          getCurColor(),getCurMode(),(float)*m_gfx_a,DT_NOCLIP,NULL,NULL);
-@@ -1461,7 +1560,7 @@ void eel_lice_state::gfx_drawnumber(EEL_F n, EEL_F ndigits)
+-                         getCurColor(),getCurMode(),(float)*m_gfx_a,DT_NOCLIP,NULL,NULL);
++                         getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),DT_NOCLIP,NULL,NULL);
+ 
+ }
+ 
+@@ -1461,8 +1572,8 @@ void eel_lice_state::gfx_drawnumber(EEL_F n, EEL_F ndigits)
    else if (a > 16) a=16;
    snprintf(buf,sizeof(buf),"%.*f",a,n);
  
@@ -804,7 +901,9 @@ index 94252e1..827bbe3 100644
 +  RECT r={(int)floor(effectdeck_gfx_coord(*m_gfx_x)),(int)floor(effectdeck_gfx_coord(*m_gfx_y)),0,0};
    *m_gfx_x = __drawTextWithFont(dest,&r,
                             GetActiveFont(),buf,(int)strlen(buf),
-                            getCurColor(),getCurMode(),(float)*m_gfx_a,DT_NOCLIP,NULL,NULL);
+-                           getCurColor(),getCurMode(),(float)*m_gfx_a,DT_NOCLIP,NULL,NULL);
++                           getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),DT_NOCLIP,NULL,NULL);
+ }
 diff --git a/sources/ysfx_api_reaper.cpp b/sources/ysfx_api_reaper.cpp
 index d29d81d..e2528d7 100644
 --- a/sources/ysfx_api_reaper.cpp
@@ -1171,10 +1270,10 @@ index ccc8580..057cfc3 100644
  
    t=*v; // set value
 diff --git a/thirdparty/WDL/source/WDL/lice/lice.cpp b/thirdparty/WDL/source/WDL/lice/lice.cpp
-index d1a7c30..8499a09 100644
+index d1a7c30..2e37605 100644
 --- a/thirdparty/WDL/source/WDL/lice/lice.cpp
 +++ b/thirdparty/WDL/source/WDL/lice/lice.cpp
-@@ -25,6 +25,12 @@
+@@ -25,6 +25,15 @@
  
  #define IGNORE_SCALING(mode) ((mode)&LICE_BLIT_IGNORE_SCALING)
  
@@ -1183,11 +1282,14 @@ index d1a7c30..8499a09 100644
 +// 読む前の範囲の検査で元の画像の外を読まない。
 +static inline int lice_wrap_add(int a, int b) { return (int) ((unsigned int)a + (unsigned int)b); }
 +static inline int lice_wrap_muladd(int a, int m, int b) { return (int) ((unsigned int)a*(unsigned int)m + (unsigned int)b); }
++// gradBlit の色と alpha は傾きの足し込みで画素ごとに育ち(±32767)、合成の掛け算(乗算・オーバーレイ・
++// HSV)が int を溢れる。gfx_a と同じ ±8(8*256)へ収める。0..1 の範囲の中は変わらない。
++static inline int lice_grad_chan(int v) { return v < -2048 ? -2048 : v > 2048 ? 2048 : v; }
 +
  #define DO_RECT_SC(mode) \
    const int __sc = (int)dest->Extended(LICE_EXT_GET_SCALING,NULL); \
    if (__sc>0) { \
-@@ -291,11 +297,11 @@ template<class COMBFUNC> class _LICE_Template_Blit0 // these always templated
+@@ -291,11 +300,11 @@ template<class COMBFUNC> class _LICE_Template_Blit0 // these always templated
              }
  
              ++pout;
@@ -1201,7 +1303,7 @@ index d1a7c30..8499a09 100644
        }
      }
  
-@@ -345,7 +351,7 @@ class _LICE_Template_Blit1 // these controlled by LICE_FAVOR_SIZE_EXTREME
+@@ -345,15 +354,15 @@ class _LICE_Template_Blit1 // these controlled by LICE_FAVOR_SIZE_EXTREME
        while (h--)
        {
          int r=ir,g=ig,b=ib,a=ia;
@@ -1210,16 +1312,18 @@ index d1a7c30..8499a09 100644
          LICE_pixel_chan *pout=dest;
          int n=w;
          while (n--)
-@@ -353,7 +359,7 @@ class _LICE_Template_Blit1 // these controlled by LICE_FAVOR_SIZE_EXTREME
-           const int aa=a/65536;
-           DOPIX(pout,r/65536,g/65536,b/65536,aa,aa);
+         {
+-          const int aa=a/65536;
+-          DOPIX(pout,r/65536,g/65536,b/65536,aa,aa);
++          const int aa=lice_grad_chan(a/65536);
++          DOPIX(pout,lice_grad_chan(r/65536),lice_grad_chan(g/65536),lice_grad_chan(b/65536),aa,aa);
            pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
 -          r+=drdx; g+=dgdx; b+=dbdx; a+=dadx;
 +          r=lice_wrap_add(r,drdx); g=lice_wrap_add(g,dgdx); b=lice_wrap_add(b,dbdx); a=lice_wrap_add(a,dadx);
          }
          dest+=dest_span;
        }
-@@ -468,11 +474,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+@@ -468,11 +477,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
              }
  
              pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
@@ -1233,7 +1337,7 @@ index d1a7c30..8499a09 100644
        }
      }
      static void scaleBlit(LICE_pixel_chan *dest, const LICE_pixel_chan *src, int w, int h, 
-@@ -515,7 +521,7 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+@@ -515,7 +524,7 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
                }
  
                pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
@@ -1242,7 +1346,7 @@ index d1a7c30..8499a09 100644
              }
            }
            else if (cury == clipbottom-1)
-@@ -536,11 +542,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+@@ -536,11 +545,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
                }
  
                pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
@@ -1256,7 +1360,7 @@ index d1a7c30..8499a09 100644
          }
        }
        else
-@@ -565,11 +571,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+@@ -565,11 +574,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
                }
  
                pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
@@ -1270,7 +1374,7 @@ index d1a7c30..8499a09 100644
          }
        }
      }
-@@ -654,13 +660,13 @@ class _LICE_Template_Blit3 // stuff controlled by LICE_FAVOR_SPEED
+@@ -654,13 +663,13 @@ class _LICE_Template_Blit3 // stuff controlled by LICE_FAVOR_SPEED
              }
  
              pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
@@ -1290,7 +1394,7 @@ index d1a7c30..8499a09 100644
            dest+=dest_span;
          }
        }
-@@ -684,13 +690,13 @@ class _LICE_Template_Blit3 // stuff controlled by LICE_FAVOR_SPEED
+@@ -684,13 +693,13 @@ class _LICE_Template_Blit3 // stuff controlled by LICE_FAVOR_SPEED
              }
  
              pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
@@ -1310,7 +1414,7 @@ index d1a7c30..8499a09 100644
            dest+=dest_span;
          }
        }
-@@ -1329,12 +1335,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+@@ -1329,12 +1338,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
    {
      if (ficurx < 0) // increase dstx, decrease dstw
      {
@@ -1331,7 +1435,7 @@ index d1a7c30..8499a09 100644
      {
        int neww = (int)(((srcbm_w-1)*65536.0 - ficurx)/fidx);
        if (neww < dstw) dstw=neww;
-@@ -1349,12 +1357,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+@@ -1349,12 +1360,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
    {
      if (ficury < 0) // increase dsty, decrease dsth
      {
@@ -1352,7 +1456,7 @@ index d1a7c30..8499a09 100644
      {
        int newh = (int)(((srcbm_h-1)*65536.0 - ficury)/fidy);
        if (newh < dsth) dsth=newh;
-@@ -1373,8 +1383,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+@@ -1373,8 +1386,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
    LICE_pixel_chan *pdest = (LICE_pixel_chan *)dest->getBits();
    if (!psrc || !pdest) return;
  
@@ -1369,7 +1473,7 @@ index d1a7c30..8499a09 100644
  
    if (src->isFlipped())
    {
-@@ -2048,10 +2064,10 @@ void LICE_MultiplyAddRect(LICE_IBitmap *dest, int x, int y, int w, int h,
+@@ -2048,10 +2067,10 @@ void LICE_MultiplyAddRect(LICE_IBitmap *dest, int x, int y, int w, int h,
      while (n--) 
      {
        LICE_pixel_chan *ptr=(LICE_pixel_chan *)p++;
