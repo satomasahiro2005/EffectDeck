@@ -119,7 +119,8 @@ SOURCE_ROLES = [
 # setup.sh が用意するもの。無ければ読めなかったと書く（黙って通さない）。
 FETCHED_HEADS = ("Vendor/", "Generated/")
 # 拡張は DSP コアを積まない（project.yml の EffeTuneLiveExtension の excludes）。
-DEVICE_SHARED_EXCLUDES = re.compile(r"^(ETPipeline|ETResample|ETPreviewTone|ETJSFXHost|ETLICEFont)\.")
+DEVICE_SHARED_EXCLUDES = re.compile(r"^(ETPipeline|ETResample|ETPreviewTone|ETJSFXHost|ETJSFXBench|ETJSFXBenchEngine"
+                                    r"|ETJSFXBenchPorts|ETLICEFont)\.")
 SHARE_EXTRA_SOURCES = ("Sources/EffeTuneLive/DSP/ETRemoteFile.swift",
                        "Sources/EffeTuneLive/DSP/ETShareInbox.swift")
 SOURCE_SUFFIXES = (".swift", ".m", ".mm", ".c", ".cc", ".cpp", ".h", ".hpp")
