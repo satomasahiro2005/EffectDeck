@@ -30,7 +30,8 @@ using VP = EEL_F(NSEEL_CGEN_CALL *)(void *, INT_PTR, EEL_F **);
 using VPX = EEL_F(NSEEL_CGEN_CALL *)(void *, void *, INT_PTR, EEL_F **);
 } // namespace
 
-void interpret(const Function &fn, InterpState &st)
+// API を呼ぶ（ETVMOps.h の ETVM_NO_SANITIZE_FUNCTION の注）
+ETVM_NO_SANITIZE_FUNCTION void interpret(const Function &fn, InterpState &st)
 {
     if (st.vals.size() < fn.values.size()) st.vals.resize(fn.values.size());
     uint64_t *V = st.vals.data();

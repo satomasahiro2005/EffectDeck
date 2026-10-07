@@ -31,6 +31,8 @@ using VP = EEL_F(NSEEL_CGEN_CALL *)(void *, INT_PTR, EEL_F **);
 using VPX = EEL_F(NSEEL_CGEN_CALL *)(void *, void *, INT_PTR, EEL_F **);
 
 #define ETVM_H(name) HRet h_##name(const Word *ip, Ctx *cx)
+/// API を呼ぶハンドラ（ETVMOps.h の ETVM_NO_SANITIZE_FUNCTION の注）
+#define ETVM_HAPI(name) ETVM_NO_SANITIZE_FUNCTION HRet h_##name(const Word *ip, Ctx *cx)
 #if ETVM_THREADED_LOOP
 #define ETVM_GO(n) do { (void)cx; return (n); } while (0)
 #define ETVM_STOP() return nullptr
@@ -40,6 +42,12 @@ using VPX = EEL_F(NSEEL_CGEN_CALL *)(void *, void *, INT_PTR, EEL_F **);
 #endif
 /// 次の命令（自分の語 1 つ + オペランド k 個の先）
 #define ETVM_NEXT(k) ETVM_GO(ip + 1 + (k))
+/// 同じ命令の続きを別の関数で（遅い道を外へ出して、速い道に積み場の枠を作らせない）
+#if ETVM_THREADED_LOOP
+#define ETVM_TAIL(fn) return fn(ip, cx)
+#else
+#define ETVM_TAIL(fn) do { [[clang::musttail]] return fn(ip, cx); } while (0)
+#endif
 
 inline uint64_t ld64(const void *p) { uint64_t v; std::memcpy(&v, p, 8); return v; }
 inline void st64(void *p, uint64_t v) { std::memcpy(p, &v, 8); }
@@ -88,20 +96,52 @@ ETVM_H(Store)
     *(double *)ip[1].s->p = v;
     ETVM_NEXT(2);
 }
+// megabuf（EEL_BC_MEGABUF と同じ式。ETVMOps.h の etvm_megabuf）。塊が在る速い道はここで、無い・範囲の外は
+// 同じ添字を __NSEEL_RAMAlloc に渡す遅い道（別の関数へ musttail。速い道は葉のまま）。
+#define ETVM_MEGABUF_FAST(rt, v, out)                                                                         \
+    const unsigned int idx_ = (unsigned int)((v) + NSEEL_CLOSEFACTOR);                                        \
+    EEL_F *const blk_ = idx_ < NSEEL_RAM_BLOCKS * NSEEL_RAM_ITEMSPERBLOCK                                     \
+                            ? ((EEL_F *const *)(rt))[idx_ / NSEEL_RAM_ITEMSPERBLOCK]                          \
+                            : nullptr;                                                                        \
+    EEL_F *const out = blk_ ? blk_ + (idx_ & (NSEEL_RAM_ITEMSPERBLOCK - 1)) : nullptr
+inline EEL_F *megabufSlow(void *rt, double v)
+{
+    return __NSEEL_RAMAlloc((EEL_F **)rt, (unsigned int)(v + NSEEL_CLOSEFACTOR));
+}
+__attribute__((noinline)) HRet h_MemAddrSlow(const Word *ip, Ctx *cx)
+{
+    ip[1].s->p = megabufSlow(ip[3].p, *ip[2].d);
+    ETVM_NEXT(3);
+}
+__attribute__((noinline)) HRet h_MemLoadSlow(const Word *ip, Ctx *cx)
+{
+    *ip[1].d = *megabufSlow(ip[3].p, *ip[2].d);
+    ETVM_NEXT(3);
+}
+__attribute__((noinline)) HRet h_MemStoreSlow(const Word *ip, Ctx *cx)
+{
+    EEL_F *p = megabufSlow(ip[3].p, *ip[1].d);
+    *p = *ip[2].d;
+    ETVM_NEXT(3);
+}
 ETVM_H(MemAddr)
 {
-    ip[1].s->p = etvm_megabuf(ip[3].p, *ip[2].d);
+    ETVM_MEGABUF_FAST(ip[3].p, *ip[2].d, p);
+    if (!p) ETVM_TAIL(h_MemAddrSlow);
+    ip[1].s->p = p;
     ETVM_NEXT(3);
 }
 ETVM_H(MemLoad)
 {
-    const EEL_F *p = etvm_megabuf(ip[3].p, *ip[2].d);
+    ETVM_MEGABUF_FAST(ip[3].p, *ip[2].d, p);
+    if (!p) ETVM_TAIL(h_MemLoadSlow);
     *ip[1].d = *p;
     ETVM_NEXT(3);
 }
 ETVM_H(MemStore)
 {
-    EEL_F *p = etvm_megabuf(ip[3].p, *ip[1].d);
+    ETVM_MEGABUF_FAST(ip[3].p, *ip[1].d, p);
+    if (!p) ETVM_TAIL(h_MemStoreSlow);
     *p = *ip[2].d;
     ETVM_NEXT(3);
 }
@@ -227,53 +267,53 @@ ETVM_H(PtrMax)
 
 // ---- API ---------------------------------------------------------------------------------------------
 inline EEL_F *A(const Word &w) { return (EEL_F *)w.s->p; }
-ETVM_H(CallG1)
+ETVM_HAPI(CallG1)
 {
     EEL_F *a = A(ip[4]);
     ip[1].s->p = ((G1)ip[2].p)(ip[3].p, a);
     ETVM_NEXT(4);
 }
-ETVM_H(CallG2)
+ETVM_HAPI(CallG2)
 {
     EEL_F *a = A(ip[4]), *b = A(ip[5]);
     ip[1].s->p = ((G2)ip[2].p)(ip[3].p, a, b);
     ETVM_NEXT(5);
 }
-ETVM_H(CallG3)
+ETVM_HAPI(CallG3)
 {
     EEL_F *a = A(ip[4]), *b = A(ip[5]), *c = A(ip[6]);
     ip[1].s->p = ((G3)ip[2].p)(ip[3].p, a, b, c);
     ETVM_NEXT(6);
 }
-ETVM_H(CallGD1)
+ETVM_HAPI(CallGD1)
 {
     EEL_F *a = A(ip[4]);
     const double r = ((G1D)ip[2].p)(ip[3].p, a);
     *ip[1].d = r;
     ETVM_NEXT(4);
 }
-ETVM_H(CallGD2)
+ETVM_HAPI(CallGD2)
 {
     EEL_F *a = A(ip[4]), *b = A(ip[5]);
     const double r = ((G2D)ip[2].p)(ip[3].p, a, b);
     *ip[1].d = r;
     ETVM_NEXT(5);
 }
-ETVM_H(CallGD3)
+ETVM_HAPI(CallGD3)
 {
     EEL_F *a = A(ip[4]), *b = A(ip[5]), *c = A(ip[6]);
     const double r = ((G3D)ip[2].p)(ip[3].p, a, b, c);
     *ip[1].d = r;
     ETVM_NEXT(6);
 }
-ETVM_H(CallGXD)
+ETVM_HAPI(CallGXD)
 {
     EEL_F *a = A(ip[5]), *b = A(ip[6]);
     const double r = ((GXD)ip[2].p)(ip[3].p, ip[4].p, a, b);
     *ip[1].d = r;
     ETVM_NEXT(6);
 }
-ETVM_H(CallVP)
+ETVM_HAPI(CallVP)
 {
     // portable は積み場の上にポインタを並べて渡す。ここはプログラムごとの置き場（建てるときに大きさを決めた）。
     const size_t n = (size_t)ip[4].u;
@@ -283,7 +323,7 @@ ETVM_H(CallVP)
     *ip[1].d = r;
     ETVM_NEXT(5 + n);
 }
-ETVM_H(CallVPX)
+ETVM_HAPI(CallVPX)
 {
     const size_t n = (size_t)ip[5].u;
     void **arr = (void **)ip[6].p;

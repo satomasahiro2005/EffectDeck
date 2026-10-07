@@ -23,6 +23,16 @@
 
 #define ETVM_CLOSEFACTOR NSEEL_CLOSEFACTOR
 
+// API の関数（NSEEL_addfunc_retptr・retval で登録）は 1 つめの引数の型がまちまち（void *・EEL_F **・
+// ysfx_t * …）で、WDL は全部を (void *, EEL_F *…) の形で呼ぶ（GLUE_CALL_CODE の GENERIC*）。同じ値を同じ
+// レジスタで渡すので呼ばれる側から見て同じだが、UBSan の -fsanitize=function は型の違いを拾う
+// （Tests/Fuzz/run.sh も nseel-*.c はこれを外す）。API を呼ぶ所だけこれを付ける。
+#if defined(__clang__)
+#define ETVM_NO_SANITIZE_FUNCTION __attribute__((no_sanitize("function")))
+#else
+#define ETVM_NO_SANITIZE_FUNCTION
+#endif
+
 static inline double etvm_filter(double a) { return denormal_filter_double2(a); }
 
 // EEL_BC_AND / OR / XOR: (EEL_F)(((WDL_INT64)top) op (WDL_INT64)(top2))

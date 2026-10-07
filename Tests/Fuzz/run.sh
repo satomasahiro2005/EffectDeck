@@ -29,6 +29,11 @@
 #                project.yml の YSFX と同じ組・同じ定義で建てる（写し先の native/ に置き、中身が
 #                同じなら建て直さない）。止まらないスクリプトは -fork で回して時間切れを落ちと
 #                数えない（入力は timeout-* に残る。落ち・ASan・メモリの上限は今までどおり止まる）
+#   jsfxvmdiff   レジスタ型 VM（vm-reg、Sources/JSFXVM）と portable を同じ JSFX で 1 歩ずつ並べて回し、
+#                プロセスで共有される状態（rand・onfail・_global.*・gmem）を歩みごとに写して戻しながら
+#                1 ビットまで比べる（Tests/Fuzz/Native/jsfx_vmdiff.cpp、docs/jsfx-regvm-design.md §12.7）。
+#                ysfx の写しと建て方は jsfxexec と同じ。種は jsfxexec の corpus と台・照合のスクリプト。
+#                EEL の文法から作った文を差し込む変異を混ぜる
 #
 # 何を建てるかは Linux の単体テストと同じ（project.yml、Tests/Fuzz/make_package.py）。
 # 種は 3 か所から: Tests/Fuzz/Corpus/<的>（手で書いたもの）、リポジトリの見本（下の seed_files）、
@@ -41,7 +46,7 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 
-all_targets=(chaintext sharelink fxdlink pipelineform peqtext remotefile jsfxtext irprep jsfxgate jsfxexec)
+all_targets=(chaintext sharelink fxdlink pipelineform peqtext remotefile jsfxtext irprep jsfxgate jsfxexec jsfxvmdiff)
 name=default
 targets=all
 seconds=60
@@ -50,7 +55,7 @@ build_only=0
 repro=
 passthrough=()
 
-usage() { sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "run.sh: $*" >&2; exit 2; }
 
 while [ $# -gt 0 ]; do
@@ -112,10 +117,12 @@ build_log="$repo/build/fuzz-$name-build.log"
 swift_needed=0
 native_needed=0
 exec_needed=0
+vmdiff_needed=0
 for t in "${selected[@]}"; do
   case $t in
     jsfxgate) native_needed=1 ;;
     jsfxexec) exec_needed=1 ;;
+    jsfxvmdiff) exec_needed=1; vmdiff_needed=1 ;;
     *) swift_needed=1 ;;
   esac
 done
@@ -168,6 +175,7 @@ if [ "$native_needed" = 1 ]; then
 fi
 
 exec_bin=
+vmdiff_bin=
 if [ "$exec_needed" = 1 ]; then
   cc=$(command -v clang || true)
   cxx=$(command -v clang++ || true)
@@ -307,6 +315,22 @@ if [ "$exec_needed" = 1 ]; then
   status=${PIPESTATUS[0]}
   set -e
   [ "$status" = 0 ] || { echo "== jsfxexec build failed ($status). log $build_log"; exit "$status"; }
+  # jsfxvmdiff: 同じ ysfx と Sources/JSFXVM の .o に、的の 1 本を足す（ETJSFXHost は通らない）。
+  if [ "$vmdiff_needed" = 1 ]; then
+    vmdiff_bin="$native/jsfx_vmdiff"
+    # 上の { … } | tee は別のシェルで回るので、.o の並びはここで作り直す。
+    vm_objs=()
+    for f in "$repo"/Sources/JSFXVM/*.cpp; do vm_objs+=("$native/$(basename "$f").o"); done
+    set +e
+    "$cxx" -std=c++20 "${san[@]}" -fsanitize=fuzzer,address,undefined "${ysfx_defs[@]}" "${inc[@]}" \
+      -I "$repo/Sources/Shared" -I "$repo/Sources/JSFXVM" \
+      "$here/Native/jsfx_vmdiff.cpp" "$repo/Sources/Shared/ETJSFXHost.cpp" \
+      "$here/Native/et_lice_font_linux.cpp" "$native/ETExternalProcessor.o" "$native/ETVMGlueCheck.o" \
+      "${vm_objs[@]}" "$objs"/*.o -pthread -o "$vmdiff_bin" 2>&1 | tee -a "$build_log"
+    status=${PIPESTATUS[0]}
+    set -e
+    [ "$status" = 0 ] || { echo "== jsfxvmdiff build failed ($status). log $build_log"; exit "$status"; }
+  fi
 fi
 
 # 的ごとの見本（リポジトリにあるもの）。ファイルでもフォルダでもよい。
@@ -315,6 +339,8 @@ seed_files() {
     chaintext|sharelink) echo "$repo/CHAIN.md"; ls "$repo"/chain/v*/*.md 2>/dev/null || true ;;
     fxdlink) echo "$repo/site/test-vector.json" ;;
     jsfxtext|jsfxgate) ls "$repo"/Tests/Fixtures/JSFX/*.jsfx ;;
+    jsfxvmdiff) ls "$here"/Corpus/jsfxexec/* "$repo"/Tests/Fixtures/JSFX/*.jsfx "$repo"/Debug/JSFXBench/*.jsfx \
+                   "$repo"/Tools/jsfx-bench/diff/*.jsfx 2>/dev/null || true ;;
     *) ;;
   esac
 }
@@ -325,14 +351,14 @@ dict_for() {
     peqtext) echo "$here/Dict/peq.dict" ;;
     remotefile) echo "$here/Dict/remote.dict" ;;
     jsfxtext|jsfxgate) echo "$here/Dict/jsfx.dict" ;;
-    jsfxexec) echo "$here/Dict/jsfxexec.dict" ;;
+    jsfxexec|jsfxvmdiff) echo "$here/Dict/jsfxexec.dict" ;;
     *) ;;
   esac
 }
 max_len() {
   case $1 in
     irprep) echo 20000 ;;
-    chaintext|sharelink|jsfxgate|jsfxexec) echo 16384 ;;
+    chaintext|sharelink|jsfxgate|jsfxexec|jsfxvmdiff) echo 16384 ;;
     *) echo 8192 ;;
   esac
 }
@@ -340,7 +366,7 @@ max_len() {
 # ここで切る。普通の入力は数ミリ秒なので短くして、時間切れで溶かす時間を減らす。
 timeout_for() {
   case $1 in
-    jsfxexec) echo 10 ;;
+    jsfxexec|jsfxvmdiff) echo 10 ;;
     *) echo 20 ;;
   esac
 }
@@ -361,12 +387,14 @@ for t in "${selected[@]}"; do
 
   if [ "$t" = jsfxgate ]; then
     cmd=("$gate")
-  elif [ "$t" = jsfxexec ]; then
+  elif [ "$t" = jsfxexec ] || [ "$t" = jsfxvmdiff ]; then
     # 見つけて直していない UB の表（中身は Native/jsfx_exec.ubsan.supp の頭）。
     # FUZZ_UBSAN_SUPPRESSIONS= （空）で外すと、表の分も止まる（直ったかを見るとき）。
     supp=${FUZZ_UBSAN_SUPPRESSIONS-$here/Native/jsfx_exec.ubsan.supp}
-    if [ -n "$supp" ]; then cmd=(env "UBSAN_OPTIONS=$UBSAN_OPTIONS:suppressions=$supp" "$exec_bin")
-    else cmd=("$exec_bin"); fi
+    tbin=$exec_bin
+    [ "$t" = jsfxvmdiff ] && tbin=$vmdiff_bin
+    if [ -n "$supp" ]; then cmd=(env "UBSAN_OPTIONS=$UBSAN_OPTIONS:suppressions=$supp" "$tbin")
+    else cmd=("$tbin"); fi
   else
     cmd=("$bin")
     export ET_FUZZ_TARGET=$t
@@ -380,9 +408,14 @@ for t in "${selected[@]}"; do
   # （EEL2 は loop を 1048576 周で切るが、入れ子は切れない。アプリでは締切と見張りが受け持つ）。
   # 落ち・ASan / UBSan・メモリの上限（-rss_limit_mb、1 回の確保は -malloc_limit_mb の既定＝同じ値）は止まる。
   fuzz_only=()
-  if [ "$t" = jsfxexec ]; then fuzz_only=(-fork=1 -ignore_timeouts=1 -ignore_ooms=0 -ignore_crashes=0); fi
+  if [ "$t" = jsfxexec ] || [ "$t" = jsfxvmdiff ]; then
+    fuzz_only=(-fork="${FUZZ_FORK:-1}" -ignore_timeouts=1 -ignore_ooms=0 -ignore_crashes=0)
+  fi
 
   echo "== $t" | tee "$log"
+  # -fork の子が UBSan・ASan で止まると、子は crash-* を書くが終了値が -error_exitcode と違い、親は落ちと
+  # 数えずに先へ進むことがある（jsfxvmdiff で見た）。回す前後の crash-* を比べ、増えていたら落ちとする。
+  crashes_before=$(find "$artifacts" -maxdepth 1 -name 'crash-*' 2>/dev/null | sort || true)
   set +e
   if [ -n "$repro" ]; then
     "${cmd[@]}" "${args[@]}" "${passthrough[@]}" "$repro" 2>&1 | tee -a "$log"
@@ -395,6 +428,15 @@ for t in "${selected[@]}"; do
   fi
   status=${PIPESTATUS[0]}
   set -e
+  if [ -z "$repro" ] && [ "$build_only" != 1 ]; then
+    new_crashes=$(comm -13 <(printf '%s\n' "$crashes_before") \
+      <(find "$artifacts" -maxdepth 1 -name 'crash-*' 2>/dev/null | sort) | grep -v '^$' || true)
+    if [ -n "$new_crashes" ]; then
+      echo "== $t: new crash inputs (the fork parent did not stop):" | tee -a "$log"
+      printf '%s\n' "$new_crashes" | tee -a "$log"
+      [ "$status" != 0 ] || status=1
+    fi
+  fi
   execs=$(grep -Eo "stat::number_of_executed_units: *[0-9]+" "$log" | grep -Eo "[0-9]+$" | tail -1 || true)
   cov=$(grep -Eo "cov: [0-9]+" "$log" | tail -1 || true)
   # -fork の親は stat:: を出さず、"#<回数>: cov: … job: …" の行で合計を出す（落ちたときに
