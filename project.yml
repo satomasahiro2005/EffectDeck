@@ -217,6 +217,7 @@ targets:
           - "ETResample.*"
           - "ETPreviewTone.*"
           - "ETJSFXHost.*"
+          - "ETJSFXBench*"
           - "ETLICEFont.*"
     settings:
       base:
