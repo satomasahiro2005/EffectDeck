@@ -3,9 +3,10 @@
 
   python3 Tools/jsfx-bench/summary.py build/jsfx-bench/*.json docs/bench/*.json
 
-同じ機種・同じ構成（buildConfig）の JSON を 1 組にする。portable の回と wdl-jit の回は別のプロセス
-（EEL を建て分けるので 1 本に入らない）なので、x_cpp はそれぞれの回の中の cpp と比べる。
-jit/port は回をまたいだ比（温度の差が乗りうる）。out== は portable と wdl-jit の出力の指紋が同じか。
+同じ機種・同じ構成（buildConfig）の JSON を 1 組にする（同じ組の同じ実行系が 2 つあれば後のもの）。
+portable の回と wdl-jit の回は別のプロセス（EEL を建て分けるので 1 本に入らない）なので、
+port/cpp と jit/cpp はそれぞれの回の中の cpp と比べる。port/jit は回をまたいだ比（温度の差が乗りうる）。
+out== は portable と wdl-jit の出力の指紋が同じか。
 """
 import json
 import sys
@@ -17,7 +18,10 @@ def load(paths):
         with open(p, encoding="utf-8") as f:
             d = json.load(f)
         key = (d["device"]["model"], d["device"].get("osVersion", ""), d.get("buildConfig", ""))
-        groups.setdefault(key, {})[d.get("eel", "portable")] = d
+        eel = d.get("eel", "portable")
+        if eel in groups.get(key, {}):
+            print("note: %s replaces an earlier %s run of %s %s" % (p, eel, key[0], key[2]))
+        groups.setdefault(key, {})[eel] = d
     return groups
 
 

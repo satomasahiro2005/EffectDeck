@@ -1,0 +1,49 @@
+{
+  "runner": "cli", "jitProbe": "not built",
+  "schema": 1,
+  "startedAt": "2026-10-07T03:08:12Z",
+  "device": {"model": "MacBookPro17,1", "machine": "arm64", "cpu": "Apple M1", "os": "macOS", "osVersion": "26.6.2", "osBuild": "25G83"},
+  "buildConfig": "cli-Os",
+  "gitSHA": "932dd1389e92",
+  "compilerFlags": "clang -Os -fsigned-char (portable; ysfx, host and harness)",
+  "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+  "harnessOptimize": "Os/Oz",
+  "eel": "portable",
+  "clock": "mach_absolute_time",
+  "sampleRate": 48000, "blockFrames": 256, "channels": 2, "budgetNs": 5.33333e+06,
+  "seconds": 5, "warmupSeconds": 0.5, "warmupBlocks": 94, "measuredBlocks": 938, "chunkBlocks": 16, "cpuWarmupMilliseconds": 500,
+  "policy": {"requested": "time-constraint", "obtained": "time-constraint", "setResult": 0, "getResult": 0, "period": 128000, "computation": 64000, "constraint": 128000, "preemptible": true},
+  "wallSeconds": 1.91546,
+  "error": "",
+  "scripts": [
+    {"name": "gain", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 4166.67, "p90Ns": 4291.67, "p99Ns": 4541.67, "maxNs": 4666.67, "meanNs": 4193.94, "meanNsPerSample": 16.3826, "medianPermille": 0.78125, "p99Permille": 0.851562, "maxPermille": 0.875, "hostWorstPermille": 1, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "09ff8e7ae7337516", "vsReference": 1, "vsCpp": 11.1111, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 375, "p90Ns": 416.667, "p99Ns": 416.667, "maxNs": 500, "meanNs": 387.127, "meanNsPerSample": 1.51221, "medianPermille": 0.0703125, "p99Permille": 0.078125, "maxPermille": 0.09375, "bypassRecoveries": 0, "outputHash": "09ff8e7ae7337516", "vsReference": 11.1111, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]},
+    {"name": "filter_drive", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 43083.3, "p90Ns": 44000, "p99Ns": 48291.7, "maxNs": 57208.3, "meanNs": 43382.4, "meanNsPerSample": 169.463, "medianPermille": 8.07812, "p99Permille": 9.05469, "maxPermille": 10.7266, "hostWorstPermille": 10, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "4d032ac9bdd6df36", "vsReference": 1, "vsCpp": 35.6552, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 1208.33, "p90Ns": 1208.33, "p99Ns": 1333.33, "maxNs": 5458.33, "meanNs": 1212.33, "meanNsPerSample": 4.73567, "medianPermille": 0.226562, "p99Permille": 0.25, "maxPermille": 1.02344, "bypassRecoveries": 0, "outputHash": "4d032ac9bdd6df36", "vsReference": 35.6552, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]},
+    {"name": "stereo_delay", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 38250, "p90Ns": 39208.3, "p99Ns": 43125, "maxNs": 55083.3, "meanNs": 38490.4, "meanNsPerSample": 150.353, "medianPermille": 7.17188, "p99Permille": 8.08594, "maxPermille": 10.3281, "hostWorstPermille": 10, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "b369e7f22e7a10ae", "vsReference": 1, "vsCpp": 27.8182, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 1375, "p90Ns": 1416.67, "p99Ns": 1500, "maxNs": 14333.3, "meanNs": 1391.52, "meanNsPerSample": 5.43564, "medianPermille": 0.257812, "p99Permille": 0.28125, "maxPermille": 2.6875, "bypassRecoveries": 0, "outputHash": "b369e7f22e7a10ae", "vsReference": 27.8182, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]},
+    {"name": "slow", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 356625, "p90Ns": 358250, "p99Ns": 365417, "maxNs": 366875, "meanNs": 357230, "meanNsPerSample": 1395.43, "medianPermille": 66.8672, "p99Permille": 68.5156, "maxPermille": 68.7891, "hostWorstPermille": 69, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "09ff8e7ae7337516", "vsReference": 1, "vsCpp": 11.4886, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 31041.7, "p90Ns": 31125, "p99Ns": 31208.3, "maxNs": 31458.3, "meanNs": 31041, "meanNsPerSample": 121.254, "medianPermille": 5.82031, "p99Permille": 5.85156, "maxPermille": 5.89844, "bypassRecoveries": 0, "outputHash": "09ff8e7ae7337516", "vsReference": 11.4886, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]},
+    {"name": "biquad", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 96000, "p90Ns": 96250, "p99Ns": 98708.3, "maxNs": 105417, "meanNs": 95394.8, "meanNsPerSample": 372.636, "medianPermille": 18, "p99Permille": 18.5078, "maxPermille": 19.7656, "hostWorstPermille": 19, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "83c1affbafa93e2b", "vsReference": 1, "vsCpp": 48, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 2000, "p90Ns": 2000, "p99Ns": 2125, "maxNs": 2208.33, "meanNs": 1995.07, "meanNsPerSample": 7.79324, "medianPermille": 0.375, "p99Permille": 0.398438, "maxPermille": 0.414062, "bypassRecoveries": 0, "outputHash": "83c1affbafa93e2b", "vsReference": 48, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]},
+    {"name": "fir", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 954292, "p90Ns": 967958, "p99Ns": 1.02321e+06, "maxNs": 1.03604e+06, "meanNs": 956090, "meanNsPerSample": 3734.73, "medianPermille": 178.93, "p99Permille": 191.852, "maxPermille": 194.258, "hostWorstPermille": 194, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "deda65db49bb0f91", "vsReference": 1, "vsCpp": 20.8778, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 45708.3, "p90Ns": 45833.3, "p99Ns": 47458.3, "maxNs": 50416.7, "meanNs": 45793.3, "meanNsPerSample": 178.88, "medianPermille": 8.57031, "p99Permille": 8.89844, "maxPermille": 9.45312, "bypassRecoveries": 0, "outputHash": "deda65db49bb0f91", "vsReference": 20.8778, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]},
+    {"name": "math", "reference": "portable", "variants": [
+      {"name": "portable", "created": true, "error": "", "medianNs": 104042, "p90Ns": 109292, "p99Ns": 111917, "maxNs": 117292, "meanNs": 104173, "meanNsPerSample": 406.926, "medianPermille": 19.5078, "p99Permille": 20.9844, "maxPermille": 21.9922, "hostWorstPermille": 21, "hostTrips": 0, "bypassRecoveries": 0, "outputHash": "c4815db7b8ea79a4", "vsReference": 1, "vsCpp": 6.71237, "check": {"mode": "reference", "against": "", "tolerance": 0, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}},
+      {"name": "cpp", "created": true, "error": "", "medianNs": 15500, "p90Ns": 17875, "p99Ns": 18791.7, "maxNs": 19791.7, "meanNs": 15703.8, "meanNsPerSample": 61.3428, "medianPermille": 2.90625, "p99Permille": 3.52344, "maxPermille": 3.71094, "bypassRecoveries": 0, "outputHash": "c4815db7b8ea79a4", "vsReference": 6.71237, "vsCpp": 1, "check": {"mode": "tolerance", "against": "portable", "tolerance": 1e-06, "maxAbsDiff": 0, "mismatchedSamples": 0, "firstMismatchBlock": -1, "pass": true}}
+    ]}
+  ],
+  "passed": true
+}

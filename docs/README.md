@@ -10,6 +10,7 @@ records of one integration, investigation or test day and are not kept up to dat
 | [external-processor.md](external-processor.md) | The `ETExternalProcessor` boundary that AUv3 and JSFX nodes run through, and the EffeTune patches it needs |
 | [multichannel-output.md](multichannel-output.md) | Output on 2–16 channel audio interfaces, Routing, Bass Management |
 | [jsfx-host-test-design.md](jsfx-host-test-design.md) | Test design for the JSFX host (Japanese). Partly implemented; its status section maps sections to `Tests/Unit/JSFX*Tests.swift` |
+| [jsfx-bench.md](jsfx-bench.md) | The JSFX executor benchmark: variants, how to run it on the Mac CLI and the iPhone, how to read it (Japanese). Raw results are in `bench/` |
 
 The contracts for users and language models are at the top of the repository:
 [`JSFX.md`](../JSFX.md) and [`CHAIN.md`](../CHAIN.md).
