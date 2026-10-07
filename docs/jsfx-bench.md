@@ -15,7 +15,7 @@ JSFX の実行系（いまは WDL の portable の解釈）を、同じ入力・
 | `vm-goto` | vm-block の switch を computed goto に（ラベルの番地の表、各命令の終わりで次へ飛ぶ。実行時に機械語は作らない） | Mac・iPhone |
 | `vm-goto-fpreg` | vm-goto + 浮動小数の積み場の先頭をローカル（レジスタ）に置く。**アプリの既定** | Mac・iPhone |
 | `vm-goto-fpreg-mask` | vm-goto-fpreg + 表を 128 に取って番号の下 7 bit で引く（範囲の比較を省く） | Mac・iPhone |
-| `vm-reg` | レジスタ型 VM（`Sources/JSFXVM`、`docs/jsfx-regvm-design.md`）。段 S1 の中身は、バイトコードを持ち上げた中間表現を参照の解釈で回すだけ（照合のため。portable より遅い）。**名指ししたときだけ回す**（`--variants portable,vm-reg`・`-ETBenchVariants`） | Mac・iPhone |
+| `vm-reg` | レジスタ型 VM（`Sources/JSFXVM`、`docs/jsfx-regvm-design.md`）。バイトコードを持ち上げた中間表現から並べた threaded code（段 S2: 命令 1 つにハンドラ 1 つ、`[[clang::musttail]]` で次へ。オペランドは升・枠の絶対番地）。@sample は 1 ブロック 1 回の入口。**アプリの既定には入れない**（台だけ） | Mac・iPhone |
 
 実行系は `kVariants` に 1 行足す。最初の行（portable か wdl-jit）が照合の基準で、
 vm-* は `Check::exact`（1 ビットも違ってはいけない）。cpp は差 `1e-6` まで許す（いまはどれも一致）。
@@ -58,9 +58,10 @@ bash Tools/jsfx-bench/run.sh --opt Os --no-jit --scripts fir,math --seconds 2
 ```sh
 bash Tools/jsfx-bench/run.sh --diff            # 速さは測らず、実行系ごとの結果を portable と 1 ビットまで比べる
 bash Tools/jsfx-bench/run.sh --profile         # 命令と続いた 2 つの組を数える（-DNSEEL_VM_PROFILE の版）
-bash Tools/jsfx-bench/run.sh --vm-opgrid --no-jit   # レジスタ型 VM: 命令ごとに値の格子で portable と 1 ビットまで比べる
+bash Tools/jsfx-bench/run.sh --vm-opgrid --no-jit   # レジスタ型 VM: 命令ごとに値の格子で portable と参照の解釈・threaded code を 1 ビットまで比べる
 bash Tools/jsfx-bench/run.sh --vm-dump --no-jit     # レジスタ型 VM: handle ごとに持ち上がったか・理由・節ごとの割合
-bash Tools/jsfx-bench/run.sh --vm-dump --vm-ir --opt Os --no-jit Debug/JSFXBench/biquad.jsfx   # 中間表現も出す
+bash Tools/jsfx-bench/run.sh --vm-dump --vm-ir --opt Os --no-jit Debug/JSFXBench/biquad.jsfx   # 中間表現と threaded code も出す
+# ETVM_DUMP_BC=1 を付けると、持ち上げで断った handle のバイトコードを頭から並べる
 ```
 
 `--diff` は `Tests/Fixtures/JSFX`・`Tests/Fuzz/Corpus/jsfxexec`・`Debug/JSFXBench`・`Tools/jsfx-bench/diff`
@@ -68,7 +69,8 @@ bash Tools/jsfx-bench/run.sh --vm-dump --vm-ir --opt Os --no-jit Debug/JSFXBench
 実行系ごとに回す（48 ブロック、フレーム数を変え、つまみ・trigger・再生位置・NaN／Inf／非正規化数・3 ブロックに 1 回の
 MIDI を混ぜ、`ysfx_process_double`）。比べるのは毎ブロックの出力・出てきた MIDI・つまみの変化／自動化／見える印・
 最後の変数の全部・EEL のメモリ全部・@serialize・ysfx の口から見えない升（定数・関数の局所・#字）とユーザーの
-積み場の位置（`etvm::stateHash`）。vm-reg が違ったら節を 1 つずつ vm-reg にして回し直し、どの節かを出す。
+積み場の位置（`etvm::stateHash`）。vm-reg（threaded code）のほかに vm-reg-ref（同じ中間表現の参照の解釈、段 S1）も
+比べる。vm-reg が違ったら節を 1 つずつ vm-reg にして回し直し、どの節かを出す。
 回ごとに `NSEEL_rand_reset` で rand の列を最初からにする。
 gmem はプロセスの中で共有されるので、書く前に読むスクリプトは portable どうしでも違う
 （`ET_DIFF_MODES=0` で portable どうしを比べられる）。数える版は、vm-* が一度も通らなかった命令も出す。
@@ -237,3 +239,67 @@ gain（8 命令 / フレーム）でしか見えず（M1 で 9 ns / フレーム
 NaN が 2 つ（ペイロードが違う）の `+` `*` は、どちらが残るかを portable の C コンパイラが決める（オペランドを入れ替える）
 ので数えない（x86-64 で 40 組・arm64 で 24 組）。持ち上げは 145 handle 中 144（落としたのは `__dbg_getstackptr` を
 わざと使う `opcodes.jsfx` の @sample だけ）。JSON は `docs/bench/2026-10-07-s1-*`。
+
+## 段 2 の S2: threaded code（2026-10-07、d6b26a0）
+
+vm-reg の中身を、持ち上げた中間表現から並べた threaded code にした（`docs/jsfx-regvm-design.md` §16）。中間表現の
+命令 1 つにハンドラ 1 つ、`[[clang::musttail]]` で次へ。オペランドは升・枠の絶対番地で、LoadCell はオペランドへ畳み、
+StoreCell の升へじかに書き、四則 + フィルタと megabuf の番地 + 読み書きは 1 つにする。@sample は 1 ブロック 1 回の入口。
+**アプリの既定は vm-goto-fpreg のまま**（vm-reg は台だけ。台では名指ししなくても回す）。
+段 S1 の参照の解釈は `ETVM_SetEngine(ETVM_ENGINE_REFERENCE)` で残してあり、`--diff` は vm-reg-ref として両方を比べる。
+
+照合: `--vm-opgrid`（portable・参照の解釈・threaded の 3 つ）75,825 組・`--diff` 62/62 が Linux x86-64 と M1 の -Os・-O3 で
+1 ビットまで一致。iPhone の台 7 本も 2 回とも bit-exact。
+ファズ: 新しい的 `jsfxvmdiff`（`bash Tests/Fuzz/run.sh --target jsfxvmdiff`。portable と vm-reg を 1 歩ずつ並べ、
+rand・onfail・_global.*・gmem を歩みごとに写して戻しながら比べる。EEL の文法から作った文を差し込む変異つき）。
+ASan・UBSan で 7 回・約 1.6 時間（`-fork=6`、約 9.5 CPU 時間、約 63 万回）。実行系を最後に変えたあと（d6b26a0）の
+2 回（1,806 秒・2,420 秒、約 7 CPU 時間、502,798 回）で vm-reg と portable の違いは 0。見つかったのは的の側と
+portable 自身のもの（API の呼び方の型、ユーザーの積み場の初期値、portable が積み場の外を読む入力 2 つ、-fork の
+親が子の落ちを数えないこと）で、どれも直した（設計 §16.2・§16.3）。調べるときは `JSFXVMDIFF_TRACE=1`（歩みごとの
+時間・持ち上げの理由・断った handle のバイトコード）、`JSFXVMDIFF_SECTIONS=0x10`（vm-reg にする節を絞る）。
+`FUZZ_FORK=6` で子を 6 つ回せる。
+
+1 ブロック（256 フレーム）の中央値（us） / portable に対する速さ / vm-goto-fpreg に対する速さ / cpp の何倍遅いか。
+
+**M1 CLI -Os**（wdl-jit は別の回。`vs jit` は wdl-jit ÷ vm-reg）
+
+| スクリプト | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp | wdl-jit | vs jit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gain | 4.2 | 2.3 | 1.9 | 2.22x | 1.24x | 5.0 | 0.4 | 9.4 | 5.00x |
+| filter_drive | 42.5 | 27.8 | 14.3 | 2.97x | 1.94x | 12.2 | 1.2 | 16.1 | 1.13x |
+| stereo_delay | 37.3 | 26.5 | 10.6 | 3.52x | 2.50x | 7.9 | 1.3 | 15.3 | 1.44x |
+| slow | 356.6 | 174.2 | 177.0 | 2.01x | 0.98x | 5.9 | 30.1 | 184.1 | 1.04x |
+| biquad | 96.0 | 67.6 | 31.8 | 3.02x | 2.13x | 15.9 | 2.0 | 21.7 | 0.68x |
+| fir | 938.8 | 573.0 | 230.9 | 4.07x | 2.48x | 5.1 | 45.7 | 125.0 | 0.54x |
+| math | 104.2 | 66.3 | 50.4 | 2.07x | 1.31x | 3.2 | 15.6 | 36.7 | 0.73x |
+| 7 本の合計 | 1579.6 | 937.7 | 516.8 | 3.06x | 1.81x | | 96.3 | | |
+
+M1 の -O3 は vm-reg が -Os と ±3% 以内（合計 516.0）。portable は -O3 で速くなる（合計 1466.7）ので vs portable は
+1.66〜3.93x。
+
+**iPhone 16 Beta（-Os）、2 回目**（vm-reg の括弧は 1 回目。2 回目は fir・math で全部の実行系が 2 割近く遅いが、比は
+±0.1 で同じ）
+
+| スクリプト | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| gain | 2.1 | 1.7 | 1.2 (1.2) | 1.70x | 1.33x | 4.3 | 0.3 |
+| filter_drive | 22.5 | 16.1 | 8.2 (8.0) | 2.76x | 1.97x | 10.3 | 0.8 |
+| stereo_delay | 19.3 | 13.2 | 6.6 (6.2) | 2.91x | 2.00x | 6.9 | 1.0 |
+| slow | 158.2 | 114.8 | 140.4 (130.8) | 1.13x | **0.82x** | 5.7 | 24.7 |
+| biquad | 58.7 | 40.5 | 19.8 (17.9) | 2.96x | 2.04x | 11.3 | 1.8 |
+| fir | 479.8 | 340.3 | 210.4 (183.5) | 2.28x | 1.62x | 5.6 | 37.3 |
+| math | 72.2 | 52.9 | 40.7 (34.6) | 1.77x | 1.30x | 3.1 | 13.3 |
+| 7 本の合計 | 812.8 | 579.5 | 427.4 (382.2) | 1.90x | 1.36x | | 79.1 |
+
+- **slow だけ vm-goto-fpreg より遅い**（iPhone で 0.82x、M1 で 0.98x）。`loop(n, i += 1)` が 1 周 4 ハンドラで、
+  うち `IDec` → `IGt0` → `BrT` が枠の升を書いて次が読む鎖になる（vm-goto-fpreg は `LOOP_END` 1 つ）。
+  段 S3 の loop-next・比べと分かれ道の 1 つ化で直す
+- biquad・fir・math は M1 の wdl-jit がまだ 1.4〜1.9 倍速い（値ごとにメモリを往復し、命令ごとに 1 回飛ぶ）。
+  段 S3・S4（畳み込み・木のカーネル）の的
+- 持ち上げた 144 handle は全部 threaded code になる。@sample は中間表現 1 命令あたり 0.41 ハンドラ
+  （`docs/bench/2026-10-07-s2-vm-coverage-mac-m1-Os.json`）
+- Apple clang -Os の `objdump` で、四則・フィルタ付きの代入・写し・分かれ道・loop の数・megabuf の速い道の
+  ハンドラは積み場の枠を作らない葉（`br x2` で次へ）。枠があるのは外を呼ぶもの（libm・API・gmem・megabuf の遅い道・`Ret`）だけ
+- 測ったあいだ Mac では `ANECompilerService` が 1 コアを使っていた（実行系は 16 ブロックごとに入れ替えるので比は崩れない）
+
+JSON は `docs/bench/2026-10-07-s2-*`。

@@ -1,8 +1,8 @@
 # EffectDeck JSFX register VM (stage 2/3) — design
 
-Status: **S0 (hook surface only) and S1 implemented** (2026-10-07, see §15 for what exists, the deviations from
-this design and their reasons, and the oracle/coverage results). S2+ not started. The design text below is the
-original one; where S0/S1 deviate, §15.2 says so.
+Status: **S0 (hook surface only), S1 and S2 implemented** (2026-10-07; §15 = S0/S1, §16 = S2: what exists, the
+deviations from this design and their reasons, oracle/fuzz results and measured numbers). S3+ not started. The design
+text below is the original one; where S0–S2 deviate, §15.2 / §16.2 say so.
 Written against worktree `EffectDeck.jsfx-vm`, branch `perf/jsfx-vm`
 (HEAD 0915106 + the uncommitted stage-1 work: `NSEEL_code_execute_frames`, `NSEEL_EXEC_*`, `glue_port_vm.h`,
 `ysfx_set_eel_exec_mode`, `ETJSFX_SetEELExecutor`, `Tools/jsfx-bench/diff.cpp`).
@@ -602,7 +602,7 @@ slow 357/184/31; iPhone 16 Beta portable: 21.7, 47.4, 374.7, 57.2, 130.5, gain 2
 |---|---|---|---|---|
 | S0 | Agree hook surface with stage 1 (§5.2), `ETVMOps.h` shared semantics in the patch, marker/.old.diff update | ±0 (invsqrt note) | 0.5–1 | low |
 | S1 | Lifter + IR + verifier + printer + reference IR interpreter + link-step analysis; `jsfx-vm-dump` CLI; oracle tests (12.1–12.2) on bench/fixtures/corpus | none (infrastructure); coverage report | 5–7 | medium (stack→SSA corner cases: stale p1, varparm, while caps) |
-| S2 | Threaded executor, tier-1 handlers, frame allocation, block @sample loop (stage-1 pre/post), megabuf inline fast path, `vm-reg` bench line, `jsfxvmdiff` target | fd ~15–20, bq ~30–40, fir ~250–350, math ~45–55, slow ~120–170, gain ~1–2 (≈ WDL JIT; 2–3× portable) | 5–7 | medium-low |
+| S2 | Threaded executor, tier-1 handlers, frame allocation, block @sample loop (stage-1 pre/post), megabuf inline fast path, `vm-reg` bench line, `jsfxvmdiff` target | fd ~15–20, bq ~30–40, fir ~250–350, math ~45–55, slow ~120–170, gain ~1–2 (≈ WDL JIT; 2–3× portable). **Measured (§16.4)**: fd 14.3, bq 31.8, fir 230.9, math 50.4, slow 177.0, gain 1.9 (2.0–4.1× portable; JIT is still faster on bq/fir/math) | 5–7 | medium-low |
 | S3 | Passes 2–9 (const cells, folding, copy-prop, load CSE/forwarding, CSE, DCE, temp promotion, direct dest), fused compare-branch, loop-next, `cell OP= lit`, megabuf base+index | fd ~10–12, bq ~18–25, fir ~180–220, math ~35–40, slow ~100–130 | 4–6 | medium (alias rules — guarded by differential) |
 | S4 | Tier-2 generated trees + tier-3 corpus kernels + BURS selection + select speculation; typed io descriptor for framing | fd ~5–8, bq ~9–15, fir ~110–150, math ~25–35, slow ~100–120 | 6–9 | medium (generator/matcher bugs, code size ~50–150 KB) |
 | S5 | Loops: LICM, megabuf induction with guards, loop kernels, unrolling; pinned-register experiment | fir ~60–100, slow ~50–80, others −10–20 % | 5–8 | medium-high (guards) |
@@ -738,6 +738,163 @@ x86-64 and arm64 produce identical coverage.
 - Building programs in `ysfx_set_eel_exec_mode` is not audited against a running audio thread (§14); fine for the
   bench/CLI, required before S2 ships anything.
 - The reference interpreter is 0.2–0.8× portable (iPhone 16 Beta, 1 s runs); it is an oracle, not an executor.
+
+---
+
+## 16. Implemented: S2 (threaded executor, `jsfxvmdiff`) — 2026-10-07
+
+Commits on `perf/jsfx-vm`: 2084258 (executor), d6b26a0 (`jsfxvmdiff`, fork-mode crash detection, megabuf slow path;
+the measured build), 80c8f36 (portable-UB skip, debug knobs), plus the docs/bench commit (run.sh exit 70). `vm-reg` is still **default-off in the app** (nothing in the app calls `ETVM_Install`);
+in the bench it is now a default variant (no longer opt-in). The patch is unchanged (S0's hook surface was enough).
+
+### 16.1 What exists
+- `ETVMThreaded.h` (word/slot/context types, handler kinds), `ETVMHandlers.cpp` (73 handlers),
+  `ETVMSelect.cpp` (IR → handler stream), `ETVMExec.h` (`buildThreaded` / `runThreaded` / `freeThreaded` /
+  `disassembleThreaded`). `ETVMLink.cpp`'s backend builds a threaded program per handle by default;
+  `ETVM_SetEngine(ETVM_ENGINE_REFERENCE)` builds S1's reference-interpreter programs instead (oracle).
+- **Dispatch**: `[[clang::musttail]] return next->h(next, cx)`; `ETVM_THREADED_LOOP` (automatic when the compiler has
+  no `clang::musttail`) switches every handler to "return the next word" + a `while` driver. Instruction = handler
+  pointer + 8-byte operands; f64 operands are `double *` (cell, frame slot or pool), ptr/bool/i32 operands are frame
+  slots, branch targets are word addresses. Handlers read every operand before writing (slot reuse relies on it).
+- **Block-level @sample loop**: the `Ret` handler calls `post(i)`, then `pre(i+1)` and tail-jumps to the entry, so a
+  whole block is one entry into the chain (stage-1 `pre/post` callbacks, §9.6).
+- **Selection (tier 1, one handler per IR op)**, all exactness-preserving:
+  dead pure values are not emitted (mark-live from stores/calls/allocations/branch conditions, so p1-tracking phis
+  and `booltoptr` vanish); `LoadCell` is folded into the consuming operand when nothing between the load and the use
+  may write the cell; an f64 op whose only use is the next `StoreCell(c, v)` writes `c` directly when nothing in
+  between may read or write `c`; `+ - * /` immediately followed by `Filter` become one `*F` handler; `MemAddr`
+  immediately followed by its `Load`/`Store` becomes `MemLoad`/`MemStore`. "May read/write" uses the pointer's origin:
+  a constant address is that cell only, megabuf/gmem/`booltoptr` pointers never alias VM cells, everything else
+  (API results, phis, min/max references, user stack) may alias any cell; API calls read and write every cell.
+- **Frame slots**: values used outside their block and phis get dedicated slots; block-local values reuse slots after
+  their last use. A phi and the incoming value from block X share a slot when that value is defined in X after the
+  phi's last use (loop counters: `idec` writes the phi's slot, no copy). Remaining phi copies are sequentialised
+  parallel copies (cycles through one temp slot); copies on conditional edges go to stubs after the code.
+- **megabuf**: the handler computes `(unsigned)(v + 1e-5)` and uses the block table inline; a missing block or an
+  out-of-range index tail-calls a separate slow handler (`__NSEEL_RAMAlloc`, same index), so the fast path stays a
+  leaf.
+- **Oracles**: `--vm-opgrid` runs portable vs reference IR vs threaded; `--diff` runs `vm-reg` (threaded) and
+  `vm-reg-ref` (reference) against portable; `--vm-dump --vm-ir` prints the handler stream and per-section counts
+  (handlers per IR instruction, folded loads, direct destinations, fusions, coalesced phis, copies).
+- **`jsfxvmdiff`** (`Tests/Fuzz/Native/jsfx_vmdiff.cpp`, `Tests/Fuzz/run.sh --target jsfxvmdiff`): §12.7 as designed
+  (A = portable, B = vm-reg, ysfx directly, lockstep over @init / blocks / state save / state load with global-state
+  snapshot and restore; compares G, outputs, MIDI, slider masks, all vars, all RAM blocks, static cells, user-stack
+  positions, @serialize bytes) plus a grammar mutator (`LLVMFuzzerCustomMutator`, 1/3 of mutations) that inserts EEL
+  statements into a section: all operators, op-assigns, nested `loop`/`while`, megabuf with fractional/negative/huge
+  indices, `?:` and `min/max` lvalues, user functions with `local`/`instance`/namespaces, varparm `mem_*_values`,
+  user stack, `spl()`/`slider()`, gmem, `_global.*`.
+
+### 16.2 Deviations from the design (and why)
+1. **Pulled forward from S3**: LoadCell operand folding, direct destination (pass 9), DCE of unused pure values (part
+   of pass 7) and the two fusions (op + filter, megabuf + load/store). Without them a tier-1 executor issues one
+   dispatch per IR `LoadCell`/`StoreCell` and runs *more* handlers than vm-goto-fpreg runs bytecodes. They are
+   emission rules with a local alias check, not IR passes; each is counted in `--vm-dump`. Still S3: const-cell
+   folding, CSE, load forwarding, temp promotion, fused compare-branch, loop-next, `cell OP= literal`,
+   megabuf base+index.
+2. **Slot allocation** is "dedicated for cross-block values + reuse inside a block + phi coalescing", not linear scan
+   over the linearised IR. Frames stay small: over the corpus at most 32 dedicated and 4 reused slots per handle
+   (the largest frame, 133 slots, is 130 constant-pool entries: every `PtrConst`/`BoolConst`/`I32Const` gets one).
+3. **rand in `jsfxvmdiff`**: instead of a test-only MT accessor in the patch, every step starts both sides with
+   `NSEEL_rand_reset()` (same state for A and B; no new patch revision). The harness also zeroes each handle's user
+   stack after compile (it is `malloc`ed and never initialised: `stack_exch`/`stack_peek` before a push differ even
+   portable vs portable).
+4. **Inputs on which portable itself may be undefined are skipped** by `jsfxvmdiff`: if any handle falls back with
+   `undefined`, `type-confusion`, fp/interpreter stack over/underflow, `opcode0`, `null-deref`, `bool-deref`,
+   `unknown-opcode` or `jump-outside`, portable can read outside its own stacks, and vm-reg runs that handle on
+   vm-goto-fpreg, whose stack layout differs (§1 non-goal). The skip is decided from the lifter's reason before
+   anything runs (conservative: some `undefined` refusals are benign, e.g. p1 after a varparm call inside `loop` is an
+   interpreter-stack address that portable only tests for non-null). Two inputs made ASan stop in portable's
+   `GLUE_CALL_CODE` (reads past the fp stack): one after a merge with differing p-registers, one where WDL left
+   **uninitialised bytes in the @block bytecode** where an inlined user-function body belongs (the bytes differ from
+   run to run in the ASan build; the -Os build happens to hold valid code there). The second is a WDL code-generator
+   bug that portable and the stage-1 executors (the app default) share; vm-reg does not change the exposure (the
+   lifter refuses the handle, which then runs on vm-goto-fpreg). Not investigated further in S2; the inputs are kept
+   under `build/fuzz/` only (not committed).
+5. **API calls are `no_sanitize("function")`** in the handlers and the reference interpreter: WDL registers API
+   functions whose first parameter is `void *`, `EEL_F **`, `ysfx_t *`… and calls all of them as
+   `(void *, EEL_F *…)` (same registers); UBSan's `function` check flagged `eel_fft`. `nseel-*.c` is already built
+   without that check for the same reason.
+6. `ETVMOps.h` is still a copy of the `glue_port.h` expressions (shared header = re-baseline of portable's `invsqrt`;
+   moved to S3 together with const folding, which is where the folder needs it).
+7. Handlers are compiled at the YSFX level (-Os); no per-file -O2 (the -O3 CLI column shows what a higher level buys).
+8. `Tests/Fuzz/run.sh` now fails a run when new `crash-*` files appear: with `-fork`, a child stopped by UBSan/ASan
+   writes its crash file but the parent kept going and exited 0 (seen with `jsfxvmdiff`; `jsfxexec` has the same
+   exposure).
+
+### 16.3 Oracle and fuzz results (vm-reg = threaded code)
+| Layer | Linux x86-64, clang 21.0.0 (swiftlang), -Os / -O3 | Mac M1 arm64, Apple clang 21.0.0, -Os / -O3 | iPhone 16 Beta |
+|---|---|---|---|
+| §12.1 op grid, 3-way (portable / reference IR / threaded) | 75,825 cases, 0 mismatched (40 NaN+NaN choices, same cases for both) | 75,825 cases, 0 mismatched (24 NaN+NaN choices) | — |
+| §12.2–12.4 `--diff` (62 files; vm-reg, vm-reg-ref and all stage-1 modes; profile build too) | 62/62 bit-exact | 62/62 bit-exact | bench 7 scripts `portable,vm-goto-fpreg,vm-reg,cpp`, 2 runs: all `bit-exact ok` |
+| §12.7 `jsfxvmdiff` (ASan + UBSan, `-fork=6`) | 7 runs, ~1.6 h wall ≈ 9.5 CPU-hours, ~0.63 M executions, coverage 8,655 edges, corpus 3,372. Since the last executor change (d6b26a0): 1,806 s + 2,420 s (≈ 7 CPU-hours, 502,798 executions), **no vm-reg/portable mismatch**; the only finding in that window was a portable-UB input (deviation 4) | — | — |
+| `musttail` codegen (Apple clang -Os, `objdump -d` of `ETVMHandlers.o`) | — | every arithmetic / filtered-store / `Mov` / `Filt` / branch / loop-counter / compare handler and the megabuf fast paths are frameless leaves ending in `ldr x2, [x0, #k]!; br x2`; only handlers that call out (libm, API, gmem, megabuf slow paths, `Ret`) set up a frame | — |
+
+Findings and fixes during the fuzz runs (each fixed in the executor/harness, the oracle unchanged): UBSan `function`
+on API calls (deviation 5); harness non-determinism from uninitialised user stacks (deviation 3); two portable-UB
+inputs, one of them uninitialised WDL bytecode (deviation 4); fork-mode crash files not failing the run, and fork
+mode exiting 70 when its last job timed out although timeouts are ignored (deviation 8; run.sh now treats 70 without
+new crash files as success). No mismatch between vm-reg and portable was found. Timeouts (72 in the last run) are
+nested loops at the 1,048,576 cap under ASan; replaying 8 of them with a 180 s limit, 7 finished bit-exact, the
+longest spends its time in a `while` running to the cap every frame (portable 1.9 s, vm-reg 9.9 s per block under
+ASan, but vm-reg 2.4× faster than portable on the same loop without sanitizers).
+
+### 16.4 Measured numbers (median µs per 256-frame block)
+Speedups are portable / vm-reg, vm-goto-fpreg / vm-reg and wdl-jit / vm-reg (> 1 = vm-reg faster); `x cpp` =
+vm-reg / cpp. JSON: `docs/bench/2026-10-07-s2-*` (Mac: `cli-{Os,O3}-{portable,jit}`; iPhone: `iphone16-beta-run{1,2}`;
+coverage: `s2-vm-coverage-mac-m1-Os`). During the Mac runs a macOS service (`ANECompilerService`) kept one core busy;
+the bench interleaves variants every 16 blocks, so ratios are unaffected.
+
+**M1 CLI -Os** (git d6b26a0)
+
+| script | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp | wdl-jit | vs jit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gain | 4.2 | 2.3 | 1.9 | 2.22× | 1.24× | 5.0 | 0.4 | 9.4 | 5.00× |
+| filter_drive | 42.5 | 27.8 | 14.3 | 2.97× | 1.94× | 12.2 | 1.2 | 16.1 | 1.13× |
+| stereo_delay | 37.3 | 26.5 | 10.6 | 3.52× | 2.50× | 7.9 | 1.3 | 15.3 | 1.44× |
+| slow | 356.6 | 174.2 | 177.0 | 2.01× | 0.98× | 5.9 | 30.1 | 184.1 | 1.04× |
+| biquad | 96.0 | 67.6 | 31.8 | 3.02× | 2.13× | 15.9 | 2.0 | 21.7 | 0.68× |
+| fir | 938.8 | 573.0 | 230.9 | 4.07× | 2.48× | 5.1 | 45.7 | 125.0 | 0.54× |
+| math | 104.2 | 66.3 | 50.4 | 2.07× | 1.31× | 3.2 | 15.6 | 36.7 | 0.73× |
+| sum of 7 | 1579.6 | 937.7 | 516.8 | 3.06× | 1.81× | | 96.3 | | |
+
+**M1 CLI -O3**: vm-reg within ±3 % of -Os on every script (gain 1.8, fd 14.6, sd 10.1, slow 176.8, bq 31.6,
+fir 231.5, math 49.7; sum 516.0); portable gains more from -O3 (sum 1466.7), so vs portable drops to 1.66–3.93×.
+YSFX stays at -Os.
+
+**iPhone 16 Beta (-Os), run 2** (run 1 in parentheses for vm-reg; run 2 is up to 18 % slower for every variant
+on the long scripts (fir, math), the speedup ratios of the two runs agree within ±0.1)
+
+| script | portable | vm-goto-fpreg | vm-reg | vs portable | vs fpreg | x cpp | cpp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| gain | 2.1 | 1.7 | 1.2 (1.2) | 1.70× | 1.33× | 4.3 | 0.3 |
+| filter_drive | 22.5 | 16.1 | 8.2 (8.0) | 2.76× | 1.97× | 10.3 | 0.8 |
+| stereo_delay | 19.3 | 13.2 | 6.6 (6.2) | 2.91× | 2.00× | 6.9 | 1.0 |
+| slow | 158.2 | 114.8 | 140.4 (130.8) | 1.13× | **0.82×** | 5.7 | 24.7 |
+| biquad | 58.7 | 40.5 | 19.8 (17.9) | 2.96× | 2.04× | 11.3 | 1.8 |
+| fir | 479.8 | 340.3 | 210.4 (183.5) | 2.28× | 1.62× | 5.6 | 37.3 |
+| math | 72.2 | 52.9 | 40.7 (34.6) | 1.77× | 1.30× | 3.1 | 13.3 |
+| sum of 7 | 812.8 | 579.5 | 427.4 (382.2) | 1.90× | 1.36× | | 79.1 |
+
+Against the S2 estimates (M1 -Os): fd 14.3 (est. 15–20), bq 31.8 (30–40), fir 230.9 (250–350), math 50.4 (45–55),
+gain 1.9 (1–2) are in or better than the range; **slow 177.0 misses (120–170)**, and on the iPhone `slow` is 18 %
+slower than vm-goto-fpreg. Cause: `loop(n, i += 1)` is 4 handlers per iteration (`FAdd` writing `i`, then
+`IDec` → `IGt0` → `BrT`), and the last three form a dependent chain through frame slots (store → load per handler);
+vm-goto-fpreg's `LOOP_END` decrements and branches in one opcode. S3's fused loop-next (and compare-branch) removes
+two of the four handlers and the slot round trips. WDL JIT is still 1.4–1.9× faster than vm-reg on biquad, fir and
+math (memory round trips per IR value, one dispatch per op), as the staging table expected for S2.
+
+### 16.5 What remains (S3/S4)
+- S3: fused loop-next and compare-branch (fixes `slow`, the iPhone regression vs vm-goto-fpreg), `cell OP= literal`,
+  megabuf base+index, const-cell folding + constant folding (with `ETVMOps.h` shared with `glue_port.h`, the
+  `invsqrt` re-baseline), load CSE / store→load forwarding, temp promotion, pure CSE; passes switchable for bisecting
+  (`ETVM_PASSES`).
+- S4: tier-2 generated arithmetic trees and tier-3 corpus kernels with BURS selection (needs the external corpus for
+  `mine_shapes.py`), select speculation, typed io descriptor for framing (removes the two `pre/post` calls per frame;
+  `gain` is mostly that).
+- Still open from S1: external corpus (real fallback rate), untested opcodes (§15.5), and the audit of building
+  programs in `ysfx_set_eel_exec_mode` against a running audio thread — required before vm-reg can be a user-visible
+  option; the §12.9 gate (24 CPU-hours of `jsfxvmdiff` after the last semantic change, no script > 5 % slower than
+  the stage-1 default) is not met (`slow` on iPhone).
 
 ---
 

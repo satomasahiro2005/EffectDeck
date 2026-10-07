@@ -436,6 +436,12 @@ for t in "${selected[@]}"; do
       printf '%s\n' "$new_crashes" | tee -a "$log"
       [ "$status" != 0 ] || status=1
     fi
+    # -fork で時間切れを無視していても、最後の子が時間切れだと親はその終了値（-timeout_exitcode の既定 70）で
+    # 終わる。新しい crash-* が無ければ落ちではない。
+    if [ "$status" = 70 ] && [ ${#fuzz_only[@]} -gt 0 ] && [ -z "$new_crashes" ]; then
+      echo "== $t: exit 70 = the last fork job timed out (timeouts are ignored); not a failure" | tee -a "$log"
+      status=0
+    fi
   fi
   execs=$(grep -Eo "stat::number_of_executed_units: *[0-9]+" "$log" | grep -Eo "[0-9]+$" | tail -1 || true)
   cov=$(grep -Eo "cov: [0-9]+" "$log" | tail -1 || true)
