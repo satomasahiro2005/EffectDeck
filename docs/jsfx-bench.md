@@ -65,7 +65,9 @@ bash Tools/jsfx-bench/run.sh --profile         # 命令と続いた 2 つの組�
 最後の変数の全部・EEL のメモリ全部・@serialize。回ごとに `NSEEL_rand_reset` で rand の列を最初からにする。
 gmem はプロセスの中で共有されるので、書く前に読むスクリプトは portable どうしでも違う
 （`ET_DIFF_MODES=0` で portable どうしを比べられる）。数える版は、vm-* が一度も通らなかった命令も出す。
-`Tests/Fuzz/run.sh --target jsfxexec` も 1/4 の入力で既定の実行系と portable に同じものを渡して比べる。
+`Tests/Fuzz/run.sh --target jsfxexec` も 1/4 の入力で既定の実行系と portable に同じものを渡して比べる
+（gmem・`time` の字があるソースは外し、範囲の外の番地が指す 1 語 `nseel_ramalloc_onfail` は回ごとに 0 に戻す。
+どちらもプロセスで共有され、前の回の残りで portable どうしでも違う）。
 
 `-Os` は Xcode の YSFX と同じ段（Beta・Release は `GCC_OPTIMIZATION_LEVEL` を書いておらず、Xcode の既定の `-Os`。
 アプリ側の `ETJSFXHost.cpp` と台も `dspSettings` で `-Os`）。`-O3` は比べるための別の段。

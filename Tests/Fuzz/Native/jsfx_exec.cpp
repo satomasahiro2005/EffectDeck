@@ -18,7 +18,9 @@
 //   8. ETJSFX_Destroy
 //   9. 1/4 で実行系の差分: 同じソースを 2 つ作り、アプリの既定の実行系（ETJSFX_EELExecutor）と
 //      portable（GLUE_CALL_CODE そのもの）に同じつまみと同じブロックを渡して、出力が 1 ビットまで同じか。
-//      既定が portable の建て方では何もしない。締切を一度でも超えたら比べない（外れたかが時刻で変わる）
+//      既定が portable の建て方では何もしない。締切を一度でも超えたら比べない（外れたかが時刻で変わる）。
+//      プロセスで共有されて前の回の残りが見えるもの（名前の無い gmem・time()・time_precise()）を
+//      ソースが書いていたら比べない。範囲の外の番地が指す 1 語（nseel_ramalloc_onfail）は回ごとに 0 に戻す
 //
 // 標本化率・ブロック長・つまみの値・画の大きさは入力の FNV-1a から決める（同じ入力は同じ回り方）。
 // 入力の全体が JSFX のソースになるので、種（.jsfx）はそのまま読める。
@@ -43,6 +45,7 @@
 #include "WDL/eel2/ns-eel.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
@@ -53,6 +56,9 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
+
+// nseel-ram.c。範囲の外のメモリの読み書きが全部ここに来る（プロセスで 1 語）。
+extern "C" EEL_F nseel_ramalloc_onfail;
 
 namespace {
 constexpr size_t kErrorCapacity = 4096;   // ETJSFXHost.swift と同じ
@@ -442,12 +448,23 @@ void exercise(ETJSFX *h, Stream &s, Rng &r)
     ETJSFX_SetGFXMenuCallback(h, nullptr, nullptr);
 }
 
+/// 回ごとに違う値を読みうるソースか（差分を取らない）。名前の無い gmem はプロセスで 1 つの塊で
+/// 前の回の書き込みが残り、time()・time_precise() は時計。EEL は大文字小文字を区別しないので小文字で探す。
+/// 字面で広めに外す（コメントの中の字でも外す。外しすぎは差分の回が減るだけ）。
+bool readsProcessState(const uint8_t *data, size_t size)
+{
+    std::string s(reinterpret_cast<const char *>(data), size);
+    for (char &c : s) c = (char)std::tolower((unsigned char)c);
+    return s.find("gmem") != std::string::npos || s.find("time") != std::string::npos;
+}
+
 /// 9. 実行系の差分。rand() は全部の VM で 1 つの列なので、2 つを並べずに 1 つずつ最初から回す。
 void differential(double sampleRate, uint32_t maxFrames, uint64_t seed)
 {
     std::vector<std::vector<float>> outs[2];
     for (int pass = 0; pass < 2; ++pass) {
         NSEEL_rand_reset();
+        nseel_ramalloc_onfail = 0;
         char error[kErrorCapacity] = {};
         ETJSFX *h = ETJSFX_Create(sourcePath().c_str(), sampleRate, maxFrames, error, sizeof error);
         if (!h) {
@@ -505,6 +522,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     const uint32_t firstFrames = s.maxFrames;
     exercise(h, s, r);
     ETJSFX_Destroy(h);
-    if (r.oneIn(4)) differential(firstRate, firstFrames, r.next());
+    if (r.oneIn(4) && !readsProcessState(data, size)) differential(firstRate, firstFrames, r.next());
     return 0;
 }
