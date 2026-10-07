@@ -34,8 +34,10 @@ on:
 permissions:
   contents: read
 
+# event を組に入れる。同じ組だと、登録のための push の回（ジョブは全部飛ばす）が、待っている
+# workflow_dispatch の回を「待ちは 1 つだけ」で取り消す。
 concurrency:
-  group: fuzz-long
+  group: fuzz-long-${{ github.event_name }}
   cancel-in-progress: false
 
 defaults:
