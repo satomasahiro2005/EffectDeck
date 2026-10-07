@@ -94,4 +94,14 @@ xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer 
 | fir | 374.7 | 13.1 | 954.3 | 20.9 | 124.8 | 2.7 |
 | math | 57.2 | 5.5 | 104.0 | 6.7 | 36.5 | 2.3 |
 
-cpp と portable・wdl-jit の出力は全部 1 ビットまで同じ。iPhone は 2 回回して差は 5% 以内（表は 2 回目）。
+cpp と portable・wdl-jit の出力は全部 1 ビットまで同じ。iPhone は 2 回回して差は 7% 以内（fir が最大。表は 2 回目）。
+
+`x cpp` を読むときの注意:
+
+- cpp はホストを通らない（`ysfx_process_float` の float と double の詰め替え・締切の計測・1 フレームごとの
+  `NSEEL_code_execute` の出入りが無い）。portable・wdl-jit の数字にはこの分が乗っている。`gain` は中身が
+  ほぼ無いので、`x cpp` はこの分の比に近い（式を解く遅さの比ではない）
+- 時計（`mach_absolute_time`）の刻みは 41.7 ns（24 MHz）。cpp の `gain` は 0.1〜0.4 us = 3〜10 刻みしかないので、
+  `gain` の `x cpp`（特に -O3 の 32 倍・73 倍）は刻みの粗さで大きく揺れる。ほかのスクリプトの cpp は 0.8 us 以上
+- `slow` は音を素通しするので、照合では cpp の `loop` が本当に回ったかを確かめられない。M1 の -Os の CLI を
+  逆アセンブルして、200 周の `fadd` の鎖が残っていることを見た（消されてはいない）
