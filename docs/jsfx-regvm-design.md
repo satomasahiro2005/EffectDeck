@@ -1109,6 +1109,47 @@ handlers per tap), math 74 → 50 (while 7 → 3 per iteration), slow 11 → 4 (
 - **S5**: loop kernels for multi-instruction bodies (register-carried values across a body, e.g. fir's `k`, `j`, the
   two accumulators), LICM, megabuf induction with guards.
 
+### 17.6 Review of S3 and the patch fix (2026-10-07, a0d4003..285745a)
+Read `ETVMOpt.cpp` against §7.3 (what may write a cell: `StoreCell`, `Store`/`ustack.pop`/`exch` by pointer origin,
+every API call; `CallF1/F2` incl. `rand` write no cell and are neither CSE'd nor removed; volatile cells never reused;
+`promote` only for worktable cells that never escape and are never read or written by pointer; fold only on normal
+inputs and results with the handlers' functions), the S3 parts of `ETVMSelect.cpp` (the read/write windows of `ldfold`
+and multi-use `direct` with values that `cse`/`fwd` now keep alive longer; the end-of-block read point of `J*`/`W*J`;
+fusion only across non-executing instructions; `coalesceLive` interference; `lkern` only when nothing but `d op= k|b`
+executes, `b ≠ d`, the counter phi is coalesced and the back edge has no copies) and the new handlers (all operands read
+before the write, `LK*` counter arithmetic = `DecJ`, no contraction). No defect found.
+
+Tests added: `Tools/jsfx-bench/diff/vm_s3_*.jsfx` (7): reuse across `?:`/`min`/`max`/user-stack/`spl()`/varparm/
+`atomic_*`/API/user-function (instance, global) writes, megabuf/gmem stores, denormal filtering, loop kernels with
+NaN/Inf/subnormal values, extreme and NaN counts, nested, `_global.*`/`reg*`, the destination on the right, and while +
+compare with NaN conditions and caps. `--diff` 72/72 bit-exact on Linux x86-64 and M1 (-Os, -O3, profile); §12.1 grid
+on M1 -Os/-O3 0 mismatched. Random differential (two throwaway EEL grammars, not committed: @init/@slider/@block/@sample/
+@serialize, lvalue `?:`/`min`/`max`, varparm, user stack, `spl()`, megabuf base + index, single-op loops with NaN /
+huge / negative counts, while + compare, user functions with local/instance/global): 3,040 scripts bit-exact on M1 -Os;
+on Linux -Os the only mismatch was one x86-only NaN sign (x86's default NaN is negative) that the stage-1 executors show
+too and vm-reg does not. 500 of them under 11 `ETVM_PASSES` combinations (each IR pass and each selection rule off,
+`none`, `ir`, `none,+ldfold,+direct,+loop,+lkern,+cmpbr`): bit-exact. The S3 `jsfxvmdiff` corpus (3,928) replayed
+through `--diff` on Linux and M1: every mismatch also appears between portable and itself, or depends on run order in
+the process (`--diff` does not reset `nseel_ramalloc_onfail`, gmem or uninitialised user-stack reads the way
+`jsfxvmdiff` does), so it is not an oracle; no input showed a reproducible vm-reg-only difference. The tables of §17.4
+match the committed JSON.
+
+Patch (a0d4003): the cause is right (`EEL_GLUE_set_immediate` on `_asm_megabuf`'s zero slots), the change is minimal
+(only `FN_MEMORY`'s list, only when the glue defines the macro; `FN_GMEMORY` chains its two immediates correctly even when
+`gram_blocks` is NULL, the ysfx default). With a counter in `EEL_GLUE_set_immediate`, no call starts on a non-zero word
+over the whole `--diff` corpus after the fix; with `FN_MEMORY`'s list put back, `megabuf_tail.jsfx` crashes (SIGSEGV)
+on Linux -Os. The patch applies to a fresh `5c3452f` tree, the `.old.diff` applies to the pristine tree as `setup.sh`'s
+reverse path needs, and the result equals the worktree's `Vendor/ysfx`.
+
+Residual: (1) the gate stays open: 3.5 of 24 CPU-hours, and §12.6's arm64 replay of the fuzz corpus through the
+`jsfxvmdiff` oracle (not `--diff`) has not been done. (2) `lkern` holds `d` in a register for the whole loop: a value
+another thread writes into `d` meanwhile (a @gfx variable, `_global.*`, `reg*`) is lost at the final store instead of
+possibly mid-loop. Both executors race there; only the outcome of the race differs. (3) `constcell` assumes nothing
+outside the VM's bytecode writes a static data cell (ysfx writes registered variables only) and that API calls return
+pointers only to escaped cells or registered variables (stores through unknown pointers do not demote Const). A future
+ysfx/WDL change that breaks either assumption breaks `constcell` silently. (4) NaN+NaN payload choice inside the new
+fused handlers belongs to the same class as §15.2 (9); the grid checks single ops only.
+
 ---
 
 ## Appendix A — portable opcode → IR mapping
