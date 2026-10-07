@@ -1,0 +1,2137 @@
+{
+ "weighting": "each script equal (mean of per-script shares)",
+ "scripts": [
+  {
+   "script": "biquad",
+   "frames": 48128,
+   "ops": 11551394,
+   "opsPerFrame": 240.01
+  },
+  {
+   "script": "filter_drive",
+   "frames": 48128,
+   "ops": 5245983,
+   "opsPerFrame": 109.0
+  },
+  {
+   "script": "fir",
+   "frames": 48128,
+   "ops": 113155492,
+   "opsPerFrame": 2351.14
+  },
+  {
+   "script": "gain",
+   "frames": 48128,
+   "ops": 385029,
+   "opsPerFrame": 8.0
+  },
+  {
+   "script": "math",
+   "frames": 48128,
+   "ops": 11881184,
+   "opsPerFrame": 246.87
+  },
+  {
+   "script": "slow",
+   "frames": 48128,
+   "ops": 38839301,
+   "opsPerFrame": 807.0
+  },
+  {
+   "script": "stereo_delay",
+   "frames": 48128,
+   "ops": 4660644,
+   "opsPerFrame": 96.84
+  }
+ ],
+ "ops": [
+  {
+   "op": "MOV_FPTOP_DV",
+   "share": 0.35087,
+   "rawCount": 61120440,
+   "rawShare": 0.3291
+  },
+  {
+   "op": "MOV_P2_DV",
+   "share": 0.15641,
+   "rawCount": 29411723,
+   "rawShare": 0.15837
+  },
+  {
+   "op": "MUL",
+   "share": 0.07742,
+   "rawCount": 10299915,
+   "rawShare": 0.05546
+  },
+  {
+   "op": "ADD",
+   "share": 0.05319,
+   "rawCount": 11647184,
+   "rawShare": 0.06271
+  },
+  {
+   "op": "ADD_OP_FAST",
+   "share": 0.0454,
+   "rawCount": 13182651,
+   "rawShare": 0.07098
+  },
+  {
+   "op": "MUL_OP",
+   "share": 0.04029,
+   "rawCount": 476731,
+   "rawShare": 0.00257
+  },
+  {
+   "op": "LOOP_END",
+   "share": 0.03929,
+   "rawCount": 12705920,
+   "rawShare": 0.06841
+  },
+  {
+   "op": "ASSIGN_FROMFP",
+   "share": 0.03793,
+   "rawCount": 2262210,
+   "rawShare": 0.01218
+  },
+  {
+   "op": "SUB",
+   "share": 0.02428,
+   "rawCount": 1347859,
+   "rawShare": 0.00726
+  },
+  {
+   "op": "RET",
+   "share": 0.02205,
+   "rawCount": 336903,
+   "rawShare": 0.00181
+  },
+  {
+   "op": "_RESET_WTP",
+   "share": 0.02205,
+   "rawCount": 336903,
+   "rawShare": 0.00181
+  },
+  {
+   "op": "MEGABUF",
+   "share": 0.01769,
+   "rawCount": 9529536,
+   "rawShare": 0.05131
+  },
+  {
+   "op": "ADD_OP",
+   "share": 0.01407,
+   "rawCount": 6462656,
+   "rawShare": 0.0348
+  },
+  {
+   "op": "ASSIGN_FAST_FROMFP",
+   "share": 0.01105,
+   "rawCount": 963408,
+   "rawShare": 0.00519
+  },
+  {
+   "op": "FXCH",
+   "share": 0.01068,
+   "rawCount": 3417314,
+   "rawShare": 0.0184
+  },
+  {
+   "op": "ABOVE",
+   "share": 0.00994,
+   "rawCount": 3508795,
+   "rawShare": 0.01889
+  },
+  {
+   "op": "PUSH_VAL_AT_P1_TO_FPSTACK",
+   "share": 0.00778,
+   "rawCount": 6160456,
+   "rawShare": 0.03317
+  },
+  {
+   "op": "JMP_IF_P1_Z",
+   "share": 0.00748,
+   "rawCount": 3272704,
+   "rawShare": 0.01762
+  },
+  {
+   "op": "ASSIGN_FAST",
+   "share": 0.00684,
+   "rawCount": 3176448,
+   "rawShare": 0.0171
+  },
+  {
+   "op": "ABS",
+   "share": 0.00494,
+   "rawCount": 288768,
+   "rawShare": 0.00155
+  },
+  {
+   "op": "WHILE_BEGIN",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205
+  },
+  {
+   "op": "WHILE_END",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205
+  },
+  {
+   "op": "WHILE_CHECK_RV",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205
+  },
+  {
+   "op": "DIV",
+   "share": 0.00436,
+   "rawCount": 240827,
+   "rawShare": 0.0013
+  },
+  {
+   "op": "SUB_OP_FAST",
+   "share": 0.00389,
+   "rawCount": 3080192,
+   "rawShare": 0.01659
+  },
+  {
+   "op": "POP_FPSTACK_TO_PTR",
+   "share": 0.00357,
+   "rawCount": 288768,
+   "rawShare": 0.00155
+  },
+  {
+   "op": "PUSH_P1",
+   "share": 0.00295,
+   "rawCount": 96320,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "POP_P2",
+   "share": 0.00295,
+   "rawCount": 96320,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "CFUNC_1PDD",
+   "share": 0.00232,
+   "rawCount": 192658,
+   "rawShare": 0.00104
+  },
+  {
+   "op": "BELOWEQ",
+   "share": 0.00211,
+   "rawCount": 144384,
+   "rawShare": 0.00078
+  },
+  {
+   "op": "MOV_P1_DV",
+   "share": 0.00119,
+   "rawCount": 96280,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "COPY_VALUE_AT_P1_TO_ADDR",
+   "share": 0.00119,
+   "rawCount": 96280,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "CFUNC_2PDD",
+   "share": 0.00116,
+   "rawCount": 96266,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "WHILE_SETUP",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026
+  },
+  {
+   "op": "LOOP_LOADCNT",
+   "share": 0.00024,
+   "rawCount": 96258,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "SET_P2_FROM_P1",
+   "share": 0.00012,
+   "rawCount": 96320,
+   "rawShare": 0.00052
+  },
+  {
+   "op": "POP_FPSTACK",
+   "share": 0.0,
+   "rawCount": 8,
+   "rawShare": 0.0
+  },
+  {
+   "op": "DIV_OP",
+   "share": 0.0,
+   "rawCount": 64,
+   "rawShare": 0.0
+  },
+  {
+   "op": "SUB_OP",
+   "share": 0.0,
+   "rawCount": 3,
+   "rawShare": 0.0
+  },
+  {
+   "op": "MIN_FP",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0
+  },
+  {
+   "op": "MAX_FP",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0
+  }
+ ],
+ "pairs": [
+  {
+   "first": "MOV_P2_DV",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.09733,
+   "rawCount": 17427574,
+   "rawShare": 0.09384,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0579,
+    "gain": 0.25,
+    "math": 0.0721,
+    "slow": 0.2491,
+    "stereo_delay": 0.0339
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.09313,
+   "rawCount": 16937033,
+   "rawShare": 0.0912,
+   "byScript": {
+    "biquad": 0.1667,
+    "filter_drive": 0.1193,
+    "fir": 0.1102,
+    "gain": 0.0,
+    "math": 0.1009,
+    "slow": 0.0,
+    "stereo_delay": 0.1549
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "MUL",
+   "share": 0.07742,
+   "rawCount": 10299915,
+   "rawShare": 0.05546,
+   "byScript": {
+    "biquad": 0.1667,
+    "filter_drive": 0.1284,
+    "fir": 0.0544,
+    "gain": 0.0,
+    "math": 0.0891,
+    "slow": 0.0,
+    "stereo_delay": 0.1033
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "ADD_OP_FAST",
+   "share": 0.0454,
+   "rawCount": 13182651,
+   "rawShare": 0.07098,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0276,
+    "gain": 0.0,
+    "math": 0.032,
+    "slow": 0.2478,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "ADD",
+   "share": 0.04351,
+   "rawCount": 11262160,
+   "rawShare": 0.06064,
+   "byScript": {
+    "biquad": 0.0667,
+    "filter_drive": 0.0367,
+    "fir": 0.0825,
+    "gain": 0.0,
+    "math": 0.0567,
+    "slow": 0.0,
+    "stereo_delay": 0.062
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "MUL_OP",
+   "share": 0.04029,
+   "rawCount": 476731,
+   "rawShare": 0.00257,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.25,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.03648,
+   "rawCount": 2310360,
+   "rawShare": 0.01244,
+   "byScript": {
+    "biquad": 0.1,
+    "filter_drive": 0.0367,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0567,
+    "slow": 0.0,
+    "stereo_delay": 0.062
+   }
+  },
+  {
+   "first": "ADD_OP_FAST",
+   "second": "LOOP_END",
+   "share": 0.0354,
+   "rawCount": 9625728,
+   "rawShare": 0.05183,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.2478,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "LOOP_END",
+   "second": "MOV_P2_DV",
+   "share": 0.03529,
+   "rawCount": 9625601,
+   "rawShare": 0.05183,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.2466,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_P2_DV",
+   "second": "ASSIGN_FROMFP",
+   "share": 0.03498,
+   "rawCount": 2165890,
+   "rawShare": 0.01166,
+   "byScript": {
+    "biquad": 0.1,
+    "filter_drive": 0.0734,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0405,
+    "slow": 0.0,
+    "stereo_delay": 0.031
+   }
+  },
+  {
+   "first": "ASSIGN_FROMFP",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.03309,
+   "rawCount": 2069679,
+   "rawShare": 0.01114,
+   "byScript": {
+    "biquad": 0.1,
+    "filter_drive": 0.0642,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0365,
+    "slow": 0.0,
+    "stereo_delay": 0.031
+   }
+  },
+  {
+   "first": "MUL_OP",
+   "second": "MOV_P2_DV",
+   "share": 0.02243,
+   "rawCount": 428603,
+   "rawShare": 0.00231,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.125,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "(start)",
+   "second": "_RESET_WTP",
+   "share": 0.02205,
+   "rawCount": 336903,
+   "rawShare": 0.00181,
+   "byScript": {
+    "biquad": 0.0042,
+    "filter_drive": 0.0092,
+    "fir": 0.0004,
+    "gain": 0.125,
+    "math": 0.0041,
+    "slow": 0.0012,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "MOV_P2_DV",
+   "share": 0.02,
+   "rawCount": 6689833,
+   "rawShare": 0.03602,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0734,
+    "fir": 0.0544,
+    "gain": 0.0,
+    "math": 0.0122,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "_RESET_WTP",
+   "second": "MOV_P2_DV",
+   "share": 0.01861,
+   "rawCount": 144386,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.125,
+    "math": 0.0041,
+    "slow": 0.0012,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MUL_OP",
+   "second": "RET",
+   "share": 0.01786,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.125,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "MEGABUF",
+   "share": 0.01769,
+   "rawCount": 9529536,
+   "rawShare": 0.05131,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0825,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0413
+   }
+  },
+  {
+   "first": "SUB",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.01673,
+   "rawCount": 866449,
+   "rawShare": 0.00467,
+   "byScript": {
+    "biquad": 0.0333,
+    "filter_drive": 0.055,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "MOV_P2_DV",
+   "share": 0.01625,
+   "rawCount": 1058816,
+   "rawShare": 0.0057,
+   "byScript": {
+    "biquad": 0.0667,
+    "filter_drive": 0.0183,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "SUB",
+   "share": 0.01476,
+   "rawCount": 577667,
+   "rawShare": 0.00311,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0642,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.031
+   }
+  },
+  {
+   "first": "MOV_P2_DV",
+   "second": "ADD_OP",
+   "share": 0.01302,
+   "rawCount": 6352960,
+   "rawShare": 0.03421,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0367,
+    "fir": 0.0544,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.01282,
+   "rawCount": 673808,
+   "rawShare": 0.00363,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0367,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0324,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "FXCH",
+   "share": 0.01068,
+   "rawCount": 3417314,
+   "rawShare": 0.0184,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0276,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "ADD_OP",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.01012,
+   "rawCount": 3334272,
+   "rawShare": 0.01795,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0367,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0029
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "ADD",
+   "share": 0.00968,
+   "rawCount": 385024,
+   "rawShare": 0.00207,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0413
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "SUB",
+   "share": 0.00952,
+   "rawCount": 770048,
+   "rawShare": 0.00415,
+   "byScript": {
+    "biquad": 0.0667,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MEGABUF",
+   "second": "PUSH_VAL_AT_P1_TO_FPSTACK",
+   "share": 0.00778,
+   "rawCount": 6160448,
+   "rawShare": 0.03317,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0544,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "PUSH_VAL_AT_P1_TO_FPSTACK",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00778,
+   "rawCount": 6160384,
+   "rawShare": 0.03317,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0544,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "SUB",
+   "second": "MOV_P2_DV",
+   "share": 0.00755,
+   "rawCount": 481410,
+   "rawShare": 0.00259,
+   "byScript": {
+    "biquad": 0.0333,
+    "filter_drive": 0.0092,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "MOV_P2_DV",
+   "second": "ASSIGN_FAST",
+   "share": 0.00684,
+   "rawCount": 3176448,
+   "rawShare": 0.0171,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "MEGABUF",
+   "second": "MOV_P2_DV",
+   "share": 0.00684,
+   "rawCount": 3176448,
+   "rawShare": 0.0171,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "ASSIGN_FAST_FROMFP",
+   "share": 0.00681,
+   "rawCount": 674557,
+   "rawShare": 0.00363,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0034,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0012,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "ADD_OP_FAST",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00611,
+   "rawCount": 476731,
+   "rawShare": 0.00257,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "ABOVE",
+   "second": "JMP_IF_P1_Z",
+   "share": 0.00536,
+   "rawCount": 3128320,
+   "rawShare": 0.01684,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "ASSIGN_FAST",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00536,
+   "rawCount": 3128320,
+   "rawShare": 0.01684,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "FXCH",
+   "second": "ABOVE",
+   "share": 0.00536,
+   "rawCount": 3128320,
+   "rawShare": 0.01684,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "ASSIGN_FAST_FROMFP",
+   "second": "MOV_P2_DV",
+   "share": 0.00498,
+   "rawCount": 433905,
+   "rawShare": 0.00234,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0021,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "ABS",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00494,
+   "rawCount": 288768,
+   "rawShare": 0.00155,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0162,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "ABOVE",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "WHILE_BEGIN",
+   "second": "MOV_P2_DV",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "WHILE_END",
+   "second": "WHILE_CHECK_RV",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ABOVE",
+   "second": "WHILE_END",
+   "share": 0.00457,
+   "rawCount": 380475,
+   "rawShare": 0.00205,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.032,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "DIV",
+   "second": "MOV_P2_DV",
+   "share": 0.00436,
+   "rawCount": 240662,
+   "rawShare": 0.0013,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0122,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ASSIGN_FAST_FROMFP",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00424,
+   "rawCount": 336988,
+   "rawShare": 0.00181,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0092,
+    "fir": 0.0009,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0012,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "MOV_P2_DV",
+   "second": "ASSIGN_FAST_FROMFP",
+   "share": 0.00424,
+   "rawCount": 288851,
+   "rawShare": 0.00156,
+   "byScript": {
+    "biquad": 0.0083,
+    "filter_drive": 0.0092,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0122,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "WHILE_CHECK_RV",
+   "second": "WHILE_BEGIN",
+   "share": 0.004,
+   "rawCount": 332347,
+   "rawShare": 0.00179,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.028,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD_OP",
+   "second": "MOV_P2_DV",
+   "share": 0.00389,
+   "rawCount": 3080256,
+   "rawShare": 0.01659,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "SUB_OP_FAST",
+   "share": 0.00389,
+   "rawCount": 3080192,
+   "rawShare": 0.01659,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD_OP_FAST",
+   "second": "MOV_P2_DV",
+   "share": 0.00389,
+   "rawCount": 3080192,
+   "rawShare": 0.01659,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "SUB_OP_FAST",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00389,
+   "rawCount": 3080192,
+   "rawShare": 0.01659,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0272,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "LOOP_END",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00383,
+   "rawCount": 3032190,
+   "rawShare": 0.01633,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0268,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "JMP_IF_P1_Z",
+   "second": "LOOP_END",
+   "share": 0.00383,
+   "rawCount": 3032064,
+   "rawShare": 0.01633,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0268,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "ABS",
+   "share": 0.00378,
+   "rawCount": 192512,
+   "rawShare": 0.00104,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "POP_FPSTACK_TO_PTR",
+   "share": 0.00357,
+   "rawCount": 288768,
+   "rawShare": 0.00155,
+   "byScript": {
+    "biquad": 0.025,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "POP_FPSTACK_TO_PTR",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00357,
+   "rawCount": 288768,
+   "rawShare": 0.00155,
+   "byScript": {
+    "biquad": 0.025,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ASSIGN_FROMFP",
+   "second": "RET",
+   "share": 0.00336,
+   "rawCount": 144386,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0092,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "FXCH",
+   "second": "DIV",
+   "share": 0.0032,
+   "rawCount": 144456,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0183,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "JMP_IF_P1_Z",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00312,
+   "rawCount": 130941,
+   "rawShare": 0.00071,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0178
+   }
+  },
+  {
+   "first": "PUSH_P1",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00295,
+   "rawCount": 96320,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "POP_P2",
+   "second": "ASSIGN_FROMFP",
+   "share": 0.00295,
+   "rawCount": 96320,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "MEGABUF",
+   "second": "PUSH_P1",
+   "share": 0.00295,
+   "rawCount": 96320,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "POP_P2",
+   "share": 0.00295,
+   "rawCount": 96256,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0207
+   }
+  },
+  {
+   "first": "_RESET_WTP",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00285,
+   "rawCount": 144388,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0092,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "BELOWEQ",
+   "second": "JMP_IF_P1_Z",
+   "share": 0.00211,
+   "rawCount": 144384,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "FXCH",
+   "second": "BELOWEQ",
+   "share": 0.00211,
+   "rawCount": 144384,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "CFUNC_1PDD",
+   "second": "MOV_P2_DV",
+   "share": 0.00174,
+   "rawCount": 144393,
+   "rawShare": 0.00078,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0122,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ASSIGN_FROMFP",
+   "second": "MOV_P2_DV",
+   "share": 0.00148,
+   "rawCount": 48137,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "ASSIGN_FAST",
+   "second": "MOV_P2_DV",
+   "share": 0.00148,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0103
+   }
+  },
+  {
+   "first": "MOV_P1_DV",
+   "second": "COPY_VALUE_AT_P1_TO_ADDR",
+   "share": 0.00119,
+   "rawCount": 96280,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0083,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "COPY_VALUE_AT_P1_TO_ADDR",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00119,
+   "rawCount": 96264,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0083,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "MOV_P2_DV",
+   "share": 0.00119,
+   "rawCount": 96256,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0083,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "CFUNC_1PDD",
+   "share": 0.00116,
+   "rawCount": 96386,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "CFUNC_2PDD",
+   "second": "MOV_P2_DV",
+   "share": 0.00116,
+   "rawCount": 96266,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "DIV",
+   "share": 0.00116,
+   "rawCount": 96256,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "CFUNC_2PDD",
+   "share": 0.00116,
+   "rawCount": 96256,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0081,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "ADD_OP",
+   "share": 0.00105,
+   "rawCount": 109696,
+   "rawShare": 0.00059,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0029
+   }
+  },
+  {
+   "first": "ASSIGN_FAST_FROMFP",
+   "second": "RET",
+   "share": 0.00066,
+   "rawCount": 96259,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0042,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "_RESET_WTP",
+   "second": "MOV_P1_DV",
+   "share": 0.0006,
+   "rawCount": 48129,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0042,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ASSIGN_FAST_FROMFP",
+   "second": "MOV_P1_DV",
+   "share": 0.0006,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0042,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "CFUNC_1PDD",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00058,
+   "rawCount": 48264,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "CFUNC_1PDD",
+   "share": 0.00058,
+   "rawCount": 48144,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "WHILE_SETUP",
+   "second": "WHILE_BEGIN",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "WHILE_CHECK_RV",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "ABS",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD",
+   "second": "CFUNC_1PDD",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "ABS",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ASSIGN_FAST_FROMFP",
+   "second": "WHILE_SETUP",
+   "share": 0.00058,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0041,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "JMP_IF_P1_Z",
+   "second": "MOV_P2_DV",
+   "share": 0.00053,
+   "rawCount": 109699,
+   "rawShare": 0.00059,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0009,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0029
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "LOOP_LOADCNT",
+   "share": 0.00024,
+   "rawCount": 96258,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0012,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "LOOP_END",
+   "second": "RET",
+   "share": 0.00018,
+   "rawCount": 48129,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0012,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "LOOP_LOADCNT",
+   "second": "MOV_P2_DV",
+   "share": 0.00018,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0012,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "SET_P2_FROM_P1",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.00012,
+   "rawCount": 96320,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0009,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MEGABUF",
+   "second": "SET_P2_FROM_P1",
+   "share": 0.00012,
+   "rawCount": 96320,
+   "rawShare": 0.00052,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0009,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "LOOP_LOADCNT",
+   "second": "MOV_FPTOP_DV",
+   "share": 6e-05,
+   "rawCount": 48130,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ADD_OP",
+   "second": "LOOP_END",
+   "share": 6e-05,
+   "rawCount": 48128,
+   "rawShare": 0.00026,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0004,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "DIV",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.0,
+   "rawCount": 165,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "DIV",
+   "share": 0.0,
+   "rawCount": 43,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "FXCH",
+   "second": "SUB",
+   "share": 0.0,
+   "rawCount": 144,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "COPY_VALUE_AT_P1_TO_ADDR",
+   "second": "MOV_P1_DV",
+   "share": 0.0,
+   "rawCount": 16,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "DIV",
+   "share": 0.0,
+   "rawCount": 72,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "FXCH",
+   "second": "CFUNC_2PDD",
+   "share": 0.0,
+   "rawCount": 10,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "PUSH_VAL_AT_P1_TO_FPSTACK",
+   "second": "POP_FPSTACK",
+   "share": 0.0,
+   "rawCount": 8,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "ASSIGN_FROMFP",
+   "second": "PUSH_VAL_AT_P1_TO_FPSTACK",
+   "share": 0.0,
+   "rawCount": 8,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "POP_FPSTACK",
+   "second": "MOV_P1_DV",
+   "share": 0.0,
+   "rawCount": 7,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "DIV_OP",
+   "share": 0.0,
+   "rawCount": 64,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "PUSH_VAL_AT_P1_TO_FPSTACK",
+   "second": "MOV_P2_DV",
+   "share": 0.0,
+   "rawCount": 64,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MUL",
+   "second": "POP_P2",
+   "share": 0.0,
+   "rawCount": 64,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "DIV_OP",
+   "second": "MOV_P2_DV",
+   "share": 0.0,
+   "rawCount": 64,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "SUB_OP",
+   "share": 0.0,
+   "rawCount": 3,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "SUB_OP",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.0,
+   "rawCount": 3,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MOV_FPTOP_DV",
+   "second": "MAX_FP",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MIN_FP",
+   "second": "MOV_FPTOP_DV",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "MAX_FP",
+   "second": "MOV_P2_DV",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "CFUNC_1PDD",
+   "second": "MIN_FP",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  },
+  {
+   "first": "POP_FPSTACK",
+   "second": "RET",
+   "share": 0.0,
+   "rawCount": 1,
+   "rawShare": 0.0,
+   "byScript": {
+    "biquad": 0.0,
+    "filter_drive": 0.0,
+    "fir": 0.0,
+    "gain": 0.0,
+    "math": 0.0,
+    "slow": 0.0,
+    "stereo_delay": 0.0
+   }
+  }
+ ]
+}

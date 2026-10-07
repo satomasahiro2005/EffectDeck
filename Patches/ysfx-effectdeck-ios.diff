@@ -2035,10 +2035,10 @@ index 0000000..56ff423
 +#undef EEL_VM_FPREG
 +#undef EEL_VM_MASK
 diff --git a/thirdparty/WDL/source/WDL/eel2/ns-eel.h b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
-index 6590a81..8157831 100644
+index 6590a81..08b5612 100644
 --- a/thirdparty/WDL/source/WDL/eel2/ns-eel.h
 +++ b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
-@@ -182,6 +182,40 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
+@@ -182,6 +182,42 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
  char *NSEEL_code_getcodeerror(NSEEL_VMCTX ctx);
  int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx);
  void NSEEL_code_execute(NSEEL_CODEHANDLE code);
@@ -2053,8 +2053,10 @@ index 6590a81..8157831 100644
 +#define NSEEL_EXEC_GOTO_FPREG_MASK 4 // NSEEL_EXEC_GOTO_FPREG + 表を 128 に取って範囲の比較を省く
 +#define NSEEL_EXEC_COUNT 5
 +// アプリが使う既定（ysfx_new が読む）。速さを測って 1 ビットも違わないものの中から選んだ（docs/jsfx-bench.md）。
++// iPhone 16 では _MASK と並び（7 本の合計は GOTO_FPREG が少し速い）、_MASK は表の外の番号が別の命令に
++// 化けうるので GOTO_FPREG にした。
 +#ifndef NSEEL_EXEC_DEFAULT
-+#define NSEEL_EXEC_DEFAULT NSEEL_EXEC_GOTO_FPREG_MASK
++#define NSEEL_EXEC_DEFAULT NSEEL_EXEC_GOTO_FPREG
 +#endif
 +typedef void (*NSEEL_FRAME_CALLBACK)(void *ctx, unsigned int frame);
 +// pre(ctx, i) → code を 1 回 → post(ctx, i) を i = 0..nframes-1。pre / post は NULL でもよい。
