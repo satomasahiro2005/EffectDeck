@@ -14,6 +14,8 @@ EffectDeck が足したもの（上流に無い）:
   GLUE_MEGABUF_NO_IMMEDIATE  portable の x[]（megabuf）に __NSEEL_RAMAlloc を書き込まない。即値の席が無い命令に
                         EEL_GLUE_set_immediate をかけて命令の後ろを潰し、命令列の最後だと先にインラインにした
                         関数の中身の頭を壊していた（上流 WDL d30c30b でも同じ）
+  effectdeck_file_retptr  file_rewind（開いていないハンドル）と file_riff（負のハンドル）が EEL_F* の戻りに NULL を返し、
+                        EEL が戻りの先を読んで落ちていた（x = file_rewind(5) + 1;）。引数を返す。上流 ysfx でも同じ
 diff --git a/include/ysfx.h b/include/ysfx.h
 index 49296d4..a35b0d0 100644
 --- a/include/ysfx.h
@@ -307,7 +309,7 @@ index 592f1f4..5799177 100644
 +    g_wdl_internal_mutex.unlock();
  }
 diff --git a/sources/ysfx_api_file.cpp b/sources/ysfx_api_file.cpp
-index d4305e5..80df998 100644
+index d4305e5..db1a049 100644
 --- a/sources/ysfx_api_file.cpp
 +++ b/sources/ysfx_api_file.cpp
 @@ -294,6 +294,7 @@ void ysfx_serializer_t::begin(bool write, std::string &buffer)
@@ -395,6 +397,40 @@ index d4305e5..80df998 100644
  }
  
  static EEL_F NSEEL_CGEN_CALL ysfx_api_file_close(void *opaque, EEL_F *handle_)
+@@ -429,6 +473,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_close(void *opaque, EEL_F *handle_)
+     return 0;
+ }
+ 
++// EffectDeck (effectdeck_file_retptr): file_rewind と file_riff は EEL_F* を返す関数
++// （NSEEL_addfunc_retptr）。EEL は戻りの先をそのまま読むので、NULL を返すと
++// `x = file_rewind(5) + 1;` のような式がアプリごと落ちる。開いていないハンドルでも
++// 引数（開いているときと同じ先）を返す。
+ static EEL_F *NSEEL_CGEN_CALL ysfx_api_file_rewind(void *opaque, EEL_F *handle_)
+ {
+     int32_t handle = ysfx_eel_round<int32_t>(*handle_);
+@@ -439,7 +487,7 @@ static EEL_F *NSEEL_CGEN_CALL ysfx_api_file_rewind(void *opaque, EEL_F *handle_)
+     std::unique_lock<ysfx::mutex> lock;
+     ysfx_file_t *file = ysfx_get_file(fx, (uint32_t)handle, lock);
+     if (!file)
+-        return 0;
++        return handle_;
+ 
+     file->rewind();
+     return handle_;
+@@ -498,8 +546,11 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_avail(void *opaque, EEL_F *handle_)
+ static EEL_F *NSEEL_CGEN_CALL ysfx_api_file_riff(void *opaque, EEL_F *handle_, EEL_F *nch_, EEL_F *samplerate_)
+ {
+     int32_t handle = ysfx_eel_round<int32_t>(*handle_);
+-    if (handle < 0)
+-        return 0;
++    if (handle < 0) {
++        *nch_ = 0;
++        *samplerate_ = 0;
++        return nch_;
++    }
+ 
+     ysfx_t *fx = (ysfx_t *)opaque;
+     std::unique_lock<ysfx::mutex> lock;
 diff --git a/sources/ysfx_api_file.hpp b/sources/ysfx_api_file.hpp
 index f94e7eb..f039411 100644
 --- a/sources/ysfx_api_file.hpp

@@ -46,7 +46,7 @@ fi
 # 前の版が当たった木（一度でも build.sh を通した Mac）を「当たっている」と
 # 見て黙って飛ばし、新しく足した分（gfx の座標の切り詰めなど）が建たない。
 # パッチを変えたら、目印もその版で足したものに替えること（Tests/Fuzz/run.sh も同じ目印を見る）。
-if grep -q "GLUE_MEGABUF_NO_IMMEDIATE" Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/glue_port.h 2>/dev/null; then
+if grep -q "effectdeck_file_retptr" Vendor/ysfx/sources/ysfx_api_file.cpp 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
   YSFX_PATCHED=1
 else

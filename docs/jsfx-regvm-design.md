@@ -836,6 +836,13 @@ in the bench it is now a default variant (no longer opt-in). The patch is unchan
 8. `Tests/Fuzz/run.sh` now fails a run when new `crash-*` files appear: with `-fork`, a child stopped by UBSan/ASan
    writes its crash file but the parent kept going and exited 0 (seen with `jsfxvmdiff`; `jsfxexec` has the same
    exposure).
+9. **`file_rewind` / `file_riff` returned NULL** (patch marker `effectdeck_file_retptr`). They are registered with
+   `NSEEL_addfunc_retptr`, so the EEL code reads through the returned `EEL_F*`; `file_rewind` on a handle that is not
+   open and `file_riff` on a negative handle returned 0, and `x = file_rewind(5) + 1;` dereferenced NULL in the
+   portable interpreter (`jsfx-bench --diff` died with SIGSEGV at nil on its reference run). Upstream ysfx has the same code. Both now return their
+   argument pointer (`file_riff` also zeroes `nch`/`samplerate`, as its other failure branches do); no other
+   `ysfx_api_*` pointer-returning function has a NULL path. Reproducer: `Tools/jsfx-bench/diff/file_null.jsfx` (also a
+   `jsfxexec` seed). The handle is rounded as `(int)(h + 0.0001)`, so -1 becomes 0 and only h <= -2 is negative.
 
 ### 16.3 Oracle and fuzz results (vm-reg = threaded code)
 | Layer | Linux x86-64, clang 21.0.0 (swiftlang), -Os / -O3 | Mac M1 arm64, Apple clang 21.0.0, -Os / -O3 | iPhone 16 Beta |
