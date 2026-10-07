@@ -1,0 +1,334 @@
+{
+ "what": "vm-reg median us per 256-frame block, M1 CLI -Os, ETVM_PASSES cumulative (2 s per variant, variants portable,vm-goto-fpreg,vm-reg)",
+ "git": "5487bff",
+ "configs": [
+  {
+   "name": "c0",
+   "passes": "none,+ldfold,+direct,+fuse",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.3,
+     "vm-reg": 1.9
+    },
+    "filter_drive": {
+     "portable": 43.1,
+     "vm-goto-fpreg": 28.2,
+     "vm-reg": 14.7
+    },
+    "stereo_delay": {
+     "portable": 37.7,
+     "vm-goto-fpreg": 27.3,
+     "vm-reg": 10.8
+    },
+    "slow": {
+     "portable": 363.5,
+     "vm-goto-fpreg": 177.2,
+     "vm-reg": 180.2
+    },
+    "biquad": {
+     "portable": 99.4,
+     "vm-goto-fpreg": 70.2,
+     "vm-reg": 32.9
+    },
+    "fir": {
+     "portable": 980.2,
+     "vm-goto-fpreg": 583.9,
+     "vm-reg": 236.1
+    },
+    "math": {
+     "portable": 108.8,
+     "vm-goto-fpreg": 69.0,
+     "vm-reg": 52.1
+    }
+   }
+  },
+  {
+   "name": "c1",
+   "passes": "none,+ldfold,+direct,+fuse,+loop",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.3,
+     "vm-reg": 1.9
+    },
+    "filter_drive": {
+     "portable": 43.1,
+     "vm-goto-fpreg": 28.2,
+     "vm-reg": 14.6
+    },
+    "stereo_delay": {
+     "portable": 37.7,
+     "vm-goto-fpreg": 27.3,
+     "vm-reg": 10.8
+    },
+    "slow": {
+     "portable": 382.3,
+     "vm-goto-fpreg": 186.4,
+     "vm-reg": 180.5
+    },
+    "biquad": {
+     "portable": 97.9,
+     "vm-goto-fpreg": 69.2,
+     "vm-reg": 32.4
+    },
+    "fir": {
+     "portable": 967.8,
+     "vm-goto-fpreg": 583.7,
+     "vm-reg": 215.7
+    },
+    "math": {
+     "portable": 106.1,
+     "vm-goto-fpreg": 67.5,
+     "vm-reg": 52.1
+    }
+   }
+  },
+  {
+   "name": "c2",
+   "passes": "none,+ldfold,+direct,+fuse,+loop,+cmpbr",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.3,
+     "vm-reg": 1.9
+    },
+    "filter_drive": {
+     "portable": 43.1,
+     "vm-goto-fpreg": 28.2,
+     "vm-reg": 14.6
+    },
+    "stereo_delay": {
+     "portable": 37.7,
+     "vm-goto-fpreg": 27.3,
+     "vm-reg": 10.2
+    },
+    "slow": {
+     "portable": 363.4,
+     "vm-goto-fpreg": 177.2,
+     "vm-reg": 171.5
+    },
+    "biquad": {
+     "portable": 96.1,
+     "vm-goto-fpreg": 68.5,
+     "vm-reg": 32.4
+    },
+    "fir": {
+     "portable": 967.7,
+     "vm-goto-fpreg": 583.6,
+     "vm-reg": 210.0
+    },
+    "math": {
+     "portable": 106.1,
+     "vm-goto-fpreg": 67.5,
+     "vm-reg": 51.5
+    }
+   }
+  },
+  {
+   "name": "c3",
+   "passes": "none,+ldfold,+direct,+fuse,+loop,+cmpbr,+constcell,+opimm,+opto",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.4,
+     "vm-reg": 1.8
+    },
+    "filter_drive": {
+     "portable": 43.1,
+     "vm-goto-fpreg": 28.2,
+     "vm-reg": 14.1
+    },
+    "stereo_delay": {
+     "portable": 37.7,
+     "vm-goto-fpreg": 27.3,
+     "vm-reg": 9.9
+    },
+    "slow": {
+     "portable": 363.4,
+     "vm-goto-fpreg": 177.2,
+     "vm-reg": 170.2
+    },
+    "biquad": {
+     "portable": 97.9,
+     "vm-goto-fpreg": 69.4,
+     "vm-reg": 32.4
+    },
+    "fir": {
+     "portable": 973.5,
+     "vm-goto-fpreg": 583.6,
+     "vm-reg": 206.0
+    },
+    "math": {
+     "portable": 106.1,
+     "vm-goto-fpreg": 67.5,
+     "vm-reg": 51.7
+    }
+   }
+  },
+  {
+   "name": "c4",
+   "passes": "none,+ldfold,+direct,+fuse,+loop,+cmpbr,+constcell,+opimm,+opto,+membi",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.4,
+     "vm-reg": 1.8
+    },
+    "filter_drive": {
+     "portable": 42.2,
+     "vm-goto-fpreg": 27.6,
+     "vm-reg": 13.8
+    },
+    "stereo_delay": {
+     "portable": 37.7,
+     "vm-goto-fpreg": 26.9,
+     "vm-reg": 9.0
+    },
+    "slow": {
+     "portable": 363.3,
+     "vm-goto-fpreg": 177.6,
+     "vm-reg": 170.1
+    },
+    "biquad": {
+     "portable": 97.8,
+     "vm-goto-fpreg": 68.2,
+     "vm-reg": 32.4
+    },
+    "fir": {
+     "portable": 969.4,
+     "vm-goto-fpreg": 583.9,
+     "vm-reg": 176.3
+    },
+    "math": {
+     "portable": 106.2,
+     "vm-goto-fpreg": 67.5,
+     "vm-reg": 51.8
+    }
+   }
+  },
+  {
+   "name": "c5",
+   "passes": "none,+ldfold,+direct,+fuse,+loop,+cmpbr,+constcell,+opimm,+opto,+membi,+fuse2",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.3,
+     "vm-reg": 1.8
+    },
+    "filter_drive": {
+     "portable": 43.2,
+     "vm-goto-fpreg": 28.2,
+     "vm-reg": 10.3
+    },
+    "stereo_delay": {
+     "portable": 37.8,
+     "vm-goto-fpreg": 27.2,
+     "vm-reg": 7.8
+    },
+    "slow": {
+     "portable": 369.1,
+     "vm-goto-fpreg": 180.1,
+     "vm-reg": 173.0
+    },
+    "biquad": {
+     "portable": 94.8,
+     "vm-goto-fpreg": 67.2,
+     "vm-reg": 23.2
+    },
+    "fir": {
+     "portable": 971.9,
+     "vm-goto-fpreg": 584.0,
+     "vm-reg": 166.0
+    },
+    "math": {
+     "portable": 106.3,
+     "vm-goto-fpreg": 67.6,
+     "vm-reg": 42.9
+    }
+   }
+  },
+  {
+   "name": "c7",
+   "passes": "none,+ldfold,+direct,+fuse,+loop,+cmpbr,+constcell,+opimm,+opto,+membi,+fuse2,+lkern",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.3,
+     "vm-reg": 1.8
+    },
+    "filter_drive": {
+     "portable": 42.3,
+     "vm-goto-fpreg": 27.6,
+     "vm-reg": 10.1
+    },
+    "stereo_delay": {
+     "portable": 37.0,
+     "vm-goto-fpreg": 26.8,
+     "vm-reg": 7.6
+    },
+    "slow": {
+     "portable": 356.6,
+     "vm-goto-fpreg": 173.9,
+     "vm-reg": 33.0
+    },
+    "biquad": {
+     "portable": 94.2,
+     "vm-goto-fpreg": 68.2,
+     "vm-reg": 23.1
+    },
+    "fir": {
+     "portable": 949.5,
+     "vm-goto-fpreg": 573.0,
+     "vm-reg": 162.8
+    },
+    "math": {
+     "portable": 104.2,
+     "vm-goto-fpreg": 66.2,
+     "vm-reg": 42.2
+    }
+   }
+  },
+  {
+   "name": "c8",
+   "passes": "all",
+   "medianUs": {
+    "gain": {
+     "portable": 4.2,
+     "vm-goto-fpreg": 2.3,
+     "vm-reg": 1.8
+    },
+    "filter_drive": {
+     "portable": 42.2,
+     "vm-goto-fpreg": 27.6,
+     "vm-reg": 10.0
+    },
+    "stereo_delay": {
+     "portable": 37.7,
+     "vm-goto-fpreg": 27.3,
+     "vm-reg": 7.7
+    },
+    "slow": {
+     "portable": 356.6,
+     "vm-goto-fpreg": 173.8,
+     "vm-reg": 33.0
+    },
+    "biquad": {
+     "portable": 96.0,
+     "vm-goto-fpreg": 66.9,
+     "vm-reg": 20.8
+    },
+    "fir": {
+     "portable": 954.6,
+     "vm-goto-fpreg": 572.8,
+     "vm-reg": 162.7
+    },
+    "math": {
+     "portable": 104.2,
+     "vm-goto-fpreg": 66.2,
+     "vm-reg": 43.0
+    }
+   }
+  }
+ ]
+}
