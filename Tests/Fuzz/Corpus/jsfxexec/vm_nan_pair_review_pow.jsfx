@@ -1,0 +1,24 @@
+desc:jsfx-bench --diff: ^= の書き戻し（フィルタを通らない）に NaN + NaN・NaN * NaN（vm_nan_pair.jsfx の続き）
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+slider1:2<0,8,1>N
+@init
+function nanp() ( z / z );
+function nann() ( -(z / z) );
+function h(a, b) local(l) ( l = 3; l ^= a + b; sprintf(#h, "%f", l); strlen(#h) );
+function hm(a, b) local(l) ( l = 3; l ^= a * b; l );
+z = 0;
+@block
+a = 2; a ^= nann() * nanp();
+b = 2; b ^= nanp() * nann();
+lh = h(nanp(), nann()); lh2 = h(nann(), nanp()); hm(nann(), nanp()); hm(nanp(), nann());
+buf = 64; buf[5] = 2; buf[5] ^= nann() + nanp(); buf[6] = 2; buf[6] ^= nanp() * nann();
+c = 1; c += nann() + nanp(); d = 2; d *= nanp() + nann();
+e = 2; loop(slider1, e ^= nanp() + nann(); sprintf(#e, "%f", e); le += strlen(#e));
+f = 2; f ^= (nanp() + nann()) * (nann() + nanp());
+@sample
+v ^= (spl0 + -spl0) * (spl1 * -spl1);
+w = 2; w ^= spl1 + -spl1;
+spl0 = spl1 = 0;

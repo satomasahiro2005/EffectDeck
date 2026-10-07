@@ -1,0 +1,27 @@
+desc:jsfx-bench --diff: NaN + NaN・NaN * NaN をフィルタを通らない升・字で（vm_nan_pair.jsfx の続き）
+// 字（sprintf の %f は nan と -nan で長さが違う）・CSE（p+q と q+p）・定数に畳んだ NaN・3 つの連なり。
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+slider1:3<0,8,1>N
+@init
+function k1(p) ( p );
+function k2(p, q) ( p + q );
+function nanp() ( z / z );
+function nann() ( -(z / z) );
+function g(p, q) ( sprintf(#g, "%f %f %f %f", p + q, q + p, p * q, q * p); strlen(#g) );
+z = 0;
+@block
+sprintf(#a, "%f|%f", nanp() + nann(), nann() * nanp()); la = strlen(#a);
+lg = g(nanp(), nann()); lh = g(nann(), nanp());
+k1((0/0) + -(0/0)); k1(-(0/0) * (0/0));
+sprintf(#c, "%f %f %f", (0/0) + -(0/0), nanp() + -(0/0), -(0/0) * nanp()); lc = strlen(#c);
+k1(nanp() + -(0/0)); k1(-(0/0) + nanp()); k1(nann() * (0/0)); k1((0/0) * nann());
+k1(nann() + nanp() + nann()); k1(nanp() * (nann() * nanp()));
+k1(k2(nann(), nanp()) * k2(nanp(), nann()));
+loop(slider1, k1(nann() + nanp()); sprintf(#l, "%f", nanp() * nann()); ll += strlen(#l));
+@sample
+sprintf(#s, "%f %f", spl0 + -spl0, -spl1 * spl1); ls = strlen(#s);
+k1((spl0 * -spl0) + (spl1 + -spl1));
+spl0 = spl1 = 0;
