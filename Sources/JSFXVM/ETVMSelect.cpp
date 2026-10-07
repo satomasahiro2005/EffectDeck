@@ -122,6 +122,7 @@ struct TermFuse {
     TK kind = TK::None;
     int p0 = -1, p1 = -1; // 取り込んだ命令の位置
     int x = -1;           // While: 取り込んだブロック（条件で跳ぶだけ）
+    int cmp = -1;         // While: X の条件の比べも取り込んだ（その位置。D の中で IDec の直前）
 };
 
 struct Builder {
@@ -411,7 +412,22 @@ void Builder::fuseTerms()
                     // X の条件は X の外で作られた値（X には回る命令が無い）
                     if (vi[xb.cond].block == X) w = false;
                 }
-                if (w) { tf.kind = TK::While; tf.x = X; }
+                if (w) {
+                    tf.kind = TK::While;
+                    tf.x = X;
+                    // X の条件が D の比べ 1 つ（ほかで使わない）で、IDec の直前に回るなら、それも取り込む
+                    const uint32_t xc = xb.cond;
+                    if (n >= 3 && on(ETVM_PASS_CMPBR) && def[xc] && vi[xc].block == b && !vi[xc].phi &&
+                        vi[xc].uses.size() == 1 && order[n - 3] == vi[xc].pos) {
+                        switch (bl.ins[vi[xc].pos].op) {
+                        case Op::CmpLt: case Op::CmpGe: case Op::CmpEqClose: case Op::CmpNeClose: case Op::CmpEq:
+                        case Op::CmpNe: case Op::Truthy: case Op::Falsy:
+                            tf.cmp = vi[xc].pos;
+                            break;
+                        default: break;
+                        }
+                    }
+                }
             } else if (I1.op == Op::ILt1 && I0.op == Op::LoopCount && I1.args[0] == I0.res) {
                 tf = TermFuse{TK::LoopInit, order[n - 2], order[n - 1], -1};
             }
@@ -431,6 +447,11 @@ void Builder::fuseTerms()
         fuse[b][order[n - 1]] = 3;
         if (tf.p0 >= 0 && tf.p0 != order[n - 1]) fuse[b][tf.p0] = 3;
         if (tf.kind == TK::While) absorbed[tf.x] = 1;
+        if (tf.cmp >= 0) {
+            fuse[b][tf.cmp] = 3;
+            vi[fn.blocks[tf.x].cond].fusedAway = true;
+            ++st.cmpBr;
+        }
         switch (tf.kind) {
         case TK::LoopInit: case TK::Dec: ++st.loopFused; break;
         case TK::While: ++st.whileFused; break;
@@ -1033,8 +1054,26 @@ bool Builder::emit(ThreadedProgram &p)
                 }
                 case TK::While: {
                     const Ins &D = bl.ins[tf.p0];
-                    e.h(ifTrue ? HK::WhileJ : HK::WhileJF); e.s(sop(D.res)); e.s(sop(D.args[0]));
-                    e.s(sop(fn.blocks[tf.x].cond));
+                    if (tf.cmp < 0) {
+                        e.h(ifTrue ? HK::WhileJ : HK::WhileJF); e.s(sop(D.res)); e.s(sop(D.args[0]));
+                        e.s(sop(fn.blocks[tf.x].cond));
+                        break;
+                    }
+                    const Ins &C = bl.ins[tf.cmp];
+                    HK k = HK::Count;
+                    switch (C.op) {
+                    case Op::CmpLt: k = ifTrue ? HK::WLtJ : HK::WLtJF; break;
+                    case Op::CmpGe: k = ifTrue ? HK::WGeJ : HK::WGeJF; break;
+                    case Op::CmpEqClose: k = ifTrue ? HK::WEqCloseJ : HK::WEqCloseJF; break;
+                    case Op::CmpNeClose: k = ifTrue ? HK::WNeCloseJ : HK::WNeCloseJF; break;
+                    case Op::CmpEq: k = ifTrue ? HK::WEqJ : HK::WEqJF; break;
+                    case Op::CmpNe: k = ifTrue ? HK::WNeJ : HK::WNeJF; break;
+                    case Op::Truthy: k = ifTrue ? HK::WTruthyJ : HK::WTruthyJF; break;
+                    case Op::Falsy: k = ifTrue ? HK::WFalsyJ : HK::WFalsyJF; break;
+                    default: break;
+                    }
+                    e.h(k); e.s(sop(D.res)); e.s(sop(D.args[0])); e.d(fop(C.args[0]));
+                    if (C.args.size() == 2) e.d(fop(C.args[1]));
                     break;
                 }
                 case TK::Cmp: {

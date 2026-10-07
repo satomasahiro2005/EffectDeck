@@ -595,6 +595,56 @@ ETVM_H(MemStoreBI)
     ETVM_NEXT(4);
 }
 
+// ---- 段 S3: while の次 + 条件の比べ（比べは数を減らす前の値で。どちらも升を書かないので順は変わらない） --------
+#define ETVM_WCMP2(name, expr)                                                                                \
+    ETVM_H(W##name##J)                                                                                        \
+    {                                                                                                         \
+        const double a = *ip[3].d, b = *ip[4].d;                                                              \
+        const bool cond = (expr);                                                                             \
+        const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);                                               \
+        ip[1].s->i = (int64_t)c;                                                                              \
+        if (c > 0 && cond) ETVM_GO(ip[5].t);                                                                  \
+        ETVM_NEXT(5);                                                                                         \
+    }                                                                                                         \
+    ETVM_H(W##name##JF)                                                                                       \
+    {                                                                                                         \
+        const double a = *ip[3].d, b = *ip[4].d;                                                              \
+        const bool cond = (expr);                                                                             \
+        const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);                                               \
+        ip[1].s->i = (int64_t)c;                                                                              \
+        if (!(c > 0 && cond)) ETVM_GO(ip[5].t);                                                               \
+        ETVM_NEXT(5);                                                                                         \
+    }
+ETVM_WCMP2(Lt, a < b)
+ETVM_WCMP2(Ge, a >= b)
+ETVM_WCMP2(EqClose, etvm_eq_close(a, b))
+ETVM_WCMP2(NeClose, etvm_ne_close(a, b))
+ETVM_WCMP2(Eq, a == b)
+ETVM_WCMP2(Ne, a != b)
+#undef ETVM_WCMP2
+#define ETVM_WCMP1(name, expr)                                                                                \
+    ETVM_H(W##name##J)                                                                                        \
+    {                                                                                                         \
+        const double a = *ip[3].d;                                                                            \
+        const bool cond = (expr);                                                                             \
+        const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);                                               \
+        ip[1].s->i = (int64_t)c;                                                                              \
+        if (c > 0 && cond) ETVM_GO(ip[4].t);                                                                  \
+        ETVM_NEXT(4);                                                                                         \
+    }                                                                                                         \
+    ETVM_H(W##name##JF)                                                                                       \
+    {                                                                                                         \
+        const double a = *ip[3].d;                                                                            \
+        const bool cond = (expr);                                                                             \
+        const int32_t c = (int32_t)((uint32_t)ip[2].s->i - 1u);                                               \
+        ip[1].s->i = (int64_t)c;                                                                              \
+        if (!(c > 0 && cond)) ETVM_GO(ip[4].t);                                                               \
+        ETVM_NEXT(4);                                                                                         \
+    }
+ETVM_WCMP1(Truthy, etvm_truthy(a))
+ETVM_WCMP1(Falsy, etvm_falsy(a))
+#undef ETVM_WCMP1
+
 // ---- 段 S3: 続いた四則 2 つ（fuse2）。内側を先に計算し、その結果を外側の左（L）／右（R）に。縮約はしない -------
 #define ETVM_OPAdd +
 #define ETVM_OPSub -
@@ -656,6 +706,9 @@ const Entry kTable[] = {
     E(AddT, 2), E(SubT, 2), E(MulT, 2), E(DivT, 2), E(AddTF, 2), E(SubTF, 2), E(MulTF, 2), E(DivTF, 2),
     E(AddIT, 2), E(SubIT, 2), E(MulIT, 2), E(DivIT, 2), E(AddITF, 2), E(SubITF, 2), E(MulITF, 2), E(DivITF, 2),
     E(MemAddrBI, 4), E(MemLoadBI, 4), E(MemStoreBI, 4),
+    E(WLtJ, 5), E(WLtJF, 5), E(WGeJ, 5), E(WGeJF, 5), E(WEqCloseJ, 5), E(WEqCloseJF, 5), E(WNeCloseJ, 5),
+    E(WNeCloseJF, 5), E(WEqJ, 5), E(WEqJF, 5), E(WNeJ, 5), E(WNeJF, 5),
+    E(WTruthyJ, 4), E(WTruthyJF, 4), E(WFalsyJ, 4), E(WFalsyJF, 4),
 #define ETVM_F2_E(i, o) E(F2L##i##o, 4), E(F2R##i##o, 4), E(F2LF##i##o, 4), E(F2RF##i##o, 4),
     ETVM_FUSE2_LIST(ETVM_F2_E)
 #undef ETVM_F2_E

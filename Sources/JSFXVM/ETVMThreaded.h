@@ -126,6 +126,10 @@ enum class HK : uint16_t {
     MemAddrBI,  // s dst, d a, d b, x rt
     MemLoadBI,  // d dst, d a, d b, x rt
     MemStoreBI, // d a, d b, d v, x rt
+    // while の次 + 条件の比べ（s out, s in, d a, d b, t: out = in - 1。(out > 0 && a cmp b) が真／偽なら t。
+    // 1 つのものは d a だけ）
+    WLtJ, WLtJF, WGeJ, WGeJF, WEqCloseJ, WEqCloseJF, WNeCloseJ, WNeCloseJF, WEqJ, WEqJF, WNeJ, WNeJF,
+    WTruthyJ, WTruthyJF, WFalsyJ, WFalsyJF,
     // 続いた四則 2 つ（fuse2）: L は d = (a i b) o c、R は d = c o (a i b)。F は o の結果にフィルタ。d dst, d a, d b, d c
 #define ETVM_F2_ENUM(i, o) F2L##i##o, F2R##i##o, F2LF##i##o, F2RF##i##o,
     ETVM_FUSE2_LIST(ETVM_F2_ENUM)
