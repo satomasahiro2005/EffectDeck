@@ -18,6 +18,8 @@
 #include "ETVMBytecode.h"
 #include "ETVMLink.h"
 #include "ETVMExec.h"
+#include "ETVMOpt.h"
+#include "ETVM.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -83,6 +85,10 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
     uint64_t thBuilt[8] = {}, thHandlers[8] = {}, thIR[8] = {}, thFolded[8] = {}, thDirect[8] = {}, thFused[8] = {},
              thCoalesced[8] = {}, thCopies[8] = {}, thDead[8] = {};
     std::string thFirstError;
+    // 段 S3: loop / while / cmpbr / opimm / opto / membi / fuse2 / constbr / multidirect
+    uint64_t s3[8][9] = {};
+    etvm::OptStats optStats[8];
+    const uint32_t passes = ETVM_GetPasses();
     std::map<std::string, uint64_t> reasons[8];
     uint64_t cellClasses[5] = {}, filesCompiled = 0, filesAllLifted = 0, filesNoConst = 0;
     double linkMsTotal = 0, linkMsMax = 0;
@@ -108,6 +114,7 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
         // つなぎ（全部の handle の持ち上げと升の分類）にかかる時間（設計 §10.2 の予算を見るため）
         const auto t0 = std::chrono::steady_clock::now();
         const etvm::LinkReport rep = etvm::link(vm, hs.data(), secs.data(), n);
+        const etvm::CellFacts facts = etvm::cellFacts(rep);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         linkMsTotal += ms;
         if (ms > linkMsMax) { linkMsMax = ms; linkMsMaxFile = base; }
@@ -132,17 +139,25 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
                 insns[sec] += hr.lift.fn.instructionCount();
                 std::string why;
                 etvm::ThreadedStats ts;
-                etvm::ThreadedProgram *tp = etvm::buildThreaded(hr.lift.fn, why, &ts);
+                // 段 S3: アプリの実行系（ETVMLink.cpp の buildPrograms）と同じ順に、中間表現の最適化 → 並べる
+                etvm::Function opt = hr.lift.fn;
+                etvm::OptStats os;
+                etvm::optimize(opt, passes, facts, &os);
+                optStats[sec] += os;
+                etvm::ThreadedProgram *tp = etvm::buildThreaded(opt, why, &ts, passes);
                 if (tp) {
                     ++thBuilt[sec]; thHandlers[sec] += ts.handlers; thIR[sec] += ts.irInstructions;
                     thFolded[sec] += ts.foldedLoads; thDirect[sec] += ts.directDest; thFused[sec] += ts.fused;
                     thCoalesced[sec] += ts.coalesced; thCopies[sec] += ts.copies; thDead[sec] += ts.dead;
+                    s3[sec][0] += ts.loopFused; s3[sec][1] += ts.whileFused; s3[sec][2] += ts.cmpBr;
+                    s3[sec][3] += ts.opImm; s3[sec][4] += ts.opTo; s3[sec][5] += ts.memBI; s3[sec][6] += ts.fuse2;
+                    s3[sec][7] += ts.constBr; s3[sec][8] += ts.multiDirect;
                 } else if (thFirstError.empty()) thFirstError = std::string(base) + ": " + why;
                 std::printf("  %-12s lifted   nodes %6zu blocks %5zu insns %6zu  threaded %s %zu handlers\n", label,
                             hr.lift.nodes, hr.lift.fn.blocks.size(), hr.lift.fn.instructionCount(),
                             tp ? "ok" : ("FAIL " + why).c_str(), ts.handlers);
                 if (printIR) {
-                    std::fputs(etvm::print(hr.lift.fn, cellNamer, (void *)&rep).c_str(), stdout);
+                    std::fputs(etvm::print(opt, cellNamer, (void *)&rep).c_str(), stdout);
                     if (tp) std::fputs(etvm::disassembleThreaded(tp, cellNamer, (void *)&rep).c_str(), stdout);
                 }
                 if (tp) etvm::freeThreaded(tp);
@@ -199,18 +214,25 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
             std::printf("      fallback %-18s %" PRIu64 "\n", why.c_str(), cnt);
             rs += (rs.empty() ? "" : ", ") + std::string("\"") + why + "\": " + std::to_string(cnt);
         }
-        char item[1024];
+        char item[2048];
         std::snprintf(item, sizeof item, "%s\"%s\": {\"handles\": %" PRIu64 ", \"lifted\": %" PRIu64 ", \"blocks\": %" PRIu64
                       ", \"insns\": %" PRIu64 ", \"nodes\": %" PRIu64 ", \"fallbacks\": {%s}, \"threaded\": {\"built\": %" PRIu64
                       ", \"ir\": %" PRIu64 ", \"handlers\": %" PRIu64 ", \"dead\": %" PRIu64 ", \"foldedLoads\": %" PRIu64
-                      ", \"directDest\": %" PRIu64 ", \"fused\": %" PRIu64 ", \"coalesced\": %" PRIu64 ", \"copies\": %" PRIu64 "}}",
+                      ", \"directDest\": %" PRIu64 ", \"fused\": %" PRIu64 ", \"coalesced\": %" PRIu64 ", \"copies\": %" PRIu64
+                      ", \"s3\": {\"constCells\": %zu, \"folded\": %zu, \"cseLoads\": %zu, \"csePure\": %zu, "
+                      "\"forwarded\": %zu, \"deadStores\": %zu, \"loopFused\": %" PRIu64 ", \"whileFused\": %" PRIu64
+                      ", \"cmpBr\": %" PRIu64 ", \"opImm\": %" PRIu64 ", \"opTo\": %" PRIu64 ", \"memBI\": %" PRIu64
+                      ", \"fuse2\": %" PRIu64 ", \"constBr\": %" PRIu64 "}}}",
                       jsonSections.empty() ? "" : ", ", kSectionNames[sec], handles[sec], lifted[sec], blocks[sec],
                       insns[sec], nodes[sec], rs.c_str(), thBuilt[sec], thIR[sec], thHandlers[sec], thDead[sec],
-                      thFolded[sec], thDirect[sec], thFused[sec], thCoalesced[sec], thCopies[sec]);
+                      thFolded[sec], thDirect[sec], thFused[sec], thCoalesced[sec], thCopies[sec],
+                      optStats[sec].constCells, optStats[sec].folded, optStats[sec].cseLoads, optStats[sec].csePure,
+                      optStats[sec].forwarded, optStats[sec].deadStores, s3[sec][0], s3[sec][1], s3[sec][2], s3[sec][3],
+                      s3[sec][4], s3[sec][5], s3[sec][6], s3[sec][7]);
         jsonSections += item;
     }
     std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %7.1f%%\n", "all", th, tl, th ? 100.0 * (double)tl / (double)th : 100.0);
-    std::printf("\nthreaded code (stage S2; lifted handles -> handlers)\n");
+    std::printf("\nthreaded code (lifted handles -> handlers)\n");
     std::printf("  %-10s %8s %8s %9s %7s %7s %7s %7s %7s %7s %7s\n", "section", "built", "IR", "handlers", "h/IR",
                 "dead", "folded", "direct", "fused", "coal", "copies");
     uint64_t tb = 0;
@@ -220,6 +242,18 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
                     " %7" PRIu64 " %7" PRIu64 "\n", kSectionNames[sec], thBuilt[sec], thIR[sec], thHandlers[sec],
                     thIR[sec] ? (double)thHandlers[sec] / (double)thIR[sec] : 0.0, thDead[sec], thFolded[sec],
                     thDirect[sec], thFused[sec], thCoalesced[sec], thCopies[sec]);
+    }
+    std::printf("\nstage S3 (ETVM_PASSES = 0x%05x)\n", passes);
+    std::printf("  %-10s %6s %6s %6s %6s %6s %6s %6s %6s | %6s %6s %6s %6s %6s %6s %6s %6s %6s\n", "section",
+                "const", "fold", "cseLd", "cseOp", "fwd", "dead", "vfail", "multi", "loop", "while", "cmpbr", "opimm",
+                "opto", "membi", "fuse2", "constb", "");
+    for (int sec = 1; sec <= 6; ++sec) {
+        const etvm::OptStats &o = optStats[sec];
+        std::printf("  %-10s %6zu %6zu %6zu %6zu %6zu %6zu %6zu %6" PRIu64 " | %6" PRIu64 " %6" PRIu64 " %6" PRIu64
+                    " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64 "\n", kSectionNames[sec],
+                    o.constCells, o.folded, o.cseLoads, o.csePure, o.forwarded, o.deadStores, o.verifyFailed,
+                    s3[sec][8], s3[sec][0], s3[sec][1], s3[sec][2], s3[sec][3], s3[sec][4], s3[sec][5], s3[sec][6],
+                    s3[sec][7]);
     }
     std::printf("  threaded built for %" PRIu64 " of %" PRIu64 " lifted handles%s%s\n", tb, tl,
                 thFirstError.empty() ? "" : "; first failure: ", thFirstError.c_str());
@@ -232,10 +266,10 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
         if (!f) { std::fprintf(stderr, "jsfx-bench: cannot write %s\n", jsonPath.c_str()); return 2; }
         std::fprintf(f, "{\n  \"filesCompiled\": %" PRIu64 ", \"filesAllLifted\": %" PRIu64 ", \"linkMsTotal\": %.3f, "
                      "\"linkMsMax\": %.3f, \"linkMsMaxFile\": \"%s\",\n  \"sections\": {%s},\n"
-                     "  \"cells\": {\"var\": %" PRIu64 ", \"const\": %" PRIu64 ", \"static\": %" PRIu64 ", \"temp\": %" PRIu64
+                     "  \"passes\": %u,\n  \"cells\": {\"var\": %" PRIu64 ", \"const\": %" PRIu64 ", \"static\": %" PRIu64 ", \"temp\": %" PRIu64
                      ", \"volatile\": %" PRIu64 "},\n  \"files\": [\n%s\n  ]\n}\n",
                      filesCompiled, filesAllLifted, linkMsTotal, linkMsMax, jsonEscape(linkMsMaxFile).c_str(),
-                     jsonSections.c_str(), cellClasses[0], cellClasses[1], cellClasses[2], cellClasses[3], cellClasses[4],
+                     jsonSections.c_str(), passes, cellClasses[0], cellClasses[1], cellClasses[2], cellClasses[3], cellClasses[4],
                      jsonFiles.c_str());
         std::fclose(f);
         std::printf("json: %s\n", jsonPath.c_str());
@@ -306,9 +340,12 @@ void runPortable(const Asm &a, Machine &m)
     NSEEL_code_execute(&h);
 }
 
-/// 持ち上げて参照の解釈（threaded = false）か threaded code（段 S2）で回す。だめなら理由。
-std::string runLifted(const Asm &a, Machine &m, bool threaded = false)
+/// 持ち上げて回す。side 1 = 参照の解釈、2 = threaded code（いまの ETVM_PASSES。升の性質は知らない）、
+/// 3 = 2 + 段 S3 の中間表現の最適化（どの升も読み直してよく、書かれない升は Const として建てるときに値を読む）。
+/// だめなら理由。
+std::string runLifted(const Asm &a, Machine &m, int side)
 {
+    const bool threaded = side >= 2;
     etvm::LiftInput in;
     in.code = a.b.data();
     in.workTable = (uint64_t)(uintptr_t)m.wt;
@@ -331,9 +368,29 @@ std::string runLifted(const Asm &a, Machine &m, bool threaded = false)
             }
     }
     if (!r.ok()) return std::string(etvm::fallbackName(r.reason)) + ": " + r.detail;
+    if (side == 3) {
+        etvm::CellFacts facts;
+        bool anyIndirect = false;
+        for (const etvm::Block &bl : r.fn.blocks)
+            for (const etvm::Ins &in : bl.ins)
+                anyIndirect |= in.op == etvm::Op::Store || in.op == etvm::Op::UStackPop || in.op == etvm::Op::UStackExch ||
+                               in.op == etvm::Op::CallG || in.op == etvm::Op::CallGD || in.op == etvm::Op::CallVarparm;
+        for (const etvm::Block &bl : r.fn.blocks)
+            for (const etvm::Ins &in : bl.ins)
+                if (in.op == etvm::Op::LoadCell || in.op == etvm::Op::StoreCell) facts.cells[in.imm[0]] |= etvm::CellFacts::Cacheable;
+        for (auto &[addr, k] : facts.cells) {
+            bool stored = anyIndirect;
+            for (const etvm::Block &bl : r.fn.blocks)
+                for (const etvm::Ins &in : bl.ins) stored |= in.op == etvm::Op::StoreCell && in.imm[0] == addr;
+            if (!stored) k |= etvm::CellFacts::Const;
+        }
+        std::string w;
+        if (!etvm::optimize(r.fn, ETVM_GetPasses(), facts, nullptr, &w)) return "optimize: " + w;
+        if (debug) std::fputs(etvm::print(r.fn).c_str(), stderr);
+    }
     if (threaded) {
         std::string why;
-        etvm::ThreadedProgram *p = etvm::buildThreaded(r.fn, why);
+        etvm::ThreadedProgram *p = etvm::buildThreaded(r.fn, why, nullptr, ETVM_GetPasses());
         if (!p) return "threaded: " + why;
         if (debug) std::fputs(etvm::disassembleThreaded(p).c_str(), stderr);
         etvm::runThreaded(p, 1, nullptr, nullptr, nullptr);
@@ -348,7 +405,8 @@ std::string runLifted(const Asm &a, Machine &m, bool threaded = false)
 struct Tally {
     uint64_t cases = 0, bad = 0, liftFail = 0, nanPair = 0;
     uint64_t badTh = 0, nanPairTh = 0; // threaded code（段 S2）と portable
-    std::string first, firstTh;
+    uint64_t badOpt = 0, nanPairOpt = 0; // threaded code + 段 S3 の中間表現の最適化（升を Const に）と portable
+    std::string first, firstTh, firstOpt;
 };
 
 bool isNaNBits(uint64_t b) { return (b & 0x7ff0000000000000ull) == 0x7ff0000000000000ull && (b & 0xfffffffffffffull); }
@@ -364,17 +422,17 @@ void check(const char *name, std::map<std::string, Tally> &t, const std::vector<
     Machine mach; // megabuf を使わない組は 1 つで足りる（rt は読まない）
     for (size_t i = 0; i < grid.size(); ++i)
         for (size_t j = 0; j < ny; ++j) {
-            // 0 = portable、1 = 中間表現の参照の解釈、2 = threaded code（段 S2）
-            Cells c[3];
+            // 0 = portable、1 = 中間表現の参照の解釈、2 = threaded code、3 = threaded + 段 S3 の最適化（Const 升）
+            Cells c[4];
             bool lifted = true;
-            for (int side = 0; side < 3 && lifted; ++side) {
+            for (int side = 0; side < 4 && lifted; ++side) {
                 c[side] = Cells{grid[i], grid[j % grid.size()], grid[i], 0.0, 12345.678};
                 std::memset(mach.wt, 0, sizeof mach.wt);
                 Asm a;
                 build(a, c[side]);
                 if (side == 0) runPortable(a, mach);
                 else {
-                    const std::string why = runLifted(a, mach, side == 2);
+                    const std::string why = runLifted(a, mach, side);
                     if (!why.empty()) {
                         if (!ta.liftFail++ && ta.first.empty()) ta.first = "lift: " + why;
                         lifted = false;
@@ -387,20 +445,23 @@ void check(const char *name, std::map<std::string, Tally> &t, const std::vector<
             // 2 つの入力がどちらも NaN のとき、どちらのペイロードが残るかは C コンパイラが + * のオペランドを
             // どちらの順に置いたかで決まる（portable の TU の中でも決まっていない）。分けて数える。
             const bool twoNaNs = arity >= 2 && isNaNBits(bitsOf(grid[i])) && isNaNBits(bitsOf(grid[j % grid.size()]));
-            for (int side = 1; side < 3; ++side) {
+            for (int side = 1; side < 4; ++side) {
                 const uint64_t ic[4] = {bitsOf(c[side].x), bitsOf(c[side].y), bitsOf(c[side].z), bitsOf(c[side].o)};
                 bool same = true, onlyNaNPayload = true;
                 for (int k = 0; k < 4; ++k)
                     if (pc[k] != ic[k]) { same = false; onlyNaNPayload &= isNaNBits(pc[k]) && isNaNBits(ic[k]); }
-                uint64_t &bad = side == 1 ? ta.bad : ta.badTh;
-                std::string &first = side == 1 ? ta.first : ta.firstTh;
-                if (!same && twoNaNs && onlyNaNPayload) { ++(side == 1 ? ta.nanPair : ta.nanPairTh); continue; }
+                uint64_t &bad = side == 1 ? ta.bad : side == 2 ? ta.badTh : ta.badOpt;
+                std::string &first = side == 1 ? ta.first : side == 2 ? ta.firstTh : ta.firstOpt;
+                if (!same && twoNaNs && onlyNaNPayload) {
+                    ++(side == 1 ? ta.nanPair : side == 2 ? ta.nanPairTh : ta.nanPairOpt);
+                    continue;
+                }
                 if (!same && !bad++) {
                     char b[400];
                     std::snprintf(b, sizeof b, "x=%a y=%a: portable x,y,z,o=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
                                   ",%016" PRIx64 " / %s %016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
                                   grid[i], grid[j % grid.size()], pc[0], pc[1], pc[2], pc[3],
-                                  side == 1 ? "ir" : "threaded", ic[0], ic[1], ic[2], ic[3]);
+                                  side == 1 ? "ir" : side == 2 ? "threaded" : "threaded+s3", ic[0], ic[1], ic[2], ic[3]);
                     first = b;
                 }
             }
@@ -570,9 +631,9 @@ int ETJSFXBenchVMOpGridMain()
     {
         Tally &ta = t["MEGABUF"];
         for (double x : grid) {
-            std::string where[3];
+            std::string where[4];
             bool lifted = true;
-            for (int side = 0; side < 3; ++side) {
+            for (int side = 0; side < 4; ++side) {
                 Machine mach;
                 nseel_ramalloc_onfail = 0;
                 double cx = x, mark = 777.25;
@@ -581,7 +642,7 @@ int ETJSFXBenchVMOpGridMain()
                 a.op(ETBC_MOV_FPTOP_DV); a.ptr(&mark); a.op(ETBC_ASSIGN_FAST_FROMFP); a.op(ETBC_RET);
                 if (side == 0) runPortable(a, mach);
                 else {
-                    const std::string why = runLifted(a, mach, side == 2);
+                    const std::string why = runLifted(a, mach, side);
                     if (!why.empty()) { lifted = false; if (!ta.liftFail++) ta.first = "lift: " + why; break; }
                 }
                 where[side] = megabufTarget(mach, mark);
@@ -594,6 +655,11 @@ int ETJSFXBenchVMOpGridMain()
                 std::snprintf(b, sizeof b, "x=%a: portable %s / ir %s", x, where[0].c_str(), where[1].c_str());
                 ta.first = b;
             }
+            if (where[0] != where[3] && !ta.badOpt++) {
+                char b[160];
+                std::snprintf(b, sizeof b, "x=%a: portable %s / threaded+s3 %s", x, where[0].c_str(), where[3].c_str());
+                ta.firstOpt = b;
+            }
             if (where[0] != where[2] && !ta.badTh++) {
                 char b[160];
                 std::snprintf(b, sizeof b, "x=%a: portable %s / threaded %s", x, where[0].c_str(), where[2].c_str());
@@ -601,24 +667,29 @@ int ETJSFXBenchVMOpGridMain()
             }
         }
     }
-    uint64_t total = 0, bad = 0, badTh = 0, fails = 0, nanPairs = 0, nanPairsTh = 0;
+    uint64_t total = 0, bad = 0, badTh = 0, badOpt = 0, fails = 0, nanPairs = 0, nanPairsTh = 0, nanPairsOpt = 0;
     std::printf("jsfx-bench --vm-opgrid: %zu values; portable (GLUE_CALL_CODE) vs lifted IR (reference interpreter) "
-                "and vs threaded code (stage S2)\n", grid.size());
+                "and vs threaded code (passes 0x%05x; threaded+s3 also treats unwritten cells as Const)\n", grid.size(),
+                ETVM_GetPasses());
     for (const auto &[name, ta] : t) {
-        total += ta.cases; bad += ta.bad; badTh += ta.badTh; fails += ta.liftFail; nanPairs += ta.nanPair;
-        nanPairsTh += ta.nanPairTh;
+        total += ta.cases; bad += ta.bad; badTh += ta.badTh; badOpt += ta.badOpt; fails += ta.liftFail;
+        nanPairs += ta.nanPair; nanPairsTh += ta.nanPairTh; nanPairsOpt += ta.nanPairOpt;
         std::printf("  %-22s %6" PRIu64 " cases  %s", name.c_str(), ta.cases,
-                    ta.bad || ta.badTh || ta.liftFail ? "MISMATCH" : "ok");
-        if (ta.nanPair || ta.nanPairTh)
-            std::printf("  (NaN+NaN payload choice: ir %" PRIu64 ", threaded %" PRIu64 ")", ta.nanPair, ta.nanPairTh);
+                    ta.bad || ta.badTh || ta.badOpt || ta.liftFail ? "MISMATCH" : "ok");
+        if (ta.nanPair || ta.nanPairTh || ta.nanPairOpt)
+            std::printf("  (NaN+NaN payload choice: ir %" PRIu64 ", threaded %" PRIu64 ", +s3 %" PRIu64 ")", ta.nanPair,
+                        ta.nanPairTh, ta.nanPairOpt);
         if (!ta.first.empty()) std::printf("  %s", ta.first.c_str());
         if (!ta.firstTh.empty()) std::printf("  %s", ta.firstTh.c_str());
+        if (!ta.firstOpt.empty()) std::printf("  %s", ta.firstOpt.c_str());
         std::printf("\n");
     }
-    std::printf("total %" PRIu64 " cases, mismatched: ir %" PRIu64 ", threaded %" PRIu64 "; %" PRIu64 " not lifted; "
-                "NaN+NaN payload choices ir %" PRIu64 ", threaded %" PRIu64 " (operand order of the C compiler; not "
-                "counted as mismatches)\n", total, bad, badTh, fails, nanPairs, nanPairsTh);
-    std::printf(bad || badTh || fails ? "RESULT FAIL\n" : "RESULT ok\n");
-    return bad || badTh || fails ? 1 : 0;
+    std::printf("total %" PRIu64 " cases, mismatched: ir %" PRIu64 ", threaded %" PRIu64 ", threaded+s3 %" PRIu64
+                "; %" PRIu64 " not lifted; NaN+NaN payload choices ir %" PRIu64 ", threaded %" PRIu64 ", +s3 %" PRIu64
+                " (operand order of the C compiler; not counted as mismatches)\n", total, bad, badTh, badOpt, fails,
+                nanPairs, nanPairsTh, nanPairsOpt);
+    const bool failed = bad || badTh || badOpt || fails;
+    std::printf(failed ? "RESULT FAIL\n" : "RESULT ok\n");
+    return failed ? 1 : 0;
 #endif
 }
