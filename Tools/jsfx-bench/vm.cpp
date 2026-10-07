@@ -29,6 +29,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <vector>
+#include <chrono>
 
 namespace {
 const char *const kSectionNames[] = {"?", "init", "slider", "block", "sample", "gfx", "serialize", "?"};
@@ -79,6 +80,8 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
     uint64_t handles[8] = {}, lifted[8] = {}, blocks[8] = {}, insns[8] = {}, nodes[8] = {};
     std::map<std::string, uint64_t> reasons[8];
     uint64_t cellClasses[5] = {}, filesCompiled = 0, filesAllLifted = 0, filesNoConst = 0;
+    double linkMsTotal = 0, linkMsMax = 0;
+    std::string linkMsMaxFile;
     std::string jsonFiles;
     for (const auto &file : files) {
         const char *base = std::strrchr(file.c_str(), '/');
@@ -97,12 +100,17 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
         std::vector<void *> hs(n);
         std::vector<int> secs(n);
         ysfx_get_eel_handles(fx, &vm, hs.data(), secs.data(), n);
+        // つなぎ（全部の handle の持ち上げと升の分類）にかかる時間（設計 §10.2 の予算を見るため）
+        const auto t0 = std::chrono::steady_clock::now();
         const etvm::LinkReport rep = etvm::link(vm, hs.data(), secs.data(), n);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        linkMsTotal += ms;
+        if (ms > linkMsMax) { linkMsMax = ms; linkMsMaxFile = base; }
         uint64_t cls[5] = {};
         for (const auto &[addr, c] : rep.cells) { ++cls[(int)c.cls]; ++cellClasses[(int)c.cls]; }
         if (rep.allAnalysed) ++filesAllLifted; else ++filesNoConst;
-        std::printf("%-34s cells var %" PRIu64 " const %" PRIu64 " static %" PRIu64 " temp %" PRIu64 " volatile %" PRIu64
-                    "%s\n", base, cls[0], cls[1], cls[2], cls[3], cls[4],
+        std::printf("%-34s link %7.3f ms  cells var %" PRIu64 " const %" PRIu64 " static %" PRIu64 " temp %" PRIu64
+                    " volatile %" PRIu64 "%s\n", base, ms, cls[0], cls[1], cls[2], cls[3], cls[4],
                     rep.allAnalysed ? "" : "  (a handle fell back: no const cells)");
         std::string jsonHandles;
         for (const etvm::HandleReport &hr : rep.handles) {
@@ -165,18 +173,23 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
     std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %7.1f%%\n", "all", th, tl, th ? 100.0 * (double)tl / (double)th : 100.0);
     std::printf("  cells: var %" PRIu64 " const %" PRIu64 " static %" PRIu64 " temp %" PRIu64 " volatile %" PRIu64 "\n",
                 cellClasses[0], cellClasses[1], cellClasses[2], cellClasses[3], cellClasses[4]);
+    std::printf("  link (lift every handle + classify cells): total %.2f ms, max %.3f ms (%s)\n", linkMsTotal, linkMsMax,
+                linkMsMaxFile.c_str());
     if (!jsonPath.empty()) {
         FILE *f = std::fopen(jsonPath.c_str(), "wb");
         if (!f) { std::fprintf(stderr, "jsfx-bench: cannot write %s\n", jsonPath.c_str()); return 2; }
-        std::fprintf(f, "{\n  \"filesCompiled\": %" PRIu64 ", \"filesAllLifted\": %" PRIu64 ",\n  \"sections\": {%s},\n"
+        std::fprintf(f, "{\n  \"filesCompiled\": %" PRIu64 ", \"filesAllLifted\": %" PRIu64 ", \"linkMsTotal\": %.3f, "
+                     "\"linkMsMax\": %.3f, \"linkMsMaxFile\": \"%s\",\n  \"sections\": {%s},\n"
                      "  \"cells\": {\"var\": %" PRIu64 ", \"const\": %" PRIu64 ", \"static\": %" PRIu64 ", \"temp\": %" PRIu64
                      ", \"volatile\": %" PRIu64 "},\n  \"files\": [\n%s\n  ]\n}\n",
-                     filesCompiled, filesAllLifted, jsonSections.c_str(), cellClasses[0], cellClasses[1], cellClasses[2],
-                     cellClasses[3], cellClasses[4], jsonFiles.c_str());
+                     filesCompiled, filesAllLifted, linkMsTotal, linkMsMax, jsonEscape(linkMsMaxFile).c_str(),
+                     jsonSections.c_str(), cellClasses[0], cellClasses[1], cellClasses[2], cellClasses[3], cellClasses[4],
+                     jsonFiles.c_str());
         std::fclose(f);
         std::printf("json: %s\n", jsonPath.c_str());
     }
-    return tl == th ? 0 : 1;
+    // 割合は数えるだけ（断るのは正しい振る舞い）。照合は --vm-opgrid と --diff。
+    return filesCompiled ? 0 : 1;
 #endif
 }
 
