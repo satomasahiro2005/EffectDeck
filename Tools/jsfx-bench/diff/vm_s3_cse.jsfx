@@ -1,0 +1,20 @@
+desc:jsfx-bench --diff: 段 S3 の cse・fwd が megabuf・gmem の書き込みと非正規化数の拭き取りを崩さないか
+slider1:0.5<-1,1,0.01>A
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+buf = 64; gbase = 3;
+@sample
+a = spl0; b = spl1;
+x = buf[1] * 2 + a; buf[1] = a * b; y = buf[1] * 2 + a;
+gmem[gbase] = a; g = gmem[gbase] * 2; gmem[gbase] = g + 1; h = gmem[gbase] * 2;
+d = a * (10^-300); e = d * (10^-10); f = e * (10^300); f2 = (d * (10^-10)) * (10^300);
+dd = (10^-310); dd2 = dd * 1; dd3 = dd + 0;
+v = a; v *= (10^-310); w = v * (10^300);
+p = a * b; a = p; q = a * b; a += 1; r = a * b; a = spl0;
+c1 = 2 * slider1; c2 = 1 - c1; c3 = 2 * slider1; slider1 = c2; c4 = 2 * slider1;
+lc = buf[a * 0 + 5]; buf[5] = lc + 1; lc2 = buf[5] + buf[a*0+5];
+spl0 = x + y + g + h + f + f2 + dd2 + dd3 + w + p + q + r + c1 + c2 + c3 + c4 + lc + lc2;
+spl1 = d + e + v;

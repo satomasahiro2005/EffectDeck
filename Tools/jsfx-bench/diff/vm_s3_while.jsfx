@@ -1,0 +1,21 @@
+desc:jsfx-bench --diff: 段 S3 の while + 比べ（NaN の条件・頭打ち・中身の形）
+slider1:3<-5,40,0.5>N
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@block
+n = slider1;
+i = 0; while (i += 1; i < n);
+j = 0; while (j < n) ( j += 1; );
+k = 0; nan = 0/0; while (k += 1; k < nan);
+l = 0; while (l += 1; nan != l);
+m = 0; while (m += 1; m == m && m < (2*10^6));
+o = 0; while (o += 0.5; o);
+p = 10; while (p -= 1; p > n);
+q = 0; while (q += 1; q <= 3 || q < n);
+r = 0; c = 0; while (r += 1; c = r < n; c);
+s0 = 0; while (s0 += 1; !(s0 >= n));
+@sample
+t = 0; while (t += 1; t < abs(spl0) * 8);
+spl0 = i + j + k + l + m + o + p + q + r + c + s0 + t;

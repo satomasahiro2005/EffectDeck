@@ -1,0 +1,22 @@
+desc:jsfx-bench --diff: 段 S3 の読み直しが、varparm・atomic_*・stack_peek の左辺をまたがないか。rand は 1 つにしない
+slider1:0.5<-1,1,0.01>A
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+buf = 100; buf[0] = 1.5; buf[1] = -2.5; buf[2] = 7;
+@sample
+a = spl0; b = spl1;
+x0 = a * 3 + b; mem_get_values(buf, a, b); x1 = a * 3 + b;
+mem_set_values(buf + 4, a * 2, b); a = buf[4] * 0.5 + spl0;
+y0 = a * 2; atomic_add(a, 1); y1 = a * 2; atomic_set(b, 0.25); y2 = b * 2; atomic_exch(a, b); y3 = a - b;
+atomic_setifequal(a, 0.25, 9); y4 = a * 2;
+stack_push(a); stack_push(b); z0 = a + b; stack_peek(0) = 3; stack_peek(1) += a; stack_pop(a); stack_pop(b); z1 = a + b;
+r0 = rand(1); r1 = rand(1); r2 = (rand(2) + rand(2)) * 0.5;
+i0 = invsqrt(abs(a) + 1); i1 = invsqrt(abs(a) + 1);
+p = ((a > 0 ? b : spl1) > 0 ? a : b) = spl0 * 0.5; p2 = a + b;
+m = min(min(a, b), spl0) = 0.125; m2 = a + b + spl0;
+q = (a > b ? max(a, b) : buf[2]) += 1; q2 = a + b + buf[2];
+spl0 = x0 + x1 + y0 + y1 + y2 + y3 + y4 + z0 + z1 + r0 + r1 + r2 + i0 + i1 + p + p2 + m + m2 + q + q2;
+spl1 = a - b;

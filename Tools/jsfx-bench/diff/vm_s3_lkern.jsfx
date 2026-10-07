@@ -1,0 +1,32 @@
+desc:jsfx-bench --diff: 段 S3 の loop kernel（中身 1 つの loop）を NaN・無限大・非正規化数・頭打ち・入れ子・_global・reg で
+slider1:3<-5,40,0.5>N
+slider2:0.5<-2,2,0.01>K
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+z = 0;
+@block
+n = slider1;
+d0 = 1; loop(n, d0 += 0.1);
+d1 = 1; loop(n, d1 *= slider2);
+d2 = (10^-300); loop(n, d2 *= 0.001);
+d3 = (10^-300); loop(n, d3 = d3 * 0.001);
+d4 = 1; loop(n, d4 /= z);
+d5 = 1; loop(n * (10^9), d5 += 1);
+d6 = 1; loop(0/0, d6 += 1);
+d7 = 2; loop(n, d7 += d7);
+d8 = 1; loop(4, loop(n, d8 *= 1.5); d8 -= 0.25);
+_global.cnt = 0; loop(n, _global.cnt += 1); gv = _global.cnt;
+reg07 = 0; loop(n, reg07 += 0.5); rv = reg07;
+d9 = 1; loop(n, d9 = d9 - (10^-310));
+d10 = 5; loop(d10, d10 -= 1);
+d11 = 0.5; loop(n, d11 = 0.3 - d11);
+d12 = 0.5; loop(n, d12 = slider2 / d12);
+e0 = 0; i = 0; loop(n, e0 += i);
+@sample
+s = spl0; loop(3, s *= 0.5);
+t = spl1; loop(slider1, t -= spl0);
+spl0 = s + d0 + d1 + d2 + d3 + d4 * 0 + d5 + d6 + d7 + d8 + gv + rv + d9 + d10 + d11 + d12 + e0;
+spl1 = t;

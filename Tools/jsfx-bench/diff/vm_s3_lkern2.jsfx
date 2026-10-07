@@ -1,0 +1,31 @@
+desc:jsfx-bench --diff: 段 S3 の loop kernel の端（数の端・行き先 = 右・同じ升・拭き取り）
+slider1:3<-5,40,0.5>N
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+tiny = 10^-300; den = 10^-310; huge = 10^300;
+@block
+n = slider1;
+a = tiny; loop(n, a *= 0.5); a1 = a;
+b = tiny; loop(n, b = b * 0.5); b1 = b;
+c = huge; loop(n, c *= huge); c1 = c;
+d = 0; loop(n, d -= den); d1 = d;
+e = 1; loop(2147483647, e += 0); 
+f = 1; loop(-2147483648, f += 1);
+g = 1; loop(0.99999, g += 1); g2 = 1; loop(-0.5, g2 += 1);
+h = 1; k = 3; loop(n, h /= k); k = 0; loop(n, h /= k);
+x = 1; loop(n, x += tiny); 
+nan = 0/0; y = 1; loop(n, y += nan); y2 = nan; loop(n, y2 *= 0);
+spl_cnt = 0; loop(n, loop(n, spl_cnt += 1));
+w = 0; loop(n, w += 1; ); loop(n, w -= 0.5;);
+v = 1; loop(n, (v += 1));
+u = 2; loop(n, u = u);
+t = 2; loop(n, t = t + t);
+s = 2; loop(n, s = 0.5 * s);
+r = 2; loop(n, r = 1 - r);
+@sample
+q = spl0; loop(2, q *= q);
+spl0 = a + b + c * 0 + d + e + f + g + g2 + h + x + y + y2 + spl_cnt + w + v + u + t + s + r + q;
+spl1 = a1 + b1 + c1 + d1;

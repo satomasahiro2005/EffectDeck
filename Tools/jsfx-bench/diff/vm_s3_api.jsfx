@@ -1,0 +1,26 @@
+desc:jsfx-bench --diff: 段 S3 の読み直しが、API・関数（instance・global）が書く変数をまたがないか
+slider1:0.5<-1,1,0.01>A
+slider2:2<0,8,1>B
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+g = 1; m1 = 0; m2 = 0; ofs = 0;
+function acc(v) instance(s) global(g) ( s += v; g += 1; s * g );
+function bump() global(g q) ( g = g * 0.5 + q; q += 1; g );
+@block
+k = 0;
+while (midirecv(ofs, m1, m2)) ( k += m1 + m2 * 0.5 + ofs; midisend(ofs, m1, m2); );
+x0 = m1 * 2; slider(1) = x0 * 0.001; x1 = slider1 * 3 + m1 * 2;
+sliderchange(slider1);
+@sample
+p = g * 2 + spl0;
+q0 = sx.acc(spl0);
+r = g * 2 + spl0;
+q1 = sx.acc(r);
+r2 = g * 2 + sx.s;
+u = g + 1; bump(); u2 = g + 1; bump(); u3 = g + 1 + q;
+spl(1) = u * 3; v = spl1 * 3; spl(slider2 & 1) = v + 1; w = spl0 + spl1;
+spl0 = p + q0 + r + q1 + r2 + u + u2 + u3 + w + x1 + k * 0.001;
+spl1 = v + w * 0.5 + sx.s * 0.01;

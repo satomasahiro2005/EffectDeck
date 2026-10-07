@@ -21,7 +21,7 @@ JSFX の実行系（いまは WDL の portable の解釈）を、同じ入力・
 vm-* は `Check::exact`（1 ビットも違ってはいけない）。cpp は差 `1e-6` まで許す（いまはどれも一致）。
 vm-* は WDL の字句・構文・compile・バイトコードには触らず、解き方だけを替える（`Patches/ysfx-effectdeck-ios.diff`。
 `ns-eel.h` の `NSEEL_EXEC_*`）。同じ実体の上で実行時に選べる（`ysfx_set_eel_exec_mode`・`ETJSFX_SetEELExecutor`）。
-ysfx は @slider・@block・@sample を選んだ実行系で回す（@init・@serialize・@gfx は今までの `NSEEL_code_execute`）。
+ysfx は @slider・@block・@sample を選んだ実行系で回す（@serialize・@gfx は今までの `NSEEL_code_execute`。@init は vm-reg のときだけ vm-reg、ほかは `NSEEL_code_execute`）。
 アプリの既定は `NSEEL_EXEC_DEFAULT`（`ns-eel.h`）。portable の行もはっきり 0 を選ぶ。
 
 ## スクリプト（`Debug/JSFXBench`、全部自前）
@@ -67,7 +67,8 @@ bash Tools/jsfx-bench/run.sh --vm-dump --vm-ir --opt Os --no-jit Debug/JSFXBench
 `--diff` は `Tests/Fixtures/JSFX`・`Tests/Fuzz/Corpus/jsfxexec`・`Debug/JSFXBench`・`Tools/jsfx-bench/diff`
 （`opcodes.jsfx`: 命令をなるべく通す。`vm_lift.jsfx`: その @sample を vm-reg でも通す写し。`vm_edge.jsfx`: vm-reg の
 畳み込み・行き先じか書き・まとめ・升の使い回しが portable の読み書きの順を崩さないかを突く形と、段 1 のコーパスで
-通らなかった命令）を、ysfx をじかに使って
+通らなかった命令。`vm_s3_*.jsfx`: 段 S3 の読み直し・書いた値の流用・loop kernel・while + 比べを、ポインタ越しの
+書き込み・API・特別な値・頭打ちで突く形。`megabuf_tail.jsfx`: パッチで直した WDL の x[] の再現）を、ysfx をじかに使って
 実行系ごとに回す（48 ブロック、フレーム数を変え、つまみ・trigger・再生位置・NaN／Inf／非正規化数・3 ブロックに 1 回の
 MIDI を混ぜ、`ysfx_process_double`）。比べるのは毎ブロックの出力・出てきた MIDI・つまみの変化／自動化／見える印・
 最後の変数の全部・EEL のメモリ全部・@serialize・ysfx の口から見えない升（定数・関数の局所・#字）とユーザーの
