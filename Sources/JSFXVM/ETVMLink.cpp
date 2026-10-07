@@ -259,13 +259,29 @@ std::atomic<int> gEngine{ETVM_ENGINE_THREADED};
 std::mutex gCoverageMutex;
 Coverage gCoverage;
 
-void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t count)
+/// ysfx の builder（ysfx_compile の終わり・ysfx_set_eel_exec_mode(NSEEL_EXEC_REG)）。
+/// **呼ぶ側の約束: その effect のどの handle も回っていないこと。**付け替えた handle の前のプログラムは
+/// その場で放す。ETJSFXHost は保守（音と @gfx を外す）の中でだけ呼ぶ。
+/// プログラムは handle ごとに 1 つで、枠（frame・scratch）もプログラムが持つ。同じ handle を 2 本の
+/// スレッドで同時に回してはいけない（ysfx では @init・@slider・@block・@sample は音か保守のどちらか
+/// 1 本、@gfx・@serialize はプログラムが在っても NSEEL_code_execute で回る）。
+/// 大域で読むのは atomic の設定（節・中身・最適化）と、錠の中の数えだけ。別の effect を別のスレッドで
+/// 同時に作ってよい。
+/// **例外を外へ出さない**（ysfx の中を抜ける。確保に失敗したら、つなぎの前ならどれも付け替えず、
+/// handle の途中なら その handle だけプログラム無し＝ vm-goto-fpreg）。
+void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t count) noexcept
 {
-    LinkReport rep = link(vm, handles, sections, count);
+    LinkReport rep;
+    CellFacts facts;
+    try {
+        rep = link(vm, handles, sections, count);
+        facts = cellFacts(rep);
+    } catch (...) {
+        return;
+    }
     const uint32_t mask = gMask.load(std::memory_order_relaxed);
     const int engine = gEngine.load(std::memory_order_relaxed);
     const uint32_t passes = ETVM_GetPasses();
-    const CellFacts facts = cellFacts(rep);
     std::lock_guard<std::mutex> lock(gCoverageMutex);
     for (uint32_t i = 0; i < count; ++i) {
         if (!handles[i]) continue;
@@ -277,7 +293,7 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
             else ++gCoverage.reasons[sec][(size_t)hr.lift.reason];
         }
         Program *p = nullptr;
-        if (hr.present && hr.lift.ok() && (mask & (1u << sec))) {
+        if (hr.present && hr.lift.ok() && (mask & (1u << sec))) try {
             // 段 S3 の中間表現の最適化（参照の解釈も同じ形を回す: vm-reg-ref が違えば最適化、vm-reg だけ違えば並べ方）
             OptStats os;
             optimize(hr.lift.fn, passes, facts, &os);
@@ -302,6 +318,9 @@ void buildPrograms(void *vm, void *const *handles, const int *sections, uint32_t
                     gCoverage.threadedHandlers[sec] += ts.handlers;
                 }
             }
+        } catch (...) {
+            delete p;
+            p = nullptr;
         }
         NSEEL_code_attach_program(handles[i], p);
         if (p) ++gCoverage.attached[sec];
@@ -325,8 +344,12 @@ void resetCoverage()
 
 extern "C" void ETVM_Install(void)
 {
-    NSEEL_set_exec_backend(&etvm::kBackend);
-    ysfx_set_eel_program_builder(etvm::buildPrograms);
+    // **登録は 1 度だけ書く。**WDL の nseel_exec_backend・ysfx の builder は素の大域で、別の effect の音の
+    // スレッドが NSEEL_code_execute_frames で読んでいる。同じ値でも書き直せば競合（TSan が拾う形）。
+    // 関数の static の初期化は 1 度だけ・あとから来た呼び出しはそれを待つ（C++11）。
+    static const bool installed = (NSEEL_set_exec_backend(&etvm::kBackend),
+                                   ysfx_set_eel_program_builder(etvm::buildPrograms), true);
+    (void)installed;
 }
 
 extern "C" void ETVM_SetSectionMask(uint32_t mask) { etvm::gMask.store(mask, std::memory_order_relaxed); }

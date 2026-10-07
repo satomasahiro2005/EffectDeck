@@ -13,7 +13,17 @@
 extern "C" {
 #endif
 
-/// WDL（NSEEL_set_exec_backend）と ysfx（ysfx_set_eel_program_builder）に登録する。何度呼んでもよい。
+/// WDL（NSEEL_set_exec_backend）と ysfx（ysfx_set_eel_program_builder）に登録する。何度呼んでもよい
+/// （書くのは最初の 1 回だけ。どのスレッドからでもよい）。
+///
+/// スレッドの約束（docs/jsfx-regvm-design.md §18）:
+///   - プログラムを作る・放すのは ysfx_compile と ysfx_set_eel_exec_mode(NSEEL_EXEC_REG)。どちらも、その effect の
+///     どの handle も回っていないときだけ呼ぶ（ETJSFXHost は保守の中: ETJSFX_SetEELExecutor・Create）。
+///     ysfx は実行系の番号を relaxed で読むので、作ったプログラムが音のスレッドに見えるのは、呼ぶ側の同期
+///     （ETJSFXHost の mode の release / acquire）による
+///   - プログラム（枠を含む）は handle ごとに 1 つ。同じ handle を 2 本のスレッドで同時に回さない
+///   - 別々の effect のプログラムは別々のスレッドで同時に作ってよい（大域は atomic の設定と錠の中の数えだけ）
+///   - 下の設定（節・中身・最適化）は、このあと作るプログラムから効く。いつ替えてもよい
 void ETVM_Install(void);
 /// プログラムを付ける節（ysfx_section_type_t のビット 1 << section）。既定は @init・@slider・@block・@sample。
 /// @gfx・@serialize は付けても ysfx が NSEEL_code_execute で回す（持ち上げは解析のためにする）。
