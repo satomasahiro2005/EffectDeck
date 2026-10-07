@@ -282,15 +282,26 @@ if [ "$exec_needed" = 1 ]; then
   fi
   # ETJSFXHost.cpp とその周りは毎回建てる（アプリの側。短い）。
   # ETLICEFont.mm（CoreText）の代わりは et_lice_font_linux.cpp（寸法だけ返す）。
+  # Sources/JSFXVM（差分の 3 つめ vm-reg）はアプリでは YSFX の中。ysfx と同じ定義・同じ飽和の旗で建てる。
   exec_bin="$native/jsfx_exec"
+  vm_flags=(-fno-sanitize=float-cast-overflow -fno-strict-float-cast-overflow -I "$repo/Sources/JSFXVM")
+  vm_objs=()
   set +e
   {
     "$cc" "${san[@]}" -fsanitize=fuzzer-no-link,address,undefined -I "$repo/Sources/Shared" \
       -c "$repo/Sources/Shared/ETExternalProcessor.c" -o "$native/ETExternalProcessor.o" &&
+    "$cc" "${san[@]}" -fsanitize=fuzzer-no-link,address,undefined "${vm_flags[@]}" "${ysfx_defs[@]}" "${inc[@]}" \
+      -c "$repo/Sources/JSFXVM/ETVMGlueCheck.c" -o "$native/ETVMGlueCheck.o" &&
+    for f in "$repo"/Sources/JSFXVM/*.cpp; do
+      o="$native/$(basename "$f").o"; vm_objs+=("$o")
+      "$cxx" -std=c++20 "${san[@]}" -fsanitize=fuzzer-no-link,address,undefined "${vm_flags[@]}" \
+        "${ysfx_defs[@]}" "${inc[@]}" -c "$f" -o "$o" || exit 1
+    done &&
     "$cxx" -std=c++20 "${san[@]}" -fsanitize=fuzzer,address,undefined "${ysfx_defs[@]}" "${inc[@]}" \
-      -I "$repo/Sources/Shared" \
+      -I "$repo/Sources/Shared" -I "$repo/Sources/JSFXVM" \
       "$here/Native/jsfx_exec.cpp" "$repo/Sources/Shared/ETJSFXHost.cpp" \
-      "$here/Native/et_lice_font_linux.cpp" "$native/ETExternalProcessor.o" "$objs"/*.o \
+      "$here/Native/et_lice_font_linux.cpp" "$native/ETExternalProcessor.o" "$native/ETVMGlueCheck.o" \
+      "${vm_objs[@]}" "$objs"/*.o \
       -pthread -o "$exec_bin"
   } 2>&1 | tee -a "$build_log"
   status=${PIPESTATUS[0]}

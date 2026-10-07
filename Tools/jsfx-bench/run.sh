@@ -4,6 +4,7 @@
 #
 #   bash Tools/jsfx-bench/run.sh [--seconds <秒>] [--scripts a,b] [--opt Os|O3|both] [--no-jit]
 #                                [--label <名前>] [--build-only] [--clean] [--diff] [--profile]
+#                                [--vm-dump [--vm-ir] [<file|dir> ...]] [--vm-opgrid]
 #
 #   --seconds    測る長さ（音の秒）。既定 5
 #   --scripts    Debug/JSFXBench のうち回すもの（拡張子なし）。既定は全部
@@ -16,6 +17,10 @@
 #                portable と 1 ビットまで比べる（diff.cpp）。数える版は通らなかった命令も出す
 #   --profile    速さを測らず、-DNSEEL_VM_PROFILE の版（-Os）で Debug/JSFXBench を 1 本ずつ vm-goto で回し、
 #                命令の数と続いた 2 つの組を数える（build/jsfx-bench/opcodes/*.json → opcodes.py）
+#   --vm-dump    速さを測らず、portable の版（--opt の段）でレジスタ型 VM の持ち上げを見る（Sources/JSFXVM、
+#                docs/jsfx-regvm-design.md）。入力の既定は --diff と同じ 4 か所。handle ごとの結果と節ごとの
+#                割合・理由の表（build/jsfx-bench/<label>-vm-coverage-<opt>.json）。--vm-ir で中間表現も出す
+#   --vm-opgrid  設計 §12.1: 命令ごとに値の格子で portable と中間表現の参照の解釈を 1 ビットまで比べる
 #
 # 建てるもの（どれも Sources/Shared/ETJSFXBench.cpp + ETJSFXHost.cpp + ysfx/WDL）:
 #   jsfx-bench-portable-<opt>  EEL_TARGET_PORTABLE（iOS と同じ解釈）。実行系 portable・vm-*・cpp
@@ -37,6 +42,8 @@ label=
 build_only=0
 clean=0
 mode=bench
+vm_ir=0
+vm_paths=()
 
 die() { echo "run.sh: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
@@ -52,8 +59,12 @@ while [ $# -gt 0 ]; do
     --clean) clean=1; shift ;;
     --diff) mode=diff; shift ;;
     --profile) mode=profile; shift ;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) die "知らない引数: $1（--help）" ;;
+    --vm-dump) mode=vmdump; shift ;;
+    --vm-ir) vm_ir=1; shift ;;
+    --vm-opgrid) mode=vmopgrid; shift ;;
+    -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "知らない引数: $1（--help）" ;;
+    *) [ "$mode" = vmdump ] || die "知らない引数: $1（--help）"; vm_paths+=("$1"); shift ;;
   esac
 done
 
@@ -74,7 +85,7 @@ label=$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '_')
 jobs=$( (sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) | head -1)
 if command -v shasum >/dev/null 2>&1; then hash_cmd=(shasum); else hash_cmd=(sha1sum); fi
 sha=$(git -C "$repo" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-if [ -n "$(git -C "$repo" status --porcelain -- Sources/Shared Tools/jsfx-bench Debug/JSFXBench Patches 2>/dev/null)" ]; then
+if [ -n "$(git -C "$repo" status --porcelain -- Sources/Shared Sources/JSFXVM Tools/jsfx-bench Debug/JSFXBench Patches 2>/dev/null)" ]; then
   sha="$sha-dirty"
 fi
 
@@ -132,7 +143,9 @@ export ET_CC="$cc" ET_CXX="$cxx" ET_YSFX="$ysfx"
 # $1=portable|jit|profile $2=Os|O3。建てた実行ファイルのパスを出す。
 build_bin() {
   local eel=$1 opt=$2 defs flags objs key bin eel_name
-  flags=(-"$opt" -fsigned-char -g)
+  # -fno-strict-float-cast-overflow: 範囲の外・NaN の double → int を arm64 の fcvtzs と同じ飽和にする
+  # （Tests/Fuzz/run.sh と同じ。arm64 では機械語は変わらない。x86_64 の照合を arm64 とそろえる）。
+  flags=(-"$opt" -fsigned-char -g -fno-strict-float-cast-overflow)
   defs=("${common_defs[@]}")
   case $eel in
     portable) defs+=(-DEEL_TARGET_PORTABLE); eel_name=portable ;;
@@ -161,17 +174,48 @@ build_bin() {
   local extra=(-DET_JSFX_BENCH=1 "-DET_JSFX_BENCH_EEL=\"$eel_name\"")
   [ "$eel" = jit ] && extra+=(-DET_JSFX_BENCH_JIT_PROBE)
   # ETJSFXHost.cpp と台はアプリの側（project.yml の dspSettings も -Os）。同じ段で建てる。
+  # Sources/JSFXVM はアプリでは YSFX の中（project.yml）。YSFX と同じ定義・同じ段で建てる。
+  local vm_srcs=("$repo"/Sources/JSFXVM/*.cpp)
   if ! { "$cc" "${flags[@]}" -I "$repo/Sources/Shared" -c "$repo/Sources/Shared/ETExternalProcessor.c" \
            -o "$objs/ETExternalProcessor.o" &&
+         "$cc" "${flags[@]}" "${defs[@]}" "${inc[@]}" -I "$repo/Sources/JSFXVM" \
+           -c "$repo/Sources/JSFXVM/ETVMGlueCheck.c" -o "$objs/ETVMGlueCheck.o" &&
          "$cxx" -std=c++20 "${flags[@]}" "${defs[@]}" "${extra[@]}" "${inc[@]}" -I "$repo/Sources/Shared" \
-           "$here/main.cpp" "$here/diff.cpp" "$repo/Sources/Shared/ETJSFXBench.cpp" "$repo/Sources/Shared/ETJSFXBenchPorts.cpp" \
+           -I "$repo/Sources/JSFXVM" "$here/main.cpp" "$here/diff.cpp" "$here/vm.cpp" "${vm_srcs[@]}" \
+           "$repo/Sources/Shared/ETJSFXBench.cpp" "$repo/Sources/Shared/ETJSFXBenchPorts.cpp" \
            "$repo/Sources/Shared/ETJSFXHost.cpp" "$repo/Tests/Fuzz/Native/et_lice_font_linux.cpp" \
-           "$objs/ETExternalProcessor.o" "$objs"/*.c.o "$objs"/*.cpp.o -pthread -o "$bin"; } >> "$log" 2>&1; then
+           "$objs/ETExternalProcessor.o" "$objs/ETVMGlueCheck.o" "$objs"/*.c.o "$objs"/*.cpp.o -pthread \
+           -o "$bin"; } >> "$log" 2>&1; then
     tail -30 "$log" >&2
     die "jsfx-bench-$eel-$opt が建たない（$log）"
   fi
   echo "$bin"
 }
+
+if [ "$mode" = vmdump ] || [ "$mode" = vmopgrid ]; then
+  status=0
+  for opt in "${opts[@]}"; do
+    b=$(build_bin portable "$opt") || exit 1
+    echo "== built: $b"
+    [ "$build_only" = 1 ] && continue
+    set +e
+    if [ "$mode" = vmopgrid ]; then
+      echo "== vm-opgrid -$opt"
+      "$b" --vm-opgrid | tee "$work/$label-vm-opgrid-$opt.txt"
+    else
+      if [ ${#vm_paths[@]} -eq 0 ]; then
+        vm_paths=("$repo/Tests/Fixtures/JSFX" "$repo/Tests/Fuzz/Corpus/jsfxexec" "$repo/Debug/JSFXBench" "$here/diff")
+      fi
+      args=(--vm-dump --vm-json "$work/$label-vm-coverage-$opt.json")
+      [ "$vm_ir" = 1 ] && args+=(--vm-ir)
+      echo "== vm-dump -$opt"
+      "$b" "${args[@]}" "${vm_paths[@]}" | tee "$work/$label-vm-dump-$opt.txt"
+    fi
+    [ "${PIPESTATUS[0]}" = 0 ] || status=1
+    set -e
+  done
+  exit "$status"
+fi
 
 if [ "$mode" = profile ]; then
   b=$(build_bin profile Os) || exit 1

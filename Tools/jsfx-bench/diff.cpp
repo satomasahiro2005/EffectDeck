@@ -8,13 +8,19 @@
 //   - 入力は ysfx_process_double（double のまま比べる）。正弦 + 雑音に、ときどき NaN・±Inf・
 //     非正規化数・-0・大きな値を混ぜる
 //   - ときどきつまみを動かし（範囲の中と外）、trigger と再生位置も送る
-// 比べるもの: 毎ブロックの出力（bit）、最後の変数の全部（ysfx_enum_vars、bit）、EEL のメモリ全部、
-// @serialize の中身（ysfx_save_state）。基準は NSEEL_EXEC_PORTABLE。
+//   - 3 ブロックに 1 回、MIDI を 2 つ入れる（midirecv が引数の升へ書く道を通す）
+// 比べるもの: 毎ブロックの出力（bit）、出てきた MIDI、つまみの変化・自動化・見える印、最後の変数の全部
+// （ysfx_enum_vars、bit）、EEL のメモリ全部、@serialize の中身（ysfx_save_state）、ysfx の口から見えない
+// VM の升（定数・関数の局所・#字）とユーザーの積み場の位置（etvm::stateHash）。基準は NSEEL_EXEC_PORTABLE。
+// vm-reg（NSEEL_EXEC_REG、Sources/JSFXVM の参照の解釈）が違ったら、節を 1 つずつ vm-reg にして回し直し、
+// どの節で違うかを出す（ETVM_SetSectionMask）。
 // 回ごとに rand() の列を最初からにする。gmem はプロセスの中で共有され前の回の残りが見えるので、
 // 書く前に gmem を読むスクリプトは portable どうしでも違う（ET_DIFF_MODES=0 で確かめられる）。
 // 違ったら終了値 1。
 #include "ysfx.h"
 #include "WDL/eel2/ns-eel.h"
+#include "ETVM.h"
+#include "ETVMLink.h"
 
 #include <algorithm>
 #include <cmath>
@@ -49,6 +55,10 @@ struct Run {
     uint32_t memNonZero = 0;
     std::vector<uint8_t> state;                // @serialize
     bool stateOk = false;
+    uint64_t midiHash = 1469598103934665603ull;   // 出てきた MIDI
+    uint64_t sliderHash = 1469598103934665603ull; // つまみの変化・自動化・見える印（毎ブロック）
+    uint64_t vmHash = 0;                           // etvm::stateHash
+    uint32_t midiOut = 0;
     double seconds = 0;
 };
 
@@ -131,15 +141,43 @@ Run runOnce(const std::string &path, int mode, uint32_t blocks)
                 if (b % 5 == 4 && rr % 37 == 0) v = specialValue(rr >> 7);
                 inBuf[c * kMaxFrames + i] = v;
             }
+        if (b % 3 == 2) {
+            const uint8_t on[3] = {(uint8_t)(0x90 | (rb % 16)), (uint8_t)(36 + rb % 48), (uint8_t)(1 + rb % 127)};
+            const uint8_t off[3] = {(uint8_t)(0x80 | (rb % 16)), on[1], 0};
+            ysfx_midi_event_t ev{0, 0, 3, on};
+            ysfx_send_midi(fx, &ev);
+            ev.offset = frames / 2; ev.data = off;
+            ysfx_send_midi(fx, &ev);
+        }
         std::fill(outBuf.begin(), outBuf.end(), 0.0);
         ysfx_process_double(fx, inPtr, outPtr, ins, outs, frames);
         for (uint32_t c = 0; c < outs; ++c)
             for (uint32_t i = 0; i < frames; ++i) r.out.push_back(bitsOf(outBuf[c * kMaxFrames + i]));
+        for (ysfx_midi_event_t ev; ysfx_receive_midi(fx, &ev);) {
+            r.midiHash = mix64(r.midiHash ^ ((uint64_t)ev.bus << 40 | (uint64_t)ev.offset << 20 | ev.size));
+            for (uint32_t k = 0; k < ev.size; ++k) r.midiHash = mix64(r.midiHash ^ ev.data[k]);
+            ++r.midiOut;
+        }
+        for (uint8_t g = 0; g < ysfx_max_slider_groups; ++g) {
+            r.sliderHash = mix64(r.sliderHash ^ ysfx_fetch_slider_changes(fx, g));
+            r.sliderHash = mix64(r.sliderHash ^ ysfx_fetch_slider_automations(fx, g));
+            r.sliderHash = mix64(r.sliderHash ^ ysfx_get_slider_visibility(fx, g));
+        }
         n += frames;
         pos += frames / kRate;
     }
 
     ysfx_enum_vars(fx, &collectVar, &r.vars);
+    {
+        void *vm = nullptr;
+        const uint32_t n = ysfx_get_eel_handles(fx, &vm, nullptr, nullptr, 0);
+        std::vector<void *> handles(n);
+        std::vector<int> sections(n);
+        ysfx_get_eel_handles(fx, &vm, handles.data(), sections.data(), n);
+#if defined(EEL_TARGET_PORTABLE)
+        r.vmHash = etvm::stateHash(vm, handles.data(), sections.data(), n);
+#endif
+    }
     // EEL のメモリ（ysfx の上限 2M 語。確保していない塊は 0 として読む）
     std::vector<ysfx_real> chunk(65536);
     for (uint32_t addr = 0; addr < 2u * 1024 * 1024; addr += (uint32_t)chunk.size()) {
@@ -161,6 +199,33 @@ Run runOnce(const std::string &path, int mode, uint32_t blocks)
     }
     ysfx_free(fx);
     return r;
+}
+
+std::string compare(const Run &ref, const Run &r)
+{
+    std::string why;
+    if (!r.compiled || !r.modeOk) return "not run";
+    if (r.out.size() != ref.out.size()) why += "out-size ";
+    else {
+        size_t bad = 0, first = (size_t)-1;
+        for (size_t i = 0; i < r.out.size(); ++i) if (r.out[i] != ref.out[i]) { if (!bad) first = i; ++bad; }
+        if (bad) why += "out(" + std::to_string(bad) + " smp, first " + std::to_string(first) + ") ";
+    }
+    if (r.vars != ref.vars) {
+        size_t bad = 0; std::string firstName;
+        for (const auto &kv : ref.vars) {
+            auto it = r.vars.find(kv.first);
+            if (it == r.vars.end() || it->second != kv.second) { if (!bad) firstName = kv.first; ++bad; }
+        }
+        if (r.vars.size() != ref.vars.size()) ++bad;
+        why += "vars(" + std::to_string(bad) + ", " + firstName + ") ";
+    }
+    if (r.memHash != ref.memHash) why += "mem ";
+    if (r.stateOk != ref.stateOk || r.state != ref.state) why += "state ";
+    if (r.midiHash != ref.midiHash || r.midiOut != ref.midiOut) why += "midi ";
+    if (r.sliderHash != ref.sliderHash) why += "sliders ";
+    if (r.vmHash != ref.vmHash) why += "vm-cells ";
+    return why;
 }
 
 void listInputs(const std::string &path, std::vector<std::string> &out)
@@ -223,36 +288,46 @@ int ETJSFXBenchDiffMain(const std::vector<std::string> &paths, uint32_t blocks)
         bool fileOk = true;
         for (int m : modes) {
             const Run r = runOnce(file, m, blocks);
-            std::string why;
-            if (!r.compiled || !r.modeOk) why = "not run";
-            else {
-                if (r.out.size() != ref.out.size()) why += "out-size ";
-                else {
-                    size_t bad = 0, first = (size_t)-1;
-                    for (size_t i = 0; i < r.out.size(); ++i) if (r.out[i] != ref.out[i]) { if (!bad) first = i; ++bad; }
-                    if (bad) why += "out(" + std::to_string(bad) + " smp, first " + std::to_string(first) + ") ";
+            std::string why = compare(ref, r);
+            // vm-reg が違ったら、節を 1 つずつ vm-reg にして回し直す（ほかの節は GOTO_FPREG）。
+            if (!why.empty() && m == NSEEL_EXEC_REG && r.compiled && r.modeOk) {
+                const uint32_t saved = ETVM_GetSectionMask();
+                std::string which;
+                static const char *const names[] = {"", "init", "slider", "block", "sample", "gfx", "serialize"};
+                for (int sec = 1; sec <= 4; ++sec) {
+                    if (!(saved & (1u << sec))) continue;
+                    ETVM_SetSectionMask(1u << sec);
+                    if (!compare(ref, runOnce(file, m, blocks)).empty()) which += std::string(which.empty() ? "" : ",") + names[sec];
                 }
-                if (r.vars != ref.vars) {
-                    size_t bad = 0; std::string firstName;
-                    for (const auto &kv : ref.vars) {
-                        auto it = r.vars.find(kv.first);
-                        if (it == r.vars.end() || it->second != kv.second) { if (!bad) firstName = kv.first; ++bad; }
-                    }
-                    if (r.vars.size() != ref.vars.size()) ++bad;
-                    why += "vars(" + std::to_string(bad) + ", " + firstName + ") ";
-                }
-                if (r.memHash != ref.memHash) why += "mem ";
-                if (r.stateOk != ref.stateOk || r.state != ref.state) why += "state ";
+                ETVM_SetSectionMask(saved);
+                why += "[sections: " + (which.empty() ? std::string("only together") : which) + "] ";
             }
             line += std::string(" ") + NSEEL_code_exec_mode_name(m) + "=" + (why.empty() ? "ok" : why);
             if (!why.empty()) fileOk = false;
         }
         ++compared;
         if (!fileOk) ++failures;
-        std::printf("  %-34s %6zu smp %4zu vars mem%7u%s%s\n", base, ref.out.size(), ref.vars.size(), ref.memNonZero,
-                    line.c_str(), fileOk ? "" : "  MISMATCH");
+        std::printf("  %-34s %6zu smp %4zu vars mem%7u midi%4u%s%s\n", base, ref.out.size(), ref.vars.size(),
+                    ref.memNonZero, ref.midiOut, line.c_str(), fileOk ? "" : "  MISMATCH");
     }
     std::printf("compared %d, not compiled %d, mismatched %d\n", compared, skipped, failures);
+#if defined(EEL_TARGET_PORTABLE)
+    if (NSEEL_code_exec_mode_available(NSEEL_EXEC_REG)) {
+        // vm-reg の回で作ったプログラムの数え（節ごと。持ち上げられなかった理由も）。
+        const etvm::Coverage c = etvm::coverage();
+        static const char *const names[] = {"?", "init", "slider", "block", "sample", "gfx", "serialize", "?"};
+        std::printf("vm-reg programs (handles / lifted / attached):");
+        for (int sec = 1; sec <= 6; ++sec)
+            std::printf(" %s %llu/%llu/%llu", names[sec], (unsigned long long)c.handles[sec],
+                        (unsigned long long)c.lifted[sec], (unsigned long long)c.attached[sec]);
+        std::printf("\n");
+        for (int sec = 1; sec <= 6; ++sec)
+            for (size_t k = 1; k < (size_t)etvm::Fallback::Count; ++k)
+                if (c.reasons[sec][k])
+                    std::printf("  fallback %s %s: %llu\n", names[sec], etvm::fallbackName((etvm::Fallback)k),
+                                (unsigned long long)c.reasons[sec][k]);
+    }
+#endif
 #if defined(NSEEL_VM_PROFILE)
     // 命令の数を取る建て方なら、どの命令を一度も通らなかったかを出す（比べ合わせが見ていないところ）。
     // 数えるのは vm-*（glue_port_vm.h）だけ。portable の GLUE_CALL_CODE は数えない。

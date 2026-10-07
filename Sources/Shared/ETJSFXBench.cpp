@@ -114,6 +114,13 @@ bool selectExecutor(ETJSFX *host, std::string &error)
     error = "this EEL build has no such executor (JIT build?)";
     return false;
 }
+extern "C" void ETVM_Install(void); // Sources/JSFXVM/ETVM.h（YSFX の中。アプリの既定では呼ばない）
+/// vm-reg（NSEEL_EXEC_REG = 5）。段 S1 は持ち上げた中間表現の参照の解釈（遅い。照合のためだけ）。
+bool selectReg(ETJSFX *host, std::string &error)
+{
+    ETVM_Install();
+    return selectExecutor<5>(host, error);
+}
 std::unique_ptr<Engine> cppVariant(const Script &script, std::string &error)
 {
     auto engine = makeCppPort(script.name, kSampleRate, kFrames);
@@ -128,6 +135,7 @@ struct Variant {
     Check check;      // 基準との照合の仕方（最初の 1 行は基準）
     double tolerance; // Check::tolerance のときに許す差（float の出力の絶対値）
     Factory make;
+    bool optIn = false; // --variants / -ETBenchVariants で名指ししたときだけ回す
 };
 /// **ここに 1 行足せば実行系が増える。**最初の行が照合の基準。
 /// ETJSFX を通るものは、作った直後に呼ぶ口（bool (ETJSFX *, std::string &)）で実行系を切り替える。
@@ -138,6 +146,7 @@ const Variant kVariants[] = {
     {"vm-goto", true, Check::exact, 0, hostVariant<selectExecutor<2>>},
     {"vm-goto-fpreg", true, Check::exact, 0, hostVariant<selectExecutor<3>>},
     {"vm-goto-fpreg-mask", true, Check::exact, 0, hostVariant<selectExecutor<4>>},
+    {"vm-reg", true, Check::exact, 0, hostVariant<selectReg>, true},
     {"cpp", false, Check::tolerance, 1e-6, cppVariant},
 };
 
@@ -472,7 +481,8 @@ ETJSFXBenchReport *ETJSFXBench_Run(const ETJSFXBenchOptions *options)
     std::vector<const Variant *> variants;
     const auto wanted = split(options ? options->variants : nullptr);
     for (const Variant &v : kVariants)
-        if (wanted.empty() || std::find(wanted.begin(), wanted.end(), v.name) != wanted.end()) variants.push_back(&v);
+        if (wanted.empty() ? !v.optIn : std::find(wanted.begin(), wanted.end(), v.name) != wanted.end())
+            variants.push_back(&v);
     for (const auto &w : wanted) {
         bool known = false;
         for (const Variant &v : kVariants) known |= w == v.name;

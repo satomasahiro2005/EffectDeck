@@ -1,0 +1,532 @@
+// Tools/jsfx-bench/vm.cpp — JSFX のレジスタ型 VM（Sources/JSFXVM、docs/jsfx-regvm-design.md）を見る口。
+//
+//   jsfx-bench --vm-dump [--vm-ir] [--vm-json out.json] <file.jsfx|dir> ...
+//       ysfx で読んでコンパイルし、全部の handle（@gfx・@serialize も）を持ち上げる。handle ごとに
+//       持ち上がったか（だめなら理由と位置）・ブロック・命令・升の数を出し、節ごとの割合と理由の表を出す。
+//       --vm-ir は中間表現も出す（升は変数名・const(値)・temp・static・volatile で）。
+//   jsfx-bench --vm-opgrid
+//       設計 §12.1: 命令 1 つ（とその前後の最小限）のバイトコードを手で組み、値の格子（±0・非正規化数・
+//       closefactor のきわ・2^31・2^63・±Inf・NaN の 2 つのペイロード・-NaN …）の全部の組で、
+//       portable（NSEEL_code_execute = WDL の GLUE_CALL_CODE そのもの）と、持ち上げた中間表現の参照の
+//       解釈を回し、出力の升を 1 ビットまで比べる。megabuf は VM を 2 つ作って、書いた先（塊と位置、
+//       または nseel_ramalloc_onfail）を比べる。
+#include "ysfx.h"
+#include "WDL/eel2/ns-eel.h"
+#include "WDL/eel2/ns-eel-int.h"
+
+#include "ETVMBytecode.h"
+#include "ETVMLink.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cinttypes>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <map>
+#include <string>
+#include <sys/stat.h>
+#include <vector>
+
+namespace {
+const char *const kSectionNames[] = {"?", "init", "slider", "block", "sample", "gfx", "serialize", "?"};
+
+void listInputs(const std::string &path, std::vector<std::string> &out)
+{
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0) { std::fprintf(stderr, "jsfx-bench --vm-dump: missing %s\n", path.c_str()); return; }
+    if (!S_ISDIR(st.st_mode)) { out.push_back(path); return; }
+    DIR *d = opendir(path.c_str());
+    if (!d) return;
+    std::vector<std::string> names;
+    while (dirent *e = readdir(d)) {
+        std::string name = e->d_name;
+        if (name == "." || name == "..") continue;
+        struct stat cs{};
+        const std::string full = path + "/" + name;
+        if (stat(full.c_str(), &cs) == 0 && S_ISREG(cs.st_mode)) names.push_back(full);
+    }
+    closedir(d);
+    std::sort(names.begin(), names.end());
+    out.insert(out.end(), names.begin(), names.end());
+}
+
+std::string jsonEscape(const std::string &s)
+{
+    std::string o;
+    for (char c : s) {
+        if (c == '"' || c == '\\') { o += '\\'; o += c; }
+        else if ((unsigned char)c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+        else o += c;
+    }
+    return o;
+}
+
+std::string cellNamer(uint64_t a, void *user) { return etvm::describeCell(*(const etvm::LinkReport *)user, a); }
+} // namespace
+
+int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, const std::string &jsonPath)
+{
+#if !defined(EEL_TARGET_PORTABLE)
+    (void)paths; (void)printIR; (void)jsonPath;
+    std::fprintf(stderr, "jsfx-bench --vm-dump: needs the portable build (bytecode)\n");
+    return 2;
+#else
+    std::vector<std::string> files;
+    for (const auto &p : paths) listInputs(p, files);
+    uint64_t handles[8] = {}, lifted[8] = {}, blocks[8] = {}, insns[8] = {}, nodes[8] = {};
+    std::map<std::string, uint64_t> reasons[8];
+    uint64_t cellClasses[5] = {}, filesCompiled = 0, filesAllLifted = 0, filesNoConst = 0;
+    std::string jsonFiles;
+    for (const auto &file : files) {
+        const char *base = std::strrchr(file.c_str(), '/');
+        base = base ? base + 1 : file.c_str();
+        ysfx_config_t *config = ysfx_config_new();
+        ysfx_t *fx = ysfx_new(config);
+        ysfx_config_free(config);
+        if (!ysfx_load_file(fx, file.c_str(), 0) || !ysfx_compile(fx, 0)) {
+            std::printf("%-34s not compiled\n", base);
+            ysfx_free(fx);
+            continue;
+        }
+        ++filesCompiled;
+        void *vm = nullptr;
+        const uint32_t n = ysfx_get_eel_handles(fx, &vm, nullptr, nullptr, 0);
+        std::vector<void *> hs(n);
+        std::vector<int> secs(n);
+        ysfx_get_eel_handles(fx, &vm, hs.data(), secs.data(), n);
+        const etvm::LinkReport rep = etvm::link(vm, hs.data(), secs.data(), n);
+        uint64_t cls[5] = {};
+        for (const auto &[addr, c] : rep.cells) { ++cls[(int)c.cls]; ++cellClasses[(int)c.cls]; }
+        if (rep.allAnalysed) ++filesAllLifted; else ++filesNoConst;
+        std::printf("%-34s cells var %" PRIu64 " const %" PRIu64 " static %" PRIu64 " temp %" PRIu64 " volatile %" PRIu64
+                    "%s\n", base, cls[0], cls[1], cls[2], cls[3], cls[4],
+                    rep.allAnalysed ? "" : "  (a handle fell back: no const cells)");
+        std::string jsonHandles;
+        for (const etvm::HandleReport &hr : rep.handles) {
+            if (!hr.present) continue;
+            const int sec = hr.section >= 0 && hr.section < 8 ? hr.section : 7;
+            ++handles[sec];
+            nodes[sec] += hr.lift.nodes;
+            char label[32];
+            std::snprintf(label, sizeof label, "%s%s", kSectionNames[sec],
+                          sec == 1 ? ("#" + std::to_string(hr.index)).c_str() : "");
+            if (hr.lift.ok()) {
+                ++lifted[sec];
+                blocks[sec] += hr.lift.fn.blocks.size();
+                insns[sec] += hr.lift.fn.instructionCount();
+                std::printf("  %-12s lifted   nodes %6zu blocks %5zu insns %6zu\n", label, hr.lift.nodes,
+                            hr.lift.fn.blocks.size(), hr.lift.fn.instructionCount());
+                if (printIR) std::fputs(etvm::print(hr.lift.fn, cellNamer, (void *)&rep).c_str(), stdout);
+            } else {
+                ++reasons[sec][etvm::fallbackName(hr.lift.reason)];
+                std::printf("  %-12s FALLBACK %s at pc %" PRIu64 ": %s\n", label, etvm::fallbackName(hr.lift.reason),
+                            hr.lift.pc, hr.lift.detail.c_str());
+            }
+            char item[512];
+            std::snprintf(item, sizeof item, "%s{\"section\": \"%s\", \"index\": %d, \"lifted\": %s, \"reason\": \"%s\", "
+                          "\"detail\": \"%s\", \"nodes\": %zu, \"blocks\": %zu, \"insns\": %zu}",
+                          jsonHandles.empty() ? "" : ", ", kSectionNames[sec], hr.index, hr.lift.ok() ? "true" : "false",
+                          etvm::fallbackName(hr.lift.reason), jsonEscape(hr.lift.detail).c_str(), hr.lift.nodes,
+                          hr.lift.ok() ? hr.lift.fn.blocks.size() : (size_t)0,
+                          hr.lift.ok() ? hr.lift.fn.instructionCount() : (size_t)0);
+            jsonHandles += item;
+        }
+        char head[256];
+        std::snprintf(head, sizeof head, "%s    {\"file\": \"%s\", \"cells\": {\"var\": %" PRIu64 ", \"const\": %" PRIu64
+                      ", \"static\": %" PRIu64 ", \"temp\": %" PRIu64 ", \"volatile\": %" PRIu64 "}, \"handles\": [",
+                      jsonFiles.empty() ? "" : ",\n", jsonEscape(base).c_str(), cls[0], cls[1], cls[2], cls[3], cls[4]);
+        jsonFiles += head + jsonHandles + "]}";
+        ysfx_free(fx);
+    }
+    std::printf("\ncoverage (files compiled %" PRIu64 ", every handle lifted in %" PRIu64 ")\n", filesCompiled, filesAllLifted);
+    std::printf("  %-10s %8s %8s %8s %10s %10s\n", "section", "handles", "lifted", "%", "blocks", "insns");
+    uint64_t th = 0, tl = 0;
+    std::string jsonSections;
+    for (int sec = 1; sec <= 6; ++sec) {
+        th += handles[sec]; tl += lifted[sec];
+        const double pct = handles[sec] ? 100.0 * (double)lifted[sec] / (double)handles[sec] : 100.0;
+        std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %7.1f%% %10" PRIu64 " %10" PRIu64 "\n", kSectionNames[sec],
+                    handles[sec], lifted[sec], pct, blocks[sec], insns[sec]);
+        std::string rs;
+        for (const auto &[why, cnt] : reasons[sec]) {
+            std::printf("      fallback %-18s %" PRIu64 "\n", why.c_str(), cnt);
+            rs += (rs.empty() ? "" : ", ") + std::string("\"") + why + "\": " + std::to_string(cnt);
+        }
+        char item[512];
+        std::snprintf(item, sizeof item, "%s\"%s\": {\"handles\": %" PRIu64 ", \"lifted\": %" PRIu64 ", \"blocks\": %" PRIu64
+                      ", \"insns\": %" PRIu64 ", \"nodes\": %" PRIu64 ", \"fallbacks\": {%s}}",
+                      jsonSections.empty() ? "" : ", ", kSectionNames[sec], handles[sec], lifted[sec], blocks[sec],
+                      insns[sec], nodes[sec], rs.c_str());
+        jsonSections += item;
+    }
+    std::printf("  %-10s %8" PRIu64 " %8" PRIu64 " %7.1f%%\n", "all", th, tl, th ? 100.0 * (double)tl / (double)th : 100.0);
+    std::printf("  cells: var %" PRIu64 " const %" PRIu64 " static %" PRIu64 " temp %" PRIu64 " volatile %" PRIu64 "\n",
+                cellClasses[0], cellClasses[1], cellClasses[2], cellClasses[3], cellClasses[4]);
+    if (!jsonPath.empty()) {
+        FILE *f = std::fopen(jsonPath.c_str(), "wb");
+        if (!f) { std::fprintf(stderr, "jsfx-bench: cannot write %s\n", jsonPath.c_str()); return 2; }
+        std::fprintf(f, "{\n  \"filesCompiled\": %" PRIu64 ", \"filesAllLifted\": %" PRIu64 ",\n  \"sections\": {%s},\n"
+                     "  \"cells\": {\"var\": %" PRIu64 ", \"const\": %" PRIu64 ", \"static\": %" PRIu64 ", \"temp\": %" PRIu64
+                     ", \"volatile\": %" PRIu64 "},\n  \"files\": [\n%s\n  ]\n}\n",
+                     filesCompiled, filesAllLifted, jsonSections.c_str(), cellClasses[0], cellClasses[1], cellClasses[2],
+                     cellClasses[3], cellClasses[4], jsonFiles.c_str());
+        std::fclose(f);
+        std::printf("json: %s\n", jsonPath.c_str());
+    }
+    return tl == th ? 0 : 1;
+#endif
+}
+
+// ---- §12.1 命令の格子 ----------------------------------------------------------------------------------
+#if defined(EEL_TARGET_PORTABLE)
+namespace {
+uint64_t bitsOf(double v) { uint64_t b; std::memcpy(&b, &v, 8); return b; }
+double fromBits(uint64_t b) { double v; std::memcpy(&v, &b, 8); return v; }
+
+std::vector<double> valueGrid()
+{
+    const double ulp5 = std::nextafter(1e-5, 1.0) - 1e-5;
+    std::vector<double> g = {
+        0.0, -0.0, fromBits(1), -fromBits(1),                       // ±最小の非正規化数
+        fromBits(0x000fffffffffffffull), -fromBits(0x000fffffffffffffull), // ±最大の非正規化数
+        DBL_MIN, -DBL_MIN, 1e-5, 1e-5 + ulp5, 1e-5 - ulp5, -1e-5, -(1e-5 - ulp5),
+        0.5, 1.0, -1.0, 1.5, -1.5, 2.0, 3.0, 7.25, -2.75,
+        2147483647.0, 2147483648.0, 2147483649.0, -2147483648.0, -2147483649.0, 4294967296.0,
+        9223372036854775808.0, -9223372036854775808.0, 9007199254740993.0, 1e30, -1e30, 1048577.0,
+        INFINITY, -INFINITY,
+        fromBits(0x7ff8000000000001ull), fromBits(0x7ff80000deadbeefull), fromBits(0xfff8000000000000ull),
+        fromBits(0x7ff0000000000001ull), // signalling NaN
+        DBL_MAX, -DBL_MAX, 65535.99999, 65536.0, 131071.0,
+    };
+    return g;
+}
+
+struct Asm {
+    std::vector<unsigned char> b;
+    void op(int o) { put(&o, 4); }
+    void i32(int32_t v) { put(&v, 4); }
+    void u64(uint64_t v) { put(&v, 8); }
+    void ptr(const void *p) { u64((uint64_t)(uintptr_t)p); }
+    void put(const void *p, size_t n) { const unsigned char *c = (const unsigned char *)p; b.insert(b.end(), c, c + n); }
+    size_t here() const { return b.size(); }
+    /// 4 バイトの跳び先を後で埋める（命令の直後の即値の位置 at、跳び先 target）。
+    void patch(size_t at, size_t target) { const int32_t off = (int32_t)target - (int32_t)(at + 4); std::memcpy(&b[at], &off, 4); }
+    size_t jmp(int o) { op(o); const size_t at = here(); i32(0); return at; }
+};
+
+struct Machine {
+    double wt[64 + 48] = {};
+    NSEEL_VMCTX vm = nullptr;
+    void *rt = nullptr;
+    Machine()
+    {
+        vm = NSEEL_VM_alloc();
+        NSEEL_VM_setramsize(vm, 128 * 65536);
+        rt = ((compileContext *)vm)->ram_state->blocks;
+    }
+    ~Machine() { NSEEL_VM_free(vm); }
+};
+
+/// portable で回す（GLUE_CALL_CODE そのもの）。
+void runPortable(const Asm &a, Machine &m)
+{
+    codeHandleType h;
+    std::memset(&h, 0, sizeof h);
+    h.code = (void *)a.b.data();
+    h.workTable = m.wt;
+    h.ramPtr = m.rt;
+    NSEEL_code_execute(&h);
+}
+
+/// 持ち上げて参照の解釈で回す。だめなら理由。
+std::string runLifted(const Asm &a, Machine &m)
+{
+    etvm::LiftInput in;
+    in.code = a.b.data();
+    in.workTable = (uint64_t)(uintptr_t)m.wt;
+    in.ramPtr = (uint64_t)(uintptr_t)m.rt;
+    in.codeRanges.push_back({(uint64_t)(uintptr_t)a.b.data(), (uint64_t)(uintptr_t)a.b.data() + a.b.size()});
+    etvm::LiftResult r = etvm::lift(in);
+    static const bool debug = std::getenv("ETVM_OPGRID_DEBUG") != nullptr;
+    if (debug) {
+        std::fprintf(stderr, "-- lift %s %s at %" PRIu64 "\n", etvm::fallbackName(r.reason), r.detail.c_str(), r.pc);
+        if (r.ok()) std::fputs(etvm::print(r.fn).c_str(), stderr);
+        else
+            for (size_t at = 0; at + 4 <= a.b.size();) {
+                const int op = etbc_read_i32(a.b.data() + at);
+                const int ib = etbc_imm_bytes(op);
+                std::fprintf(stderr, "   %4zu %s", at, etbc_name(op));
+                if (ib == 8) std::fprintf(stderr, " 0x%" PRIx64, etbc_read_u64(a.b.data() + at + 4));
+                std::fprintf(stderr, "\n");
+                if (ib < 0) break;
+                at += 4 + (size_t)ib;
+            }
+    }
+    if (!r.ok()) return std::string(etvm::fallbackName(r.reason)) + ": " + r.detail;
+    etvm::InterpState st;
+    etvm::interpret(r.fn, st);
+    return std::string();
+}
+
+struct Tally {
+    uint64_t cases = 0, bad = 0, liftFail = 0, nanPair = 0;
+    std::string first;
+};
+
+bool isNaNBits(uint64_t b) { return (b & 0x7ff0000000000000ull) == 0x7ff0000000000000ull && (b & 0xfffffffffffffull); }
+
+/// 升 X・Y・Z・O と印 M を使う 1 つの組を両方で回し、升を比べる。
+struct Cells { double x, y, z, o, m; };
+
+template <class Build>
+void check(const char *name, std::map<std::string, Tally> &t, const std::vector<double> &grid, int arity, Build build)
+{
+    Tally &ta = t[name];
+    const size_t ny = arity >= 2 ? grid.size() : 1;
+    Machine mach; // megabuf を使わない組は 1 つで足りる（rt は読まない）
+    for (size_t i = 0; i < grid.size(); ++i)
+        for (size_t j = 0; j < ny; ++j) {
+            Cells c[2];
+            for (int side = 0; side < 2; ++side) {
+                c[side] = Cells{grid[i], grid[j % grid.size()], grid[i], 0.0, 12345.678};
+                std::memset(mach.wt, 0, sizeof mach.wt);
+                Asm a;
+                build(a, c[side]);
+                if (side == 0) runPortable(a, mach);
+                else {
+                    const std::string why = runLifted(a, mach);
+                    if (!why.empty()) {
+                        if (!ta.liftFail++ && ta.first.empty()) ta.first = "lift: " + why;
+                        continue;
+                    }
+                }
+            }
+            ++ta.cases;
+            const uint64_t pc[4] = {bitsOf(c[0].x), bitsOf(c[0].y), bitsOf(c[0].z), bitsOf(c[0].o)};
+            const uint64_t ic[4] = {bitsOf(c[1].x), bitsOf(c[1].y), bitsOf(c[1].z), bitsOf(c[1].o)};
+            bool same = true, onlyNaNPayload = true;
+            for (int k = 0; k < 4; ++k)
+                if (pc[k] != ic[k]) { same = false; onlyNaNPayload &= isNaNBits(pc[k]) && isNaNBits(ic[k]); }
+            // 2 つの入力がどちらも NaN のとき、どちらのペイロードが残るかは C コンパイラが + * のオペランドを
+            // どちらの順に置いたかで決まる（portable の TU の中でも決まっていない）。分けて数える。
+            const bool twoNaNs = arity >= 2 && isNaNBits(bitsOf(grid[i])) && isNaNBits(bitsOf(grid[j % grid.size()]));
+            if (!same && twoNaNs && onlyNaNPayload) { ++ta.nanPair; continue; }
+            if (!same && !ta.bad++) {
+                char b[400];
+                std::snprintf(b, sizeof b, "x=%a y=%a: portable x,y,z,o=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+                              ",%016" PRIx64 " / ir %016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
+                              grid[i], grid[j % grid.size()], pc[0], pc[1], pc[2], pc[3], ic[0], ic[1], ic[2], ic[3]);
+                ta.first = b;
+            }
+        }
+}
+
+/// megabuf: 書いた先（塊と位置、または onfail）を比べる。
+std::string megabufTarget(Machine &m, double mark)
+{
+    if (bitsOf(nseel_ramalloc_onfail) == bitsOf(mark)) return "onfail";
+    EEL_F **blocks = (EEL_F **)m.rt;
+    for (int bl = 0; bl < NSEEL_RAM_BLOCKS; ++bl) {
+        if (!blocks[bl]) continue;
+        for (int k = 0; k < NSEEL_RAM_ITEMSPERBLOCK; ++k)
+            if (bitsOf(blocks[bl][k]) == bitsOf(mark)) return std::to_string(bl) + ":" + std::to_string(k);
+    }
+    return "none";
+}
+} // namespace
+#endif
+
+int ETJSFXBenchVMOpGridMain()
+{
+#if !defined(EEL_TARGET_PORTABLE)
+    std::fprintf(stderr, "jsfx-bench --vm-opgrid: needs the portable build (bytecode)\n");
+    return 2;
+#else
+    const std::vector<double> grid = valueGrid();
+    std::map<std::string, Tally> t;
+    // 2 つ積んで 1 つの命令 → O へ（BOOL を返すものは BOOLTOFP で）
+    struct Bin { const char *name; int op; bool boolean; };
+    const Bin bins[] = {
+        {"ADD", ETBC_ADD, false}, {"SUB", ETBC_SUB, false}, {"MUL", ETBC_MUL, false}, {"DIV", ETBC_DIV, false},
+        {"AND", ETBC_AND, false}, {"OR", ETBC_OR, false}, {"XOR", ETBC_XOR, false}, {"MOD", ETBC_MOD, false},
+        {"SHL", ETBC_SHL, false}, {"SHR", ETBC_SHR, false}, {"MIN_FP", ETBC_MIN_FP, false}, {"MAX_FP", ETBC_MAX_FP, false},
+        {"EQUAL", ETBC_EQUAL, true}, {"EQUAL_EXACT", ETBC_EQUAL_EXACT, true}, {"NOTEQUAL", ETBC_NOTEQUAL, true},
+        {"NOTEQUAL_EXACT", ETBC_NOTEQUAL_EXACT, true}, {"ABOVE", ETBC_ABOVE, true}, {"BELOWEQ", ETBC_BELOWEQ, true},
+    };
+    for (const Bin &bn : bins)
+        check(bn.name, t, grid, 2, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x);
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.y);
+            a.op(bn.op);
+            if (bn.boolean) a.op(ETBC_BOOLTOFP);
+            a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o);
+            a.op(ETBC_RET);
+        });
+    struct Un { const char *name; int op; int kind; }; // kind 0 = 値, 1 = BOOL を返す, 2 = BNOT
+    const Un uns[] = {
+        {"UMINUS", ETBC_UMINUS, 0}, {"SQR", ETBC_SQR, 0}, {"ABS", ETBC_ABS, 0}, {"SIGN", ETBC_SIGN, 0},
+        {"INVSQRT", ETBC_INVSQRT, 0}, {"OR0", ETBC_OR0, 0}, {"FPTOBOOL", ETBC_FPTOBOOL, 1},
+        {"FPTOBOOL_REV", ETBC_FPTOBOOL_REV, 1}, {"BNOT", ETBC_BNOT, 2},
+    };
+    for (const Un &u : uns)
+        check(u.name, t, grid, 1, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x);
+            if (u.kind == 2) a.op(ETBC_FPTOBOOL);
+            a.op(u.op);
+            if (u.kind != 0) a.op(ETBC_BOOLTOFP);
+            a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o);
+            a.op(ETBC_RET);
+        });
+    // 升への演算（p2 = Z）。p1 = p2 になるので、続けて p1 の値も O へ
+    struct OpAssign { const char *name; int op; };
+    const OpAssign opas[] = {
+        {"ADD_OP", ETBC_ADD_OP}, {"SUB_OP", ETBC_SUB_OP}, {"MUL_OP", ETBC_MUL_OP}, {"DIV_OP", ETBC_DIV_OP},
+        {"ADD_OP_FAST", ETBC_ADD_OP_FAST}, {"SUB_OP_FAST", ETBC_SUB_OP_FAST}, {"MUL_OP_FAST", ETBC_MUL_OP_FAST},
+        {"DIV_OP_FAST", ETBC_DIV_OP_FAST}, {"AND_OP", ETBC_AND_OP}, {"OR_OP", ETBC_OR_OP}, {"XOR_OP", ETBC_XOR_OP},
+        {"MOD_OP", ETBC_MOD_OP},
+    };
+    for (const OpAssign &oa : opas)
+        check(oa.name, t, grid, 2, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_P2_DV); a.ptr(&c.z);
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.y);
+            a.op(oa.op);
+            a.op(ETBC_PUSH_VAL_AT_P1_TO_FPSTACK);
+            a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o);
+            a.op(ETBC_RET);
+        });
+    // 代入（フィルタの有無）
+    check("ASSIGN", t, grid, 1, [&](Asm &a, Cells &c) {
+        a.op(ETBC_MOV_P1_DV); a.ptr(&c.x); a.op(ETBC_MOV_P2_DV); a.ptr(&c.o); a.op(ETBC_ASSIGN); a.op(ETBC_RET);
+    });
+    check("ASSIGN_FAST", t, grid, 1, [&](Asm &a, Cells &c) {
+        a.op(ETBC_MOV_P1_DV); a.ptr(&c.x); a.op(ETBC_MOV_P2_DV); a.ptr(&c.o); a.op(ETBC_ASSIGN_FAST); a.op(ETBC_RET);
+    });
+    check("ASSIGN_FROMFP", t, grid, 1, [&](Asm &a, Cells &c) {
+        a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x); a.op(ETBC_MOV_P2_DV); a.ptr(&c.o); a.op(ETBC_ASSIGN_FROMFP); a.op(ETBC_RET);
+    });
+    check("ASSIGN_FAST_FROMFP", t, grid, 1, [&](Asm &a, Cells &c) {
+        a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x); a.op(ETBC_MOV_P2_DV); a.ptr(&c.o); a.op(ETBC_ASSIGN_FAST_FROMFP);
+        a.op(ETBC_RET);
+    });
+    // min / max（参照を返す）: 選ばれた升へ印を書く（-0 と +0・NaN でどちらを選ぶか）
+    for (int mm = 0; mm < 2; ++mm)
+        check(mm ? "MAX" : "MIN", t, grid, 2, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_P1_DV); a.ptr(&c.x); a.op(ETBC_MOV_P2_DV); a.ptr(&c.y);
+            a.op(mm ? ETBC_MAX : ETBC_MIN);
+            a.op(ETBC_PUSH_VAL_AT_P1_TO_FPSTACK); a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o);
+            a.op(ETBC_SET_P2_FROM_P1); a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.m); a.op(ETBC_ASSIGN_FAST_FROMFP);
+            a.op(ETBC_RET);
+        });
+    // C の関数（同じ関数ポインタを呼ぶ）
+    struct C1 { const char *name; double (*f)(double); };
+    using D1 = double (*)(double);
+    const C1 c1s[] = {{"CFUNC_1PDD sin", static_cast<D1>(&::sin)}, {"CFUNC_1PDD exp", static_cast<D1>(&::exp)},
+                      {"CFUNC_1PDD log", static_cast<D1>(&::log)}, {"CFUNC_1PDD floor", static_cast<D1>(&::floor)}};
+    for (const C1 &cf : c1s)
+        check(cf.name, t, grid, 1, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x); a.op(ETBC_CFUNC_1PDD); a.ptr((const void *)cf.f);
+            a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o); a.op(ETBC_RET);
+        });
+    struct C2 { const char *name; double (*f)(double, double); };
+    using D2 = double (*)(double, double);
+    const C2 c2s[] = {{"CFUNC_2PDD pow", static_cast<D2>(&::pow)}, {"CFUNC_2PDD atan2", static_cast<D2>(&::atan2)}};
+    for (const C2 &cf : c2s)
+        check(cf.name, t, grid, 2, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x); a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.y);
+            a.op(ETBC_CFUNC_2PDD); a.ptr((const void *)cf.f);
+            a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o); a.op(ETBC_RET);
+        });
+    check("CFUNC_2PDDS pow", t, grid, 2, [&](Asm &a, Cells &c) {
+        a.op(ETBC_MOV_P2_DV); a.ptr(&c.z); a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.y);
+        a.op(ETBC_CFUNC_2PDDS); a.ptr((const void *)static_cast<D2>(&::pow)); a.op(ETBC_RET);
+    });
+    // loop: X 回（(int)・1 未満は飛ばす・1048576 で打ち切る）。Z に 1 ずつ足す
+    static const double kOne = 1.0;
+    check("LOOP", t, grid, 1, [&](Asm &a, Cells &c) {
+        c.z = 0;
+        a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x);
+        const size_t skip = a.jmp(ETBC_LOOP_LOADCNT);
+        const size_t top = a.here();
+        a.op(ETBC_MOV_P2_DV); a.ptr(&c.z); a.op(ETBC_MOV_FPTOP_DV); a.ptr(&kOne); a.op(ETBC_ADD_OP_FAST);
+        const size_t back = a.jmp(ETBC_LOOP_END);
+        a.patch(back, top);
+        a.patch(skip, a.here());
+        a.op(ETBC_RET);
+    });
+    // while: X が真の間（1048576 回で打ち切る）。Z に 1 ずつ足す
+    check("WHILE", t, grid, 1, [&](Asm &a, Cells &c) {
+        c.z = 0;
+        a.op(ETBC_WHILE_SETUP);
+        const size_t top = a.here();
+        a.op(ETBC_WHILE_BEGIN);
+        a.op(ETBC_MOV_P2_DV); a.ptr(&c.z); a.op(ETBC_MOV_FPTOP_DV); a.ptr(&kOne); a.op(ETBC_ADD_OP_FAST);
+        a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x); a.op(ETBC_FPTOBOOL);
+        const size_t end = a.jmp(ETBC_WHILE_END);
+        const size_t again = a.jmp(ETBC_WHILE_CHECK_RV);
+        a.patch(again, top);
+        a.patch(end, a.here());
+        a.op(ETBC_RET);
+    });
+    // 分かれて合流（浮動小数の積み場の phi）: X が真なら Y、偽なら Z
+    for (int nz = 0; nz < 2; ++nz)
+        check(nz ? "JMP_IF_P1_NZ merge" : "JMP_IF_P1_Z merge", t, grid, 2, [&](Asm &a, Cells &c) {
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(&c.x); a.op(ETBC_FPTOBOOL);
+            const size_t j = a.jmp(nz ? ETBC_JMP_IF_P1_NZ : ETBC_JMP_IF_P1_Z);
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(nz ? &c.z : &c.y);
+            const size_t over = a.jmp(ETBC_JMP_NC);
+            a.patch(j, a.here());
+            a.op(ETBC_MOV_FPTOP_DV); a.ptr(nz ? &c.y : &c.z);
+            a.patch(over, a.here());
+            a.op(ETBC_POP_FPSTACK_TO_PTR); a.ptr(&c.o);
+            a.op(ETBC_RET);
+        });
+    // megabuf（VM を 2 つ。書いた先を比べる）
+    {
+        Tally &ta = t["MEGABUF"];
+        for (double x : grid) {
+            std::string where[2];
+            bool lifted = true;
+            for (int side = 0; side < 2; ++side) {
+                Machine mach;
+                nseel_ramalloc_onfail = 0;
+                double cx = x, mark = 777.25;
+                Asm a;
+                a.op(ETBC_MOV_FPTOP_DV); a.ptr(&cx); a.op(ETBC_MEGABUF); a.op(ETBC_SET_P2_FROM_P1);
+                a.op(ETBC_MOV_FPTOP_DV); a.ptr(&mark); a.op(ETBC_ASSIGN_FAST_FROMFP); a.op(ETBC_RET);
+                if (side == 0) runPortable(a, mach);
+                else {
+                    const std::string why = runLifted(a, mach);
+                    if (!why.empty()) { lifted = false; if (!ta.liftFail++) ta.first = "lift: " + why; break; }
+                }
+                where[side] = megabufTarget(mach, mark);
+            }
+            nseel_ramalloc_onfail = 0;
+            if (!lifted) continue;
+            ++ta.cases;
+            if (where[0] != where[1] && !ta.bad++) {
+                char b[160];
+                std::snprintf(b, sizeof b, "x=%a: portable %s / ir %s", x, where[0].c_str(), where[1].c_str());
+                ta.first = b;
+            }
+        }
+    }
+    uint64_t total = 0, bad = 0, fails = 0, nanPairs = 0;
+    std::printf("jsfx-bench --vm-opgrid: %zu values; portable (GLUE_CALL_CODE) vs lifted IR (reference interpreter)\n",
+                grid.size());
+    for (const auto &[name, ta] : t) {
+        total += ta.cases; bad += ta.bad; fails += ta.liftFail; nanPairs += ta.nanPair;
+        std::printf("  %-22s %6" PRIu64 " cases  %s", name.c_str(), ta.cases, ta.bad || ta.liftFail ? "MISMATCH" : "ok");
+        if (ta.nanPair) std::printf("  (NaN+NaN payload choice: %" PRIu64 ")", ta.nanPair);
+        if (!ta.first.empty()) std::printf("  %s", ta.first.c_str());
+        std::printf("\n");
+    }
+    std::printf("total %" PRIu64 " cases, %" PRIu64 " mismatched, %" PRIu64 " not lifted, %" PRIu64
+                " NaN+NaN payload choices (operand order of the C compiler; not counted as mismatches)\n",
+                total, bad, fails, nanPairs);
+    std::printf(bad || fails ? "RESULT FAIL\n" : "RESULT ok\n");
+    return bad || fails ? 1 : 0;
+#endif
+}

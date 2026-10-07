@@ -20,7 +20,9 @@
 //      portable（GLUE_CALL_CODE そのもの）に同じつまみと同じブロックを渡して、出力が 1 ビットまで同じか。
 //      既定が portable の建て方では何もしない。締切を一度でも超えたら比べない（外れたかが時刻で変わる）。
 //      プロセスで共有されて前の回の残りが見えるもの（名前の無い gmem・time()・time_precise()）を
-//      ソースが書いていたら比べない。範囲の外の番地が指す 1 語（nseel_ramalloc_onfail）は回ごとに 0 に戻す
+//      ソースが書いていたら比べない。範囲の外の番地が指す 1 語（nseel_ramalloc_onfail）は回ごとに 0 に戻す。
+//      3 つめに vm-reg（NSEEL_EXEC_REG = Sources/JSFXVM の、持ち上げた中間表現の参照の解釈）も同じに回して
+//      portable と比べる（docs/jsfx-regvm-design.md §12.2）
 //
 // 標本化率・ブロック長・つまみの値・画の大きさは入力の FNV-1a から決める（同じ入力は同じ回り方）。
 // 入力の全体が JSFX のソースになるので、種（.jsfx）はそのまま読める。
@@ -43,6 +45,7 @@
 #include "ETJSFXHost.h"
 #include "ETExternalProcessor.h"
 #include "WDL/eel2/ns-eel.h"
+#include "ETVM.h"
 
 #include <algorithm>
 #include <cctype>
@@ -461,8 +464,10 @@ bool readsProcessState(const uint8_t *data, size_t size)
 /// 9. 実行系の差分。rand() は全部の VM で 1 つの列なので、2 つを並べずに 1 つずつ最初から回す。
 void differential(double sampleRate, uint32_t maxFrames, uint64_t seed)
 {
-    std::vector<std::vector<float>> outs[2];
-    for (int pass = 0; pass < 2; ++pass) {
+    static const bool installed = (ETVM_Install(), true);
+    (void)installed;
+    std::vector<std::vector<float>> outs[3];
+    for (int pass = 0; pass < 3; ++pass) {
         NSEEL_rand_reset();
         nseel_ramalloc_onfail = 0;
         char error[kErrorCapacity] = {};
@@ -473,6 +478,7 @@ void differential(double sampleRate, uint32_t maxFrames, uint64_t seed)
         }
         if (pass == 0 && ETJSFX_EELExecutor(h) == NSEEL_EXEC_PORTABLE) { ETJSFX_Destroy(h); return; }
         if (pass == 1 && !ETJSFX_SetEELExecutor(h, NSEEL_EXEC_PORTABLE)) harness("portable を選べない");
+        if (pass == 2 && !ETJSFX_SetEELExecutor(h, NSEEL_EXEC_REG)) harness("vm-reg を選べない");
         Rng r{seed};
         std::vector<Parameter> params = readParameters(h);
         ETExternalProcessor processor = ETJSFX_Processor(h);
@@ -492,11 +498,14 @@ void differential(double sampleRate, uint32_t maxFrames, uint64_t seed)
         ETJSFX_Destroy(h);
         if (tripped) return;
     }
-    const size_t n = std::min(outs[0].size(), outs[1].size());
-    for (size_t b = 0; b < n; ++b)
-        if (outs[0][b].size() != outs[1][b].size() ||
-            std::memcmp(outs[0][b].data(), outs[1][b].data(), outs[0][b].size() * sizeof(float)) != 0)
-            broken("差分: 既定の実行系と portable の出力が違う", "block " + std::to_string(b));
+    for (int other : {0, 2}) {
+        const size_t n = std::min(outs[other].size(), outs[1].size());
+        for (size_t b = 0; b < n; ++b)
+            if (outs[other][b].size() != outs[1][b].size() ||
+                std::memcmp(outs[other][b].data(), outs[1][b].data(), outs[1][b].size() * sizeof(float)) != 0)
+                broken(other == 0 ? "差分: 既定の実行系と portable の出力が違う" : "差分: vm-reg と portable の出力が違う",
+                       "block " + std::to_string(b));
+    }
 }
 }
 
