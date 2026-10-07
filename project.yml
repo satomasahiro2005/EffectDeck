@@ -23,6 +23,8 @@ settings:
     Beta:
       ET_APPICON: EffectDeckPublicBeta
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ET_BETA"
+      # C / C++ からも同じ印を見る（Sources/Shared/ETJSFXBench.h。Debug は DEBUG=1 で見る）。
+      GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) ET_BETA=1"
   base:
     # 既定は青。Beta 構成だけ上の configs で紫に上書きする。
     ET_APPICON: EffeTuneLive

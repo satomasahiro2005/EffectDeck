@@ -1,0 +1,53 @@
+desc:EffectDeck DSP Stereo Delay
+author:nemut.ai
+tags:delay test
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+slider1:delay_ms=280<1,1000,1:log=280>Delay (ms)
+slider2:feedback=45<0,92,0.1>Feedback (%)
+slider3:mix=35<0,100,0.1>Wet mix (%)
+slider4:crossfeed=25<0,100,0.1>Crossfeed (%)
+
+@init
+max_delay = min(1000000, ceil(srate * 1.1));
+left_buffer = 0;
+right_buffer = max_delay;
+write_position = 0;
+memset(left_buffer, 0, max_delay * 2);
+
+@slider
+delay_samples = max(1, min(max_delay - 1, floor(delay_ms * srate / 1000)));
+feedback_gain = feedback / 100;
+wet = mix / 100;
+dry = 1 - wet;
+cross = crossfeed / 100;
+
+@sample
+read_position = write_position - delay_samples;
+read_position < 0 ? read_position += max_delay;
+delayed_l = left_buffer[read_position];
+delayed_r = right_buffer[read_position];
+input_l = spl0;
+input_r = spl1;
+left_buffer[write_position] = input_l + (delayed_l * (1-cross) + delayed_r * cross) * feedback_gain;
+right_buffer[write_position] = input_r + (delayed_r * (1-cross) + delayed_l * cross) * feedback_gain;
+write_position += 1;
+write_position >= max_delay ? write_position = 0;
+spl0 = input_l * dry + delayed_l * wet;
+spl1 = input_r * dry + delayed_r * wet;
+
+@gfx 560 210
+gfx_set(0.055, 0.065, 0.08, 1); gfx_rect(0, 0, gfx_w, gfx_h);
+gfx_setfont(1, "Helvetica", 20, 'b');
+gfx_set(0.55, 0.72, 1, 1); gfx_x = 20; gfx_y = 18;
+gfx_drawstr("DSP Stereo Delay");
+gfx_setfont(1, "Helvetica", 14);
+gfx_set(0.9, 0.93, 0.96, 1); gfx_x = 20; gfx_y = 62;
+gfx_drawstr(sprintf(#text, "Delay %.0f ms    Feedback %.0f%%    Mix %.0f%%", delay_ms, feedback, mix));
+phase = write_position / max_delay;
+gfx_set(0.25, 0.5, 1, 0.35); gfx_rect(20, 116, gfx_w - 40, 30);
+gfx_set(0.35, 0.9, 1, 1); gfx_rect(20, 116, max(2, (gfx_w - 40) * phase), 30);

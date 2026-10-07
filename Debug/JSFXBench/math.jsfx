@@ -1,0 +1,47 @@
+desc:EffectDeck Bench Math
+author:nemut.ai
+tags:distortion test
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+slider1:drive=4<1,20,0.1>Drive
+slider2:rate=3<0.1,20,0.01>LFO rate (Hz)
+slider3:mix=50<0,100,0.1>Wet mix (%)
+
+@init
+phase = 0;
+two_pi = 2 * $pi;
+
+@slider
+inc = two_pi * rate / srate;
+wet = mix / 100;
+dry = 1 - wet;
+
+@sample
+phase += inc;
+phase >= two_pi ? phase -= two_pi;
+lfo = 0.5 + 0.5 * sin(phase);
+k = drive * (0.5 + lfo);
+// tanh(k * x) through exp.
+e_l = exp(2 * k * spl0);
+e_r = exp(2 * k * spl1);
+t_l = (e_l - 1) / (e_l + 1);
+t_r = (e_r - 1) / (e_r + 1);
+// Log-compressed envelope and an LFO-driven power curve.
+m = log(1 + abs(spl0 + spl1) * 8);
+p_l = pow(abs(spl0) + 0.001, 0.6 + 0.3 * lfo);
+p_r = pow(abs(spl1) + 0.001, 0.6 + 0.3 * lfo);
+// Data-dependent loop: halve until below 0.25.
+x = abs(spl0 * k) * 64 + 1;
+n = 0;
+while (
+  x *= 0.5;
+  n += 1;
+  x > 0.25
+);
+g = 1 / (1 + 0.02 * n);
+spl0 = (spl0 * dry + (t_l + 0.1 * p_l * m) * wet) * g;
+spl1 = (spl1 * dry + (t_r + 0.1 * p_r * m) * wet) * g;

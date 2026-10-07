@@ -1210,6 +1210,20 @@ class BundleTests(unittest.TestCase):
             code, text = check(make_app(d / "s2", samples={"Fixtures/stray.jsfx": SAMPLE_A}), repo)
             self.assertIn("Fixtures/stray.jsfx", fails(text, "samples")[0])
 
+    def test_bench_scripts_follow_the_sample_rule(self):
+        # Debug/JSFXBench（速さを測る台の入力）は見本と同じ規則で、別のフォルダに積む。
+        tracked = {"DebugJSFXFactory/A.jsfx": SAMPLE_A, "DebugJSFXFactory/B.jsfx": SAMPLE_B}
+        with TempDir() as d:
+            repo = make_repo(d / "repo")
+            write(repo / "Debug/JSFXBench/gain.jsfx", SAMPLE_A)
+            bench = dict(tracked, **{"DebugJSFXBench/gain.jsfx": SAMPLE_A})
+            code, text = check(make_app(d / "b1", flavor="beta", samples=bench), repo)
+            self.assertEqual(code, 0, text)
+            code, text = check(make_app(d / "b2", flavor="beta", samples=tracked), repo)
+            self.assertIn("見本が欠けている: gain.jsfx", fails(text, "samples")[0])
+            code, text = check(make_app(d / "s1", samples={"DebugJSFXBench/gain.jsfx": SAMPLE_A}), repo)
+            self.assertIn("店の版に DebugJSFXBench/ が在る（1 本）", fails(text, "samples")[0])
+
     def test_signed_entitlements_rules(self):
         cases = {
             "app に中身がある": ("app", dict(signed(APP_ENTS, "app"), **{

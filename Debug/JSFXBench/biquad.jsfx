@@ -1,0 +1,66 @@
+desc:EffectDeck Bench Biquad EQ
+author:nemut.ai
+tags:eq test
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+slider1:f1=90<20,20000,1>Band 1 (Hz)
+slider2:g1=4<-24,24,0.1>Band 1 gain (dB)
+slider3:f2=450<20,20000,1>Band 2 (Hz)
+slider4:g2=-3<-24,24,0.1>Band 2 gain (dB)
+slider5:f3=2200<20,20000,1>Band 3 (Hz)
+slider6:g3=2.5<-24,24,0.1>Band 3 gain (dB)
+slider7:f4=9000<20,20000,1>Band 4 (Hz)
+slider8:g4=-5<-24,24,0.1>Band 4 gain (dB)
+slider9:q=1.1<0.1,10,0.01>Q
+
+@init
+// RBJ peaking EQ. Coefficients and state live in each namespace (l1. r1. ...).
+function peak_set(freq, gain_db, width)
+  instance(b0, b1, b2, a1, a2)
+  local(amp, w0, cw, alpha, a0inv)
+(
+  amp = 10 ^ (gain_db / 40);
+  w0 = 2 * $pi * freq / srate;
+  cw = cos(w0);
+  alpha = sin(w0) / (2 * width);
+  a0inv = 1 / (1 + alpha / amp);
+  b0 = (1 + alpha * amp) * a0inv;
+  b1 = -2 * cw * a0inv;
+  b2 = (1 - alpha * amp) * a0inv;
+  a1 = b1;
+  a2 = (1 - alpha / amp) * a0inv;
+);
+
+// Transposed direct form II.
+function peak_tick(x)
+  instance(b0, b1, b2, a1, a2, s1, s2)
+  local(y)
+(
+  y = b0 * x + s1;
+  s1 = b1 * x - a1 * y + s2;
+  s2 = b2 * x - a2 * y;
+  y;
+);
+
+function peak_reset()
+(
+  this.s1 = 0;
+  this.s2 = 0;
+);
+
+l1.peak_reset(); l2.peak_reset(); l3.peak_reset(); l4.peak_reset();
+r1.peak_reset(); r2.peak_reset(); r3.peak_reset(); r4.peak_reset();
+
+@slider
+l1.peak_set(f1, g1, q); r1.peak_set(f1, g1, q);
+l2.peak_set(f2, g2, q); r2.peak_set(f2, g2, q);
+l3.peak_set(f3, g3, q); r3.peak_set(f3, g3, q);
+l4.peak_set(f4, g4, q); r4.peak_set(f4, g4, q);
+
+@sample
+spl0 = l4.peak_tick(l3.peak_tick(l2.peak_tick(l1.peak_tick(spl0))));
+spl1 = r4.peak_tick(r3.peak_tick(r2.peak_tick(r1.peak_tick(spl1))));

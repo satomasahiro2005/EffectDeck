@@ -24,8 +24,9 @@ Release の書庫では実行ファイルのシンボルが strip されるの�
   entitle    署名の entitlements。media-device-extension は本体では鍵が在って中身が空（ITMS-91183）、
              中身を持つのは Media Device Extension の .appex だけ。App Group・associated domains・iCloud KVS。
              署名済みならリポジトリの .entitlements の鍵が全部入っていること、ipa なら get-task-allow が無いことも
-  samples    Debug/JSFXFactory の見本。店の版（青）には無い。TestFlight（紫・ET_BETA）には追跡している
-             ものだけが中身ごと同じで在る。Local/DebugJSFXFactory（第三者の実物）はどちらにも無い
+  samples    Debug/JSFXFactory の見本と Debug/JSFXBench（速さを測る台の入力）。店の版（青）には無い。
+             TestFlight（紫・ET_BETA）には追跡しているものだけが中身ごと同じで在る。
+             Local/DebugJSFXFactory（第三者の実物）はどちらにも無い
   debugonly  #if DEBUG の中にだけある字（Sources/EffeTuneLive/DSP/DebugPresets.swift の鎖など）が
              実行ファイルに無い。DebugPresets.swift はファイルごと囲っていない（呼ぶ側が囲う）ので、
              そこで宣言した名前を #if DEBUG の外で使う所があればソースの段で落とし、その場所を出す
@@ -170,6 +171,10 @@ DEBUG_BUILD_NAMES = re.compile(r"(\.debug\.dylib|^__preview\.dylib)$")
 JSFX_SUFFIXES = (".jsfx", ".jsfx-inc")
 SAMPLES_DIR = "DebugJSFXFactory"
 TRACKED_SAMPLES = "Debug/JSFXFactory"
+# 積んでよい自前の JSFX の組（.app の中のフォルダ, 追跡しているフォルダ, 紫に必ず在るか）。
+# 見本と、速さを測る台の入力（Scripts/embed_debug_jsfx.sh・docs/jsfx-bench.md）。規則は同じで、
+# 台の入力はリポジトリに無ければ見ない（無いものを紫に求めない）。
+SAMPLE_SETS = ((SAMPLES_DIR, TRACKED_SAMPLES, True), ("DebugJSFXBench", "Debug/JSFXBench", False))
 IGNORED_NAMES = {".DS_Store"}
 
 ALL_CHECKS = ("strip", "debugbuild", "lookup", "abiname", "plist", "entitle", "samples", "debugonly",
@@ -1644,35 +1649,44 @@ def _hash_tree(root):
 
 
 def check_samples(rep, repo, app_dir, flavor):
-    tracked_dir = repo / TRACKED_SAMPLES
-    tracked = _hash_tree(tracked_dir)
-    shipped_dir = app_dir / SAMPLES_DIR
-    shipped = _hash_tree(shipped_dir)
+    shipped_dirs = [app_dir / shipped_name for shipped_name, _, _ in SAMPLE_SETS]
     stray = sorted(p.relative_to(app_dir).as_posix() for p in app_dir.rglob("*")
-                   if p.is_file() and p.suffix.lower() in JSFX_SUFFIXES and shipped_dir not in p.parents)
+                   if p.is_file() and p.suffix.lower() in JSFX_SUFFIXES
+                   and not any(d in p.parents for d in shipped_dirs))
     for s in stray:
-        rep.fail("samples", "JSFX が %s/ の外に入っている: %s" % (SAMPLES_DIR, s))
+        rep.fail("samples", "JSFX が %s の外に入っている: %s"
+                 % ("・".join(n + "/" for n, _, _ in SAMPLE_SETS), s))
+    for shipped_name, tracked_name, required in SAMPLE_SETS:
+        _check_sample_set(rep, repo, app_dir, flavor, shipped_name, tracked_name, required)
+
+
+def _check_sample_set(rep, repo, app_dir, flavor, shipped_name, tracked_name, required):
+    tracked_dir = repo / tracked_name
+    tracked = _hash_tree(tracked_dir)
+    shipped_dir = app_dir / shipped_name
+    shipped = _hash_tree(shipped_dir)
     foreign = sorted(rel for rel, h in shipped.items() if tracked.get(rel) != h)
     for rel in foreign:
-        why = "中身が %s と違う" % TRACKED_SAMPLES if rel in tracked else "%s に無い" % TRACKED_SAMPLES
+        why = "中身が %s と違う" % tracked_name if rel in tracked else "%s に無い" % tracked_name
         rep.fail("samples", "%s/%s: %s。Local/DebugJSFXFactory の第三者の実物は再配布しない"
-                 % (SAMPLES_DIR, rel, why))
+                 % (shipped_name, rel, why))
     if flavor == "store":
         if shipped_dir.exists():
             rep.fail("samples", "店の版に %s/ が在る（%d 本）。Tools/review_notes.txt の「ships no scripts」が嘘になる"
-                     % (SAMPLES_DIR, len(shipped)))
+                     % (shipped_name, len(shipped)))
         else:
-            rep.ok("samples", "店の版に %s/ は無い" % SAMPLES_DIR)
+            rep.ok("samples", "店の版に %s/ は無い" % shipped_name)
     else:
         if not tracked:
-            rep.fail("samples", "%s が空か無い。紫の版に積む見本が無い" % TRACKED_SAMPLES)
+            if required:
+                rep.fail("samples", "%s が空か無い。紫の版に積む見本が無い" % tracked_name)
             return
         missing = sorted(set(tracked) - set(shipped))
         if missing:
             rep.fail("samples", "紫（ET_BETA）なのに見本が欠けている: %s（アイコンと中身は同じ構成で決める。"
                      "project.yml の Beta）" % ", ".join(missing))
         elif not foreign:
-            rep.ok("samples", "紫の版の %s/ は %s の %d 本と中身まで同じ" % (SAMPLES_DIR, TRACKED_SAMPLES, len(tracked)))
+            rep.ok("samples", "紫の版の %s/ は %s の %d 本と中身まで同じ" % (shipped_name, tracked_name, len(tracked)))
 
 
 def check_debug_only(rep, repo, bundles, files):

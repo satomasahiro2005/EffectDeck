@@ -4,4 +4,5 @@
 #import "ETResample.h"
 #import "ETPreviewTone.h"
 #import "ETJSFXHost.h"
+#import "ETJSFXBench.h"
 #import "effetune/abi.h"

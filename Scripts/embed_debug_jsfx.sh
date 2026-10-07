@@ -12,12 +12,17 @@
 # Local/DebugJSFXFactoryは第三者の実物で、**再配布しない**。
 # gitignoreしてあるうえ、ここでDebugのときしか写さない。
 # **この条件を緩めないこと。**書庫にもReleaseにも入れてはいけない。
+#
+# Debug/JSFXBenchも自前のもの（速さを測る台の入力。docs/jsfx-bench.md）。見本と同じく
+# **DebugとET_BETAだけ**、別のフォルダDebugJSFXBenchへ積む（一覧には出さない。
+# 読むのは-ETBenchJSFX 1で起動したときのJSFXBench.swiftだけ）。
 set -eu
 
 DEST_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/DebugJSFXFactory"
+BENCH_DEST_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/DebugJSFXBench"
 # 毎回消してから写す。dittoは足すだけなので、紫の後に青を建てたときや
 # Localから消したときに、前のビルドの写しが.appに残る。
-rm -rf "$DEST_DIR"
+rm -rf "$DEST_DIR" "$BENCH_DEST_DIR"
 
 IS_DEBUG=0
 [ "${CONFIGURATION:-}" != "Debug" ] || IS_DEBUG=1
@@ -31,6 +36,13 @@ TRACKED_DIR="$SRCROOT/Debug/JSFXFactory"
 if [ "$EMBED_SAMPLES" = 1 ] && [ -d "$TRACKED_DIR" ]; then
   mkdir -p "$DEST_DIR"
   ditto "$TRACKED_DIR" "$DEST_DIR"
+fi
+
+# 速さを測るスクリプト。見本と同じくDebugとET_BETAだけ。
+BENCH_DIR="$SRCROOT/Debug/JSFXBench"
+if [ "$EMBED_SAMPLES" = 1 ] && [ -d "$BENCH_DIR" ]; then
+  mkdir -p "$BENCH_DEST_DIR"
+  ditto "$BENCH_DIR" "$BENCH_DEST_DIR"
 fi
 
 # 第三者の実物。**Debugだけ。**

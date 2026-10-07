@@ -1,0 +1,56 @@
+desc:EffectDeck Bench FIR
+author:nemut.ai
+tags:filter test
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+slider1:cutoff=3000<100,20000,1>Cutoff (Hz)
+
+@init
+taps = 64;
+coef = 0;
+hist_l = 64;
+hist_r = 128;
+pos = 0;
+memset(hist_l, 0, taps * 2);
+
+@slider
+// Hamming-windowed sinc low-pass. The centre is 31.5, so t is never 0.
+fc = cutoff / srate;
+sum = 0;
+k = 0;
+loop(taps,
+  t = k - (taps - 1) / 2;
+  w = 0.54 - 0.46 * cos(2 * $pi * k / (taps - 1));
+  coef[k] = sin(2 * $pi * fc * t) / ($pi * t) * w;
+  sum += coef[k];
+  k += 1;
+);
+k = 0;
+loop(taps,
+  coef[k] /= sum;
+  k += 1;
+);
+
+@sample
+hist_l[pos] = spl0;
+hist_r[pos] = spl1;
+acc_l = 0;
+acc_r = 0;
+k = 0;
+j = pos;
+loop(taps,
+  c = coef[k];
+  acc_l += c * hist_l[j];
+  acc_r += c * hist_r[j];
+  k += 1;
+  j -= 1;
+  j < 0 ? j += taps;
+);
+pos += 1;
+pos >= taps ? pos = 0;
+spl0 = acc_l;
+spl1 = acc_r;
