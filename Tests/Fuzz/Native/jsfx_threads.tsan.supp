@@ -1,0 +1,8 @@
+# jsfx_threads.tsan.supp（Tests/Fuzz/tsan.sh が TSAN_OPTIONS の suppressions に渡す）
+# 直していない・直さない競合の表。**足すときは理由と、どちらのスレッドかを書く。**
+#
+# EEL の変数（slider1..256 を含む）は @gfx のスレッドと音のスレッドで共有する（REAPER の JSFX と同じ約束。
+# @gfx のコードもつまみの変数を読み書きする）。ETJSFX_RunGFX の終わりの cacheSliders が
+# ysfx_slider_get_value で読むのと、音のスレッドの applySliders（ysfx_slider_set_value）・@slider・@sample が
+# 書くのが重なる。どの実行系でも同じで、vm-reg のプログラムとは関係ない（docs/jsfx-regvm-design.md §18）。
+race:ysfx_slider_get_value
