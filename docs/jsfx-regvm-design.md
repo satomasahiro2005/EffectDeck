@@ -857,7 +857,7 @@ the bench interleaves variants every 16 blocks, so ratios are unaffected.
 | math | 104.2 | 66.3 | 50.4 | 2.07× | 1.31× | 3.2 | 15.6 | 36.7 | 0.73× |
 | sum of 7 | 1579.6 | 937.7 | 516.8 | 3.06× | 1.81× | | 96.3 | | |
 
-**M1 CLI -O3**: vm-reg within ±3 % of -Os on every script (gain 1.8, fd 14.6, sd 10.1, slow 176.8, bq 31.6,
+**M1 CLI -O3**: vm-reg within −7…+2 % of -Os per script (−7 % is gain, 1.9 → 1.8 µs; stereo_delay −4 %; the rest ±2 %; gain 1.8, fd 14.6, sd 10.1, slow 176.8, bq 31.6,
 fir 231.5, math 49.7; sum 516.0); portable gains more from -O3 (sum 1466.7), so vs portable drops to 1.66–3.93×.
 YSFX stays at -Os.
 
@@ -895,6 +895,39 @@ math (memory round trips per IR value, one dispatch per op), as the staging tabl
   programs in `ysfx_set_eel_exec_mode` against a running audio thread — required before vm-reg can be a user-visible
   option; the §12.9 gate (24 CPU-hours of `jsfxvmdiff` after the last semantic change, no script > 5 % slower than
   the stage-1 default) is not met (`slow` on iPhone).
+
+### 16.6 Review of S1+S2 (2026-10-07, after 764d161)
+Read the lifter, selector and handlers against `GLUE_CALL_CODE` (operand order of every op, `p1 = p2` before the
+read in `*_OP`, MIN/MAX by reference, varparm array order, loop/while counter and wtp save/restore, top-level vs FCALL
+`RET`, user-stack arithmetic, MEGABUF/GMEGABUF immediates and slow path, denormal filter placement incl. the `_FAST`
+forms). Selector invariants checked by hand: a folded `LoadCell` is read where its user executes (a fused head reads at
+its tail; only non-executing instructions lie between); a direct destination is rejected when the cell is read (also by
+a folded user) or written between the producer and the store; fusion never crosses an executing instruction; a phi is
+coalesced only with a latch value defined after the phi's last use in that block (EEL CFGs are structured, so no
+inner-loop path re-reads the phi); local slots are freed at the last use and every handler reads all operands before
+writing. No defect found.
+
+Added `Tools/jsfx-bench/diff/vm_edge.jsfx`: in-expression read-then-write of the same variable (assign, `op=`,
+`?:`/`min`/`max` lvalues, by-reference user functions, FCALL'd big functions, user stack and API writes such as
+`mem_get_values`/`stack_pop`/`stack_exch`), loop/while counts (negative, fractional, NaN, capped), out-of-range
+megabuf, denormal/NaN/Inf into filtered stores, out-of-range shifts / `%` / bit ops, and four opcodes the corpus never
+reached (`DIV_OP_FAST`, `BNOT`, `PUSH_P1PTR_AS_VALUE`, `GENERIC2PARM`). `--diff`: bit-exact for every mode on Linux
+x86-64 (-Os, -O3, profile) and M1 (-O3, profile, and an **app-like -Os build** where ysfx/WDL is compiled without
+`-fno-strict-float-cast-overflow` and only Sources/JSFXVM has it, as in project.yml; its §12.1 grid is also 0 mismatched,
+24 NaN+NaN). `jsfxvmdiff` with the new seed, 915 s × 6 jobs: 104,138 runs, no mismatch. Fresh `ysfx` clone at the
+pinned revision: the patch applies with `git apply` and with `patch`, and the `.old.diff` → new path of `setup.sh`
+works both ways. Release: `Sources/JSFXVM` is reached only from `ETJSFXBench.cpp` (empty unless `ET_JSFX_BENCH`), the
+extension does not list it; `test_check_release_binary`/`test_release_config` pass (71). The S2 tables match the
+committed JSON (the executor did not change after d6b26a0); the -O3 sentence above was corrected (it said ±3 %).
+
+Residual: (1) NaN+NaN payload choice for `+`/`*` differs from portable (§15.2; filtered stores turn NaN into 0, so it
+survives only through `_FAST` stores, outputs and API arguments). (2) A program's frame is per handle: executing the
+same handle from two threads at once, or rebuilding programs (`ysfx_set_eel_exec_mode(REG)` twice, `ysfx_compile`)
+while the audio thread runs it, is unsafe — still the open audit of §16.5. (3) `jsfxvmdiff` skips whole inputs that
+have a handle portable may run into undefined bytes (deviation 4), so those inputs' other handles are not compared.
+(4) Still not executed by any corpus: `POP_P1`, `MOVE_STACKPTR_TO_P2/P3`, `SET_P2/P3_FROM_WTP`,
+`PUSH_VAL_AT_P2/P3_TO_FPSTACK` (WDL only emits index 0 for the last one) and `GENERIC2XPARM_RETD` (only
+`NSEEL_addfunc_varparm_ctxptr2`, which ysfx does not use).
 
 ---
 

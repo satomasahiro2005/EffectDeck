@@ -65,7 +65,9 @@ bash Tools/jsfx-bench/run.sh --vm-dump --vm-ir --opt Os --no-jit Debug/JSFXBench
 ```
 
 `--diff` は `Tests/Fixtures/JSFX`・`Tests/Fuzz/Corpus/jsfxexec`・`Debug/JSFXBench`・`Tools/jsfx-bench/diff`
-（`opcodes.jsfx`: 命令をなるべく通す。`vm_lift.jsfx`: その @sample を vm-reg でも通す写し）を、ysfx をじかに使って
+（`opcodes.jsfx`: 命令をなるべく通す。`vm_lift.jsfx`: その @sample を vm-reg でも通す写し。`vm_edge.jsfx`: vm-reg の
+畳み込み・行き先じか書き・まとめ・升の使い回しが portable の読み書きの順を崩さないかを突く形と、段 1 のコーパスで
+通らなかった命令）を、ysfx をじかに使って
 実行系ごとに回す（48 ブロック、フレーム数を変え、つまみ・trigger・再生位置・NaN／Inf／非正規化数・3 ブロックに 1 回の
 MIDI を混ぜ、`ysfx_process_double`）。比べるのは毎ブロックの出力・出てきた MIDI・つまみの変化／自動化／見える印・
 最後の変数の全部・EEL のメモリ全部・@serialize・ysfx の口から見えない升（定数・関数の局所・#字）とユーザーの
@@ -274,7 +276,7 @@ portable 自身のもの（API の呼び方の型、ユーザーの積み場の�
 | math | 104.2 | 66.3 | 50.4 | 2.07x | 1.31x | 3.2 | 15.6 | 36.7 | 0.73x |
 | 7 本の合計 | 1579.6 | 937.7 | 516.8 | 3.06x | 1.81x | | 96.3 | | |
 
-M1 の -O3 は vm-reg が -Os と ±3% 以内（合計 516.0）。portable は -O3 で速くなる（合計 1466.7）ので vs portable は
+M1 の -O3 は vm-reg が -Os とほぼ同じ（合計 516.0。1 本ごとには −7〜+2%、−7% は 1.9 → 1.8 µs の gain、次が stereo_delay の −4%）。portable は -O3 で速くなる（合計 1466.7）ので vs portable は
 1.66〜3.93x。
 
 **iPhone 16 Beta（-Os）、2 回目**（vm-reg の括弧は 1 回目。2 回目は fir・math で全部の実行系が 2 割近く遅いが、比は
