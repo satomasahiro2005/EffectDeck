@@ -1,6 +1,9 @@
 # EffectDeck JSFX register VM (stage 2/3) — design
 
-Status: design only, nothing implemented. Written against worktree `EffectDeck.jsfx-vm`, branch `perf/jsfx-vm`
+Status: **S0 (hook surface only) and S1 implemented** (2026-10-07, see §15 for what exists, the deviations from
+this design and their reasons, and the oracle/coverage results). S2+ not started. The design text below is the
+original one; where S0/S1 deviate, §15.2 says so.
+Written against worktree `EffectDeck.jsfx-vm`, branch `perf/jsfx-vm`
 (HEAD 0915106 + the uncommitted stage-1 work: `NSEEL_code_execute_frames`, `NSEEL_EXEC_*`, `glue_port_vm.h`,
 `ysfx_set_eel_exec_mode`, `ETJSFX_SetEELExecutor`, `Tools/jsfx-bench/diff.cpp`).
 Line numbers refer to `Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/*` with `Patches/ysfx-effectdeck-ios.diff` applied.
@@ -633,7 +636,113 @@ Beta committed under `docs/bench/`; never report -O0 numbers.
 
 ---
 
+## 15. Implemented: S0 (hook surface) and S1 (lifter, IR, oracles) — 2026-10-07
+
+Commits on `perf/jsfx-vm`: a700e2a (S0 patch revision), 0558811 (Sources/JSFXVM), f3dc530 (oracles and tools),
+0d4f643 (`vm_lift.jsfx`), 75adc74 (link timing). The backend is **default-off**: nothing in the app calls
+`ETVM_Install`; only the bench (`vm-reg` variant, opt-in), the CLI tools and the fuzz harness do.
+
+### 15.1 What exists
+- **Patch (S0 subset of §5.2)**, marker `NSEEL_exec_backend`, previous revision in `.old.diff`:
+  `NSEEL_EXEC_REG` (= 5, name `vm-reg`), `NSEEL_exec_backend {run, free_prog}`, `NSEEL_set_exec_backend`,
+  `NSEEL_code_attach_program` / `NSEEL_code_get_program`, `codeHandleType::backend_prog` (freed in `NSEEL_code_free`
+  before the handle's data blocks). A handle without a program runs on `NSEEL_EXEC_GOTO_FPREG`.
+  `NSEEL_code_exec_mode_available(REG)` is true only when a backend is registered. ysfx:
+  `ysfx_set_eel_program_builder` (called by `ysfx_set_eel_exec_mode(fx, REG)` and at the end of `ysfx_compile` when the
+  mode is REG), `ysfx_get_eel_handles` (vm + all handles + their sections), and @init runs through
+  `NSEEL_code_execute_frames(h, REG, 1, …)` when the mode is REG.
+- **`Sources/JSFXVM/`** (YSFX target in project.yml, per-file `-fno-strict-float-cast-overflow`; not in the extension):
+  `ETVMBytecode.h` (opcode mirror + immediate widths; `ETVMGlueCheck.c` `_Static_assert`s every value against
+  `glue_port.h`), `ETVMOps.h` (op semantics = copies of the `glue_port.h` expressions), `ETVMIR.h/.cpp` (IR, verifier,
+  printer), `ETVMLift.h/.cpp` (lifter, fallback reasons), `ETVMInterp.cpp` (reference IR interpreter),
+  `ETVMLink.h/.cpp` (link step / cell classes, state hash, the S1 backend = "run the reference interpreter per frame",
+  coverage counters), `ETVM.h` (C API: `ETVM_Install`, `ETVM_SetSectionMask`).
+- **Tools**: `Tools/jsfx-bench/run.sh --vm-opgrid` (§12.1), `--vm-dump [--vm-ir] [paths]` (coverage, per-handle
+  fallback reason and pc, cell classes, link time, JSON), `--diff` now includes `vm-reg` (§12.2) and on a vm-reg
+  mismatch re-runs with one section at a time. The diff also compares MIDI out (MIDI is now fed in every 3rd block),
+  slider change/automation/visibility masks per block and `etvm::stateHash` (Static/Const cells referenced by any
+  handle, in first-reference order, plus each handle's user-stack position). The jsfxexec fuzz target's differential
+  has a third pass on `vm-reg`. `jsfx-bench --variants portable,vm-reg` (and `-ETBenchVariants` in the app) runs it in
+  the bench with `Check::exact`.
+
+### 15.2 Deviations from this design (and why)
+1. `NSEEL_EXEC_REG` is 5, not 4: stage 1 already used 4 for `GOTO_FPREG_MASK`. `run` returns `void`.
+2. Sources live in `Sources/JSFXVM/`, not `Sources/Shared/JSFXVM/`: the app and the extension both pick up
+   `Sources/Shared` wholesale, and the backend reads WDL internals (`ns-eel-int.h`), so it belongs in YSFX only. A
+   separate directory keeps the extension's exclude list and `DEVICE_SHARED_EXCLUDES` unchanged
+   (`Tools/check_release_binary.py` got one `SOURCE_ROLES` line).
+3. `ETVMOps.h` is **not yet** shared with `glue_port.h` (§9.8 / S0 item): doing so changes portable's own `invsqrt`
+   (contraction), which needs a re-baseline. Instead `ETVMOps.h` copies the expressions; `invsqrt` keeps the portable
+   TU's default contraction (`#pragma clang fp contract(on)` locally) and the §12.1 grid proves identity on x86-64 and
+   arm64 at -Os and -O3. Move to a shared header in S2 when handlers are added.
+4. IR spelling: filtered stores are `Filter` + `StoreCell`/`Store` (no `StoreCellF`/`StoreF`); loops are `LoopCount`,
+   `ILt1`, `IDec`, `IGt0` (no `LoopInit/LoopNext/WhileInit/WhileNext`); `CallGXD` for non-varparm
+   `GENERIC2XPARM_RETD`; constants (`PtrConst`, `BoolConst`, `I32Const`) live in `Function::consts` (they dominate
+   everything, so merges of the same address need no phi).
+5. Entry state is not "undefined": `GLUE_CALL_CODE` starts with p1 = p2 = p3 = NULL and wtp = the worktable, and the
+   lifter models exactly that (a later dereference of NULL is the `null-deref` fallback).
+6. **wtp is part of the path context**, not a merge-time check: the discovery key is (pc, FCALL return stack, wtp,
+   saved-wtp stack). `c ? (expr using a temp) : x` advances wtp on one arm only; the code after the merge is then
+   lifted once per wtp, so every temp keeps portable's address (design said "wtp not statically known ⇒ fallback";
+   `opcodes.jsfx` @block needs this).
+7. p-registers whose kind differs at a merge (value on one path, interpreter-stack address after a varparm call on the
+   other) become "undefined" and only fail (`undefined`) if read later — WDL never reads them.
+8. Varparm callees are called with their declared type `EEL_F (*)(void *, INT_PTR, EEL_F **)` (portable passes the
+   same register values through a two-pointer type; UBSan `-fsanitize=function` flagged the cast).
+9. **NaN + NaN payloads are not bit-exact by construction**: for `+` and `*` (and `+=`/`*=` FAST) the C compiler
+   chooses the operand order in the portable TU (it commutes), so when *both* operands are NaNs with different
+   payloads, which payload survives is a property of the compiled `glue_port.h`, not of the source. The stage-1 vm-*
+   interpreters have the same exposure. The IR keeps source order; the grid counts these cases separately
+   (x86-64: 40, arm64: 24 of 75,825) and does not call them mismatches. A single NaN operand, NaN vs number, and all
+   other ops are bit-exact.
+10. The state hash leaves out worktable and user-stack *contents*: both are `malloc`ed and never initialised, so
+    portable-vs-portable already differs there. Static cells (constants, function locals, `#strings`) are
+    initialised at compile time and are hashed.
+11. §12.1 lives in the bench CLI (`--vm-opgrid`), not `Tests/Native`; the reference is a hand-assembled bytecode run
+    through the real `NSEEL_code_execute` (fake `codeHandleType` with code/workTable/ramPtr), i.e. the compiled
+    `GLUE_CALL_CODE` of the YSFX TU.
+12. The x86-64 bench/CLI builds now use `-fno-strict-float-cast-overflow` for ysfx too (as the fuzz build and arm64
+    hardware already behave), so out-of-range/NaN double→int conversions saturate identically in both TUs.
+
+### 15.3 Oracle results (all with the S1 backend = reference IR interpreter)
+| Layer | Linux x86-64, clang 21.0.0 (swiftlang), -Os / -O3 | Mac M1 arm64, Apple clang 21.0.0 (2100.3.34.2), -Os / -O3 | iPhone 16 Beta (-Os) |
+|---|---|---|---|
+| §12.1 op grid (`--vm-opgrid`, 45 values, 57 op shapes incl. op-assign, assign±filter, min/max refs, libm, loop/while caps, branch merges, megabuf incl. onfail) | 75,825 cases, 0 mismatched, 0 not lifted (40 NaN+NaN choices) | 75,825 cases, 0 mismatched, 0 not lifted (24 NaN+NaN choices) | — |
+| §12.2 `--diff` (Tests/Fixtures/JSFX, Tests/Fuzz/Corpus/jsfxexec, Debug/JSFXBench, Tools/jsfx-bench/diff; 66 files, 62 compile): out, vars, RAM, @serialize, MIDI, slider masks, VM cells | 62/62 bit-exact for vm-reg and all stage-1 modes, both opt levels and the profile build | same, 62/62 | bench 7 scripts `portable,vm-goto-fpreg,vm-reg`: all `bit-exact ok` (`docs/bench/2026-10-07-s1-iphone16-beta-vmreg.json`) |
+| fuzz `jsfxexec` (vm-reg as 3rd differential pass, ASan/UBSan) | 300 s, 67,533 runs, no finding | — | — |
+
+### 15.4 Coverage (`--vm-dump`, same corpus; `docs/bench/2026-10-07-s1-vm-coverage-mac-m1-Os.json`)
+| section | handles | lifted | blocks | IR insns |
+|---|---:|---:|---:|---:|
+| @init | 42 | 42 (100%) | 52 | 617 |
+| @slider | 29 | 29 (100%) | 33 | 947 |
+| @block | 20 | 20 (100%) | 60 | 536 |
+| @sample | 31 | 30 (96.8%) | 166 | 5,522 |
+| @gfx (analysis only) | 9 | 9 (100%) | 46 | 1,210 |
+| @serialize (analysis only) | 14 | 14 (100%) | 24 | 154 |
+| all | 145 | 144 (99.3%) | | |
+
+Fallback histogram: `dbg-getstackptr` 1 (`opcodes.jsfx` @sample, deliberate). Cells referenced: var 543, const 618,
+static (mutable) 648, temp 66, volatile 3. Link (lift every handle + classify) for a whole effect: max 1.1 ms on M1
+(`vm_lift.jsfx`, 4,103 IR insns in @sample), 1.3 ms on WSL; well inside the §10.2 budget.
+x86-64 and arm64 produce identical coverage.
+
+### 15.5 Known gaps (carry into S2)
+- No external corpus yet (Cockos/ReaTeam): the real-world fallback rate is still unknown (§14).
+- Opcodes that WDL never emitted for the corpus, so the lifter's handling of them is untested end-to-end:
+  `PUSH_P1PTR_AS_VALUE`, `POP_P1`, `MOVE_STACKPTR_TO_P2/P3`, `SET_P2/P3_FROM_WTP`, `PUSH_VAL_AT_P2/P3_TO_FPSTACK`,
+  `GENERIC2PARM`, `GENERIC2XPARM_RETD` (the stage-1 profile build reports the same list). The grid does not cover
+  `GMEGABUF`, the user-stack ops, API calls or `FCALL`; those are covered by the corpus and the fuzz differential only.
+- §12.7 `jsfxvmdiff` (lockstep libFuzzer target with global-state snapshot, structure-aware mutator) is not built;
+  the jsfxexec differential compares the float outputs only.
+- Building programs in `ysfx_set_eel_exec_mode` is not audited against a running audio thread (§14); fine for the
+  bench/CLI, required before S2 ships anything.
+- The reference interpreter is 0.2–0.8× portable (iPhone 16 Beta, 1 s runs); it is an oracle, not an executor.
+
+---
+
 ## Appendix A — portable opcode → IR mapping
+
 
 | Opcode | IR |
 |---|---|

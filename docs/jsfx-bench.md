@@ -15,6 +15,7 @@ JSFX の実行系（いまは WDL の portable の解釈）を、同じ入力・
 | `vm-goto` | vm-block の switch を computed goto に（ラベルの番地の表、各命令の終わりで次へ飛ぶ。実行時に機械語は作らない） | Mac・iPhone |
 | `vm-goto-fpreg` | vm-goto + 浮動小数の積み場の先頭をローカル（レジスタ）に置く。**アプリの既定** | Mac・iPhone |
 | `vm-goto-fpreg-mask` | vm-goto-fpreg + 表を 128 に取って番号の下 7 bit で引く（範囲の比較を省く） | Mac・iPhone |
+| `vm-reg` | レジスタ型 VM（`Sources/JSFXVM`、`docs/jsfx-regvm-design.md`）。段 S1 の中身は、バイトコードを持ち上げた中間表現を参照の解釈で回すだけ（照合のため。portable より遅い）。**名指ししたときだけ回す**（`--variants portable,vm-reg`・`-ETBenchVariants`） | Mac・iPhone |
 
 実行系は `kVariants` に 1 行足す。最初の行（portable か wdl-jit）が照合の基準で、
 vm-* は `Check::exact`（1 ビットも違ってはいけない）。cpp は差 `1e-6` まで許す（いまはどれも一致）。
@@ -57,15 +58,21 @@ bash Tools/jsfx-bench/run.sh --opt Os --no-jit --scripts fir,math --seconds 2
 ```sh
 bash Tools/jsfx-bench/run.sh --diff            # 速さは測らず、実行系ごとの結果を portable と 1 ビットまで比べる
 bash Tools/jsfx-bench/run.sh --profile         # 命令と続いた 2 つの組を数える（-DNSEEL_VM_PROFILE の版）
+bash Tools/jsfx-bench/run.sh --vm-opgrid --no-jit   # レジスタ型 VM: 命令ごとに値の格子で portable と 1 ビットまで比べる
+bash Tools/jsfx-bench/run.sh --vm-dump --no-jit     # レジスタ型 VM: handle ごとに持ち上がったか・理由・節ごとの割合
+bash Tools/jsfx-bench/run.sh --vm-dump --vm-ir --opt Os --no-jit Debug/JSFXBench/biquad.jsfx   # 中間表現も出す
 ```
 
 `--diff` は `Tests/Fixtures/JSFX`・`Tests/Fuzz/Corpus/jsfxexec`・`Debug/JSFXBench`・`Tools/jsfx-bench/diff`
-（`opcodes.jsfx`: 命令をなるべく通す）を、ysfx をじかに使って実行系ごとに回す（48 ブロック、フレーム数を変え、
-つまみ・trigger・再生位置・NaN／Inf／非正規化数を混ぜ、`ysfx_process_double`）。比べるのは毎ブロックの出力・
-最後の変数の全部・EEL のメモリ全部・@serialize。回ごとに `NSEEL_rand_reset` で rand の列を最初からにする。
+（`opcodes.jsfx`: 命令をなるべく通す。`vm_lift.jsfx`: その @sample を vm-reg でも通す写し）を、ysfx をじかに使って
+実行系ごとに回す（48 ブロック、フレーム数を変え、つまみ・trigger・再生位置・NaN／Inf／非正規化数・3 ブロックに 1 回の
+MIDI を混ぜ、`ysfx_process_double`）。比べるのは毎ブロックの出力・出てきた MIDI・つまみの変化／自動化／見える印・
+最後の変数の全部・EEL のメモリ全部・@serialize・ysfx の口から見えない升（定数・関数の局所・#字）とユーザーの
+積み場の位置（`etvm::stateHash`）。vm-reg が違ったら節を 1 つずつ vm-reg にして回し直し、どの節かを出す。
+回ごとに `NSEEL_rand_reset` で rand の列を最初からにする。
 gmem はプロセスの中で共有されるので、書く前に読むスクリプトは portable どうしでも違う
 （`ET_DIFF_MODES=0` で portable どうしを比べられる）。数える版は、vm-* が一度も通らなかった命令も出す。
-`Tests/Fuzz/run.sh --target jsfxexec` も 1/4 の入力で既定の実行系と portable に同じものを渡して比べる
+`Tests/Fuzz/run.sh --target jsfxexec` も 1/4 の入力で既定の実行系・vm-reg と portable に同じものを渡して比べる
 （gmem・`time` の字があるソースは外し、範囲の外の番地が指す 1 語 `nseel_ramalloc_onfail` は回ごとに 0 に戻す。
 どちらもプロセスで共有され、前の回の残りで portable どうしでも違う）。
 
@@ -215,3 +222,18 @@ gain（8 命令 / フレーム）でしか見えず（M1 で 9 ns / フレーム
 | 18 | `SUB` | `MOV_FPTOP_DV` | 1.67% | 0.47% | 3.3 | 5.5 | 0.0 | 0.0 | 0.8 | 0.0 | 2.1 |
 | 19 | `ADD` | `MOV_P2_DV` | 1.63% | 0.57% | 6.7 | 1.8 | 0.0 | 0.0 | 0.8 | 0.0 | 2.1 |
 | 20 | `MOV_FPTOP_DV` | `SUB` | 1.48% | 0.31% | 0.0 | 6.4 | 0.0 | 0.0 | 0.8 | 0.0 | 3.1 |
+
+## 段 2 の S1: 持ち上げと照合（2026-10-07）
+
+レジスタ型 VM（`docs/jsfx-regvm-design.md` §15）の土台。バイトコードを SSA の中間表現に持ち上げ、参照の解釈で回す
+（vm-reg）。速さはまだ見ない（portable の 0.2〜0.8 倍）。照合だけ:
+
+| 層 | Linux x86-64 -Os・-O3 | M1 -Os・-O3 | iPhone 16 Beta |
+|---|---|---|---|
+| `--vm-opgrid`（命令ごとの値の格子） | 75,825 組 0 違い | 75,825 組 0 違い | — |
+| `--diff`（62 本、vm-reg を含む全部の実行系） | 62/62 一致 | 62/62 一致 | 台の 7 本 vm-reg bit-exact |
+| jsfxexec のファズ（vm-reg を差分の 3 つめに） | 300 秒・67,533 回・落ち無し | — | — |
+
+NaN が 2 つ（ペイロードが違う）の `+` `*` は、どちらが残るかを portable の C コンパイラが決める（オペランドを入れ替える）
+ので数えない（x86-64 で 40 組・arm64 で 24 組）。持ち上げは 145 handle 中 144（落としたのは `__dbg_getstackptr` を
+わざと使う `opcodes.jsfx` の @sample だけ）。JSON は `docs/bench/2026-10-07-s1-*`。
