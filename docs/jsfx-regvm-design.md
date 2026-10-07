@@ -914,7 +914,8 @@ megabuf, denormal/NaN/Inf into filtered stores, out-of-range shifts / `%` / bit 
 reached (`DIV_OP_FAST`, `BNOT`, `PUSH_P1PTR_AS_VALUE`, `GENERIC2PARM`). `--diff`: bit-exact for every mode on Linux
 x86-64 (-Os, -O3, profile) and M1 (-O3, profile, and an **app-like -Os build** where ysfx/WDL is compiled without
 `-fno-strict-float-cast-overflow` and only Sources/JSFXVM has it, as in project.yml; its §12.1 grid is also 0 mismatched,
-24 NaN+NaN). `jsfxvmdiff` with the new seed, 915 s × 6 jobs: 104,138 runs, no mismatch. Fresh `ysfx` clone at the
+24 NaN+NaN). `jsfxvmdiff` with the new seed, 915 s × 6 jobs: 104,138 runs, no mismatch. `jsfxexec` (default / portable / vm-reg, with the
+run.sh crash-file check of deviation 8), 432 s × 6 jobs: 265,087 runs, no crash or mismatch. Fresh `ysfx` clone at the
 pinned revision: the patch applies with `git apply` and with `patch`, and the `.old.diff` → new path of `setup.sh`
 works both ways. Release: `Sources/JSFXVM` is reached only from `ETJSFXBench.cpp` (empty unless `ET_JSFX_BENCH`), the
 extension does not list it; `test_check_release_binary`/`test_release_config` pass (71). The S2 tables match the
