@@ -147,6 +147,24 @@ int ETJSFXBenchVMDumpMain(const std::vector<std::string> &paths, bool printIR, c
                 }
                 if (tp) etvm::freeThreaded(tp);
             } else {
+                // ETVM_DUMP_BC=1: 断った handle のバイトコードを頭から並べて出す（跳び先は数えない。調べるとき）
+                static const bool dumpBC = std::getenv("ETVM_DUMP_BC") != nullptr;
+                etvm::LiftInput li;
+                if (dumpBC && etvm::liftInputFromHandle(hs[&hr - rep.handles.data()], li) && !li.codeRanges.empty()) {
+                    const uint64_t base = (uint64_t)(uintptr_t)li.code;
+                    uint64_t end = base;
+                    for (const auto &r : li.codeRanges) if (base >= r.first && base < r.second) end = r.second;
+                    for (uint64_t at = base; at + 4 <= end;) {
+                        const int op = etbc_read_i32((const unsigned char *)(uintptr_t)at);
+                        const int ib = etbc_imm_bytes(op);
+                        std::printf("      bc %5" PRIu64 " %-28s", at - base, etbc_name(op));
+                        if (ib == 8) std::printf(" 0x%" PRIx64, etbc_read_u64((const unsigned char *)(uintptr_t)(at + 4)));
+                        if (ib == 4) std::printf(" %+d", etbc_read_i32((const unsigned char *)(uintptr_t)(at + 4)));
+                        std::printf("\n");
+                        if (ib < 0) break;
+                        at += 4 + (uint64_t)ib;
+                    }
+                }
                 ++reasons[sec][etvm::fallbackName(hr.lift.reason)];
                 std::printf("  %-12s FALLBACK %s at pc %" PRIu64 ": %s\n", label, etvm::fallbackName(hr.lift.reason),
                             hr.lift.pc, hr.lift.detail.c_str());

@@ -30,6 +30,7 @@
 #include "WDL/eel2/ns-eel-int.h"
 #include "ETVM.h"
 #include "ETVMLink.h"
+#include "ETVMBytecode.h"
 
 #include <algorithm>
 #include <cctype>
@@ -204,16 +205,39 @@ bool create(Inst &in, int mode)
         const etvm::CellInfo &c = rep.cells.at(a);
         if (c.cls == etvm::CellClass::Static || c.cls == etvm::CellClass::Const) in.staticCells.push_back(a);
     }
-    // 持ち上げは成功するか理由を言う。理由のうち、portable 自身が決まらない読み書きをする形（書いていない
-    // 積み場の段・p レジスタを読む、64 段・64 KiB を越える、番地 0・比べた結果を番地として読む、opcode 0）は
-    // 比べない: portable は解釈の積み場の外を読み（ASan が GLUE_CALL_CODE で止まる）、vm-reg はその handle を
-    // vm-goto-fpreg で回すが、積み場の並びが違うので同じ値を読む保証は無い（設計 §1 の非目標）。
+    // 持ち上げは成功するか理由を言う。理由のうち、portable 自身が決まらない読み書きをしうる形（書いていない
+    // 積み場の段・p レジスタを読む、64 段・64 KiB を越える、番地 0・比べた結果を番地として読む、opcode 0、
+    // 命令でないバイト・コードの外への跳び）は比べない: portable は解釈の積み場の外を読みうる（ASan が
+    // GLUE_CALL_CODE で止まった）。vm-reg はその handle を vm-goto-fpreg で回すが、積み場の並びが違うので
+    // 同じ値を読む保証は無い（設計 §1 の非目標、§16.2 の 4）。WDL は関数を展開した先に初期化していない
+    // バイトを残すことがある（ASan の版で @block の途中が回ごとに違う値になった）。
+    // JSFXVMDIFF_TRACE=1 なら、handle ごとの理由と、断った handle のバイトコードを頭から出す。
+    static const bool trace = std::getenv("JSFXVMDIFF_TRACE") != nullptr;
     for (const etvm::HandleReport &hr : rep.handles) {
+        if (trace)
+            std::fprintf(stderr, "jsfxvmdiff: mode %d section %d present %d lift %s at %llu: %s\n", mode,
+                         hr.section, (int)hr.present, etvm::fallbackName(hr.lift.reason),
+                         (unsigned long long)hr.lift.pc, hr.lift.detail.c_str());
+        etvm::LiftInput li;
+        if (trace && !hr.lift.ok() && hr.present &&
+            etvm::liftInputFromHandle(in.handles[(size_t)(&hr - rep.handles.data())], li)) {
+            const uint64_t base = (uint64_t)(uintptr_t)li.code;
+            uint64_t end = base;
+            for (const auto &r : li.codeRanges) if (base >= r.first && base < r.second) end = r.second;
+            for (uint64_t at = base; at + 4 <= end;) {
+                const int op = etbc_read_i32((const unsigned char *)(uintptr_t)at);
+                const int ib = etbc_imm_bytes(op);
+                std::fprintf(stderr, "  bc %5llu %s\n", (unsigned long long)(at - base), etbc_name(op));
+                if (ib < 0) break;
+                at += 4 + (uint64_t)ib;
+            }
+        }
         if (!hr.present) continue;
         switch (hr.lift.reason) {
         case etvm::Fallback::Undefined: case etvm::Fallback::TypeConfusion: case etvm::Fallback::FpOverflow:
         case etvm::Fallback::FpUnderflow: case etvm::Fallback::StackOverflow: case etvm::Fallback::StackUnderflow:
         case etvm::Fallback::Opcode0: case etvm::Fallback::NullDeref: case etvm::Fallback::BoolDeref:
+        case etvm::Fallback::UnknownOpcode: case etvm::Fallback::JumpOutside:
             in.portableUB = true;
             break;
         default:
