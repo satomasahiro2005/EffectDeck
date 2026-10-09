@@ -112,7 +112,10 @@ document-picker code and the Xcode project are only read, not compiled.
     confidence, hollow dots for unlocated onsets, a tempogram line without the 0.15 alpha floor
     that is extended to the right edge at draw time only, and a lens whose three rows match the
     lane rows. Tempogram and Echo rows are off by default (`vt`, `ve`), also in
-    `DisplayParams.defaults`.
+    `DisplayParams.defaults`. Chains saved before 2.13.0 have neither key and used to show both
+    rows, so a stage with neither key is read as `vt` / `ve` true (`ETDisplayParam.legacyRead`),
+    and a chain now always writes the Rhythm Analyzer's display keys, as upstream's
+    `getParameters` does, so a 2.13.0 stage that was never touched round-trips as false.
 - Analog Meter: label spacing is measured as the chord between neighbouring labels.
 - The generic card's row gate (`ETParamGate`, Foundation-only) is now a rule over the card's
   values and keeps its old "toggle off" entries. Cassette Artifacts: damage rows (Deck Grade,
@@ -154,6 +157,12 @@ input goes silent. `ParameterRow` gained `shown` and `lowerBound` for the overri
   the folder has several `.sfz`, Remove, a red error line, one alert with the load warnings
   after an import, then the parameter rows in upstream's order; Lowest and Highest Note use the
   note-name row of the Note Spectrogram (`ETNoteRangeRow`).
+- `setParameters` rules: on load, Lowest / Highest Note, Max Voices, Octave, Velocity 1 and 127
+  Level are clamped to their `params.json` ranges first, then rounded, then Highest Note is raised
+  to Lowest Note and Velocity 127 Level to Velocity 1 Level + 1 dB (`ETUpstreamNormalize`). The
+  two cross rules also run on every edit from the card (`EffeTuneDSP.setValue`), like upstream's
+  slider path. Reset, or removing the bank, also resets the loader state (`SFZLoader.forget`):
+  a Reset during a load discards the result, and a red error line goes away.
 - SFZ Note Player is in the picker and listed under New.
 
 ### LAN remote control (official EffeTune 2.13.0)
@@ -187,7 +196,7 @@ input goes silent. `ParameterRow` gained `shown` and `lowerBound` for the overri
 
 Run this session unless noted (the Mac was offline; no Xcode build, no simulator, no device).
 
-- Swift Logic bundle on Linux (WSL, Swift 6.4, `Tests/Linux/run.sh`): 1019 tests, 0 failures,
+- Swift Logic bundle on Linux (WSL, Swift 6.4, `Tests/Linux/run.sh`): 1020 tests, 0 failures,
   1 skipped (`RemoteFileDownloadTests`, a Linux URLSession limit). That is after the last code
   change in this branch.
 - Python tools (`Tests/Tools`, Windows): 251 tests OK, 9 skipped (none related to these

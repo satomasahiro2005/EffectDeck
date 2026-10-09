@@ -297,20 +297,35 @@ enum ETUpstreamNormalize {
         return values
     }
 
-    /// plugins/others/sfz_note_player.js:45-60 の setParameters。Lowest / Highest Note・Max Voices・
-    /// Octave は整数に丸め、Highest Note は Lowest Note より下にしない。Velocity 127 Level は
-    /// Velocity 1 Level より 1 dB 以上上にする。ほかの鍵が来なくても毎回かける（上流と同じ）。
+    /// plugins/others/sfz_note_player.js:45-60 の setParameters。各鍵を params.json の範囲へ寄せ
+    /// （parseFiniteNumber の min / max）、Lowest / Highest Note・Max Voices・Octave は整数に丸め、
+    /// そのあとで Highest Note は Lowest Note より下にせず、Velocity 127 Level は Velocity 1 Level より
+    /// 1 dB 以上上にする。寄せる前に比べると、範囲の外の値で上流と違う所に着地する
+    /// （vf: 5, vc: -10 は、上流は vf を 0 に寄せてから vc を 1 にする）。
+    /// ほかの鍵が来なくても毎回かける（上流と同じ）。
     private static func sfzNotePlayer(params: [ETParam], values input: [Float]) -> [Float] {
+        var values = input
+        for key in ["mn", "mx", "pl", "os", "vf", "vc"] {
+            guard let p = params.first(where: { $0.key == key }), values.indices.contains(p.offset),
+                  values[p.offset].isFinite else { continue }
+            var v = values[p.offset]
+            if case .number(let lo, let hi, _, _, _) = p.kind { v = min(max(v, lo), hi) }
+            // **Int(_:) にしない。**ここの値は bounded の前で、1e30 も来る（Int の外で落ちる）。
+            // 丸めは JS の Math.round（.5 は +∞ 側。-1.5 は -1）。
+            if key != "vf", key != "vc" { v = (v + 0.5).rounded(.down) }
+            values[p.offset] = v
+        }
+        return sfzCrossRules(params: params, values: values)
+    }
+
+    /// SFZ Note Player の鍵どうしの規則だけ（sfz_note_player.js:59-60）。画面からの編集にも同じものをかける
+    /// （上流は slider を動かすたびに setParameters を通る）。
+    static func sfzCrossRules(params: [ETParam], values input: [Float]) -> [Float] {
         var values = input
         func index(_ key: String) -> Int? {
             guard let p = params.first(where: { $0.key == key }),
                   values.indices.contains(p.offset) else { return nil }
             return p.offset
-        }
-        // **Int(_:) にしない。**ここの値は bounded の前で、1e30 も来る（Int の外で落ちる）。
-        // 丸めは JS の Math.round（.5 は +∞ 側。-1.5 は -1）。
-        for key in ["mn", "mx", "pl", "os"] {
-            if let k = index(key), values[k].isFinite { values[k] = (values[k] + 0.5).rounded(.down) }
         }
         if let mn = index("mn"), let mx = index("mx"), values[mn] > values[mx] {
             values[mx] = values[mn]

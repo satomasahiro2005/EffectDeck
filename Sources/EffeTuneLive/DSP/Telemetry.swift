@@ -57,7 +57,7 @@ final class Telemetry: ObservableObject {
     /// 落ちた枠の列へは直しが届かない（2.13.0）。
     /// 上流のハブは枠ごとに購読者へ配るので落とさない。tap と種類ごとに持ち、描く側が drainFrames で取り出す。
     private var frameQueue: [UInt64: [ETFrame]] = [:]
-    /// 溜める種類。Note Spectrogram（24）は ETFrameType に無いので数で持つ。
+    /// 溜める種類。Note Spectrogram（24）と Rhythm Analyzer（28）の枠（ETFrameType.noteSpectrogram / .rhythmAnalyzer）。
     static let queuedTypes: Set<UInt16> = [ETFrameType.noteSpectrogram.rawValue,
                                            ETFrameType.rhythmAnalyzer.rawValue]
     /// tap と種類ごとの上限。30Hz なら 8 秒ぶん（Note Spectrogram は 50 fps なので 5 秒）。

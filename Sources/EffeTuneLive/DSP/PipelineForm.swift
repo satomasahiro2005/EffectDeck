@@ -129,7 +129,10 @@ enum PipelineStore {
         // 綴りは上流に合わせて `ir`（ir_reverb.js:866）。
         if !item.irId.isEmpty { o[ETChainText.assetKey(forType: item.spec.type)] = item.irId }
         // 図の見せ方（float に載らない）。綴りは上流のまま。
-        ETDisplayParam.write(item.display, type: item.spec.type, into: &o)
+        let shown = ETDisplayParam.writesDefaultsInChain(item.spec.type)
+            ? ETDisplayParam.defaults(for: item.spec.type).merging(item.display) { _, mine in mine }
+            : item.display
+        ETDisplayParam.write(shown, type: item.spec.type, into: &o)
         // designerの材料（floatに載らない）。綴りは上流のまま。
         ETDesignParam.write(item.design, type: item.spec.type, into: &o)
         return o
@@ -222,7 +225,7 @@ enum PipelineStore {
                 channelSpec: ETChannel.spec(from: ch),
                 sectionName: "",
                 irId: assetID(params, type: spec.type),
-                display: ETDisplayParam.read(params, type: spec.type),
+                display: ETDisplayParam.legacyRead(params, type: spec.type),
                 design: ETDesignParam.read(params, type: spec.type)))
         }
         return out

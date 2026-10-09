@@ -230,7 +230,11 @@ final class SFZLoader: ObservableObject {
                 set(.failed(code), for: nodeID)
             }
         case .success(let prepared):
-            guard let slot = dsp.slot(of: nodeID), let node = dsp.node(at: slot), node.irId == bankID else { return }
+            guard let slot = dsp.slot(of: nodeID), let node = dsp.node(at: slot), node.irId == bankID else {
+                // 段が消えたか、鍵が呼び手に外された。読み込み中のまま残さない。
+                set(.idle, for: nodeID)
+                return
+            }
             do {
                 try send(prepared, to: node, dsp: dsp)
                 recent = prepared.asset.payload.count <= Self.recentLimit ? (bankID, prepared) : nil
@@ -328,6 +332,13 @@ final class SFZLoader: ObservableObject {
             finish(nodeID: nodeID, bankID: imported.id, number: number, dsp: dsp, announce: true,
                    result: .success(imported.prepared))
         }
+    }
+
+    /// 段の素材を呼び手が外した（Reset など）。走っている読み込みの結果を捨て、状態を None に戻す。
+    /// 呼ばないと、読み込み中の Reset で状態が .loading のまま残り、失敗の赤い文も消えない。
+    func forget(nodeID: UUID) {
+        _ = nextGeneration(nodeID)
+        set(.idle, for: nodeID)
     }
 
     /// 置き場にあるバンクを選んだ（選択欄から）。

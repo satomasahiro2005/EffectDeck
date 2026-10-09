@@ -85,6 +85,23 @@ enum ETDisplayParam {
         }
     }
 
+    /// 鎖の保存で、触っていない鍵も既定で書く型。上流は getParameters() で毎回全部書くので、
+    /// 書いておけば「鍵が無い＝2.12 以前の保存」と見分けられる（legacyRead）。
+    static func writesDefaultsInChain(_ type: String) -> Bool { type == "RhythmAnalyzerPlugin" }
+
+    /// 2.13.0 より前の EffectDeck が保存した鎖には Rhythm Analyzer の vt / ve が無い。
+    /// あの頃の既定は両方 true なので、どちらの鍵も無い保存はそれで読む（2.13.0 の既定 false のままだと、
+    /// 触っていない段が更新後に Tempogram と Echo の行を隠す）。2.13.0 以降は writesDefaultsInChain で
+    /// 必ず書くので、この補いは古い保存にだけ効く。
+    static func legacyRead(_ params: [String: Any], type: String) -> [String: String] {
+        var out = read(params, type: type)
+        if type == "RhythmAnalyzerPlugin", params["vt"] == nil, params["ve"] == nil {
+            out["vt"] = "true"
+            out["ve"] = "true"
+        }
+        return out
+    }
+
     /// プリセットの表示の設定が、いまの display と一致するか。
     /// 上流の一致は「プリセットが書いた鍵だけ」を比べる（plugin-preset-dialog.js:64-72）。
     /// 既定を持たない型・鍵は比べない（比べられないものを不一致にしない）。

@@ -185,11 +185,50 @@ final class Upstream213Tests: XCTestCase {
         XCTAssertEqual(try at(v, "mx"), 81)
         XCTAssertEqual(try at(v, "pl"), 8)
         XCTAssertEqual(try at(v, "os"), -1, "Math.round は .5 を +∞ 側へ")
+        // 範囲の外の値は、寄せてから規則をかける（上流の parseFiniteNumber が先）。
+        v = load(s, ["vf": 5, "vc": -10])
+        XCTAssertEqual(try at(v, "vf"), 0)
+        XCTAssertEqual(try at(v, "vc"), 1, "vf は 0 に寄り、vc は 0 + 1")
+        v = load(s, ["vf": -200, "vc": 99])
+        XCTAssertEqual(try at(v, "vf"), -96)
+        XCTAssertEqual(try at(v, "vc"), 24)
+        v = load(s, ["mn": 5, "mx": 500])
+        XCTAssertEqual(try at(v, "mn"), 21)
+        XCTAssertEqual(try at(v, "mx"), 108)
+        // 画面からの編集にも同じ規則（setValue から）。
+        var edited = s.defaults
+        edited[try param(s, "mx").offset] = 10
+        edited[try param(s, "vc").offset] = -100
+        edited = ETUpstreamNormalize.sfzCrossRules(params: s.params, values: edited)
+        XCTAssertEqual(try at(edited, "mx"), try at(edited, "mn"))
+        XCTAssertEqual(try at(edited, "vc"), try at(edited, "vf") + 1)
         // 書いていなくても毎回かける（上流と同じ）。
         var current = s.defaults
         current[try param(s, "mn").offset] = 90
         current[try param(s, "mx").offset] = 50
         XCTAssertEqual(try at(load(s, [:], current: current), "mx"), 90)
+    }
+
+    /// 2.13.0 で Rhythm Analyzer の vt / ve の既定は false になったが、2.12 以前の保存（鍵が無い）は
+    /// 触っていない段でも Tempogram と Echo を出していた。鍵の無い保存は true で読み、
+    /// 2.13.0 からは触っていなくても毎回書く（上流の getParameters と同じ）。
+    func testRhythmAnalyzerLegacyChainKeepsTempogramAndEcho() throws {
+        let s = try spec("RhythmAnalyzerPlugin")
+        XCTAssertEqual(ETDisplayParam.legacyRead([:], type: s.type)["vt"], "true")
+        XCTAssertEqual(ETDisplayParam.legacyRead([:], type: s.type)["ve"], "true")
+        XCTAssertEqual(ETDisplayParam.legacyRead(["vt": false], type: s.type)["vt"], "false")
+        XCTAssertNil(ETDisplayParam.legacyRead([:], type: "StereoMeterPlugin")["vt"])
+        let node = ETChainNode(spec: s, values: s.defaults)
+        let written = PipelineStore.shortForm([PipelineStore.Loaded(node)])
+        XCTAssertEqual(written[0]["vt"] as? Bool, false, "触っていない 2.13.0 の段は false を書く")
+        XCTAssertEqual(written[0]["ve"] as? Bool, false)
+        let back = PipelineStore.parse(written, catalog: ETCatalog)
+        XCTAssertEqual(back.first?.display["vt"], "false", "書いて読み戻しても false のまま")
+        var old = written[0]
+        old["vt"] = nil
+        old["ve"] = nil
+        XCTAssertEqual(PipelineStore.parse([old], catalog: ETCatalog).first?.display["vt"], "true")
+        XCTAssertEqual(PipelineStore.parse([old], catalog: ETCatalog).first?.display["ve"], "true")
     }
 
     /// バンクの鍵は段の `irId` に載せ、保存の綴りは型で決まる（SFZ は `sf`、IR Reverb は `ir`）。

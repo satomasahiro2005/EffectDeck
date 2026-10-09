@@ -1109,6 +1109,12 @@ final class EffeTuneDSP: ObservableObject {
         guard contains(slot: index),
               self[slot: index].values.indices.contains(offset) else { return }
         self[slot: index].values[offset] = value
+        // SFZ Note Player: 上流は slider を動かすたびに setParameters を通り、Highest Note は Lowest Note より
+        // 下に、Velocity 127 Level は Velocity 1 Level + 1 dB より下にならない（sfz_note_player.js:59-60）。
+        if self[slot: index].spec.type == ETChainText.sfzType {
+            self[slot: index].values = ETUpstreamNormalize.sfzCrossRules(params: self[slot: index].spec.params,
+                                                                          values: self[slot: index].values)
+        }
         let before = instanceLatency(of: self[slot: index])
         pushParams(self[slot: index])
         settleAfterParams(at: index, changed: offset, before: before)
@@ -1207,6 +1213,10 @@ final class EffeTuneDSP: ObservableObject {
             self[slot: index].irId = ""
             assetInfo[self[slot: index].id] = nil
             AssetUpload.clear(engine: engine, instance: self[slot: index].instance)
+        }
+        // SFZ は読み込みの状態も戻す（読み込み中なら結果を捨て、失敗の文も消す）。
+        if self[slot: index].spec.type == ETChainText.sfzType {
+            SFZLoader.shared.forget(nodeID: self[slot: index].id)
         }
         // 経路と測定は鎖の外の置き場にある。上流はどちらも既定に入っているので戻す。
         switch self[slot: index].spec.type {
