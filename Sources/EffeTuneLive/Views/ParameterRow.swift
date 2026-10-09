@@ -108,22 +108,6 @@ enum ETSliderScale {
     ]
 }
 
-/// 別の toggle が切れている間は触れない行。`型名.key` → その toggle の key。
-///
-/// **止めるのは操作だけで、値は残す。** 上流も input を disabled にするだけ。
-/// 決まった値しか取らない数（Oversampling）の表は ETAllowedValues（ETParamCoding.swift）。
-enum ETParamGate {
-    static func upstream(type: String, key: String) -> String? {
-        table[type + "." + key]
-    }
-
-    private static let table: [String: String] = [
-        // dynamics/attack_tonal_balance.js:67-70（_syncGainControlAvailability）
-        "AttackTonalBalancePlugin.at": "ae",
-        "AttackTonalBalancePlugin.tn": "te",
-    ]
-}
-
 struct ParameterRow: View {
     let param: ETParam
     let nodeIndex: Int
@@ -132,13 +116,18 @@ struct ParameterRow: View {
     @ObservedObject var dsp: EffeTuneDSP
     /// 数値欄の末尾の 0 を出さない（Analog Meter の Attack 5・Release 1.5）。既定は他の行と同じ桁。
     var trimsZeros = false
+    /// 保存値と違う値を見せる行（Adaptive Prediction: Hold の間は Autonomy を 1、Weight Decay が無限大の間は覚えている有限の値）。
+    /// 触ったときに書くのは今までどおり保存値の位置。
+    var shown: Float? = nil
+    /// つまみと打ち込みの下端を引き上げる行（Adaptive Prediction の Weight Decay は 0.5 から。0 は Infinity が持つ）。
+    var lowerBound: Float? = nil
     @State private var slot = 0
     @State private var editing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
 
     private var offset: Int { param.offset + (param.isArray ? slot : 0) }
-    private var value: Float { values.indices.contains(offset) ? values[offset] : 0 }
+    private var value: Float { shown ?? (values.indices.contains(offset) ? values[offset] : 0) }
 
     private func set(_ v: Float) {
         dsp.setValue(v, at: nodeIndex, offset: offset)
@@ -174,12 +163,14 @@ struct ParameterRow: View {
         return ETAllowedValues.upstream(type: effectType, key: param.key)
     }
 
-    /// ETParamGate の toggle が切れているか。
+    /// ETParamGate の規則で触れない行か。
     private var isGatedOff: Bool {
-        guard let gate = ETParamGate.upstream(type: effectType, key: param.key),
-              let owner = dsp.node(at: nodeIndex)?.spec.params.first(where: { $0.key == gate }),
-              values.indices.contains(owner.offset) else { return false }
-        return values[owner.offset] < 0.5
+        guard let params = dsp.node(at: nodeIndex)?.spec.params else { return false }
+        return ETParamGate.isDisabled(type: effectType, key: param.key) { key in
+            guard let owner = params.first(where: { $0.key == key }),
+                  values.indices.contains(owner.offset) else { return nil }
+            return values[owner.offset]
+        }
     }
 
     /// 名前と、値そのものを触る所。
@@ -229,7 +220,9 @@ struct ParameterRow: View {
     private var valueSlider: some View {
         if let choices {
             choicePicker(choices)
-        } else if case .number(let lo, let hi, let step, _, let isInteger) = param.kind, hi > lo {
+        } else if case .number(let catalogLo, let hi, let step, _, let isInteger) = param.kind,
+                  hi > (lowerBound ?? catalogLo) {
+            let lo = lowerBound ?? catalogLo
             // step に 0 を渡すと Slider は落ちる。刻みが無いものは
             // step を取らない方を使う。params.json に step が無い
             // パラメータがあるので、ここを分けないと開いた瞬間に死ぬ。
@@ -386,8 +379,8 @@ struct ParameterRow: View {
         // **挟むのは戻してから。** Tilt EQ の Pivot は 3.0〜9.9 の自然対数なので、
         // 打たれた 1000(Hz) をそのまま挟むと 9.9 = 約 19930Hz に飛ぶ。
         let v = param.store(typed)
-        if case .number(let lo, let hi, _, _, let isInteger) = param.kind {
-            let clamped = min(max(v, lo), hi)
+        if case .number(let catalogLo, let hi, _, _, let isInteger) = param.kind {
+            let clamped = min(max(v, lowerBound ?? catalogLo), hi)
             set(isInteger ? clamped.rounded() : clamped)
         } else {
             set(v)

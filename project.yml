@@ -304,6 +304,9 @@ targets:
       - path: Sources/EffeTuneLive/DSP/ETPEQTextImport.swift
       # 専用の画面を持たないエフェクトを上流と同じタブに分ける表。Foundationだけ（ParamTabsTests）。
       - path: Sources/EffeTuneLive/DSP/ETParamTabs.swift
+      # ほかの値で触れなくなる行の規則（Cassette の Mode・Adaptive Prediction の Freeze / Hold など）。
+      # Foundationだけ（ParamGateTests）。
+      - path: Sources/EffeTuneLive/DSP/ETParamGate.swift
       # Audio Unit の数え上げを報告用の行にする所。Foundationだけ（AUCensusTests）。
       - path: Sources/EffeTuneLive/Audio/ETAUCensus.swift
       # IR Reverbの下ごしらえ（伸縮・頭の無音・Direct Cut・正規化・切り詰め）と解決規則。

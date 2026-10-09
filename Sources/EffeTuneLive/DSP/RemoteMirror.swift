@@ -364,6 +364,14 @@ final class RemoteMirror: ObservableObject {
         }
     }
 
+    /// 保存しない実行時の値を PC の同じ段へ渡す（Adaptive Prediction の Reset = resetToken）。
+    /// 鎖の短い形に載らない値なので、つまみ用の paramsChanged には乗らない。PC の setParameters が受ける。
+    func sendRuntimeParams(at index: Int, _ params: [String: Any]) {
+        guard isRemote, task != nil, !applyingRemote, sentMap.indices.contains(index),
+              let remote = sentMap[index] else { return }
+        sendEdit(["op": "params", "index": remote, "params": params])
+    }
+
     /// 全体のバイパス。NowPlaying が切り替えたものも来る（PoC なので区別しない）。
     func bypassChanged(_ on: Bool) {
         guard isRemote, task != nil, !applyingRemote else { return }

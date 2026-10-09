@@ -150,6 +150,21 @@ enum ETChainEditing {
         }
     }
 
+    /// 無音を入れても音を出し続ける段か（上流の temporalCapability 'must-process'）。
+    /// いまは Adaptive Prediction だけ。Autonomy が高いか Hold のとき、入力が無くても鳴り続ける。
+    static func mustProcessWhileSilent(type: String) -> Bool {
+        type == adaptivePredictionType
+    }
+
+    /// 鎖に、無音でも回し続けなければならない段があるか。入れていて、受けるチャンネルに居る段だけ。
+    /// PowerGate.idleSeconds(mustProcess:) へ渡す。
+    static func chainMustProcess(_ nodes: [ETChainNode]) -> Bool {
+        nodes.contains {
+            $0.enabled && mustProcessWhileSilent(type: $0.spec.type)
+                && !isChannelBypassed(type: $0.spec.type, channelSpec: $0.channelSpec)
+        }
+    }
+
     // MARK: - 選択肢と資産
 
     /// 選択肢のparamから、いま選ばれている綴りを引く。読めなければ"auto"。

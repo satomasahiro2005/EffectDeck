@@ -194,6 +194,8 @@ final class AudioIO: ObservableObject {
         deviceSwitch = ETDeviceSwitch(
             settled: ETOutputCorrectionStoreCore(storage: UserDefaults.standard).currentDevice?.key)
         observeSession()
+        // 無音でも回し続ける段を足した・外したら、休むまでの秒数を決め直す。
+        EffeTuneDSP.shared.onPublished = { [weak self] in self?.refreshGateIdle() }
 
         // DSP のエンジンは音と関係なく用意しておく。
         // 音が来るまで待っていると、その間エフェクトを足しても作れず一覧に出ない。
@@ -457,8 +459,7 @@ final class AudioIO: ObservableObject {
                                  outputChannels: channels,
                                  maxFrames: Self.capacity * factor)
         // 外部処理の尾（リバーブの残響など）が長ければ、休むのをそれまで待つ。
-        state.gate.idleSeconds = PowerGate.idleSeconds(mode: prefs.powerMode,
-                                                       externalTail: ETPipeline_ExternalTailTime())
+        refreshGateIdle()
 
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sr,
                                 channels: AVAudioChannelCount(channels))!
@@ -626,6 +627,15 @@ final class AudioIO: ObservableObject {
         // updateNowPlaying() が「変わっていない」と見て、いま外したばかりの
         // ロック画面の割り当てを付け直さない（設定変更やレート組み直しで毎回起きる）。
         nowPlayingThrottle.forget()
+    }
+
+    /// 休むまでの秒数を決め直す。外部処理の尾と、無音でも回し続ける段（Adaptive Prediction）で変わる。
+    /// 組み直しのときと、鎖を出し直したとき（EffeTuneDSP.publish）に呼ぶ。
+    func refreshGateIdle() {
+        guard let render else { return }
+        render.gate.idleSeconds = PowerGate.idleSeconds(
+            mode: Preferences.shared.powerMode, externalTail: ETPipeline_ExternalTailTime(),
+            mustProcess: ETChainEditing.chainMustProcess(EffeTuneDSP.shared.nodes))
     }
 
     /// 描画用の値だけを速く取る。図が滑らかに動くのはこちらの速さで決まる。

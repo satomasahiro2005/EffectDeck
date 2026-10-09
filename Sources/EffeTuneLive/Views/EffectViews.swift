@@ -35,6 +35,8 @@ enum ETEffectViews {
         "OscillatorPlugin",
         // 状態の一語とつまみだけ（BassExtenderView.swift）。
         "BassExtenderPlugin",
+        // つまみと Reset だけ（AdaptivePredictionView.swift）。
+        "AdaptivePredictionEffectPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。
@@ -45,6 +47,7 @@ enum ETEffectViews {
     static func has(_ type: String) -> Bool { types.contains(type) }
 
     private static let types: Set<String> = [
+        "AdaptivePredictionEffectPlugin",
         "AnalogMeterPlugin",
         "PitchMeterPlugin",
         "SpatialMapperPlugin",
@@ -100,6 +103,8 @@ enum ETEffectViews {
     static func view(index: Int, node: EffeTuneDSP.Node,
                      dsp: EffeTuneDSP) -> some View {
         switch node.spec.type {
+        case "AdaptivePredictionEffectPlugin":
+            AdaptivePredictionView(index: index, node: node, dsp: dsp)
         case "AnalogMeterPlugin":
             AnalogMeterView(index: index, node: node, dsp: dsp)
         case "PitchMeterPlugin":

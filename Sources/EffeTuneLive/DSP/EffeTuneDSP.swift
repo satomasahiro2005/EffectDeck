@@ -1562,7 +1562,21 @@ final class EffeTuneDSP: ObservableObject {
             ETLogTap.record(over)
             if ETConsoleLog.on { print(over) }
         }
+        // 無音でも回し続ける段の有無で、休むまでの秒数が変わる（AudioIO.refreshGateIdle）。
+        onPublished?()
         persist()
+    }
+
+    /// 鎖を出し直したときに呼ぶ。AudioIO が休む秒数を決め直すのに使う（AudioIO と互いに生成を待たないよう、引かずに受ける）。
+    var onPublished: (() -> Void)?
+
+    /// その段の実行時の事故が残っているか（et_instance_runtime_event の latched）。
+    /// Adaptive Prediction が数値の失敗を起こすと立つ。Reset（resetToken）で下りる。
+    func runtimeFault(at index: Int) -> Bool {
+        guard engine != 0, contains(slot: index), self[slot: index].instance != 0 else { return false }
+        var state = et_runtime_event_state()
+        guard Int(et_instance_runtime_event(engine, self[slot: index].instance, &state)) == ET_OK else { return false }
+        return state.latched != 0
     }
 
     /// 音のスレッドへ渡す並び。**中身は ETChainEditing.descriptors が決める**

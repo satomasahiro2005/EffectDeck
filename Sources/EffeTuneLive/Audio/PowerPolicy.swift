@@ -89,8 +89,12 @@ extension PowerGate {
 
     /// 休むまでの秒数。外部処理（AU / JSFX）の尾（リバーブの残響など）が
     /// 選んだ秒数より長ければ、尾を切らないようそちらに合わせる。
-    static func idleSeconds(mode: ETPowerMode, externalTail: Double) -> Double {
-        max(mode.idleSeconds, externalTail)
+    ///
+    /// **無音を入れても音を出し続ける段**（Adaptive Prediction の Autonomy / Hold）があるときは休まない。
+    /// 上流はその段を temporalCapability 'must-process' にして、無音で飛ばさないようにしている
+    /// （adaptive_prediction_effect.js の getTemporalCapability）。
+    static func idleSeconds(mode: ETPowerMode, externalTail: Double, mustProcess: Bool = false) -> Double {
+        mustProcess ? .infinity : max(mode.idleSeconds, externalTail)
     }
 
     /// このブロックを丸ごと 0 で済ませてよいか。
