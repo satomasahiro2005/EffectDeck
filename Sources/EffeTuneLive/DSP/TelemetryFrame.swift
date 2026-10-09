@@ -28,6 +28,7 @@ enum ETFrameType: UInt16 {
     case swRadioSimulator   = 18
     case tubeSimulator      = 19
     case phaseSelectMap     = 20
+    case noteSpectrogram    = 24
     case pitchMeter         = 26
     case analogMeter        = 27
     case rhythmAnalyzer     = 28

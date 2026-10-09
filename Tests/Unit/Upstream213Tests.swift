@@ -276,4 +276,57 @@ final class Upstream213Tests: XCTestCase {
         XCTAssertEqual(ETRhythm.version, 4)
         XCTAssertEqual(ETRhythm.payloadBytes, 1496)
     }
+
+    // MARK: 直しの当て先の列
+
+    /// 帯は 8 列で、10 枠入れた直後（head = 2）。最新の枠 109 は列 1、枠 108 は列 0、枠 107 は列 7。
+    private func ledger(first: UInt32, count: Int, columns: Int = 8, generation: UInt32 = 1)
+        -> (frames: [(generation: UInt32, index: UInt32)?], head: Int) {
+        var frames = [(generation: UInt32, index: UInt32)?](repeating: nil, count: columns)
+        var head = 0
+        for step in 0..<count {
+            frames[head] = (generation, first &+ UInt32(step))
+            head = (head + 1) % columns
+        }
+        return (frames, head)
+    }
+
+    func testRevisionColumnFindsTheFrameAgeBack() {
+        let l = ledger(first: 100, count: 10)
+        XCTAssertEqual(l.head, 2)
+        let latest: UInt32 = 109
+        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+                                                   generation: 1, index: latest &- 2), 7)
+        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+                                                   generation: 1, index: latest &- 4), 5)
+        // 8 枠前は輪（8 列）の外。流れているので何もしない。
+        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+                                                 generation: 1, index: latest &- 8))
+    }
+
+    func testRevisionColumnReachesEightFramesBackOnALargeBand() {
+        let l = ledger(first: 1000, count: 40, columns: 64)
+        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 40,
+                                                   generation: 1, index: 1039 &- 8), 40 - 1 - 8)
+    }
+
+    func testRevisionColumnWrapsFrameIndex() {
+        let l = ledger(first: UInt32.max - 3, count: 8, columns: 16)
+        // 枠は ... max-1, max, 0, 1, 2, 3。最新（3）の 4 枠前は max。
+        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+                                                   generation: 1, index: UInt32(3) &- 4), 3)
+        XCTAssertEqual(l.frames[3]?.index, UInt32.max)
+    }
+
+    func testRevisionColumnIgnoresDroppedFramesAndOtherGenerations() {
+        var l = ledger(first: 10, count: 6, columns: 16)
+        // 枠 13 を取りこぼした。
+        l.frames[3] = nil
+        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 6,
+                                                 generation: 1, index: 13))
+        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 6,
+                                                 generation: 2, index: 12))
+        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 0,
+                                                 generation: 1, index: 12))
+    }
 }

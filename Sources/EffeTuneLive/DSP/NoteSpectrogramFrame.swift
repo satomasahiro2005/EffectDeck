@@ -55,6 +55,26 @@ enum ETNoteLayout {
     static let maximumRevisionAge: UInt32 = 8
 }
 
+extension ETNoteLayout {
+    /// 直しの当て先の列。最新（head の 1 つ前）から age + 1 列ぶんだけ遡って、枠の番号が合う列を探す。
+    /// 枠の番号は UInt32 で折り返すので、index は呼ぶ側が `frameIndex &- age` で出す。
+    /// 取りこぼした・もう流れた・世代が違うなら nil。
+    static func revisionColumn(frames: [(generation: UInt32, index: UInt32)?], head: Int, count: Int,
+                               generation: UInt32, index: UInt32) -> Int? {
+        let columns = frames.count
+        guard columns > 0 else { return nil }
+        let reach = min(count, Int(maximumRevisionAge) + 1)
+        guard reach > 0 else { return nil }
+        for back in 1...reach {
+            let column = ((head - back) % columns + columns) % columns
+            if let frame = frames[column], frame.generation == generation, frame.index == index {
+                return column
+            }
+        }
+        return nil
+    }
+}
+
 /// 前の枠の確からしさの直し。
 struct ETNoteRevision {
     let age: UInt32

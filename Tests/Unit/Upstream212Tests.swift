@@ -170,8 +170,11 @@ final class Upstream212Tests: XCTestCase {
         XCTAssertTrue(ETDisplayParam.matches(["rl": -14], display: [:], type: "AnalogMeterPlugin"))
         XCTAssertFalse(ETDisplayParam.matches(["rl": -18], display: [:], type: "AnalogMeterPlugin"))
         XCTAssertTrue(ETDisplayParam.matches(["rl": -18], display: ["rl": "-18.0"], type: "AnalogMeterPlugin"))
-        XCTAssertTrue(ETDisplayParam.matches(["vt": true], display: [:], type: "RhythmAnalyzerPlugin"))
-        XCTAssertFalse(ETDisplayParam.matches(["vt": false], display: [:], type: "RhythmAnalyzerPlugin"))
+        // 2.13.0: Tempogram（vt）と Echo rows（ve）は既定で隠す。Timing lanes（vm）と Beat lens（vl）は出す。
+        XCTAssertFalse(ETDisplayParam.matches(["vt": true], display: [:], type: "RhythmAnalyzerPlugin"))
+        XCTAssertTrue(ETDisplayParam.matches(["vt": false], display: [:], type: "RhythmAnalyzerPlugin"))
+        XCTAssertFalse(ETDisplayParam.matches(["ve": true], display: [:], type: "RhythmAnalyzerPlugin"))
+        XCTAssertTrue(ETDisplayParam.matches(["vm": true, "vl": true], display: [:], type: "RhythmAnalyzerPlugin"))
     }
 
     func testUserPresetKeepsDisplaySettings() throws {

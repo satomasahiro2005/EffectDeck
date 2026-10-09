@@ -436,7 +436,7 @@ private struct AnalogMeterFigure: View {
             context.stroke(arcPath(scale.valuePosition(red), 1, radius + 2),
                            with: .color(danger), lineWidth: 3)
         }
-        // 隣の字がぶつかるときは、基準から数えて 1 つおきにする（analog_meter.js:632-647）。
+        // 隣の字がぶつかるときは、基準から数えて 1 つおきにする（analog_meter.js:849-860）。
         let labelRadius = radius + 9
         let labeled = scale.ticks.filter { !$0.label.isEmpty }
         var widest: CGFloat = 0
@@ -446,7 +446,8 @@ private struct AnalogMeterFigure: View {
             widest = max(widest, w)
             guard i > 0 else { continue }
             let step = abs(scale.valuePosition(tick.value) - scale.valuePosition(labeled[i - 1].value))
-            spacing = min(spacing, CGFloat(2 * arc * Double(labelRadius) * step))
+            // 2.13.0 は隣の字の点の間の弦で測る（弧の長さでなく。analog_meter.js:857 の hypot）。
+            spacing = min(spacing, CGFloat(2 * Double(labelRadius) * sin(arc * step)))
         }
         let kept: Set<Double>? = spacing < widest + fontSize * 0.3 ? ETAnalogMeter.sparseLabels(scale) : nil
         for tick in scale.ticks {

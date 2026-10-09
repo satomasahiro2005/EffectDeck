@@ -184,6 +184,7 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(s.hopSeconds, 0.01, accuracy: 1e-12)
         XCTAssertEqual(s.frameCount, 1000)
         XCTAssertTrue(s.analysisValid)
+        XCTAssertTrue(s.analysisAvailable)
         XCTAssertTrue(s.tickGateOpen)
         XCTAssertEqual(s.analysisEpoch, 1)
         XCTAssertEqual(s.periodSeconds, 0.5)
@@ -196,9 +197,13 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(s.sequence, 8)
         let e = try XCTUnwrap(s.events.first)
         XCTAssertEqual(s.events.count, 1)
-        XCTAssertTrue(e.locked)
+        XCTAssertTrue(e.annotated)
+        XCTAssertFalse(e.provisional)
         XCTAssertEqual(e.time, 990.5 * 0.01, accuracy: 1e-9, "(frame + fraction) × hopSeconds")
         XCTAssertEqual(e.epoch, 4)
+        XCTAssertEqual(e.index, 7)
+        // 札は 世代:frame:fraction のビット:帯域（同じ onset が仮から確定へ変わっても変わらない）。
+        XCTAssertEqual(e.identity, "1:990:" + String(Float(0.5).bitPattern) + ":2")
         XCTAssertEqual(e.position, 7.25, accuracy: 1e-9)
         XCTAssertEqual(e.band, 2)
         XCTAssertEqual(e.strength, 0.6, accuracy: 1e-6)
@@ -211,7 +216,7 @@ final class RhythmAnalyzerTests: XCTestCase {
         let s = try XCTUnwrap(ETRhythmSnapshot.parse(frame(f)))
         XCTAssertFalse(s.analysisValid)
         XCTAssertFalse(s.tickGateOpen)
-        XCTAssertFalse(s.events[0].locked)
+        XCTAssertFalse(s.events[0].annotated)
         // 拍に乗っていない onset は period 0 が許される。乗っているのに 0 は落とす。
         f.events = [EventSpec(frame: 10, beatIndex: 0, period: 0, flags: 0)]
         XCTAssertNil(ETRhythmSnapshot.parse(frame(f)))
@@ -276,7 +281,7 @@ final class RhythmAnalyzerTests: XCTestCase {
         let s = try XCTUnwrap(ETRhythmSnapshot.parse(frame(f)))
         XCTAssertEqual(s.events.count, 1)
         XCTAssertTrue(s.events[0].provisional)
-        XCTAssertFalse(s.events[0].locked)
+        XCTAssertFalse(s.events[0].annotated)
         XCTAssertEqual(s.forwardBeats.map(\.index), [8, 9])
         XCTAssertEqual(s.shownBeats.map(\.index), [8])
         XCTAssertEqual(s.shownBeats[0].strength, 0.9, accuracy: 1e-6)
@@ -287,36 +292,64 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(s.previewPeriodSeconds, 0.5)
     }
 
+    func testAnalysisIsOnlyAvailableAtTheKernelsRates() throws {
+        for rate: Float in [48000, 96000, 192000] {
+            var f = Fields()
+            f.rate = rate
+            XCTAssertTrue(try XCTUnwrap(ETRhythmSnapshot.parse(frame(f))).analysisAvailable, "\(rate)")
+        }
+        for rate: Float in [44100, 88200, 32000] {
+            var f = Fields()
+            f.rate = rate
+            XCTAssertFalse(try XCTUnwrap(ETRhythmSnapshot.parse(frame(f))).analysisAvailable, "\(rate)")
+        }
+    }
+
     // MARK: 履歴
 
+    /// 確定した拍（flags 5）。frame は符号付き。
+    private func committedBeat(frame: Int32, index: Int32, epoch: UInt32 = 1, period: Float = 0.5,
+                               strength: Float = 0.6) -> EventSpec {
+        EventSpec(frame: UInt32(bitPattern: frame), epoch: epoch, beatIndex: index, period: period,
+                  strength: strength, band: 0, flags: 5)
+    }
+
+    /// 先の拍。shown なら見せる拍（flags 2）、でなければ見せない拍（flags 4）。
+    private func forwardBeat(frame: UInt32, index: Int32, epoch: UInt32 = 1, period: Float = 0.5,
+                             strength: Float = 1, shown: Bool = true) -> EventSpec {
+        EventSpec(frame: frame, epoch: epoch, beatIndex: index, period: period, strength: strength,
+                  band: 0, flags: shown ? 2 : 4)
+    }
+
     /// 0.1 秒（10 ホップ）ごとの枠。拍は 0.5 秒（50 ホップ）おきで、拍 n は 50n ホップ。
-    /// `events` は拍の頭の onset を持つ拍の番号。
-    private func gridFrame(_ k: Int, generation: UInt32 = 1, onsetsOn beats: [Int] = [],
+    /// 本物のカーネルと同じく、最新の確定した拍（anchor）を毎回運び、次の拍を見せる先の拍として運ぶ。
+    /// `beats` は拍の頭の onset を持つ拍の番号、`midBeats` は 0.52 拍目の onset を持つ拍の番号。
+    private func gridFrame(_ k: Int, generation: UInt32 = 1, epoch: UInt32 = 1, onsetsOn beats: [Int] = [],
                            midBeats: [Int] = []) -> ETFrame {
         var f = Fields()
         f.generation = generation
+        f.epoch = epoch
         f.frameCount = UInt32(10 * k)
         f.time = Float(Double(k) * 0.1)
-        let next = Int(f.frameCount) / 50 + 1
-        f.anchorIndex = UInt32(next)
-        f.anchorFrame = UInt32(50 * next)
+        let n = Int(f.frameCount) / 50
+        f.anchorIndex = UInt32(n)
+        f.anchorFrame = UInt32(50 * n)
         f.anchorFraction = 0
-        // 見せる拍（LED）。次の拍を、その時刻で。
-        var events = [EventSpec(frame: UInt32(50 * next), beatIndex: Int32(next), strength: 1,
-                                band: 0, flags: 2)]
-        events += beats.map { EventSpec(frame: UInt32(50 * $0), beatIndex: Int32($0)) }
+        var events = [committedBeat(frame: Int32(50 * n), index: Int32(n), epoch: epoch),
+                      forwardBeat(frame: UInt32(50 * (n + 1)), index: Int32(n + 1), epoch: epoch)]
+        events += beats.map { EventSpec(frame: UInt32(50 * $0), epoch: epoch, beatIndex: Int32($0)) }
         // 拍の途中（0.52 拍）の onset は +10ms 遅れ。
         events += midBeats.map {
-            EventSpec(frame: UInt32(50 * $0 + 26), beatIndex: Int32($0), beatFraction: 0.52)
+            EventSpec(frame: UInt32(50 * $0 + 26), epoch: epoch, beatIndex: Int32($0), beatFraction: 0.52)
         }
         f.events = events
         return frame(f, sequence: UInt32(k))
     }
 
     private func feed(_ state: ETRhythmState, frames range: ClosedRange<Int>, generation: UInt32 = 1,
-                      onsets: [Int: [Int]] = [:], mids: [Int: [Int]] = [:]) {
+                      epoch: UInt32 = 1, onsets: [Int: [Int]] = [:], mids: [Int: [Int]] = [:]) {
         for k in range {
-            state.ingest(gridFrame(k, generation: generation, onsetsOn: onsets[k] ?? [],
+            state.ingest(gridFrame(k, generation: generation, epoch: epoch, onsetsOn: onsets[k] ?? [],
                                    midBeats: mids[k] ?? []), now: Double(k) * 0.1)
         }
     }
@@ -326,36 +359,71 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(state.tempogramHead, 159)
         state.ingest(gridFrame(1), now: 0)
         XCTAssertEqual(state.tempogramHead, 0, "最初の枠は 1 列進める")
-        XCTAssertEqual(state.tempogramAdopted[0], 120, "採用したテンポ = 60 / 周期")
         XCTAssertEqual(state.tempogramConfidence[0], 0.6, accuracy: 1e-6)
+        XCTAssertEqual(state.tempogramAdopted[0], 0, "いまの列は、採用したテンポで埋めない（外挿しない）")
+        // 確定した拍（時刻 0）は、原点（0.1 秒）より前の 1 つ前の列に当たる。
+        XCTAssertEqual(state.tempogramAdopted[159], 120, "採用したテンポ = 60 / 周期。解析した時刻の列に入る")
         state.ingest(gridFrame(2), now: 0.1)
         XCTAssertEqual(state.tempogramHead, 0, "0.1 秒 < 1 列（0.125 秒）: 同じ列を書き直す")
-        XCTAssertEqual(state.columnPhase, 0.8, accuracy: 1e-12)
+        XCTAssertEqual(state.columnPhase, 0.8, accuracy: 1e-9)
         state.ingest(gridFrame(3), now: 0.2)
         XCTAssertEqual(state.tempogramHead, 1)
-        XCTAssertEqual(state.columnPhase, 0.6, accuracy: 1e-12)
-        XCTAssertEqual(state.tempogramScroll(now: 0.2), 0.6, accuracy: 1e-12)
+        XCTAssertEqual(state.columnPhase, 0.6, accuracy: 1e-9)
+        XCTAssertEqual(state.tempogramScroll(now: 0.2), 0.6, accuracy: 1e-9)
         // 枠が止まっても、壁時計で 2 列までしか進めない。
-        XCTAssertEqual(state.tempogramScroll(now: 100), 0.6 + 2, accuracy: 1e-12)
+        XCTAssertEqual(state.tempogramScroll(now: 100), 0.6 + 2, accuracy: 1e-9)
     }
 
-    func testBeatClockFollowsTheLockedGrid() throws {
+    /// 上流 rhythm-analyzer-display.test.mjs の「delayed adopted history」。
+    func testDelayedAdoptedHistoryUsesTheOriginalAudioTimeBucket() {
+        let state = ETRhythmState()
+        for frameCount in 10...197 {
+            var f = Fields()
+            f.hop = 512
+            f.frameCount = UInt32(frameCount)
+            f.time = Float(frameCount) * 512 / 48000
+            if frameCount == 197 {
+                f.period = 0.5
+                f.anchorFrame = 90
+                f.anchorFraction = 0
+                f.anchorIndex = 0
+            } else {
+                f.locked = false
+            }
+            f.confidence = 0.3
+            state.ingest(frame(f, sequence: UInt32(frameCount)), now: Double(frameCount) * 0.01)
+        }
+        XCTAssertEqual(state.tempogramHead, 15)
+        XCTAssertEqual(state.tempogramAdopted[6], 120, "90 フレームは最初の 10 フレームから数えて 6 番目の列")
+        XCTAssertEqual(state.tempogramAdopted[5], 0, "隣の古い列には触らない")
+        XCTAssertEqual(state.tempogramAdopted[15], 0, "いまの確定していない列は埋めない")
+        XCTAssertEqual(state.tempogramConfidence[6], 0.3, accuracy: 1e-6)
+    }
+
+    func testBeatClockFollowsTheCommittedBeats() throws {
         let state = ETRhythmState()
         feed(state, frames: 1...60)
         let segment = try XCTUnwrap(state.openSegment)
         XCTAssertEqual(state.segments.count, 1)
         XCTAssertEqual(segment.epoch, 1)
-        // 最初の枠で時計は 0、拍の位置は 0.2。以後は同じ傾きで進む（0.1 秒 = 0.2 拍）。
-        XCTAssertEqual(segment.offset, -0.2, accuracy: 1e-9)
-        XCTAssertEqual(state.beatClock, 0.2 * 59, accuracy: 1e-6)
+        // 最初の確定した拍が番号 0 で、時計は 0。以後は拍の番号どおりに進む（0.5 秒 = 1 拍）。
+        XCTAssertEqual(segment.offset, 0, accuracy: 1e-9)
+        XCTAssertEqual(state.beatClock, 12, accuracy: 1e-9, "枠 60 は 6.0 秒。最新の確定した拍は 12")
         XCTAssertEqual(state.heldPeriod, 0.5)
         XCTAssertEqual(state.snapshot?.frameCount, 600)
-        // 時計の履歴からの補間。
-        XCTAssertEqual(state.clockAt(3.0), 0.2 * 29, accuracy: 1e-6, "k = 30 の時刻 3.0 秒")
-        XCTAssertEqual(state.clockAt(3.05), 0.2 * 29 + 0.1, accuracy: 1e-6)
+        XCTAssertEqual(state.clockAnchor?.index, 12)
+        // 履歴からの補間（確定した拍の間）。
+        XCTAssertEqual(state.clockAt(3.0), 6, accuracy: 1e-9)
+        XCTAssertEqual(state.clockAt(3.25), 6.5, accuracy: 1e-9)
+        // 最新の確定した拍より先は、先の拍の尾をたどり、尾の先は最後の周期で伸ばす。
+        XCTAssertEqual(state.clockAt(6.5), 13, accuracy: 1e-9)
+        XCTAssertEqual(state.clockAt(7.0), 14, accuracy: 1e-9)
+        XCTAssertEqual(state.clockPosition(7.0).period, 0.5, accuracy: 1e-9)
+        // 同じ確定した拍は 1 度だけ入る。
+        XCTAssertEqual(state.clockCount, 13)
     }
 
-    func testUnlockedFramesRunTheClockOnAtTheHeldPeriod() {
+    func testUnlockedFramesKeepTheCommittedClockAndHeldPeriod() {
         let state = ETRhythmState()
         feed(state, frames: 1...5)
         let before = state.beatClock
@@ -364,10 +432,95 @@ final class RhythmAnalyzerTests: XCTestCase {
         f.frameCount = 60
         f.time = 0.6
         state.ingest(frame(f), now: 0.6)
-        // dt = 10 ホップ × 0.01 秒、周期 0.5 → 0.2 拍。
-        XCTAssertEqual(state.beatClock, before + 0.2, accuracy: 1e-9)
+        XCTAssertEqual(state.beatClock, before, "解析した拍が無い間、時計は進めない")
         XCTAssertNil(state.openSegment)
+        XCTAssertEqual(state.heldPeriod, 0.5)
         XCTAssertEqual(state.ledLevel, 0)
+    }
+
+    /// 上流の「v3 clock shares the producer boundary, tie, reset and duplicate-time cases」から。
+    func testClockPositionFollowsTheForwardTailAndTheAnchor() throws {
+        func state(anchor: (frame: Int32, period: Float, index: Int32)?,
+                   forward: [(frame: UInt32, period: Float, index: Int32)], epoch: UInt32 = 1,
+                   forwardEpoch: UInt32 = 1, into existing: ETRhythmState? = nil) -> ETRhythmState {
+            let s = existing ?? ETRhythmState()
+            var f = Fields()
+            f.locked = false
+            f.epoch = epoch
+            f.frameCount = 1000
+            var events: [EventSpec] = []
+            if let anchor {
+                events.append(committedBeat(frame: anchor.frame, index: anchor.index, epoch: epoch,
+                                            period: anchor.period, strength: 0))
+            }
+            events += forward.map { forwardBeat(frame: $0.frame, index: $0.index, epoch: forwardEpoch,
+                                                period: $0.period, strength: 0, shown: false) }
+            f.events = events
+            s.ingest(frame(f), now: 0)
+            // 上流のテストと同じく、区間の offset は 0 に揃える。
+            for segment in s.segments.values { segment.offset = 0 }
+            return s
+        }
+        func near(_ s: ETRhythmState, _ time: Double, _ position: Double, _ period: Double? = nil,
+                  line: UInt = #line) {
+            let actual = s.clockPosition(time)
+            XCTAssertEqual(actual.position, position, accuracy: 1e-6, "t=\(time) U", line: line)
+            if let period { XCTAssertEqual(actual.period, period, accuracy: 1e-6, "t=\(time) period", line: line) }
+        }
+        // 先の拍だけ。
+        var s = state(anchor: nil, forward: [(100, 0.5, 7), (160, 0.6, 8)])
+        near(s, 0.75, 6.5, 0.5)
+        near(s, 1.3, 7.5, 0.6)
+        near(s, 2.2, 9, 0.6)
+        XCTAssertEqual(ETRhythmState().clockPosition(0).period, 0)
+        // anchor と先の拍。anchor と半拍以内で重なる先の拍は尾に入れない。
+        s = state(anchor: (102, 0.5, 10), forward: [(100, 0.5, 7), (160, 0.6, 8), (210, 0.5, 9)])
+        near(s, 1.31, 10.5, 0.58)
+        near(s, 2.35, 12.5, 0.5)
+        s = state(anchor: (100, 0.5, 10), forward: [(102, 0.5, 7), (150, 0.5, 8)])
+        near(s, 1.25, 10.5, 0.5)
+        // 周期が違うと、小さいほうが重なりの幅になる。
+        s = state(anchor: (100, 1, 10), forward: [(75, 1, 7), (125, 1, 8)])
+        near(s, 1.25, 11, 0.25)
+        s = state(anchor: (100, 0.2, 10), forward: [(115, 0.5, 7)])
+        near(s, 1.15, 11, 0.15)
+        // 周期 0 の anchor（最初の確定した拍）は、先の拍の周期で重なりを見る。
+        s = state(anchor: (100, 0, 0), forward: [(102, 0.5, 7), (150, 0.5, 8)])
+        near(s, 1.25, 0.5, 0.5)
+        // 時刻が同じ先の拍は 1 つに畳む。
+        s = state(anchor: nil, forward: [(100, 0.5, 0), (100, 0.5, 1), (150, 0.5, 2)])
+        near(s, 1.25, 0.5, 0.5)
+        let history = s.forwardBeats.count
+        _ = state(anchor: nil, forward: [], into: s)
+        XCTAssertEqual(s.forwardBeats.count, history, "先の拍が無い枠で、目標を捨てない")
+        s.clearHistory()
+        XCTAssertEqual(s.clockPosition(2).period, 0)
+    }
+
+    func testANewEpochReanchorsWithoutMovingTheClockBack() throws {
+        let state = ETRhythmState()
+        feed(state, frames: 1...60)
+        let before = state.beatClock
+        let oldEnd = try XCTUnwrap(state.segments[1]).endU
+        // 新しい epoch は拍の番号を 100 から数え、時計は戻らない。
+        for k in 61...70 {
+            var f = Fields()
+            f.epoch = 2
+            f.frameCount = UInt32(10 * k)
+            f.time = Float(Double(k) * 0.1)
+            let n = Int(f.frameCount) / 50
+            f.anchorIndex = UInt32(100 + n)
+            f.anchorFrame = UInt32(50 * n)
+            f.anchorFraction = 0
+            f.events = [committedBeat(frame: Int32(50 * n), index: Int32(100 + n), epoch: 2)]
+            state.ingest(frame(f, sequence: UInt32(k)), now: Double(k) * 0.1)
+        }
+        let segment = try XCTUnwrap(state.segments[2])
+        XCTAssertTrue(segment.reanchor)
+        XCTAssertEqual(segment.startU, oldEnd, accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(state.beatClock, before)
+        XCTAssertEqual(state.segmentOrder, [1, 2])
+        XCTAssertEqual(try XCTUnwrap(state.lensSummary()).rows.count, 0, "新しい epoch のレンズは空から")
     }
 
     func testOnsetsAreStoredAndPlacedOnTheBeatClock() throws {
@@ -377,9 +530,9 @@ final class RhythmAnalyzerTests: XCTestCase {
         for n in 1...12 { onsets[5 * n] = [n] }
         feed(state, frames: 1...60, onsets: onsets)
         XCTAssertEqual(state.eventSerial, 12)
-        var us: [Double] = []
-        state.forEachEvent(from: -100, to: 100) { _ in us.append(0) }
-        XCTAssertEqual(us.count, 12)
+        var count = 0
+        state.forEachEvent(from: -100, to: 100) { _ in count += 1 }
+        XCTAssertEqual(count, 12)
         let lens = try XCTUnwrap(state.lensSummary())
         // 拍の頭だけ。帯域 1（Mid）のスロット 0 に 12 個、揺れは 0。
         XCTAssertEqual(lens.rows.count, 1)
@@ -408,8 +561,31 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(lens.swing, 0.52 / 0.48, accuracy: 1e-3, "中央値 0.52 → 0.52 : 0.48")
         let mid = try XCTUnwrap(lens.rows.first { $0.slot == 3 })
         XCTAssertEqual(mid.count, 12)
-        // 先頭の拍の onset は、同じ帯域の 1 Span か 2 Span 前が無いので新規ではない。
-        XCTAssertFalse(lens.rows.isEmpty)
+    }
+
+    func testAnEpochOnTheTripletGridSwitchesTheSnap() throws {
+        let state = ETRhythmState()
+        // 拍の 1/3 と 2/3 に乗る onset を、拍ごとに 2 つ。
+        for k in 1...80 {
+            var f = Fields()
+            f.frameCount = UInt32(10 * k)
+            f.time = Float(Double(k) * 0.1)
+            let n = Int(f.frameCount) / 50
+            f.anchorIndex = UInt32(n)
+            f.anchorFrame = UInt32(50 * n)
+            f.anchorFraction = 0
+            var events = [committedBeat(frame: Int32(50 * n), index: Int32(n))]
+            if k % 5 == 3 {
+                let b = k / 5
+                events.append(EventSpec(frame: UInt32(50 * b + 17), beatIndex: Int32(b), beatFraction: 1 / 3 + 0.004))
+                events.append(EventSpec(frame: UInt32(50 * b + 33), beatIndex: Int32(b), beatFraction: 2 / 3 - 0.004))
+            }
+            f.events = events
+            state.ingest(frame(f, sequence: UInt32(k)), now: Double(k) * 0.1)
+        }
+        let lens = try XCTUnwrap(state.lensSummary())
+        XCTAssertEqual(Set(lens.rows.map(\.slot)), [2, 4], "3 連の格子のスロット")
+        XCTAssertGreaterThan(try XCTUnwrap(state.openSegment).triplet, try XCTUnwrap(state.openSegment).straight)
     }
 
     func testPointsForLaneViewsAreOldestFirstAndInsideTheWindow() {
@@ -417,20 +593,112 @@ final class RhythmAnalyzerTests: XCTestCase {
         var onsets: [Int: [Int]] = [:]
         for n in 1...12 { onsets[5 * n] = [n] }
         feed(state, frames: 1...60, onsets: onsets)
+        state.prepareRender(now: 6.0)
         let view = ETRhythmState.LaneView(left: 0, top: 0, width: 400, height: 90,
                                           uRight: state.beatClock, span: 4, echo: false)
         let points = state.points(for: view)
         XCTAssertGreaterThanOrEqual(points.count, 4)
         XCTAssertEqual(points.map(\.x), points.map(\.x).sorted(), "古い順")
         // 帯域 1（Mid）の行の中心（上から 2 行目の中央）。揺れ 0 ms。
-        for p in points where p.timed {
+        for p in points where p.located {
             XCTAssertEqual(p.y, 90.0 / 3 * 1.5, accuracy: 1e-3)
-            XCTAssertGreaterThanOrEqual(p.radius, 0.025 * 30)
+            XCTAssertGreaterThanOrEqual(p.radius, 1.5)
+            XCTAssertLessThanOrEqual(p.radius, 3.5)
         }
         // Echo は帯域ごとの行の高さ（中央の行は 0.5 の位置）。
         let echo = ETRhythmState.LaneView(left: 0, top: 0, width: 400, height: 22,
                                           uRight: state.beatClock, span: 4, echo: true)
         for p in state.points(for: echo) { XCTAssertEqual(p.y, 11, accuracy: 1e-9) }
+    }
+
+    // MARK: 仮の onset
+
+    private func provisionalFrame(count: UInt32, anchorFrame: UInt32, anchorIndex: UInt32, events: [EventSpec],
+                                  preview: [(frame: Int32, fraction: Float, index: Int32)] = [],
+                                  generation: UInt32 = 1) -> ETFrame {
+        var f = Fields()
+        f.generation = generation
+        f.frameCount = count
+        f.time = Float(Double(count) * 0.01)
+        f.anchorFrame = anchorFrame
+        f.anchorFraction = 0
+        f.anchorIndex = anchorIndex
+        f.events = [committedBeat(frame: Int32(anchorFrame), index: Int32(anchorIndex))] + events
+        f.preview = preview
+        f.previewPeriod = preview.isEmpty ? 0 : 0.5
+        return frame(f)
+    }
+
+    func testProvisionalOnsetAppearsAtOnceAndACommittedResendCorrectsTheSamePoint() throws {
+        let state = ETRhythmState()
+        let onset = EventSpec(frame: 100, beatIndex: 1, beatFraction: 0.02, band: 1, flags: 3)
+        state.ingest(provisionalFrame(count: 100, anchorFrame: 50, anchorIndex: 0, events: [onset]), now: 0)
+        XCTAssertEqual(state.eventSerial, 1)
+        XCTAssertEqual(state.pendingOnsets.count, 1)
+        var info = state.eventInfo(0)
+        XCTAssertTrue(info.located)
+        XCTAssertFalse(info.timed)
+        XCTAssertEqual(try XCTUnwrap(state.lensSummary()).rows.count, 0, "仮の点のずれはレンズに入れない")
+        let before = state.displayedEvent(0, wall: 1)
+
+        var committed = onset
+        committed.flags = 0
+        committed.beatFraction = 0.98 // 拍の手前（番号 0 の 0.98）に置き直される
+        committed.beatIndex = 0
+        state.ingest(provisionalFrame(count: 200, anchorFrame: 150, anchorIndex: 2, events: [committed]), now: 1)
+        XCTAssertEqual(state.eventSerial, 1, "確定の出し直しは 2 つ目の点を足さない")
+        XCTAssertTrue(state.pendingOnsets.isEmpty)
+        info = state.eventInfo(0)
+        XCTAssertTrue(info.timed)
+        XCTAssertEqual(info.time, 1.0, accuracy: 1e-9, "解析した時刻は変えない")
+        // 表示は連続（同じ壁時計では、補正の前と同じ位置）。
+        let after = state.displayedEvent(0, wall: 1)
+        XCTAssertEqual(after.u, before.u, accuracy: 1e-9)
+        XCTAssertEqual(after.deviation, before.deviation, accuracy: 1e-9)
+        // 100 ms 後には、補正の差が e^-1 に縮み、十分後には確定した位置に着く。
+        let moving = state.displayedEvent(0, wall: 1.1)
+        XCTAssertLessThan(abs(moving.u - info.u), abs(before.u - info.u))
+        XCTAssertEqual(state.displayedEvent(0, wall: 5).u, info.u, accuracy: 1e-6)
+        // 確定した点は動かさない。
+        committed.beatIndex = 0
+        committed.beatFraction = 0.8
+        state.ingest(provisionalFrame(count: 200, anchorFrame: 150, anchorIndex: 2, events: [committed]), now: 2)
+        XCTAssertEqual(state.eventInfo(0).u, info.u)
+        XCTAssertEqual(state.eventInfo(0).deviation, info.deviation)
+    }
+
+    func testFreshPathsCorrectAPendingOnsetBeforeItCommits() throws {
+        let state = ETRhythmState()
+        let onset = EventSpec(frame: 100, beatIndex: 1, band: 1, flags: 3)
+        func path(_ middle: Int32, _ events: [EventSpec] = []) -> ETFrame {
+            provisionalFrame(count: 150, anchorFrame: 50, anchorIndex: 0, events: events,
+                             preview: [(50, 0, 0), (middle, 0, 1), (middle + 50, 0, 2)])
+        }
+        state.ingest(path(100, [onset]), now: 0)
+        let original = state.displayedEvent(0, wall: 0)
+        XCTAssertEqual(original.u, 1, accuracy: 1e-9)
+        state.ingest(path(120), now: 0.017)
+        // 0.5 秒（拍 0）から 1.2 秒（拍 1）の間の 1.0 秒は 5/7 拍。
+        XCTAssertEqual(state.eventInfo(0).u, 5.0 / 7, accuracy: 1e-7, "出し直し無しで、新しい経路が仮の点を直す")
+        XCTAssertEqual(state.displayedEvent(0, wall: 0.017).u, original.u, accuracy: 1e-9, "補正は連続して始まる")
+        XCTAssertEqual(state.eventSerial, 1)
+        XCTAssertEqual(state.eventInfo(0).time, 1, accuracy: 1e-9)
+        XCTAssertFalse(state.eventInfo(0).timed)
+        let target = state.eventInfo(0).u
+        XCTAssertLessThan(abs(state.displayedEvent(0, wall: 0.117).u - target), abs(original.u - target))
+        state.ingest(path(110), now: 0.03)
+        XCTAssertGreaterThan(state.eventInfo(0).u, target, "次の経路が同じ点をさらに直す")
+        var committed = onset
+        committed.flags = 0
+        state.ingest(provisionalFrame(count: 200, anchorFrame: 150, anchorIndex: 2, events: [committed],
+                                      preview: [(150, 0, 2), (200, 0, 3)]), now: 0.05)
+        XCTAssertTrue(state.eventInfo(0).timed)
+        XCTAssertTrue(state.pendingOnsets.isEmpty)
+        let fixed = state.eventInfo(0).u
+        state.ingest(provisionalFrame(count: 210, anchorFrame: 150, anchorIndex: 2, events: [],
+                                      preview: [(150, 0, 2), (210, 0, 3)]), now: 0.06)
+        XCTAssertEqual(state.eventInfo(0).u, fixed)
+        XCTAssertEqual(state.eventSerial, 1)
     }
 
     // MARK: 世代の柵
@@ -459,15 +727,47 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(state.snapshot?.frameCount, 70)
     }
 
-    func testNewerGenerationRestartsTheHistory() {
+    /// 2.13.0: カーネルの解析のやり直し（新しい世代）は履歴を捨てず、枠の番号と epoch を続ける。
+    func testANewerGenerationKeepsTheHistoryAndContinuesFramesAndEpochs() throws {
         let state = ETRhythmState()
-        feed(state, frames: 1...10, generation: 3)
-        XCTAssertEqual(state.segments.count, 1)
-        state.ingest(gridFrame(11, generation: 4), now: 0)
-        XCTAssertEqual(state.activeGeneration, 4)
-        XCTAssertEqual(state.eventSerial, 0)
-        XCTAssertEqual(state.segments.count, 1, "新しい世代の最初の枠から作り直す")
-        XCTAssertEqual(state.tempogramHead, 0)
+        var onsets: [Int: [Int]] = [:]
+        for n in 1...12 { onsets[5 * n] = [n] }
+        feed(state, frames: 1...60, generation: 5, onsets: onsets)
+        let stored = state.eventSerial
+        let clock = state.beatClock
+        // 古い世代は捨てる。
+        state.ingest(gridFrame(61, generation: 4), now: 6.1)
+        XCTAssertEqual(state.eventSerial, stored)
+        XCTAssertEqual(state.snapshot?.frameCount, 600)
+        // 新しい世代は枠の番号が 0 近くから始まる。続きとして 600 を足す。epoch 1 は別の区間になる。
+        var f = Fields()
+        f.generation = 6
+        f.frameCount = 3
+        f.time = 0.03
+        f.locked = false
+        f.events = [EventSpec(frame: 1, epoch: 1, beatIndex: 0, beatFraction: 0.5, band: 0)]
+        state.ingest(frame(f), now: 6.2)
+        XCTAssertEqual(state.activeGeneration, 6)
+        XCTAssertEqual(state.frameBase, 600)
+        XCTAssertEqual(state.epochBase, 1 << 32)
+        XCTAssertEqual(state.snapshot?.frameCount, 603)
+        XCTAssertEqual(state.eventSerial, stored + 1)
+        XCTAssertGreaterThanOrEqual(state.beatClock, clock)
+        XCTAssertEqual(state.snapshot?.events.first?.epoch, (1 << 32) + 1)
+        XCTAssertEqual(state.snapshot?.events.first?.time ?? 0, 6.01, accuracy: 1e-9, "時刻も続ける")
+        // 新しい世代の最初の拍は、別の区間として作られる。
+        var g = Fields()
+        g.generation = 6
+        g.frameCount = 53
+        g.time = 0.53
+        g.anchorFrame = 50
+        g.anchorFraction = 0
+        g.anchorIndex = 0
+        g.events = [committedBeat(frame: 50, index: 0)]
+        state.ingest(frame(g), now: 6.7)
+        XCTAssertEqual(state.segments.count, 2)
+        XCTAssertNotNil(state.segments[(1 << 32) + 1])
+        XCTAssertEqual(state.segmentOrder, [1, (1 << 32) + 1])
     }
 
     func testSourceChangeAcceptsRestartedGenerations() {
@@ -480,35 +780,125 @@ final class RhythmAnalyzerTests: XCTestCase {
         feed(state, frames: 1...2, generation: 1)
         XCTAssertEqual(state.activeGeneration, 1)
         XCTAssertNotNil(state.snapshot)
+        XCTAssertEqual(state.frameBase, 0, "出どころが替わったら番号の続きも捨てる")
     }
+
+    // MARK: ビート LED
 
     func testBeatLedLightsOnShownBeatsAndFades() throws {
         let state = ETRhythmState()
         feed(state, frames: 1...4)
-        // 拍 1 は 0.5 秒。0.4 秒の枠まではまだ点いていない（ledBeat は無い）。
+        // 拍 1 は 0.5 秒。0.4 秒の枠まではまだ点いていない。
         XCTAssertEqual(state.ledLevel, 0)
-        XCTAssertNil(state.ledAgeMilliseconds(now: 0.4))
         feed(state, frames: 5...5)
         // 0.5 秒の枠で拍 1 を越える。ちょうど越えた直後は最大（強さ 1）。
         XCTAssertGreaterThan(state.ledLevel, 0.99)
         feed(state, frames: 6...6)
         // 0.1 秒後は 0.09 秒の減衰を過ぎて消える。
         XCTAssertEqual(state.ledLevel, 0)
-        XCTAssertNotNil(state.ledAgeMilliseconds(now: 0.6))
     }
 
-    func testBeatLedScalesWithStrengthAndIgnoresRepeatedBeats() throws {
+    /// 上流の「shown beats flash once at their time…」。
+    func testShownBeatsFlashOnceAndQueuedBeatsFlashBetweenFrames() {
+        let state = ETRhythmState()
+        func at(_ count: UInt32, _ events: [EventSpec], gate: Bool = true, epoch: UInt32 = 1, now: Double = 0) {
+            var f = Fields()
+            f.frameCount = count
+            f.time = Float(Double(count) * 0.01)
+            f.locked = gate
+            f.epoch = epoch
+            f.period = 0
+            f.events = events
+            state.ingest(frame(f), now: now)
+        }
+        let shown = forwardBeat(frame: 60, index: 7, epoch: 3, strength: 0.8)
+        at(55, [shown], now: 0)
+        XCTAssertEqual(state.eventSerial, 0, "拍の項目は onset の行に入らない")
+        XCTAssertEqual(state.ledLevel, 0, "先の拍は待ちに入れるだけで、点けない")
+        at(57, [shown], gate: false, epoch: 2, now: 0.02)
+        // 壁時計が進むと、待っている拍がその時刻に点く（枠の間でも）。
+        state.prepareRender(now: 0.0505)
+        XCTAssertEqual(state.ledLevel, 0.8, accuracy: 0.01, "0.57 + 0.0305 = 0.6005 秒で点く")
+        state.prepareRender(now: 0.02 + 0.075)
+        XCTAssertEqual(state.ledLevel, 0.4, accuracy: 1e-3, "0.045 / 0.09 を消費")
+        at(70, [shown], gate: false, now: 0.1)
+        XCTAssertEqual(state.ledLevel, 0, "同じ札の拍は 2 度点けない")
+    }
+
+    func testLateShownBeatStartsWhenReceivedAndSilenceClearsTheQueue() {
+        let state = ETRhythmState()
+        var f = Fields()
+        f.frameCount = 80
+        f.period = 0.5
+        f.events = [forwardBeat(frame: 10, index: 2, epoch: 4, strength: 0.6)]
+        state.ingest(frame(f, sequence: 1), now: 0)
+        XCTAssertEqual(state.ledLevel, 0.6, accuracy: 1e-6, "過ぎた拍は受け取った時に点く")
+        f.frameCount = 81
+        state.ingest(frame(f, sequence: 2), now: 0.01)
+        XCTAssertLessThan(state.ledLevel, 0.6)
+        // 解析の確からしさも最強候補も 0（無音）。待っている拍と札を捨てる。
+        f.frameCount = 100
+        f.events = [forwardBeat(frame: 150, index: 3, epoch: 4)]
+        state.ingest(frame(f, sequence: 3), now: 0.02)
+        f.frameCount = 101
+        f.confidence = 0
+        f.strongest = 0
+        f.events = []
+        state.ingest(frame(f, sequence: 4), now: 0.03)
+        XCTAssertEqual(state.ledLevel, 0)
+        // 捨てたので、同じ番号の拍が改めて受け取られる。
+        f.frameCount = 200
+        f.confidence = 0.6
+        f.strongest = 120
+        f.events = [forwardBeat(frame: 150, index: 3, epoch: 4)]
+        state.ingest(frame(f, sequence: 5), now: 0.04)
+        XCTAssertGreaterThan(state.ledLevel, 0)
+    }
+
+    func testMetronomeClickOffClearsTheLed() {
         let state = ETRhythmState()
         var f = Fields()
         f.frameCount = 100
-        f.events = [EventSpec(frame: 100, beatIndex: 2, strength: 0.5, band: 0, flags: 2)]
+        f.events = [forwardBeat(frame: 100, index: 2, strength: 0.5)]
         state.ingest(frame(f, sequence: 1), now: 0)
-        XCTAssertEqual(state.ledLevel, 0.5, accuracy: 1e-9, "着いた時刻で点け、強さ倍")
-        // 同じ epoch で番号が進んでいない拍は出し直し。点け直さない。
-        f.frameCount = 108
-        f.events = [EventSpec(frame: 108, beatIndex: 2, strength: 1, band: 0, flags: 2)]
-        state.ingest(frame(f, sequence: 2), now: 0.08)
-        XCTAssertEqual(state.ledLevel, 0.5 * (1 - 0.08 / 0.09), accuracy: 1e-6)
+        XCTAssertEqual(state.ledLevel, 0.5, accuracy: 1e-9)
+        state.clearBeatLed()
+        XCTAssertEqual(state.ledLevel, 0)
+    }
+
+    // MARK: 止まっている間の表示
+
+    func testIdleLanesKeepScrollingAtTheLastPeriod() throws {
+        let state = ETRhythmState()
+        feed(state, frames: 1...60)
+        state.prepareRender(now: 6.0)
+        let initial = try XCTUnwrap(state.displayU)
+        let lastCount = try XCTUnwrap(state.snapshot).frameCount
+        let committedClock = state.beatClock
+        // 無音の枠（周期 0・確からしさ 0・最強候補 0）が来て、そのあと枠は来ない。
+        var f = Fields()
+        f.locked = false
+        f.frameCount = UInt32(lastCount + 1)
+        f.confidence = 0
+        f.strongest = 0
+        state.ingest(frame(f), now: 6.0)
+        XCTAssertTrue(state.idleScroll)
+        state.prepareRender(now: 6.1)
+        let first = try XCTUnwrap(state.displayU)
+        state.prepareRender(now: 6.2)
+        let second = try XCTUnwrap(state.displayU)
+        XCTAssertGreaterThan(first, initial)
+        XCTAssertGreaterThan(second, first)
+        XCTAssertEqual(second - first, 0.1 / 0.5, accuracy: 1e-9, "最後の周期（0.5 秒）で流れる")
+        state.prepareRender(now: 66.2)
+        XCTAssertEqual(try XCTUnwrap(state.displayU) - second, 60 / 0.5, accuracy: 1e-6)
+        XCTAssertEqual(state.beatClock, committedClock, "止まっている間の描画は解析の履歴を変えない")
+        // 枠が戻る。止まっていた間の時間は表示に残り、時計は後ろに戻らない。
+        state.ingest(gridFrame(62, generation: 1), now: 66.3)
+        XCTAssertFalse(state.idleScroll)
+        let resumed = state.displayClock(state.audioNow(66.3), wall: 66.3)
+        XCTAssertEqual(resumed, state.displayU ?? 0, accuracy: 1e-6)
+        XCTAssertGreaterThan(resumed, second)
     }
 
     func testSegmentsAreCappedAtSixtyFour() {

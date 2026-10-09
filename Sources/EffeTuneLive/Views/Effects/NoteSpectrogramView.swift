@@ -3,28 +3,11 @@
 //
 //  解析は重い（学習済みの木を回す）が、値は DSP から出てくるので、こちらは描くだけ。
 //
-//  テレメトリ: frameType 24、formatVersion 3。
-//  ETFrameType には 20 までしか無い（Telemetry.swift）ので、
-//  Telemetry.frame(tap:type:) は使えない。latest の鍵を自分で作って読んでいる。
-//  鍵の作り方は Telemetry.key(tap:type:) と同じ (tap << 16 | type)。
-//  番号の出どころ: dsp/plugins/analyzer/note_spectrogram/kernel.cpp:167
-//  の writer.write(24u, 3u, ...)、note_spectrogram.js:1-2 の
-//  MULTI_F0_TAP_FRAME / MULTI_F0_TELEMETRY_VERSION。
-//
-//  ペイロードの並び。kernel.cpp:238-249 が頭を書き、同 527 と 564 が本体を書く。
-//  plugins/analyzer/note_spectrogram.js:305-334 が同じ位置を読む:
-//      0      f32 sampleRate     kernel.cpp:238 / note_spectrogram.js:305
-//      4      f32 timeSeconds    kernel.cpp:239 / note_spectrogram.js:306
-//      8      u16 pitchCount     kernel.cpp:240 / note_spectrogram.js:307  常に 440 (88*5)
-//     10      u16 firstMidi      kernel.cpp:241 / note_spectrogram.js:308  常に 21
-//     12      f32 hopSeconds     kernel.cpp:242 / note_spectrogram.js:309
-//     16      u32 frameIndex     kernel.cpp:243 / note_spectrogram.js:310
-//     20      u32 modeCode       kernel.cpp:244 / note_spectrogram.js:311  常に 5（細分）
-//     24      u32 generation     kernel.cpp:245 / note_spectrogram.js:312  0 は無効
-//     28 + p*4    f32 confidence kernel.cpp:527 / note_spectrogram.js:324  0〜1
-//   1788 + p*4    f32 level      kernel.cpp:564 / note_spectrogram.js:330  dB（床は -240）
-//  1788 = 28 + 440*4（note_spectrogram.js:13 の MULTI_F0_LEVEL_OFFSET）。
-//  長さは 3548 ちょうど（同 14）。
+//  テレメトリ: frameType 24、formatVersion 5（2.13.0）。枠の並びと読みは
+//  DSP/NoteSpectrogramFrame.swift（ETNoteSnapshot。Foundation だけで試せる）。
+//  確からしさは 32 + p*4、dB は 1792 + p*4、長さは 8840。さらに 2・4・8 枠前の確からしさの直しを運ぶ。
+//  番号の出どころ: dsp/plugins/analyzer/note_spectrogram/kernel.cpp の writer.write(24u, 5u, ...)、
+//  note_spectrogram.js の MULTI_F0_TAP_FRAME / MULTI_F0_TELEMETRY_VERSION。
 //
 //  細分は 1 半音を 5 つに割ったもの（kernel.cpp:25 の kFineDivisions）。
 //  p = (midi - 21) * 5 + division で、division は 0 が一番低い。
@@ -32,16 +15,15 @@
 //  （note_spectrogram.js:828-835 の _bagConfidence）。High のときは 5 つを別々の行にする。
 //
 //  列は 1 本ずつ来る。Spectrogram と同じく、固定長の輪（ETNoteBand）に入れて
-//  CGImage 1〜2 枚に畳んで貼る。88×256 の升目を Path に積まない。
+//  CGImage 1〜2 枚に畳んで貼る。88×512 の升目を Path に積まない。
 //  Color が Normal のときは画像に alpha だけを持たせて型抜きに使い、塗りは .tint に任せる。
 //  Note Colors のときだけ note_spectrogram.js:43-61 の色を前乗算で画像に入れて直に貼る。
 //
-//  取りこぼしについて。DSP は貯まった枠を writeTelemetry で全部吐く（kernel.cpp:165-172）
-//  が、Telemetry は tap と種類ごとに最新の 1 枠しか残さない。読み出しは
-//  PipelineView の 1/30 秒ごとの pollTelemetry で、DSP が吐くのは 60Hz
-//  （EffeTuneDSP.telemetryHz）。読むたびに残っているのは最後の 1 枠だけなので、
-//  実際に帯へ入るのも 1 回につき 1 列になる。列の幅は一定の時間を表さない。
-//  Time Span は上流のように列の間隔を時間で決められないので、
+//  取りこぼしについて。DSP は 20 ms ごと（50 fps）に枠を吐き、PipelineView の pollTelemetry は 30Hz。
+//  最新の 1 枠だけだと 4 割が落ちて、前の枠の列を直す枠の番号（frameIndex - age）の当て先が無くなる。
+//  なので Telemetry は種類 24 の枠を畳まずに溜め（Telemetry.drainFrames）、帯へ届いた順に全部入れる。
+//  列は 512 本で、Time Span 10 秒（500 列）が収まる。1 回の入れ直しで画像は 1 度だけ組む。
+//  列の間隔は一定の時間とは限らない（取りこぼしや止まっている間）ので、Time Span は
 //  溜まっている列の平均の間隔から「何列ぶんを横幅いっぱいに並べるか」を出している。
 
 import SwiftUI
@@ -622,12 +604,10 @@ private struct NoteSpectrogramGraph: View {
                 // **縦の引き伸ばしを画像へ持たせる**（ETNoteBand.rowScale）。
                 // 全画面では図がずっと高くなるので、開くたびに測り直す。
                 band.fit(height: graphHeight * displayScale)
-                if let latest = snapshot { band.push(latest) }
+                ingest()
             }
             .onChange(of: graphHeight) { _, h in band.fit(height: h * displayScale) }
-            .onChange(of: snapshot?.frameIndex) { _, _ in
-                if let latest = snapshot { band.push(latest) }
-            }
+            .onChange(of: latestSequence) { _, _ in ingest() }
             // 手元と PC で時計が違う。入れ替わったら溜めた列を捨てる（残すと Time Span の列数が狂う）。
             .onChange(of: telemetry.mirrored.contains(tapId)) { _, _ in band.reset() }
             .onChange(of: display) { _, now in band.display = now }
@@ -853,8 +833,20 @@ private struct NoteSpectrogramGraph: View {
     // MARK: 枠を読む
 
     private var snapshot: ETNoteSnapshot? {
-        // frameType 24 は ETFrameType に無いので、鍵を自分で組む。
-        ETNoteSnapshot(telemetry.latest[UInt64(tapId) << 16 | 24])
+        ETNoteSnapshot(telemetry.frame(tap: tapId, type: .noteSpectrogram))
+    }
+
+    /// 最新の枠の通し番号。変わったら溜まっている枠を取りに行く。
+    private var latestSequence: UInt32? {
+        telemetry.frame(tap: tapId, type: .noteSpectrogram)?.sequence
+    }
+
+    /// 溜まっている枠を届いた順に全部帯へ入れる。**最新の 1 枠だけだと 50 fps の 4 割が落ち**、
+    /// 2・4・8 枠前の確からしさの直しの当て先の列が無くなる。全画面と元の図は同じ帯を見るので、
+    /// 先に取った側が入れれば足りる。
+    private func ingest() {
+        let frames = telemetry.drainFrames(tap: tapId, type: ETFrameType.noteSpectrogram.rawValue)
+        band.push(contentsOf: frames.compactMap { ETNoteSnapshot($0) })
     }
 }
 
@@ -874,7 +866,8 @@ struct ETNoteProbe {
 /// 描く用の並びは表示の切り替えで作り直す。
 final class ETNoteBand: ObservableObject {
 
-    static let columns = 256
+    /// 512 列。2.13.0 は枠を全部入れる（50 fps）ので、Time Span 10 秒が 500 列になる。
+    static let columns = 512
     /// 数は枠の読みと同じもの（ETNoteLayout、NoteSpectrogramFrame.swift）。
     static let notes = ETNoteLayout.notes
     static let divisions = ETNoteLayout.divisions
@@ -971,11 +964,25 @@ final class ETNoteBand: ObservableObject {
         pixels = [UInt8](repeating: 0, count: bytes)
     }
 
+    /// 届いた枠を全部入れる。画像の組み直しは最後に 1 回だけ。
+    func push(contentsOf snapshots: [ETNoteSnapshot]) {
+        var added = false
+        for snapshot in snapshots where append(snapshot) { added = true }
+        guard added else { return }
+        image = makeImage()
+        revision &+= 1
+    }
+
     func push(_ snapshot: ETNoteSnapshot) {
+        push(contentsOf: [snapshot])
+    }
+
+    /// 1 枠を列にして描く。入れたら true。
+    private func append(_ snapshot: ETNoteSnapshot) -> Bool {
         guard snapshot.confidence.count == Self.pitches,
-              snapshot.level.count == Self.pitches else { return }
+              snapshot.level.count == Self.pitches else { return false }
         // 同じ枠を 2 度入れない。描き直しのたびに列が増えてしまう。
-        if let previous = lastIndex, previous == snapshot.frameIndex { return }
+        if let previous = lastIndex, previous == snapshot.frameIndex { return false }
         lastIndex = snapshot.frameIndex
 
         let elapsed = max(0, snapshot.time - (lastTime ?? snapshot.time))
@@ -1002,26 +1009,21 @@ final class ETNoteBand: ObservableObject {
             revise(generation: snapshot.generation, index: snapshot.frameIndex &- fix.age,
                    confidence: fix.confidence)
         }
-        image = makeImage()
-        revision &+= 1
+        return true
     }
 
     /// 前の枠の確からしさを直す（2.13.0。上流 _applyFrameRevision、note_spectrogram.js:760-781）。
     /// 当て先は最新から age 枠までの列だけを探す。無い（取りこぼした、もう流れた）なら何もしない。
     /// dB（Volume）は直さない。上流も volumeLevelHistory はそのまま。
     private func revise(generation: UInt32, index: UInt32, confidence: [Float]) {
-        guard confidence.count == Self.pitches else { return }
-        let reach = min(count, Int(ETNoteLayout.maximumRevisionAge) + 1)
-        for back in 1...max(1, reach) where back <= count {
-            let column = (head - back + Self.columns) % Self.columns
-            guard let frame = frames[column], frame.generation == generation,
-                  frame.index == index else { continue }
-            for pitch in 0..<Self.pitches {
-                fine[pitch * Self.columns + column] = Self.byte(confidence[pitch])
-            }
-            paint(column: column)
-            return
+        guard confidence.count == Self.pitches,
+              let column = ETNoteLayout.revisionColumn(frames: frames, head: head, count: count,
+                                                       generation: generation, index: index)
+        else { return }
+        for pitch in 0..<Self.pitches {
+            fine[pitch * Self.columns + column] = Self.byte(confidence[pitch])
         }
+        paint(column: column)
     }
 
     /// 溜めた列を全部捨てる。枠の出どころ（手元・PC）が替わったとき。音量の目盛りも既定へ戻す。

@@ -45,17 +45,24 @@ final class Telemetry: ObservableObject {
 
     private init() {}
 
-    private var pending: [(time: TimeInterval, frames: [UInt64: ETFrame], rhythm: [ETFrame])] = []
+    private var pending: [(time: TimeInterval, frames: [UInt64: ETFrame], queued: [ETFrame])] = []
 
-    /// Rhythm Analyzer の枠。**最新の 1 枠に畳まず、届いた順に全部取っておく。**
+    /// 畳まずに届いた順に全部取っておく枠（Rhythm Analyzer と Note Spectrogram）。
     ///
-    /// 枠 1 つは、前の枠からの onset（最大 16 個）と取りこぼした数を運ぶ
+    /// Rhythm Analyzer: 枠 1 つは、前の枠からの onset（最大 16 個）と取りこぼした数を運ぶ
     /// （rhythm_analyzer/kernel.cpp の kMaxEvents と droppedEvents）。1 回の poll に 2 枠以上
-    /// 入ると、最新だけ残す `latest` では前の枠の onset が消える。上流のハブは枠ごとに
-    /// 購読者へ配るので落とさない。tap ごとに持ち、描く側が drainRhythmFrames で取り出す。
-    private var rhythmQueue: [UInt32: [ETFrame]] = [:]
-    /// tap ごとの上限。30Hz なら 8 秒ぶん。描く側が止まっていた間に溜め続けない。
-    static let rhythmQueueLimit = 256
+    /// 入ると、最新だけ残す `latest` では前の枠の onset が消える。
+    /// Note Spectrogram: カーネルは 20 ms ごと（50 fps）に枠を出し、こちらの poll は 30Hz なので、
+    /// 最新だけだと 4 割が落ちる。2・4・8 枠前の確からしさの直しは枠の番号で当て先を探すので、
+    /// 落ちた枠の列へは直しが届かない（2.13.0）。
+    /// 上流のハブは枠ごとに購読者へ配るので落とさない。tap と種類ごとに持ち、描く側が drainFrames で取り出す。
+    private var frameQueue: [UInt64: [ETFrame]] = [:]
+    /// 溜める種類。Note Spectrogram（24）は ETFrameType に無いので数で持つ。
+    static let queuedTypes: Set<UInt16> = [ETFrameType.noteSpectrogram.rawValue,
+                                           ETFrameType.rhythmAnalyzer.rawValue]
+    /// tap と種類ごとの上限。30Hz なら 8 秒ぶん（Note Spectrogram は 50 fps なので 5 秒）。
+    /// 描く側が止まっていた間に溜め続けない。
+    static let queueLimit = 256
     private var synchronized = false
 
     static func key(tap: UInt32, type: ETFrameType) -> UInt64 {
@@ -66,9 +73,13 @@ final class Telemetry: ObservableObject {
         latest[Self.key(tap: tap, type: type)]
     }
 
-    /// 溜まっている Rhythm Analyzer の枠を、届いた順に全部渡して空にする。
+    /// 溜まっている枠を、届いた順に全部渡して空にする。
+    func drainFrames(tap: UInt32, type: UInt16) -> [ETFrame] {
+        frameQueue.removeValue(forKey: UInt64(tap) << 16 | UInt64(type)) ?? []
+    }
+
     func drainRhythmFrames(tap: UInt32) -> [ETFrame] {
-        rhythmQueue.removeValue(forKey: tap) ?? []
+        drainFrames(tap: tap, type: ETFrameType.rhythmAnalyzer.rawValue)
     }
 
     /// clear した回数。エンジンを作り直すと枠の番号も世代も数え直しになる（Rhythm Analyzer は
@@ -77,7 +88,7 @@ final class Telemetry: ObservableObject {
 
     func clear() {
         clearCount &+= 1
-        rhythmQueue.removeAll()
+        frameQueue.removeAll()
         latest.removeAll()
         droppedFrames = 0
         pending.removeAll()
@@ -113,8 +124,9 @@ final class Telemetry: ObservableObject {
         var found: [UInt64: ETFrame] = [:]
         for frame in frames where mirrored.contains(frame.tapId) {
             found[UInt64(frame.tapId) << 16 | UInt64(frame.type)] = frame
-            // Rhythm Analyzer の枠は 1 枚ごとに次の枠を読む前提の持ち越しがあるので、溜めて渡す。
-            if frame.type == ETFrameType.rhythmAnalyzer.rawValue { enqueueRhythm(frame) }
+            // Rhythm Analyzer は 1 枚ごとに次の枠を読む前提の持ち越しがあり、Note Spectrogram は
+            // 枠の番号で前の枠の列を直すので、どちらも溜めて渡す。
+            if Self.queuedTypes.contains(frame.type) { enqueue(frame) }
         }
         guard !found.isEmpty else { return }
         latest.merge(found) { _, new in new }
@@ -139,7 +151,7 @@ final class Telemetry: ObservableObject {
         var offset = 0
         let bytes = Int(read)
         var found: [UInt64: ETFrame] = [:]
-        var rhythm: [ETFrame] = []
+        var queued: [ETFrame] = []
 
         while offset + 16 <= bytes {
             let type    = load16(offset)
@@ -159,17 +171,17 @@ final class Telemetry: ObservableObject {
                 let frame = ETFrame(type: type, version: version, tapId: tap, sequence: seq,
                                     dropped: flags & 1 != 0, payload: payload)
                 found[UInt64(tap) << 16 | UInt64(type)] = frame
-                if type == ETFrameType.rhythmAnalyzer.rawValue { rhythm.append(frame) }
+                if Self.queuedTypes.contains(type) { queued.append(frame) }
             }
 
             offset += frameBytes
         }
 
-        if !found.isEmpty { pending.append((now + delay, found, rhythm)) }
+        if !found.isEmpty { pending.append((now + delay, found, queued)) }
         var ready: [UInt64: ETFrame] = [:]
         while let first = pending.first, first.time <= now {
             ready.merge(first.frames) { _, new in new }
-            for frame in first.rhythm { enqueueRhythm(frame) }
+            for frame in first.queued { enqueue(frame) }
             pending.removeFirst()
         }
         // Bound memory even if the output route changes to an unusually long delay.
@@ -177,13 +189,14 @@ final class Telemetry: ObservableObject {
         if !ready.isEmpty { latest.merge(ready) { _, new in new } }
     }
 
-    private func enqueueRhythm(_ frame: ETFrame) {
-        var queue = rhythmQueue[frame.tapId] ?? []
+    private func enqueue(_ frame: ETFrame) {
+        let key = UInt64(frame.tapId) << 16 | UInt64(frame.type)
+        var queue = frameQueue[key] ?? []
         queue.append(frame)
-        if queue.count > Self.rhythmQueueLimit {
-            queue.removeFirst(queue.count - Self.rhythmQueueLimit)
+        if queue.count > Self.queueLimit {
+            queue.removeFirst(queue.count - Self.queueLimit)
         }
-        rhythmQueue[frame.tapId] = queue
+        frameQueue[key] = queue
     }
 
     private func load16(_ o: Int) -> UInt16 {

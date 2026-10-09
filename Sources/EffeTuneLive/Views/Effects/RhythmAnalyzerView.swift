@@ -11,6 +11,17 @@
 //    → Beat lens（拍の中の位置ごとの、ずれとばらつき）
 //  を、使う面だけで高さを分ける。
 //
+//  2.13.0 の上流（rhythm_analyzer.js の drawGroove・_drawLane・_drawTempogram・_drawLens）に合わせた所:
+//    - 見出し: 「Analysis unavailable at this sample rate」（48 / 96 / 192 kHz 以外）、LOCKED / searching、
+//      確からしさで薄くなるテンポ・スウィング・ジッタ、拍の音の門が閉じていれば輪だけのランプ。
+//    - Timing lanes / Echo rows: 区間は表示の補正つき、拍の無い間は先の拍の尾に沿って格子を伸ばす。
+//      点の濃さは確からしさ倍、置けていない点は輪、仮の点は置いて見せる。
+//    - Tempogram: 採用したテンポの線は確からしさで濃さを決め（下限は無い）、最後の列から右端までは
+//      描く時だけ伸ばす。履歴は書き換えない。
+//    - Beat lens: 3 行を Timing lanes の行と揃え、目盛りは上、スロットの字と軸の名前は下。
+//    - 既定は Tempogram と Echo rows を隠す（vt / ve が false）。
+//    - 枠が止まっても（無音で休んでも）、タイミングの行は最後の周期で流し続ける。
+//
 //  上流との違い:
 //    - 字の縁取りは無い（SwiftUI の Canvas は字を縁取れない）。重なって読めない字は、上流と同じく
 //      先に書いた字を優先して外す。
@@ -19,7 +30,7 @@
 //    - 「Metronome Click」を入れるとメトロノームの 2kHz のクリックが出力へ足される（カーネルの機能）。
 //
 //  テレメトリは枠 1 つが「前の枠から今まで」の onset を運ぶので、最新の枠だけを見ず、
-//  Telemetry.drainRhythmFrames で届いた順に全部入れる。
+//  Telemetry.drainFrames で届いた順に全部入れる。
 
 import SwiftUI
 import CoreGraphics
@@ -116,9 +127,10 @@ struct RhythmAnalyzerView: View {
 
     // 表示だけの設定（DisplayParams の "RhythmAnalyzerPlugin"）。
     @State private var span: Double = Double(ETRhythm.defaultSpan)
-    @State private var showTempogram = true
+    // 2.13.0 の既定は Tempogram と Echo rows を隠す（DisplayParams の既定と同じ）。
+    @State private var showTempogram = false
     @State private var showLanes = true
-    @State private var showEcho = true
+    @State private var showEcho = false
     @State private var showLens = true
 
     init(index: Int, node: EffeTuneDSP.Node, dsp: EffeTuneDSP) {
@@ -146,7 +158,16 @@ struct RhythmAnalyzerView: View {
             tracker.objectWillChange.send()
         }
         .onAppear { tracker.state.span = spanValue }
+        // Metronome Click を切ると、待っている拍の点灯も捨てる（setParameters の `previous.ck && !this.ck`）。
+        .onChange(of: clickOn) { was, now in
+            if was && !now {
+                tracker.state.clearBeatLed()
+                tracker.objectWillChange.send()
+            }
+        }
     }
+
+    private var clickOn: Bool { current("ck", fallback: 0) >= 0.5 }
 
     /// 4/6/8/12/16 の最寄り（setParameters、rhythm_analyzer.js:179-187）。
     private var spanValue: Int { ETRhythm.nearestSpan(span) }
@@ -223,8 +244,17 @@ private struct RhythmFigure: View {
     /// 畳んだカードの高さの上限（EffectCardView.collapsedGraphHeight）。nil なら開いている。
     @Environment(\.etGraphMaxHeight) private var collapsedHeight
     @State private var width: CGFloat = 320
+    @State private var visible = false
 
     private static let narrowWidth: CGFloat = 500
+
+    /// タイミングの行を流し続けるか。見えていて、行が出ていて、周期が分かっているあいだは、
+    /// 枠が止まっても（無音で休んでも）最後の周期で流れる（上流の canRunAnimation）。
+    /// 畳んだカードは Timing lanes だけを出す。
+    private var animates: Bool {
+        let lanes = collapsedHeight != nil ? true : (showLanes || showEcho)
+        return visible && lanes && tracker.state.displayPeriod > 0
+    }
 
     var body: some View {
         let isNarrow = width < Self.narrowWidth
@@ -234,6 +264,7 @@ private struct RhythmFigure: View {
         // 枠が来たら入れる。入れたあとの知らせで描き直す（tracker の objectWillChange）。
         let sequence = telemetry.frame(tap: tapId, type: .rhythmAnalyzer)?.sequence
         VStack(alignment: .leading, spacing: 8) {
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animates)) { _ in
             GraphCanvas(
                 x: .blank(), y: .blank(),
                 height: height,
@@ -266,6 +297,7 @@ private struct RhythmFigure: View {
                 } action: { newWidth in
                     if newWidth > 0 && abs(newWidth - width) > 0.5 { width = newWidth }
                 }
+            }
             if !graphOnly {
                 ETMeasurementButton(title: "Reset") {
                     dsp.resetState(at: index)
@@ -274,7 +306,11 @@ private struct RhythmFigure: View {
             }
         }
         .onChange(of: sequence) { _, _ in tracker.pump(tap: tapId) }
-        .onAppear { tracker.pump(tap: tapId) }
+        .onAppear {
+            visible = true
+            tracker.pump(tap: tapId)
+        }
+        .onDisappear { visible = false }
     }
 }
 
@@ -358,6 +394,8 @@ private struct RhythmPainter {
         let axisFont: CGFloat = isNarrow ? 13 : 14
         let pad: CGFloat = 6
         let spanBeats = Double(span)
+        // 点灯と表示の時計を、この描画の壁時計まで進める（drawGroove の頭）。
+        state.prepareRender(now: now)
         let lens = state.displayedLens(state.lensSummary(), now: now)
         let signalColor = signal
 
@@ -440,8 +478,10 @@ private struct RhythmPainter {
                     drawBeatLed(&context, level: part.level, color: part.color, left: x, top: entry.top,
                                 size: fontSize * entry.scale, lineWidth: 1)
                 } else {
-                    draw(&context, TextItem(value: part.text, x: x, y: entry.top, color: part.color,
-                                            align: .leading, baseline: .top, size: fontSize * entry.scale))
+                    var layer = context
+                    layer.opacity = part.opacity
+                    draw(&layer, TextItem(value: part.text, x: x, y: entry.top, color: part.color,
+                                          align: .leading, baseline: .top, size: fontSize * entry.scale))
                 }
                 x += (entry.widths[i] + 0.8 * fontSize) * entry.scale
             }
@@ -449,9 +489,8 @@ private struct RhythmPainter {
         top = placed.bottom + pad
 
         let captionRow = 1.3 * fontSize
-        // レンズの軸の名前の行（スロットの字の下）。
-        let nameRow = axisFont + 8
-        let lensLabelHeight = captionRow + nameRow + (1.4 / 0.15) * fontSize
+        // 帯域の名前が行の印の上に収まる、レンズの高さ（3 行ぶん）。狭い配置ではこれがレンズの最小の高さ。
+        let lensLabelHeight = 3 * CGFloat(ETRhythm.lensLabelRow) * fontSize
         let stacked = width < height
         let besideLens = !stacked && showLens && (showLanes || showEcho)
         let laneRight = besideLens ? 0.72 * width : width
@@ -515,9 +554,10 @@ private struct RhythmPainter {
         let strip = rects["strip"], main = rects["main"], echo = rects["echo"], lensRect = rects["lens"]
 
         var views: [ETRhythmState.LaneView] = []
+        let displayU = state.displayU ?? state.beatClock
         if let main {
             views.append(.init(left: main.minX, top: main.minY, width: main.width, height: main.height,
-                               uRight: state.beatClock, span: span, echo: false))
+                               uRight: displayU, span: span, echo: false))
         }
         var rowCount = 0
         var echoRows = 0
@@ -531,7 +571,7 @@ private struct RhythmPainter {
             for row in 0..<echoRows {
                 views.append(.init(left: echo.minX, top: echo.minY + CGFloat(row) * echo.height / CGFloat(echoRows),
                                    width: echo.width, height: echo.height / CGFloat(echoRows),
-                                   uRight: state.beatClock - Double(row + firstWindow) * spanBeats,
+                                   uRight: displayU - Double(row + firstWindow) * spanBeats,
                                    span: span, echo: true))
             }
         }
@@ -549,11 +589,17 @@ private struct RhythmPainter {
         }
         if let main { separate(main, rows: 3, &context) }
         if let echo { separate(echo, rows: echoRows, &context) }
+        if let lensRect { separate(lensRect, rows: 3, &context) }
+        // 横長でレンズがタイミングの行の隣にあって Echo rows が無いときは、行が続いているので、
+        // 帯域の名前は左の行が持つ。
         if let lensRect {
             drawLens(&context, lensRect, lens: lens, signalColor: signalColor, fontSize: fontSize,
-                     captionRow: captionRow, fullNameRow: nameRow, lensLabelHeight: lensLabelHeight,
+                     axisFont: axisFont,
                      axisName: { v, x, y, room, ctx in axisName(v, x, y, room: room, &ctx) },
-                     write: { v, x, y, color, align, ctx in write(v, x, y, color, align: align, &ctx) },
+                     write: { v, x, y, color, align, size, ctx in
+                         write(v, x, y, color, align: align, size: size, &ctx)
+                     },
+                     showsBandLabels: !(besideLens && echo == nil),
                      bandLabels: { left, yOf, ctx in bandLabels(left, yOf, &ctx) })
         }
         if let main {
@@ -611,32 +657,40 @@ private struct RhythmPainter {
         var text = ""
         var slot: String?
         var color: Color
+        var opacity = 1.0
         var lamp = false
         var level: Double?
     }
 
+    /// 上流の _headerItems（2.13.0）。LOCKED は拍の音の門（trackerFlags）で決める。周期があれば門が閉じていても
+    /// BPM を出し、確からしさで薄くする。解析できない標本率ではその旨の一文だけ。
     private func headerItems(lens: ETRhythmLens?, markerColor: Color) -> [[HeaderPart]] {
         let snapshot = state.snapshot
-        let locked = snapshot?.analysisValid == true
-        let period: Double? = locked ? snapshot?.periodSeconds : state.heldPeriod
-        let bpm: Double = (period ?? 0) > 0 ? 60 / period! : .nan
+        let gateOpen = snapshot?.tickGateOpen == true
+        let period = snapshot?.periodSeconds ?? 0
+        let bpm: Double = period > 0 ? 60 / period : .nan
+        let confidence = snapshot?.confidence ?? 0
         func value(_ number: Double, _ text: String) -> String { number.isFinite ? text : ETRhythm.dash }
-        let tempo: String
-        if locked { tempo = String(format: "%.1f BPM  LOCKED", bpm) }
-        else if bpm.isFinite { tempo = String(format: "(%.0f BPM held)  searching", bpm) }
-        else { tempo = "searching" }
+        let unavailable = snapshot?.analysisAvailable == false
+        let tempo = unavailable ? "Analysis unavailable at this sample rate"
+            : (bpm.isFinite ? String(format: "%.1f BPM  ", bpm) : "") + (gateOpen ? "LOCKED" : "searching")
         let comb = (snapshot?.strongestBpm ?? 0) > 0 ? snapshot!.strongestBpm : Double.nan
         let swing = lens?.swing ?? .nan
         let jitter = lens?.jitter ?? .nan
         return [
-            [HeaderPart(color: locked ? markerColor : strongGrid, lamp: true, level: locked ? state.ledLevel : nil),
-             HeaderPart(text: tempo, slot: "(000 BPM held)  searching", color: locked ? markerColor : label)],
+            // 門が閉じていればランプは輪だけ。前に見せた拍が残っていれば光ることはある。
+            [HeaderPart(color: gateOpen ? markerColor : strongGrid, lamp: true,
+                        level: gateOpen || state.ledLevel > 0 ? state.ledLevel : nil),
+             HeaderPart(text: tempo, slot: unavailable ? tempo : "000.0 BPM  searching",
+                        color: bpm.isFinite ? markerColor : label, opacity: bpm.isFinite ? confidence : 1)],
             [HeaderPart(text: "×½ \(value(bpm, String(format: "%.0f", bpm / 2)))", slot: "×½ 000", color: label),
              HeaderPart(text: "×2 \(value(bpm, String(format: "%.0f", bpm * 2)))", slot: "×2 0000", color: label)],
             [HeaderPart(text: "strongest \(value(comb, String(format: "%.0f BPM", comb)))", slot: "strongest 000 BPM", color: label)],
-            [HeaderPart(text: "swing \(value(swing, String(format: "%.2f:1", swing)))", slot: "swing 0.00:1", color: label)],
-            [HeaderPart(text: "jitter \(value(jitter, String(format: "%.1f ms", jitter)))", slot: "jitter 000.0 ms", color: label)],
-            [HeaderPart(text: "○ no beat lock", color: label),
+            [HeaderPart(text: "swing \(value(swing, String(format: "%.2f:1", swing)))", slot: "swing 0.00:1",
+                        color: label, opacity: confidence)],
+            [HeaderPart(text: "jitter \(value(jitter, String(format: "%.1f ms", jitter)))", slot: "jitter 000.0 ms",
+                        color: label, opacity: confidence)],
+            [HeaderPart(text: "○ timing unavailable", color: label),
              HeaderPart(text: "◎ new vs \(span) / \(2 * span) beats ago", color: label),
              HeaderPart(text: "┆ beat re-aligned", color: markerColor)],
         ]
@@ -676,13 +730,14 @@ private struct RhythmPainter {
         return (placed, top + lineHeight)
     }
 
-    /// ヘッダ 1 行の大きさの LED。level があれば濃さで塗り、無ければ空の輪（_drawBeatLed）。
+    /// ヘッダ 1 行の大きさの LED。level があれば濃さで塗り、無ければ空の輪（_drawBeatLed）。中心は字の中ほど。
     private func drawBeatLed(_ context: inout GraphicsContext, level: Double?, color: Color,
                              left: CGFloat, top: CGFloat, size: CGFloat, lineWidth: CGFloat) {
         let circle = CGRect(x: left + size / 2 - 0.38 * size, y: top + 0.55 * size - 0.38 * size,
                             width: 0.76 * size, height: 0.76 * size)
         if let level {
-            let minimum = 0.15
+            // 2.13.0 のヘッダは最小の濃さ 0（消えきる）。
+            let minimum = 0.0
             var layer = context
             layer.opacity = minimum + (1 - minimum) * level
             layer.fill(Path(ellipseIn: circle), with: .color(color))
@@ -692,8 +747,17 @@ private struct RhythmPainter {
 
     // MARK: レーン（タイミング・エコー）
 
+    /// 描く区間。上流の drawLane が `segments` から作る写し（表示の補正つき）。
+    private struct ShownSegment {
+        var startU: Double
+        var endU: Double
+        var offset: Double
+        var reanchor: Bool
+    }
+
     private func drawLane(_ context: inout GraphicsContext, _ view: ETRhythmState.LaneView, signalColor: Color,
                           write: (String, CGFloat, CGFloat, Color, TextAlignment, inout GraphicsContext) -> Void) {
+        let confidence = state.snapshot?.confidence ?? 0
         let left = CGFloat(view.left), top = CGFloat(view.top)
         let width = CGFloat(view.width), height = CGFloat(view.height)
         let spanBeats = Double(view.span)
@@ -712,7 +776,23 @@ private struct RhythmPainter {
                        with: .color(subtleGrid))
             if widest == nil || end - start > widest!.end - widest!.start { widest = (start, end) }
         }
-        let ordered = state.segmentOrder.compactMap { state.segments[$0] }
+        // 区間は表示の補正（displayOffset）つき。いま開いている区間は、表示の時計の位置まで伸ばす。
+        let analysisValid = state.snapshot?.analysisValid == true
+        var ordered: [ShownSegment] = state.segmentOrder.compactMap { epoch in
+            guard let segment = state.segments[epoch] else { return nil }
+            let shift = segment.displayOffset
+            let end = segment.endU + shift
+            let open = segment.epoch == state.clockAnchor?.epoch && analysisValid
+            return ShownSegment(startU: segment.startU + shift,
+                                endU: open ? max(end, state.displayU ?? end) : end,
+                                offset: segment.offset + shift, reanchor: segment.reanchor)
+        }
+        // 確定した拍がまだ無いあいだは、先の拍の尾に沿って格子を伸ばす。
+        if state.clockAnchor == nil && !state.forwardTail.isEmpty {
+            ordered.append(ShownSegment(startU: from, endU: to,
+                                        offset: state.forwardOffset + state.displayTimelineOffset,
+                                        reanchor: false))
+        }
         for segment in ordered {
             if segment.endU <= cursor { continue }
             if segment.startU >= to { break }
@@ -763,17 +843,17 @@ private struct RhythmPainter {
             layer.opacity = 0.6
             layer.stroke(path, with: .color(signalColor), style: StrokeStyle(lineWidth: 1, dash: [1, 3]))
         }
-        // onset。
+        // onset。濃さは確からしさ倍（確からしさ 0 の枠では消える）。
         var layer = context
         layer.clip(to: Path(CGRect(x: left, y: top, width: width, height: height)))
         for point in state.points(for: view) {
-            let r = CGFloat(min(max(point.radius, 1.5), 3.5))
+            let r = CGFloat(point.radius)
             let px = CGFloat(point.x), py = CGFloat(point.y)
             let circle = CGRect(x: px - r, y: py - r, width: 2 * r, height: 2 * r)
-            if !point.timed {
-                // 拍に乗っていないものは輪。
+            if !point.located {
+                // 拍の位置に置けていないものは輪。
                 var hollow = layer
-                hollow.opacity = 0.75
+                hollow.opacity = 0.75 * confidence
                 hollow.stroke(Path(ellipseIn: circle), with: .color(signalColor), lineWidth: 0.9)
                 continue
             }
@@ -783,16 +863,18 @@ private struct RhythmPainter {
                 stem.move(to: CGPoint(x: px, y: top + (CGFloat(ETRhythm.bandRows[point.band]) + 0.5) * lane))
                 stem.addLine(to: CGPoint(x: px, y: py))
                 var faint = layer
-                faint.opacity = 0.6
+                faint.opacity = 0.6 * confidence
                 faint.stroke(stem, with: .color(signalColor), lineWidth: 1)
             }
             var dot = layer
-            dot.opacity = 0.95
+            dot.opacity = 0.95 * confidence
             dot.fill(Path(ellipseIn: circle), with: .color(signalColor))
             if point.novel {
                 let ring = r + 2
-                layer.stroke(Path(ellipseIn: CGRect(x: px - ring, y: py - ring, width: 2 * ring, height: 2 * ring)),
-                             with: .color(label), lineWidth: 1)
+                var halo = layer
+                halo.opacity = confidence
+                halo.stroke(Path(ellipseIn: CGRect(x: px - ring, y: py - ring, width: 2 * ring, height: 2 * ring)),
+                            with: .color(label), lineWidth: 1)
             }
         }
     }
@@ -805,6 +887,7 @@ private struct RhythmPainter {
                                tickRight: (CGFloat, [String], GraphicsContext) -> CGFloat,
                                write: (String, CGFloat, CGFloat, Color, TextAlignment, inout GraphicsContext) -> Void) {
         let columns = ETRhythm.tempogramColumns
+        let confidence = state.snapshot?.confidence ?? 0
         func yOf(_ bpm: Double) -> CGFloat { strip.minY + CGFloat(1 - ETRhythm.bpmPosition(bpm)) * strip.height }
         func xOf(_ step: Double) -> CGFloat {
             strip.minX + CGFloat((step + 0.5 - scroll) / Double(columns)) * strip.width
@@ -822,9 +905,13 @@ private struct RhythmPainter {
 
         let head = state.tempogramHead
         func columnAt(_ step: Int) -> Int { (head + 1 + step) % columns }
-        func alphaOf(_ confidence: Double) -> Double { confidence < 0.15 ? 0.15 : (confidence > 1 ? 1 : confidence) }
         let right = strip.maxX
         let shift = CGFloat(scroll / Double(columns)) * strip.width
+        // 最後に採用したテンポが入っている列。いまの確定した周期があればそれを、無ければ履歴の最後のテンポを使う。
+        var last = columns - 1
+        while last >= 0 && !(state.tempogramAdopted[columnAt(last)] > 0) { last -= 1 }
+        let adopted: Double = (state.snapshot?.periodSeconds ?? 0) > 0 ? 60 / state.snapshot!.periodSeconds
+            : (last < 0 ? 0 : Double(state.tempogramAdopted[columnAt(last)]))
 
         var layer = context
         layer.clip(to: Path(strip))
@@ -849,20 +936,29 @@ private struct RhythmPainter {
                 held.fill(Path(strip), with: .color(label))
             }
         }
-        // 採用したテンポと、その半分と 2 倍（破線の候補）。
+        // 採用したテンポと、その半分と 2 倍（破線の候補）。濃さは列ごとの確からしさ（下限は無い）。
         for (factor, lineWidth, opacity) in [(1.0, 2.0, 1.0), (2.0, 0.8, 0.6), (0.5, 0.8, 0.6)] {
-            for step in 1...columns {
-                let column = columnAt(step < columns ? step : columns - 1)
+            let dash: [CGFloat] = factor == 1 ? [] : [2, 2]
+            for step in 1..<columns {
+                let column = columnAt(step)
                 let previous = Double(state.tempogramAdopted[columnAt(step - 1)]) * factor
                 let current = Double(state.tempogramAdopted[column]) * factor
                 guard previous > 0, current > 0 else { continue }
                 var line = Path()
                 line.move(to: CGPoint(x: xOf(Double(step - 1)), y: yOf(previous)))
-                line.addLine(to: CGPoint(x: step < columns ? xOf(Double(step)) : right, y: yOf(current)))
+                line.addLine(to: CGPoint(x: xOf(Double(step)), y: yOf(current)))
                 var stroke = layer
-                stroke.opacity = opacity * alphaOf(Double(state.tempogramConfidence[column]))
-                stroke.stroke(line, with: .color(signal),
-                              style: StrokeStyle(lineWidth: lineWidth, dash: factor == 1 ? [] : [2, 2]))
+                stroke.opacity = opacity * Double(state.tempogramConfidence[column])
+                stroke.stroke(line, with: .color(signal), style: StrokeStyle(lineWidth: lineWidth, dash: dash))
+            }
+            // 最新のテンポを、最後の列から右端まで描く時だけ伸ばす。保存した列は書き換えない。
+            if adopted > 0 {
+                var reach = Path()
+                reach.move(to: CGPoint(x: last < 0 ? strip.minX : xOf(Double(last)), y: yOf(adopted * factor)))
+                reach.addLine(to: CGPoint(x: right, y: yOf(adopted * factor)))
+                var stroke = layer
+                stroke.opacity = opacity * confidence
+                stroke.stroke(reach, with: .color(signal), style: StrokeStyle(lineWidth: lineWidth, dash: dash))
             }
         }
         axisName("Time", strip.midX, strip.maxY - 8, strip.width, false, &context)
@@ -871,39 +967,41 @@ private struct RhythmPainter {
         for bpm in ETRhythm.bpmTicks {
             write(String(Int(bpm)), tickX, clampY(yOf(bpm)), label, .trailing, &context)
         }
-        // 最新の採用したテンポとその候補を、右端の線のすぐ上に名指しする。
-        let adopted = Double(state.tempogramAdopted[columnAt(columns - 1)])
+        // 最新の採用したテンポとその候補を、右端の線のすぐ上に名指しする。字も確からしさで薄くなる。
         guard adopted > 0 else { return }
+        var faded = context
+        faded.opacity = confidence
         for (bpm, name) in [(adopted, "adopted"), (adopted * 2, "×2"), (adopted / 2, "×½")]
         where bpm > ETRhythm.minimumBPM && bpm < 480 {
-            write(name, strip.maxX - pad, clampY(yOf(bpm) - 0.6 * fontSize), signal, .trailing, &context)
+            write(name, strip.maxX - pad, clampY(yOf(bpm) - 0.6 * fontSize), signal, .trailing, &faded)
         }
     }
 
     // MARK: ビートレンズ
 
+    /// 上流の _drawLens（2.13.0）。帯域ごとの 3 行は Timing lanes の行と揃う。目盛りは上、スロットの字と軸の名前は下。
     private func drawLens(_ context: inout GraphicsContext, _ rect: CGRect, lens: ETRhythmLens?,
-                          signalColor: Color, fontSize: CGFloat, captionRow: CGFloat, fullNameRow: CGFloat,
-                          lensLabelHeight: CGFloat,
+                          signalColor: Color, fontSize: CGFloat, axisFont: CGFloat,
                           axisName: (String, CGFloat, CGFloat, CGFloat, inout GraphicsContext) -> Void,
-                          write: (String, CGFloat, CGFloat, Color, TextAlignment, inout GraphicsContext) -> Void,
+                          write: (String, CGFloat, CGFloat, Color, TextAlignment, CGFloat?, inout GraphicsContext) -> Void,
+                          showsBandLabels: Bool,
                           bandLabels: (CGFloat, (Int) -> CGFloat, inout GraphicsContext) -> Void) {
+        let confidence = state.snapshot?.confidence ?? 0
         let columns = ETRhythm.slotLabels.count
         let columnWidth = rect.width / CGFloat(columns)
-        // 本体の下にスロットの字、その下に軸の名前。低すぎて本体が取れないときは、名前、字の順に落とす。
-        let nameRow = rect.height > captionRow + fullNameRow ? fullNameRow : 0
-        let labelRow = rect.height > captionRow ? captionRow : 0
-        let body = rect.height - labelRow - nameRow
-        guard body > 0 else { return }
+        let rowHeight = rect.height / 3
+        guard rowHeight > 0 else { return }
         func centerX(_ slot: Int) -> CGFloat { rect.minX + (CGFloat(slot) + 0.5) * columnWidth }
         let msScale = 0.42 * columnWidth / CGFloat(ETRhythm.deviationMS)
-        let scaleY = rect.minY + (0.1 * body > 2 ? 0.1 * body : 2)
-        func rowY(_ row: Int) -> CGFloat { rect.minY + (0.32 + 0.27 * CGFloat(row)) * body }
+        // 目盛りの線は、先の 2 pt を残して矩形の上から 3 pt 下に置く。
+        let scaleY = rect.minY + 3
+        func rowY(_ row: Int) -> CGFloat { rect.minY + (CGFloat(row) + 0.5) * rowHeight }
+        let markHeight = 0.15 * rowHeight
         for slot in 0..<columns {
             let x = centerX(slot)
             var guide = Path()
             guide.move(to: CGPoint(x: x, y: scaleY))
-            guide.addLine(to: CGPoint(x: x, y: rect.minY + body))
+            guide.addLine(to: CGPoint(x: x, y: rect.maxY))
             context.stroke(guide, with: .color(subtleGrid), lineWidth: 0.5)
             var scale = Path()
             scale.move(to: CGPoint(x: x - CGFloat(ETRhythm.deviationMS) * msScale, y: scaleY))
@@ -914,45 +1012,50 @@ private struct RhythmPainter {
             }
             context.stroke(scale, with: .color(strongGrid), lineWidth: 0.8)
         }
-        if labelRow > 0 {
+        // 軸の名前の基線は下から 8 pt 上、スロットの字はそのすぐ上。低いレンズは、名前、字の順に落とす。
+        let nameRow = axisFont + 8
+        let named = rect.height > nameRow + 1.2 * fontSize
+        let slotY = rect.maxY - (named ? nameRow : 0) - 0.6 * fontSize
+        if slotY >= rect.minY {
             for (slot, name) in ETRhythm.slotLabels.enumerated() {
-                write(name, centerX(slot), rect.minY + body + labelRow / 2, label, .center, &context)
+                write(name, centerX(slot), slotY, label, .center, nil, &context)
             }
         }
-        if nameRow > 0 {
-            axisName("Position in beat", rect.midX, rect.maxY - 8, rect.width, &context)
+        if named { axisName("Position in beat", rect.midX, rect.maxY - 8, rect.width, &context) }
+        // 帯域の名前は、行に余裕があれば印の少し上、無ければ行の上。背の高い行ほど印から離し、0.6 字高まで。印より先に書く。
+        let labelLift = 0.35 * rowHeight - 0.55 * fontSize
+        let labelOffset = markHeight + min(labelLift, 1.1 * fontSize)
+        let roomy = rowHeight >= CGFloat(ETRhythm.lensLabelRow) * fontSize
+        if showsBandLabels {
+            bandLabels(rect.minX, { row in roomy ? rowY(row) - labelOffset : rowY(row) }, &context)
         }
-        // 帯域の名前は、行に余裕があれば印の少し上、無ければ行の上。印より先に書く。
-        let labelY: (Int) -> CGFloat = rect.height >= lensLabelHeight
-            ? { row in rowY(row) - 0.06 * body - 0.7 * fontSize } : { row in rowY(row) }
-        bandLabels(rect.minX, labelY, &context)
         guard let lens else {
-            write("waiting for a steady beat", rect.midX, rowY(1), label, .center, &context)
+            write("waiting for a steady beat", rect.midX, rowY(1), label, .center, nil, &context)
             return
         }
         guard !lens.rows.isEmpty else { return }
         let maxCount = lens.rows.map(\.count).max() ?? 1
-        let barHeight = 0.06 * body
         let limit = ETRhythm.deviationMS
+        // ずれの値は印の下。低いレンズで印に触れるものと、字に触れるものは出さない。
         let valueSize = 0.85 * fontSize
-        let valueClearsMark = 0.05 * body >= 0.5 * valueSize
+        let valueClearsMark = markHeight >= 0.5 * valueSize
         var layer = context
         layer.clip(to: Path(rect))
         for row in lens.rows {
             let y = rowY(ETRhythm.bandRows[row.band])
             let offset = min(max(row.offset, -limit), limit)
             let x = centerX(row.slot) + CGFloat(offset) * msScale
-            let alpha = 0.35 + 0.65 * Double(row.count) / Double(maxCount)
+            let alpha = (0.35 + 0.65 * Double(row.count) / Double(maxCount)) * confidence
             var bar = layer
             bar.opacity = 0.3 * alpha
-            bar.fill(Path(CGRect(x: x - CGFloat(row.sd) * msScale, y: y - barHeight / 2,
-                                 width: 2 * CGFloat(row.sd) * msScale, height: barHeight)),
+            bar.fill(Path(CGRect(x: x - CGFloat(row.sd) * msScale, y: y - markHeight / 2,
+                                 width: 2 * CGFloat(row.sd) * msScale, height: markHeight)),
                      with: .color(signalColor))
             var tick = layer
             tick.opacity = alpha
             var line = Path()
-            line.move(to: CGPoint(x: x, y: y - 0.06 * body))
-            line.addLine(to: CGPoint(x: x, y: y + 0.06 * body))
+            line.move(to: CGPoint(x: x, y: y - markHeight))
+            line.addLine(to: CGPoint(x: x, y: y + markHeight))
             tick.stroke(line, with: .color(signalColor), lineWidth: 2)
         }
         for row in lens.rows {
@@ -960,7 +1063,8 @@ private struct RhythmPainter {
             let offset = min(max(row.offset, -limit), limit)
             let x = centerX(row.slot) + CGFloat(offset) * msScale
             if valueClearsMark && abs(row.offset) >= ETRhythm.labelMinimumMS {
-                write(ETRhythm.signed(row.offset, digits: 0), x, y + 0.11 * body, signalColor, .center, &context)
+                write(ETRhythm.signed(row.offset, digits: 0), x, y + 2 * markHeight, signalColor, .center,
+                      valueSize, &context)
             }
         }
     }

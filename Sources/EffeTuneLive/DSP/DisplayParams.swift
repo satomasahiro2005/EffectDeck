@@ -9,7 +9,7 @@
 //      stereo_meter.js:271-279       gn
 //      chroma_spiral.js:92-96        dm / lo / hi / ft / lr / df
 //      analog_meter.js:295-311       rl / rg / sc / ph / ln / tg / ls（v2.12.0）
-//      rhythm_analyzer.js:151-165    sp / vt / vm / ve / vl（v2.12.0。mn / mx / ck は DSP 側）
+//      rhythm_analyzer.js:164-178    sp / vt / vm / ve / vl（v2.12.0。mn / mx / ck は DSP 側。2.13.0 は vt / ve の既定が false）
 //  **画面で使っていないもの（kb）も表に入れる。**
 //  入れないと web 版から来た値が往復で消える。
 //
@@ -78,7 +78,8 @@ enum ETDisplayParam {
             return ["rl": "-14.0", "rg": "40.0", "sc": "0.0", "ph": "1.0",
                     "ln": "0.0", "tg": "-23.0", "ls": "0.0"]
         case "RhythmAnalyzerPlugin":
-            return ["sp": "8.0", "vt": "true", "vm": "true", "ve": "true", "vl": "true"]
+            // 2.13.0 で Tempogram と Echo rows は既定で隠す（rhythm_analyzer.js の RHYTHM_ANALYZER_DEFAULTS）。
+            return ["sp": "8.0", "vt": "false", "vm": "true", "ve": "false", "vl": "true"]
         default:
             return [:]
         }
