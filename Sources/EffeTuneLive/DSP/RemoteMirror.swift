@@ -217,7 +217,7 @@ final class RemoteMirror: ObservableObject {
 
     /// つないでいる PC の EffeTune（hello の返事から）。つながっていないときは nil。
     @Published private(set) var host: ETRemoteHostInfo?
-    /// つながっていて、PC が telemetry を持っていない（古い EffeTune）。Mirror Analyzers を無効にして理由を出す。
+    /// つながっていて、PC が telemetry を持っていない（公式の EffeTune は持たない）。このとき Options の節は出さない。
     var telemetryUnsupported: Bool { isRemote && (host.map { !$0.supports("telemetry") } ?? false) }
     /// 手元と PC の EffeTune の食い違い（効果の差と dsp の版）。つながっていない・食い違いが無いときは nil。
     var mismatch: ETRemoteMismatch? {
@@ -818,13 +818,27 @@ final class RemoteMirror: ObservableObject {
         pendingParams.removeAll()
         // 並びが変わって、まだ鎖を送っていない。鎖のほうが新しい値ごと送るので、ここは捨てる。
         guard chain.count == sentMap.count else { return }
+        // 前に送った形から鍵が無くなった段がある（IR を外した・Room EQ の測定を消したなど）。
+        // params は鍵を消せない（公式の EffeTune の setParameters は渡された鍵だけを直す）ので、
+        // PC に古い値が残る。その flush は鎖ごと送る。PC の側では鎖がプリセットの読み込みを通るため、
+        // 元に戻す履歴が 1 つ増え、プリセット名が外れる（sync1 の edit の d で消せるが、段の id の控えが要る）。
+        var entries: [Int: [String: Any]] = [:]
+        for index in pending {
+            guard chain.indices.contains(index), sentMap[index] != nil,
+                  let entry = ETRemoteProjection.entry(for: PipelineStore.Loaded(chain[index])) else { continue }
+            entries[index] = entry
+            if let remote = sentMap[index], sentForm?.indices.contains(remote) == true,
+               !ETRemoteProjection.removedKeys(sent: sentForm?[remote], now: entry).isEmpty {
+                sendChain(chain)
+                return
+            }
+        }
         for index in pending {
             guard chain.indices.contains(index), let remote = sentMap[index],
                   let params = ETRemoteProjection.params(for: chain[index]) else { continue }
             sendEdit(["op": "params", "index": remote, "params": params])
             // 後から来る persist() の鎖と食い違わないよう、送ったぶんを控えへ写す。
-            if sentForm?.indices.contains(remote) == true,
-               let entry = ETRemoteProjection.entry(for: PipelineStore.Loaded(chain[index])) {
+            if sentForm?.indices.contains(remote) == true, let entry = entries[index] {
                 sentForm?[remote] = entry
             }
         }

@@ -82,6 +82,21 @@ class ShallowTests(unittest.TestCase):
             self.assertEqual(code, 0, err)
             self.assertIn('let ETUpstreamVersion = "0.11.0"', gv.SWIFT.read_text("utf-8"))
             self.assertIn("EffeTune%20DSP-0.11.0-", gv.README.read_text("utf-8"))
+            # package.json が無ければ、アプリ全体の版は空。
+            self.assertIn('let ETUpstreamAppVersion = ""', gv.SWIFT.read_text("utf-8"))
+
+    def test_app_version_comes_from_package_json(self):
+        with TempDir() as tmp:
+            env = hermetic_git_env(tmp)
+            origin = self.make_origin(tmp, env)
+            write(origin / "package.json", '{"name": "effetune", "version": "2.11.0"}\n')
+            git(origin, "add", "package.json", env=env)
+            git(origin, "commit", "-q", "-m", "package", env=env)
+            code, gv, err = self.run_gen(tmp, origin, env, strict="1")
+            self.assertEqual(code, 0, err)
+            text = gv.SWIFT.read_text("utf-8")
+            self.assertIn('let ETUpstreamVersion = "0.11.0"', text)
+            self.assertIn('let ETUpstreamAppVersion = "2.11.0"', text, "dsp/ の版とは別に読む")
 
     def test_shallow_fatal_strict(self):
         # actions/checkout の既定は浅い submodule。describe が通っても、浅い木の版は信用しない。

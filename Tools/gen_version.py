@@ -27,6 +27,7 @@ submodule は深さ 1 でタグが付いてこない。describe が落ちるか�
 CI では Vendor/effetune を --filter=blob:none で取る（履歴とタグは全部、中身は要る分だけ）。
 """
 import datetime
+import json
 import os
 import pathlib
 import re
@@ -68,6 +69,21 @@ def dsp_version() -> str:
         ["git", "-C", str(DSP), "describe", "--tags", "--match", "dsp-v*"],
         capture_output=True, text=True, check=True).stdout
     return parse_describe(out)
+
+
+def app_version() -> str:
+    """EffeTune アプリ全体の版（Vendor/effetune/package.json の version）。無ければ空。
+
+    公式の EffeTune は hello の返事に dsp を出さず、app（= この版）だけを出す。
+    その PC とこちらの積んでいる上流の版を比べて、食い違いを出すのに使う（ETRemoteHostInfo.mismatch）。
+    **dsp/ の版とは別の事実。**機能の有無は features と effects で決め、この版は表示だけに使う。
+    """
+    try:
+        data = json.loads((DSP / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    version = data.get("version") if isinstance(data, dict) else None
+    return version.strip() if isinstance(version, str) else ""
 
 
 def is_shallow() -> bool:
@@ -135,8 +151,13 @@ def main(argv=None) -> int:
         "//  積んでいる EffeTune の dsp/ 自体の版（Vendor/effetune の dsp-v* タグ）。",
         "//  **アプリの版とは別の事実。**あちらは出した日で、",
         "//  EffeTune アプリ全体の版（package.json）とも別。",
+        "//",
+        "//  ETUpstreamAppVersion は積んでいる EffeTune アプリ全体の版（Vendor/effetune/package.json）。",
+        "//  公式の PC は hello の返事に dsp の版を出さず、この版だけを出す。食い違いの表示にだけ使う。",
+        "//  読めなければ空。",
         "",
         'let ETUpstreamVersion = "%s"' % version,
+        'let ETUpstreamAppVersion = "%s"' % app_version(),
         "",
     ]
     SWIFT.write_text(chr(10).join(header), encoding="utf-8", newline=chr(10))

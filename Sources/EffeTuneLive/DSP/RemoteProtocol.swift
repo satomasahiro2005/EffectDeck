@@ -42,6 +42,16 @@ enum ETRemoteProjection {
         var remoteIndex: [Int?]
     }
 
+    /// 前に送った段の形から、新しい形で無くなった鍵。**`params` では鍵を消せない**（PC の setParameters は
+    /// 渡された鍵だけを直す）ので、IR を外した（`ir`）・Room EQ の測定を消した（`ms0` / `mn0` など）・
+    /// 図の見せ方や designer の材料が落ちた、というときは古い値が PC に残る。あれば呼び手は `params` でなく
+    /// 鎖ごと送り直す。段の鍵（`nm` / `en` / バス / `ch` / 終端の印）は params の話ではないので数えない。
+    static func removedKeys(sent: [String: Any]?, now: [String: Any]) -> [String] {
+        guard let sent else { return [] }
+        let structural: Set<String> = ["nm", "en", "ib", "ob", "ch", ETSection.rootResetKey]
+        return sent.keys.filter { !structural.contains($0) && now[$0] == nil }.sorted()
+    }
+
     static func project(_ chain: [ETChainNode], host: ETRemoteHostInfo? = nil) -> Projected {
         project(chain.map { PipelineStore.Loaded($0) }, host: host)
     }
@@ -627,21 +637,27 @@ struct ETRemoteHostInfo: Equatable {
     /// 手元が PC へ送れる効果の名前（カタログと Section）。
     static var localEffectNames: [String] { ETCatalog.map(\.name) + [ETSection.name] }
 
-    /// 手元の EffeTune と PC の食い違い。無ければ nil。
+    /// 手元の EffeTune と PC の食い違い。無ければ nil。**表示だけ**（何ができるかは features と effects で決める）。
     ///
-    /// - effects を出す PC: 効果の名前の差と、dsp の版の差。
-    /// - effects を出さない PC: dsp の版の差だけ。dsp も出さなければ比べるものが無い（nil）。
-    func mismatch(localDSP: String, localEffects: [String]) -> ETRemoteMismatch? {
+    /// - dsp を出す PC（dsp/ の版を出す EffectDeck 向けの版）: dsp の版の差と、効果の名前の差。
+    /// - dsp を出さない PC（公式の EffeTune 2.13.0 以降は appName / app / features / effects だけ）:
+    ///   アプリ全体の版（state の app）が、積んでいる上流の版（localApp）と違えば、それ。
+    ///   上流の版が分からない（localApp が空）・PC が app を出さないときは比べない。
+    /// - effects を出す PC: 効果の名前の差。出さない古い PC は効果を比べない。
+    func mismatch(localDSP: String, localEffects: [String],
+                  localApp: String = ETUpstreamAppVersion) -> ETRemoteMismatch? {
         let dspDiffers = dsp.map { $0 != localDSP } ?? false
+        let appDiffers = dsp == nil && !localApp.isEmpty && (version.map { $0 != localApp } ?? false)
         var missingOnHost: [String] = []
         var missingHere: [String] = []
         if let effects {
             missingOnHost = Set(localEffects).subtracting(effects).sorted()
             missingHere = effects.subtracting(localEffects).sorted()
         }
-        guard dspDiffers || !missingOnHost.isEmpty || !missingHere.isEmpty else { return nil }
+        guard dspDiffers || appDiffers || !missingOnHost.isEmpty || !missingHere.isEmpty else { return nil }
         return ETRemoteMismatch(hostDSP: dsp, localDSP: localDSP,
-                                missingOnHost: missingOnHost, missingHere: missingHere)
+                                missingOnHost: missingOnHost, missingHere: missingHere,
+                                hostApp: appDiffers ? version : nil, localApp: appDiffers ? localApp : nil)
     }
 }
 
@@ -653,12 +669,18 @@ struct ETRemoteMismatch: Equatable {
     var missingOnHost: [String]
     /// PC にあって手元に無い効果の名前（昇順）。
     var missingHere: [String]
+    /// dsp の版を出さない PC（公式の EffeTune）のアプリ全体の版と、こちらが積んでいる上流の版。食い違うときだけ入る。
+    var hostApp: String? = nil
+    var localApp: String? = nil
 
     var dspDiffers: Bool { hostDSP != nil && hostDSP != localDSP }
+    var appDiffers: Bool { hostApp != nil && localApp != nil && hostApp != localApp }
 
-    /// "DSP 0.11.0 on the PC, 0.12.0 here" / "Effects differ"
+    /// "DSP 0.11.0 on the PC, 0.12.0 here" / "EffeTune 2.14.0 on the PC, 2.13.0 here" / "Effects differ"
+    /// dsp の版を出す PC はそれを先に、出さない PC はアプリ全体の版を、どちらも同じなら効果の差を言う。
     var headline: String {
         if let hostDSP, dspDiffers { return "DSP \(hostDSP) on the PC, \(localDSP) here" }
+        if let hostApp, let localApp, appDiffers { return "EffeTune \(hostApp) on the PC, \(localApp) here" }
         return "Effects differ"
     }
 

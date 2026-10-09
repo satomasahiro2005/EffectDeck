@@ -197,19 +197,12 @@ struct RemoteRows: View {
                 }
                 mismatchRows
             }
-            Section("Options") {
-                // 保存する設定。PC の EffeTune が測定値を送れない版のときだけ触れなくして理由を添える。
-                Toggle(isOn: $prefs.remoteMirrorAnalyzers) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Mirror Analyzers")
-                        if mirror.telemetryUnsupported, let host = mirror.host {
-                            Text(host.unsupportedText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+            // 測定値を送れる PC（features に telemetry を出すもの）にだけ出す。公式の EffeTune 2.13.0 は
+            // telemetry も overlays も持たない（remote-v1）ので、そちらには節ごと出さない。
+            if mirror.host?.supports("telemetry") == true {
+                Section("Options") {
+                    Toggle("Mirror Analyzers", isOn: $prefs.remoteMirrorAnalyzers)
                 }
-                .disabled(mirror.telemetryUnsupported)
             }
             Section {
                 Button("Disconnect") { mirror.disconnectByUser() }

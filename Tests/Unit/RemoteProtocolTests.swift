@@ -196,7 +196,9 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertNil(info.dsp)
         XCTAssertNil(info.effects)
         XCTAssertFalse(info.lacks("Analog Meter"))
-        XCTAssertNil(info.mismatch(localDSP: "0.12.0", localEffects: ETRemoteHostInfo.localEffectNames))
+        // 上流の版が分からないとき（localApp が空）は、比べるものが無い。
+        XCTAssertNil(info.mismatch(localDSP: "0.12.0", localEffects: ETRemoteHostInfo.localEffectNames,
+                                   localApp: ""))
     }
 
     func testMismatchNamesTheEffectsTheOldHostLacks() throws {
@@ -237,7 +239,102 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertTrue(m.missingOnHost.isEmpty)
         XCTAssertEqual(m.headline, "DSP 0.11.0 on the PC, 0.12.0 here")
         XCTAssertNil(oldHost(dsp: "0.12.0", effects: nil).mismatch(localDSP: "0.12.0", localEffects: []))
-        XCTAssertNil(oldHost(dsp: nil, effects: nil).mismatch(localDSP: "0.12.0", localEffects: []))
+        XCTAssertNil(oldHost(dsp: nil, effects: nil).mismatch(localDSP: "0.12.0", localEffects: [], localApp: ""))
+    }
+
+    // MARK: 公式の EffeTune 2.13.0（dsp を出さない）
+
+    /// 公式 2.13.0 の hello の返事（electron/remote-control-host.cjs、docs/remote-v1.md）。
+    /// dsp も build も無く、features は origin / savePreset / irSync / sync1。telemetry と overlays は無い。
+    private func official(app: String = "2.13.0", effects: [String]? = ETRemoteHostInfo.localEffectNames)
+        -> ETRemoteHostInfo {
+        var state: [String: Any] = ["app": app, "appName": "EffeTune",
+                                    "features": ["origin", "savePreset", "irSync", "sync1"],
+                                    "epoch": "e1", "slot": "A", "host": "desk"]
+        if let effects { state["effects"] = effects }
+        return ETRemoteHostInfo(state: state)
+    }
+
+    func testOfficialHostReadsWithoutDsp() {
+        let info = official()
+        XCTAssertNil(info.dsp)
+        XCTAssertNil(info.build)
+        XCTAssertEqual(info.label, "2.13.0")
+        XCTAssertTrue(info.supports("sync1"))
+        XCTAssertFalse(info.supports("telemetry"), "公式に telemetry は無い")
+        XCTAssertFalse(info.supports("overlays"))
+        XCTAssertEqual(info.hostName, "desk")
+    }
+
+    func testOfficial213HasNoMismatchAgainstTheLocalCatalog() {
+        // 公式 2.13.0 の効果の一覧は 113 個（カタログの 112 と Section）。
+        XCTAssertEqual(ETRemoteHostInfo.localEffectNames.count, 113)
+        XCTAssertNil(official().mismatch(localDSP: ETUpstreamVersion,
+                                         localEffects: ETRemoteHostInfo.localEffectNames,
+                                         localApp: "2.13.0"))
+        XCTAssertEqual(ETUpstreamAppVersion, "2.13.0", "Vendor/effetune/package.json の版")
+    }
+
+    func testOfficialHostOfAnotherAppVersionSaysSo() throws {
+        let m = try XCTUnwrap(official(app: "2.14.0").mismatch(
+            localDSP: "0.13.0", localEffects: ETRemoteHostInfo.localEffectNames, localApp: "2.13.0"))
+        XCTAssertEqual(m.headline, "EffeTune 2.14.0 on the PC, 2.13.0 here")
+        XCTAssertTrue(m.appDiffers)
+        XCTAssertFalse(m.dspDiffers)
+        XCTAssertTrue(m.missingOnHost.isEmpty)
+        // 古い公式（2.12.0）は新しい 2 つの効果を持たない。版を先に言い、効果の差は下の行に出る。
+        let added: Set<String> = ["Adaptive Prediction", "SFZ Note Player"]
+        let old = official(app: "2.12.0", effects: ETRemoteHostInfo.localEffectNames.filter { !added.contains($0) })
+        let m2 = try XCTUnwrap(old.mismatch(localDSP: "0.13.0", localEffects: ETRemoteHostInfo.localEffectNames,
+                                            localApp: "2.13.0"))
+        XCTAssertEqual(m2.headline, "EffeTune 2.12.0 on the PC, 2.13.0 here")
+        XCTAssertEqual(m2.missingOnHost, ["Adaptive Prediction", "SFZ Note Player"])
+    }
+
+    func testSameAppWithDifferentEffectsSaysEffectsDiffer() throws {
+        let m = try XCTUnwrap(official(effects: ["Volume"]).mismatch(
+            localDSP: "0.13.0", localEffects: ["Volume", "Delay"], localApp: "2.13.0"))
+        XCTAssertEqual(m.headline, "Effects differ")
+        XCTAssertFalse(m.appDiffers)
+    }
+
+    /// dsp の版を出す PC は、それを言う。アプリの版は比べない（dsp が同じなら食い違いではない）。
+    func testAHostThatReportsDspIsComparedByDspNotByApp() throws {
+        let fork = oldHost(dsp: "0.13.0", effects: ETRemoteHostInfo.localEffectNames)   // app は 2.11.0
+        XCTAssertNil(fork.mismatch(localDSP: "0.13.0", localEffects: ETRemoteHostInfo.localEffectNames,
+                                   localApp: "2.13.0"))
+        let m = try XCTUnwrap(oldHost(dsp: "0.12.0").mismatch(
+            localDSP: "0.13.0", localEffects: ETRemoteHostInfo.localEffectNames, localApp: "2.13.0"))
+        XCTAssertEqual(m.headline, "DSP 0.12.0 on the PC, 0.13.0 here")
+    }
+
+    // MARK: 前に送った形から消えた鍵（params では消せない）
+
+    func testRemovedKeysFindsWhatParamsCannotUnset() {
+        let sent: [String: Any] = ["nm": "Room EQ", "en": true, "ib": 1, "ms0": "abc", "mn0": "x", "vl": 3]
+        // 値が変わっただけ・鍵が増えただけは消えたに入らない。
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: sent, now: ["nm": "Room EQ", "ms0": "abc", "mn0": "y",
+                                                                       "vl": 4, "extra": 1]), [])
+        // 測定が消えた。段の鍵（en / ib）は params の話ではないので数えない。
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: sent, now: ["nm": "Room EQ", "vl": 3]),
+                       ["mn0", "ms0"])
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: nil, now: ["vl": 1]), [])
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: ["rr": true, "nm": "Section"], now: [:]), [])
+    }
+
+    func testClearingAnIRIsDetectedAsARemovedKey() throws {
+        var node = try effect("IRReverbPlugin")
+        node.irId = "0123456789abcdef01234567"
+        let withIR = try XCTUnwrap(ETRemoteProjection.entry(for: node))
+        XCTAssertNotNil(withIR["ir"])
+        node.irId = ""
+        let cleared = try XCTUnwrap(ETRemoteProjection.entry(for: node))
+        XCTAssertNil(cleared["ir"])
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: withIR, now: cleared), ["ir"])
+        // つまみだけ動かしても消えた鍵は無い。
+        node.irId = "0123456789abcdef01234567"
+        let moved = try XCTUnwrap(ETRemoteProjection.entry(for: node))
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: withIR, now: moved), [])
     }
 
     func testProjectionRefusesEffectsTheHostLacks() throws {

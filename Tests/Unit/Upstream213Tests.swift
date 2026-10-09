@@ -29,6 +29,7 @@ final class Upstream213Tests: XCTestCase {
 
     func testUpstreamVersionIs0_13_0() {
         XCTAssertEqual(ETUpstreamVersion, "0.13.0")
+        XCTAssertEqual(ETUpstreamAppVersion, "2.13.0", "package.json の版。公式の PC との食い違いの表示に使う")
     }
 
     func testNewEffectsAreInTheCatalog() throws {
