@@ -340,6 +340,8 @@ targets:
       - path: Sources/EffeTuneLive/DSP/AnalogMeterModel.swift
       - path: Sources/EffeTuneLive/DSP/TonalBalanceModel.swift
       - path: Sources/EffeTuneLive/DSP/RhythmAnalyzerModel.swift
+      # 2.13.0 の Note Spectrogram の枠（版 5）の読み。Foundation だけ（Upstream213Tests）。
+      - path: Sources/EffeTuneLive/DSP/NoteSpectrogramFrame.swift
       - path: Sources/EffeTuneLive/DSP/ETChannel.swift
       - path: Sources/EffeTuneLive/Generated/SystemPresets.swift
       - path: Sources/EffeTuneLive/Generated/UpstreamVersion.swift

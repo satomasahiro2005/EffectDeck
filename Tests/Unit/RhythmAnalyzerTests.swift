@@ -114,16 +114,21 @@ final class RhythmAnalyzerTests: XCTestCase {
         var epoch: UInt32 = 1
         var confidence: Float = 0.6
         var period: Float = 0.5
-        var nextFrame: UInt32 = 1050
-        var nextFraction: Float = 0.25
-        var nextIndex: UInt32 = 3
-        var comb: Float = 120
+        var anchorFrame: UInt32 = 1050
+        var anchorFraction: Float = 0.25
+        var anchorIndex: UInt32 = 3
+        var strongest: Float = 120
         var tempogram = [Float](repeating: 0.25, count: 192)
         var events: [EventSpec] = []
+        /// 先の拍の見込み（frame, fraction, index）と周期。
+        var preview: [(frame: Int32, fraction: Float, index: Int32)] = []
+        var previewPeriod: Float = 0
     }
 
-    private func frame(_ f: Fields, length: Int = 1344, sequence: UInt32 = 1) -> ETFrame {
-        var p = [UInt8](repeating: 0, count: 1344)
+    /// 2.13.0 の版 4（1496 バイト）。`locked` が false なら周期も anchor も 0（解析した拍が無い）。
+    private func frame(_ f: Fields, length: Int = 1496, version: UInt16 = 4,
+                       sequence: UInt32 = 1) -> ETFrame {
+        var p = [UInt8](repeating: 0, count: 1496)
         func put(_ bytes: [UInt8], _ offset: Int) { TelemetryBytes.put(bytes, at: offset, into: &p) }
         put(TelemetryBytes.f32(f.rate), 0)
         put(TelemetryBytes.u32(f.generation), 4)
@@ -137,10 +142,10 @@ final class RhythmAnalyzerTests: XCTestCase {
         put(TelemetryBytes.u32(f.epoch), 36)
         put(TelemetryBytes.f32(f.confidence), 40)
         put(TelemetryBytes.f32(f.locked ? f.period : 0), 44)
-        put(TelemetryBytes.u32(f.locked ? f.nextFrame : 0), 48)
-        put(TelemetryBytes.f32(f.locked ? f.nextFraction : 0), 52)
-        put(TelemetryBytes.u32(f.locked ? f.nextIndex : 0), 56)
-        put(TelemetryBytes.f32(f.comb), 60)
+        put(TelemetryBytes.u32(f.locked ? f.anchorFrame : 0), 48)
+        put(TelemetryBytes.f32(f.locked ? f.anchorFraction : 0), 52)
+        put(TelemetryBytes.u32(f.locked ? f.anchorIndex : 0), 56)
+        put(TelemetryBytes.f32(f.strongest), 60)
         for (i, v) in f.tempogram.enumerated() { put(TelemetryBytes.f32(v), 64 + 4 * i) }
         for (k, e) in f.events.enumerated() {
             let base = 832 + 32 * k
@@ -154,7 +159,16 @@ final class RhythmAnalyzerTests: XCTestCase {
             put([e.band], base + 28)
             put([e.flags], base + 29)
         }
-        return TelemetryBytes.frame(.rhythmAnalyzer, sequence: sequence, payload: Array(p.prefix(length)))
+        put(TelemetryBytes.u32(UInt32(f.preview.count)), 1344)
+        put(TelemetryBytes.f32(f.previewPeriod), 1348)
+        for (i, b) in f.preview.enumerated() {
+            let base = 1352 + 12 * i
+            put(TelemetryBytes.i32(b.frame), base)
+            put(TelemetryBytes.f32(b.fraction), base + 4)
+            put(TelemetryBytes.i32(b.index), base + 8)
+        }
+        return TelemetryBytes.frame(.rhythmAnalyzer, version: version, sequence: sequence,
+                                    payload: Array(p.prefix(length)))
     }
 
     // MARK: 枠の読み
@@ -169,13 +183,15 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(s.hop, 480)
         XCTAssertEqual(s.hopSeconds, 0.01, accuracy: 1e-12)
         XCTAssertEqual(s.frameCount, 1000)
-        XCTAssertTrue(s.locked)
-        XCTAssertEqual(s.lockEpoch, 1)
+        XCTAssertTrue(s.analysisValid)
+        XCTAssertTrue(s.tickGateOpen)
+        XCTAssertEqual(s.analysisEpoch, 1)
         XCTAssertEqual(s.periodSeconds, 0.5)
-        XCTAssertEqual(s.nextBeatFrame, 1050)
-        XCTAssertEqual(s.nextBeatFraction, 0.25)
-        XCTAssertEqual(s.nextBeatIndex, 3)
-        XCTAssertEqual(s.combBestBpm, 120)
+        XCTAssertEqual(s.anchorFrame, 1050)
+        XCTAssertEqual(s.anchorFraction, 0.25)
+        XCTAssertEqual(s.anchorIndex, 3)
+        XCTAssertEqual(s.strongestBpm, 120)
+        XCTAssertTrue(s.previewBeats.isEmpty)
         XCTAssertEqual(s.tempogram.count, 192)
         XCTAssertEqual(s.sequence, 8)
         let e = try XCTUnwrap(s.events.first)
@@ -193,7 +209,8 @@ final class RhythmAnalyzerTests: XCTestCase {
         f.locked = false
         f.events = [EventSpec(frame: 10, beatIndex: 0, period: 0, flags: 1)]
         let s = try XCTUnwrap(ETRhythmSnapshot.parse(frame(f)))
-        XCTAssertFalse(s.locked)
+        XCTAssertFalse(s.analysisValid)
+        XCTAssertFalse(s.tickGateOpen)
         XCTAssertFalse(s.events[0].locked)
         // 拍に乗っていない onset は period 0 が許される。乗っているのに 0 は落とす。
         f.events = [EventSpec(frame: 10, beatIndex: 0, period: 0, flags: 0)]
@@ -202,7 +219,9 @@ final class RhythmAnalyzerTests: XCTestCase {
 
     func testRejectsMalformedFrames() {
         XCTAssertNil(ETRhythmSnapshot.parse(nil))
-        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1343)))
+        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1495)))
+        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1344)), "2.12.0 の長さ")
+        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), version: 1)), "2.12.0 の版")
         func mutate(_ change: (inout Fields) -> Void) -> ETRhythmSnapshot? {
             var f = Fields()
             change(&f)
@@ -215,19 +234,57 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertNil(mutate { $0.rate = .nan })
         XCTAssertNil(mutate { $0.time = -1 })
         XCTAssertNil(mutate { $0.confidence = -0.1 })
-        XCTAssertNil(mutate { $0.period = 0 }, "拍に乗っているのに周期が 0")
-        XCTAssertNil(mutate { $0.nextFraction = 1 })
-        XCTAssertNil(mutate { $0.comb = -1 })
+        XCTAssertNotNil(mutate { $0.period = 0 }, "版 4 では周期 0 は「解析した拍が無い」")
+        XCTAssertNil(mutate { $0.confidence = 1.1 }, "版 4 の確からしさは 0〜1")
+        XCTAssertNil(mutate { $0.anchorFraction = 1 })
+        XCTAssertNil(mutate { $0.strongest = -1 })
         XCTAssertNil(mutate { $0.tempogram[5] = 1.5 })
         XCTAssertNil(mutate { $0.tempogram[5] = -0.1 })
         XCTAssertNil(mutate { $0.tempogram[5] = .nan })
         XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, band: 3)] })
         XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, strength: 0)] })
         XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, fraction: 1, beatIndex: 0)] })
-        XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, flags: 2)] })
+        XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, strength: 1.5)] })
+        XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, flags: 6)] })
+        // 拍（2・4・5）は band 0・beatFraction 0。
+        XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, flags: 2)] }, "band 1 の拍")
+        XCTAssertNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, beatFraction: 0.5, band: 0, flags: 5)] })
+        XCTAssertNotNil(mutate { $0.events = [EventSpec(frame: 1, beatIndex: 0, strength: 0, band: 0, flags: 4)] },
+                        "拍の強さは 0 でもよい")
+        // 先の拍の見込み: 12 個まで、時刻も番号も 1 つずつ増える、周期が要る。
+        XCTAssertNil(mutate { $0.preview = [(10, 0, 1)]; $0.previewPeriod = 0 })
+        XCTAssertNil(mutate { $0.preview = [(10, 0, 1), (60, 0, 3)]; $0.previewPeriod = 0.5 })
+        XCTAssertNil(mutate { $0.preview = [(60, 0, 1), (10, 0, 2)]; $0.previewPeriod = 0.5 })
+        XCTAssertNil(mutate { $0.preview = [(10, 1, 1)]; $0.previewPeriod = 0.5 })
+        XCTAssertNil(mutate { $0.preview = Array(repeating: (10, 0, 1), count: 13); $0.previewPeriod = 0.5 })
         XCTAssertNil(ETRhythmSnapshot.parse(TelemetryBytes.frame(.rhythmAnalyzer, version: 2,
-                                                                 payload: [UInt8](repeating: 0, count: 1344))))
-        XCTAssertNil(ETRhythmSnapshot.parse(TelemetryBytes.frame(.level, payload: [UInt8](repeating: 0, count: 1344))))
+                                                                 payload: [UInt8](repeating: 0, count: 1496))))
+        XCTAssertNil(ETRhythmSnapshot.parse(TelemetryBytes.frame(.level, version: 4,
+                                                                 payload: [UInt8](repeating: 0, count: 1496))))
+    }
+
+    func testSortsBeatsAndPreviewOutOfTheItems() throws {
+        var f = Fields()
+        f.events = [
+            EventSpec(frame: 990, beatIndex: 7, period: 0.5, strength: 0.6, band: 2, flags: 3),
+            EventSpec(frame: 1000, beatIndex: 8, period: 0.5, strength: 0.9, band: 0, flags: 2),
+            EventSpec(frame: 1050, beatIndex: 9, period: 0.5, strength: 0.4, band: 0, flags: 4),
+            EventSpec(frame: UInt32(bitPattern: -5), beatIndex: -1, period: 0.5, strength: 1, band: 0, flags: 5),
+        ]
+        f.preview = [(1100, 0.5, 10), (1150, 0.5, 11)]
+        f.previewPeriod = 0.5
+        let s = try XCTUnwrap(ETRhythmSnapshot.parse(frame(f)))
+        XCTAssertEqual(s.events.count, 1)
+        XCTAssertTrue(s.events[0].provisional)
+        XCTAssertFalse(s.events[0].locked)
+        XCTAssertEqual(s.forwardBeats.map(\.index), [8, 9])
+        XCTAssertEqual(s.shownBeats.map(\.index), [8])
+        XCTAssertEqual(s.shownBeats[0].strength, 0.9, accuracy: 1e-6)
+        XCTAssertEqual(s.analysisBeats.count, 1)
+        XCTAssertEqual(s.analysisBeats[0].time, -5 * 0.01, accuracy: 1e-9, "確定した拍の frame は符号付き")
+        XCTAssertEqual(s.previewBeats.map(\.index), [10, 11])
+        XCTAssertEqual(s.previewBeats[1].time, 1150.5 * 0.01, accuracy: 1e-9)
+        XCTAssertEqual(s.previewPeriodSeconds, 0.5)
     }
 
     // MARK: 履歴
@@ -241,10 +298,13 @@ final class RhythmAnalyzerTests: XCTestCase {
         f.frameCount = UInt32(10 * k)
         f.time = Float(Double(k) * 0.1)
         let next = Int(f.frameCount) / 50 + 1
-        f.nextIndex = UInt32(next)
-        f.nextFrame = UInt32(50 * next)
-        f.nextFraction = 0
-        var events = beats.map { EventSpec(frame: UInt32(50 * $0), beatIndex: Int32($0)) }
+        f.anchorIndex = UInt32(next)
+        f.anchorFrame = UInt32(50 * next)
+        f.anchorFraction = 0
+        // 見せる拍（LED）。次の拍を、その時刻で。
+        var events = [EventSpec(frame: UInt32(50 * next), beatIndex: Int32(next), strength: 1,
+                                band: 0, flags: 2)]
+        events += beats.map { EventSpec(frame: UInt32(50 * $0), beatIndex: Int32($0)) }
         // 拍の途中（0.52 拍）の onset は +10ms 遅れ。
         events += midBeats.map {
             EventSpec(frame: UInt32(50 * $0 + 26), beatIndex: Int32($0), beatFraction: 0.52)
@@ -422,18 +482,33 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertNotNil(state.snapshot)
     }
 
-    func testBeatLedLightsOnPredictedBeatsAndFades() throws {
+    func testBeatLedLightsOnShownBeatsAndFades() throws {
         let state = ETRhythmState()
         feed(state, frames: 1...4)
         // 拍 1 は 0.5 秒。0.4 秒の枠まではまだ点いていない（ledBeat は無い）。
         XCTAssertEqual(state.ledLevel, 0)
+        XCTAssertNil(state.ledAgeMilliseconds(now: 0.4))
         feed(state, frames: 5...5)
-        // 0.5 秒の枠で拍 1 を越える。ちょうど越えた直後は最大。
+        // 0.5 秒の枠で拍 1 を越える。ちょうど越えた直後は最大（強さ 1）。
         XCTAssertGreaterThan(state.ledLevel, 0.99)
         feed(state, frames: 6...6)
         // 0.1 秒後は 0.09 秒の減衰を過ぎて消える。
         XCTAssertEqual(state.ledLevel, 0)
         XCTAssertNotNil(state.ledAgeMilliseconds(now: 0.6))
+    }
+
+    func testBeatLedScalesWithStrengthAndIgnoresRepeatedBeats() throws {
+        let state = ETRhythmState()
+        var f = Fields()
+        f.frameCount = 100
+        f.events = [EventSpec(frame: 100, beatIndex: 2, strength: 0.5, band: 0, flags: 2)]
+        state.ingest(frame(f, sequence: 1), now: 0)
+        XCTAssertEqual(state.ledLevel, 0.5, accuracy: 1e-9, "着いた時刻で点け、強さ倍")
+        // 同じ epoch で番号が進んでいない拍は出し直し。点け直さない。
+        f.frameCount = 108
+        f.events = [EventSpec(frame: 108, beatIndex: 2, strength: 1, band: 0, flags: 2)]
+        state.ingest(frame(f, sequence: 2), now: 0.08)
+        XCTAssertEqual(state.ledLevel, 0.5 * (1 - 0.08 / 0.09), accuracy: 1e-6)
     }
 
     func testSegmentsAreCappedAtSixtyFour() {
@@ -442,9 +517,9 @@ final class RhythmAnalyzerTests: XCTestCase {
             var f = Fields()
             f.epoch = UInt32(epoch)
             f.frameCount = UInt32(10 * epoch)
-            f.nextFrame = f.frameCount + 20
-            f.nextFraction = 0
-            f.nextIndex = UInt32(epoch)
+            f.anchorFrame = f.frameCount + 20
+            f.anchorFraction = 0
+            f.anchorIndex = UInt32(epoch)
             state.ingest(frame(f, sequence: UInt32(epoch)), now: 0)
         }
         XCTAssertEqual(state.segments.count, 64)

@@ -617,7 +617,7 @@ private struct RhythmPainter {
 
     private func headerItems(lens: ETRhythmLens?, markerColor: Color) -> [[HeaderPart]] {
         let snapshot = state.snapshot
-        let locked = snapshot?.locked == true
+        let locked = snapshot?.analysisValid == true
         let period: Double? = locked ? snapshot?.periodSeconds : state.heldPeriod
         let bpm: Double = (period ?? 0) > 0 ? 60 / period! : .nan
         func value(_ number: Double, _ text: String) -> String { number.isFinite ? text : ETRhythm.dash }
@@ -625,7 +625,7 @@ private struct RhythmPainter {
         if locked { tempo = String(format: "%.1f BPM  LOCKED", bpm) }
         else if bpm.isFinite { tempo = String(format: "(%.0f BPM held)  searching", bpm) }
         else { tempo = "searching" }
-        let comb = (snapshot?.combBestBpm ?? 0) > 0 ? snapshot!.combBestBpm : Double.nan
+        let comb = (snapshot?.strongestBpm ?? 0) > 0 ? snapshot!.strongestBpm : Double.nan
         let swing = lens?.swing ?? .nan
         let jitter = lens?.jitter ?? .nan
         return [

@@ -8,23 +8,32 @@
 //  （updateBeatLed）、onset の置き方と揺れ（storeEvent・referenceDeviation・isNovel）、
 //  ビートレンズ（lensSummary・displayedLensSummary）をそのまま写した。
 //
-//  テレメトリ: ETFrameType.rhythmAnalyzer = 28、formatVersion 1、1344 バイト
-//  （dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp:36 の kTelemetryType / kPayloadBytes）
+//  テレメトリ: ETFrameType.rhythmAnalyzer = 28、formatVersion 4、1496 バイト（2.13.0。2.12.0 は版 1、1344 バイト）
+//  （dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp の kTelemetryType / kPayloadBytes、rhythm_analyzer.js:1-8）
 //
-//  ペイロードの並び（rhythm_analyzer.js:269-345、dsp/bindings/js/src/telemetry.js:463-534）:
+//  ペイロードの並び（rhythm_analyzer.js:294-394 の readSnapshot）:
 //      0   f32 sampleRate     4   u32 generation（Reset で増える。0 は無い）
 //      8   u32 hop（包絡線の 1 歩のサンプル数）   12  u32 frameCount（包絡線の歩数）
 //      16  f32 timeSeconds（ホストの時刻）        20  f32 latencySeconds
 //      24  u32 droppedEvents   28 u32 eventCount（最大 16）
-//      32  u32 trackerFlags（bit0 = 拍に乗った）  36 u32 lockEpoch   40 f32 confidence
-//      44  f32 periodSeconds   48 u32 nextBeatFrame   52 f32 nextBeatFraction（0 以上 1 未満）
-//      56  u32 nextBeatIndex   60 f32 combBestBpm
+//      32  u32 trackerFlags（1 = 拍の音を鳴らしてよい。tickGateOpen）  36 u32 analysisEpoch
+//      40  f32 confidence（0〜1）
+//      44  f32 periodSeconds（0 = 解析した拍が無い）  48 u32 anchorFrame   52 f32 anchorFraction（0 以上 1 未満）
+//      56  u32 anchorIndex   60 f32 strongestBpm
 //      64  f32 × 192 テンポグラム（0〜1。30〜480 BPM を 1 オクターブ 48 本で）
-//      832 + 32*k  onset k: u32 frame / f32 fraction / u32 epoch / i32 beatIndex /
-//                   f32 beatFraction / f32 period / f32 strength / u8 band / u8 flags（bit0 = 拍に乗っていない）/ u16 0
+//      832 + 32*k  項目 k: u32 frame（flags 5 は i32） / f32 fraction / u32 epoch / i32 index /
+//                   f32 beatFraction / f32 period / f32 strength / u8 band / u8 flags / u16 0
+//          flags: 0 確定した onset、1 拍に乗っていない onset、2 見せる先の拍、3 仮の onset、
+//                 4 見せない先の拍、5 確定した拍。拍（2・4・5）は band 0・beatFraction 0・strength 0〜1
+//      1344  u32 previewCount（12 まで）  1348 f32 previewPeriod
+//      1352 + 12*i  先の拍の見込み: i32 frame / f32 fraction / i32 index（時刻も番号も 1 つずつ増える）
 //
 //  **枠 1 つは「前の枠から今まで」の onset を運ぶ。**最新だけ残す読み方では前の枠の onset が消えるので、
 //  Telemetry は Rhythm Analyzer の枠だけ届いた順に全部取っておく（Telemetry.drainRhythmFrames）。
+//
+//  2.13.0 で上流の画面は大きく書き直された（先の拍の見込み・確定した拍の時計・仮の onset の差し替え）。
+//  ここは枠を版 4 として読み、今までの画面の計算に当てはめるところまで。拍の時計は anchor（解析した拍）
+//  から、LED は見せる拍（flags 2）から進める。仮の onset（flags 3）は後で確定した onset が来るので入れない。
 
 import Foundation
 
@@ -64,12 +73,17 @@ enum ETRhythmBPMRange {
 // MARK: - 定数と小道具
 
 enum ETRhythm {
-    static let payloadBytes = 1344
+    static let version: UInt16 = 4
+    static let payloadBytes = 1496
     static let tempogramBins = 192
     static let maxEvents = 16
     static let tempogramOffset = 64
     static let eventsOffset = 832
     static let eventBytes = 32
+    static let previewOffset = 1344
+    static let previewBeatsOffset = 1352
+    static let previewBeatBytes = 12
+    static let maxPreviewBeats = 12
     /// 1 行の拍の数（Span）。表示だけの設定 sp。
     static let spans = [4, 6, 8, 12, 16]
     static let defaultSpan = 8
@@ -145,7 +159,10 @@ enum ETRhythm {
 // MARK: - 枠
 
 struct ETRhythmEvent: Equatable {
+    /// 確定した onset（flags 0）。拍に乗っていない onset（flags 1）は false。
     var locked: Bool
+    /// 仮の onset（flags 3）。後で同じ onset が確定して来る。
+    var provisional = false
     /// 解析した時刻（生成の始めからの秒）。
     var time: Double
     var epoch: UInt32
@@ -154,6 +171,15 @@ struct ETRhythmEvent: Equatable {
     var periodSeconds: Double
     var strength: Double
     var band: Int
+}
+
+/// 拍。枠の項目の flags 2・4・5 と、先の拍の見込み。
+struct ETRhythmBeat: Equatable {
+    var time: Double
+    var index: Int32
+    var epoch: UInt32
+    var periodSeconds: Double
+    var strength: Double
 }
 
 struct ETRhythmSnapshot: Equatable {
@@ -165,69 +191,117 @@ struct ETRhythmSnapshot: Equatable {
     var latencySeconds: Double
     var droppedEvents: UInt32
     var eventCount: Int
-    var locked: Bool
-    var lockEpoch: UInt32
+    /// trackerFlags が 1。拍の音（Metronome Click）を鳴らしてよい。
+    var tickGateOpen: Bool
+    var analysisEpoch: UInt32
     var confidence: Double
     var periodSeconds: Double
-    var nextBeatFrame: UInt32
-    var nextBeatFraction: Double
-    var nextBeatIndex: UInt32
-    var combBestBpm: Double
+    /// 解析した拍（anchor）の位置。
+    var anchorFrame: UInt32
+    var anchorFraction: Double
+    var anchorIndex: UInt32
+    var strongestBpm: Double
     var tempogram: [Float]
+    /// onset（flags 0・1・3）。
     var events: [ETRhythmEvent]
+    /// 先の拍（flags 2・4）と、そのうち見せるもの（flags 2）。
+    var forwardBeats: [ETRhythmBeat] = []
+    var shownBeats: [ETRhythmBeat] = []
+    /// 確定した拍（flags 5）。
+    var analysisBeats: [ETRhythmBeat] = []
+    /// 先の拍の見込み（1344 以降）。
+    var previewBeats: [ETRhythmBeat] = []
+    var previewPeriodSeconds: Double = 0
     var sequence: UInt32
 
     var hopSeconds: Double { Double(hop) / sampleRate }
+    /// 解析した拍がある（上流 analysisValid）。周期が 0 なら無い。
+    var analysisValid: Bool { periodSeconds > 0 }
 
     /// 枠を読む（readSnapshot の門）。読めなければ nil。
     static func parse(_ frame: ETFrame?) -> ETRhythmSnapshot? {
-        guard let frame, frame.type == ETFrameType.rhythmAnalyzer.rawValue, frame.version == 1 else { return nil }
+        guard let frame, frame.type == ETFrameType.rhythmAnalyzer.rawValue,
+              frame.version == ETRhythm.version else { return nil }
         let p = ETPayload(frame)
         guard p.count == ETRhythm.payloadBytes,
               let rate = p.f32(at: 0), let generation = p.u32(at: 4), let hop = p.u32(at: 8),
               let frameCount = p.u32(at: 12), let time = p.f32(at: 16), let latency = p.f32(at: 20),
               let dropped = p.u32(at: 24), let eventCount = p.u32(at: 28),
-              let flags = p.u32(at: 32), let lockEpoch = p.u32(at: 36), let confidence = p.f32(at: 40),
-              let period = p.f32(at: 44), let nextFrame = p.u32(at: 48), let nextFraction = p.f32(at: 52),
-              let nextIndex = p.u32(at: 56), let comb = p.f32(at: 60) else { return nil }
-        let locked = flags == 1
+              let flags = p.u32(at: 32), let epoch = p.u32(at: 36), let confidence = p.f32(at: 40),
+              let period = p.f32(at: 44), let anchorFrame = p.u32(at: 48), let anchorFraction = p.f32(at: 52),
+              let anchorIndex = p.u32(at: 56), let strongest = p.f32(at: 60) else { return nil }
         guard rate.isFinite, rate > 0, hop != 0, generation != 0, time.isFinite, time >= 0,
               latency.isFinite, latency >= 0, eventCount <= UInt32(ETRhythm.maxEvents), flags <= 1,
-              confidence.isFinite, confidence >= 0, period.isFinite, period >= 0,
-              !(locked && period == 0), nextFraction >= 0, nextFraction < 1,
-              comb.isFinite, comb >= 0,
+              confidence.isFinite, confidence >= 0, confidence <= 1, period.isFinite, period >= 0,
+              anchorFraction >= 0, anchorFraction < 1, strongest.isFinite, strongest >= 0,
               let tempogram = p.floats(at: ETRhythm.tempogramOffset, count: ETRhythm.tempogramBins),
               !tempogram.contains(where: { !($0 >= 0 && $0 <= 1) }) else { return nil }
         let hopSeconds = Double(hop) / Double(rate)
-        var events: [ETRhythmEvent] = []
+        var snapshot = ETRhythmSnapshot(
+            sampleRate: Double(rate), generation: generation, hop: hop, frameCount: frameCount,
+            timeSeconds: Double(time), latencySeconds: Double(latency), droppedEvents: dropped,
+            eventCount: Int(eventCount), tickGateOpen: flags == 1, analysisEpoch: epoch,
+            confidence: Double(confidence), periodSeconds: Double(period), anchorFrame: anchorFrame,
+            anchorFraction: Double(anchorFraction), anchorIndex: anchorIndex,
+            strongestBpm: Double(strongest), tempogram: tempogram, events: [], sequence: frame.sequence)
         for slot in 0..<Int(eventCount) {
             let base = ETRhythm.eventsOffset + ETRhythm.eventBytes * slot
-            guard let frameNumber = p.u32(at: base), let fraction = p.f32(at: base + 4),
-                  let epoch = p.u32(at: base + 8), let beatIndex = p.i32(at: base + 12),
+            guard let frameNumber = p.u32(at: base), let signedFrame = p.i32(at: base),
+                  let fraction = p.f32(at: base + 4),
+                  let eventEpoch = p.u32(at: base + 8), let index = p.i32(at: base + 12),
                   let beatFraction = p.f32(at: base + 16), let eventPeriod = p.f32(at: base + 20),
                   let strength = p.f32(at: base + 24), let band = p.u8(at: base + 28),
-                  let eventFlags = p.u8(at: base + 29), let pad = p.u16(at: base + 30) else { return nil }
-            let eventLocked = eventFlags == 0
-            guard band <= 2, eventFlags <= 1, pad == 0, fraction >= 0, fraction < 1,
-                  beatFraction >= 0, beatFraction < 1, eventPeriod.isFinite, eventPeriod >= 0,
-                  !(eventLocked && eventPeriod == 0), strength.isFinite, strength > 0 else { return nil }
-            events.append(ETRhythmEvent(
-                locked: eventLocked,
-                time: (Double(frameNumber) + Double(fraction)) * hopSeconds,
-                epoch: epoch,
-                position: Double(beatIndex) + Double(beatFraction),
+                  let kind = p.u8(at: base + 29), let pad = p.u16(at: base + 30) else { return nil }
+            let annotated = kind == 0
+            let shownBeat = kind == 2
+            let forwardBeat = shownBeat || kind == 4
+            let analysisBeat = kind == 5
+            let beatSlot = forwardBeat || analysisBeat
+            guard beatSlot ? band == 0 : band <= 2, kind <= 5, pad == 0,
+                  fraction >= 0, fraction < 1, beatFraction >= 0, beatFraction < 1,
+                  eventPeriod.isFinite, eventPeriod >= 0,
+                  !((annotated || kind == 3 || forwardBeat) && eventPeriod == 0),
+                  !(beatSlot && beatFraction != 0), strength.isFinite, strength <= 1,
+                  beatSlot ? strength >= 0 : strength > 0 else { return nil }
+            let at = ((analysisBeat ? Double(signedFrame) : Double(frameNumber)) + Double(fraction)) * hopSeconds
+            if beatSlot {
+                let beat = ETRhythmBeat(time: at, index: index, epoch: eventEpoch,
+                                        periodSeconds: Double(eventPeriod), strength: Double(strength))
+                if analysisBeat {
+                    snapshot.analysisBeats.append(beat)
+                } else {
+                    snapshot.forwardBeats.append(beat)
+                    if shownBeat { snapshot.shownBeats.append(beat) }
+                }
+                continue
+            }
+            snapshot.events.append(ETRhythmEvent(
+                locked: annotated,
+                provisional: kind == 3,
+                time: at,
+                epoch: eventEpoch,
+                position: Double(index) + Double(beatFraction),
                 beatFraction: Double(beatFraction),
                 periodSeconds: Double(eventPeriod),
                 strength: Double(strength),
                 band: Int(band)))
         }
-        return ETRhythmSnapshot(
-            sampleRate: Double(rate), generation: generation, hop: hop, frameCount: frameCount,
-            timeSeconds: Double(time), latencySeconds: Double(latency), droppedEvents: dropped,
-            eventCount: Int(eventCount), locked: locked, lockEpoch: lockEpoch,
-            confidence: Double(confidence), periodSeconds: Double(period), nextBeatFrame: nextFrame,
-            nextBeatFraction: Double(nextFraction), nextBeatIndex: nextIndex, combBestBpm: Double(comb),
-            tempogram: tempogram, events: events, sequence: frame.sequence)
+        guard let previewCount = p.u32(at: ETRhythm.previewOffset),
+              let previewPeriod = p.f32(at: ETRhythm.previewOffset + 4),
+              previewCount <= UInt32(ETRhythm.maxPreviewBeats), previewPeriod.isFinite, previewPeriod >= 0,
+              !(previewCount > 0 && previewPeriod == 0) else { return nil }
+        snapshot.previewPeriodSeconds = Double(previewPeriod)
+        for i in 0..<Int(previewCount) {
+            let base = ETRhythm.previewBeatsOffset + ETRhythm.previewBeatBytes * i
+            guard let beatFrame = p.i32(at: base), let fraction = p.f32(at: base + 4),
+                  let index = p.i32(at: base + 8), fraction >= 0, fraction < 1 else { return nil }
+            let beat = ETRhythmBeat(time: (Double(beatFrame) + Double(fraction)) * hopSeconds, index: index,
+                                    epoch: epoch, periodSeconds: Double(previewPeriod), strength: 0)
+            if let previous = snapshot.previewBeats.last,
+               beat.time <= previous.time || Int64(beat.index) != Int64(previous.index) + 1 { return nil }
+            snapshot.previewBeats.append(beat)
+        }
+        return snapshot
     }
 }
 
@@ -318,13 +392,13 @@ final class ETRhythmState {
     private var lensDisplay: (epoch: UInt32?, time: Double, cells: [ETRhythmLensRow?])?
     private(set) var snapshot: ETRhythmSnapshot?
 
-    // ビート LED。
-    private var ledNextBeat: Double?
-    private var ledNextIndex: Int?
-    private var ledEpoch: UInt32?
-    private var ledBeatEpoch: UInt32?
-    private var ledIndex: Int?
+    // ビート LED（見せる拍、flags 2）。
+    private var pendingBeats: [(time: Double, strength: Double)] = []
+    /// epoch ごとに、最後に受けた見せる拍の番号。挿入順も持つ（JS の Map の順）。
+    private var shownBeatIndices: [UInt32: Int32] = [:]
+    private var shownBeatOrder: [UInt32] = []
     private var ledBeat: Double?
+    private var ledStrength = 0.0
     private(set) var ledLevel = 0.0
 
     init() {
@@ -378,12 +452,15 @@ final class ETRhythmState {
         lensDisplay = nil
         eventSerial = 0
         snapshot = nil
-        ledNextBeat = nil
-        ledNextIndex = nil
-        ledEpoch = nil
-        ledBeatEpoch = nil
-        ledIndex = nil
+        clearBeatLed()
+    }
+
+    private func clearBeatLed() {
+        pendingBeats = []
+        shownBeatIndices = [:]
+        shownBeatOrder = []
         ledBeat = nil
+        ledStrength = 0
         ledLevel = 0
     }
 
@@ -416,7 +493,8 @@ final class ETRhythmState {
         // 追跡の状態と拍の時計が先。この枠の onset が自分の epoch の offset を見つけられるように。
         advanceClock(snap, dt: Double(frames) * snap.hopSeconds)
         updateBeatLed(snap)
-        for event in snap.events { storeEvent(event) }
+        // 仮の onset は入れない。同じ onset が確定（flags 0）か拍に乗らない（flags 1）で後から来る。
+        for event in snap.events where !event.provisional { storeEvent(event) }
         snapshot = snap
         lastObservedTime = snap.timeSeconds
     }
@@ -445,7 +523,7 @@ final class ETRhythmState {
             for step in first...advance {
                 let column = (tempogramHead + step) % columns
                 for bin in 0..<bins { tempogram[column * bins + bin] = snap.tempogram[bin] }
-                tempogramAdopted[column] = snap.locked ? Float(60 / snap.periodSeconds) : 0
+                tempogramAdopted[column] = snap.analysisValid ? Float(60 / snap.periodSeconds) : 0
                 // 枠の確からしさが採用した線の濃さになる。
                 tempogramConfidence[column] = Float(snap.confidence)
             }
@@ -469,21 +547,22 @@ final class ETRhythmState {
 
     private func advanceClock(_ snap: ETRhythmSnapshot, dt: Double) {
         let now = Double(snap.frameCount) * snap.hopSeconds
-        if snap.locked {
+        if snap.analysisValid {
+            // anchor は解析した拍（過去のことが多い）。そこから周期で今の位置を出す。
             let period = snap.periodSeconds
-            let untilBeat = (Double(snap.nextBeatFrame) - Double(snap.frameCount) + snap.nextBeatFraction)
+            let untilBeat = (Double(snap.anchorFrame) - Double(snap.frameCount) + snap.anchorFraction)
                 * snap.hopSeconds
-            let position = Double(snap.nextBeatIndex) - untilBeat / period
+            let position = Double(snap.anchorIndex) - untilBeat / period
             let segment: ETRhythmSegment
-            if let existing = segments[snap.lockEpoch] {
+            if let existing = segments[snap.analysisEpoch] {
                 segment = existing
             } else {
                 let previous = openSegment
-                segment = ETRhythmSegment(epoch: snap.lockEpoch, offset: beatClock - position,
+                segment = ETRhythmSegment(epoch: snap.analysisEpoch, offset: beatClock - position,
                                           startU: previous?.endU ?? beatClock, endU: beatClock,
                                           reanchor: previous != nil)
-                segments[snap.lockEpoch] = segment
-                segmentOrder.append(snap.lockEpoch)
+                segments[snap.analysisEpoch] = segment
+                segmentOrder.append(snap.analysisEpoch)
                 if segmentOrder.count > ETRhythm.maxSegments {
                     let oldest = segmentOrder.removeFirst()
                     segments[oldest] = nil
@@ -529,52 +608,34 @@ final class ETRhythmState {
 
     // MARK: ビート LED
 
+    /// 見せる拍を、その時刻が来たら点ける（updateBeatLed・advanceBeatLed、rhythm_analyzer.js:705-728）。
+    /// 同じ epoch で番号が進んでいない拍は出し直しなので受けない。明るさは拍の強さ倍。
     private func updateBeatLed(_ snap: ETRhythmSnapshot) {
-        guard snap.locked else {
-            ledNextBeat = nil
-            ledNextIndex = nil
-            ledEpoch = nil
-            ledBeatEpoch = nil
-            ledIndex = nil
-            ledBeat = nil
-            ledLevel = 0
-            return
-        }
+        if snap.confidence == 0 && snap.strongestBpm == 0 { clearBeatLed() }
         let now = Double(snap.frameCount) * snap.hopSeconds
-        let beat = (Double(snap.nextBeatFrame) + snap.nextBeatFraction) * snap.hopSeconds
-        let halfPeriod = 0.5 * snap.periodSeconds
-        let nextIndex = Int(snap.nextBeatIndex)
-        // 位相の直し直しや再アンカーで同じ拍が出し直されたものは、新しい拍でない。
-        func light(_ candidate: Double, _ index: Int) {
-            if ledBeatEpoch == snap.lockEpoch, let lit = ledIndex, index <= lit { return }
-            if let ledBeat, candidate - ledBeat < halfPeriod { return }
-            ledBeat = candidate
-            ledIndex = index
-            ledBeatEpoch = snap.lockEpoch
-        }
-        // 前の枠の予測を先に見る（予測が動いても拍を飛ばさない）。
-        if ledEpoch == snap.lockEpoch {
-            if let predictedBeat = ledNextBeat, now >= predictedBeat, let predictedIndex = ledNextIndex {
-                let arrivedLate = now - predictedBeat >= ETRhythm.ledFadeSeconds
-                light(arrivedLate ? now : predictedBeat, predictedIndex)
+        for beat in snap.shownBeats {
+            if let previous = shownBeatIndices[beat.epoch], beat.index <= previous { continue }
+            if shownBeatIndices[beat.epoch] == nil { shownBeatOrder.append(beat.epoch) }
+            shownBeatIndices[beat.epoch] = beat.index
+            if shownBeatOrder.count > ETRhythm.maxSegments {
+                shownBeatIndices[shownBeatOrder.removeFirst()] = nil
             }
-            // 早い位相の直しで、前の予測より先に拍を通ることがある。遅れて知った拍は、着いた時刻から光らせる。
-            if let predictedIndex = ledNextIndex, nextIndex > predictedIndex { light(now, nextIndex - 1) }
-        } else if nextIndex > 0 {
-            light(now, nextIndex - 1)
+            pendingBeats.append((time: beat.time > now ? beat.time : now, strength: beat.strength))
         }
-        if now >= beat { light(beat, nextIndex) }
-        ledNextBeat = beat
-        ledNextIndex = nextIndex
-        ledEpoch = snap.lockEpoch
+        pendingBeats.sort { $0.time < $1.time }
+        while let first = pendingBeats.first, first.time <= now {
+            pendingBeats.removeFirst()
+            ledBeat = first.time
+            ledStrength = first.strength
+        }
         let level = ledBeat.map { 1 - (now - $0) / ETRhythm.ledFadeSeconds } ?? 0
-        ledLevel = level > 0 ? level : 0
+        ledLevel = (level > 0 ? level : 0) * ledStrength
     }
 
     /// 最後に点いた拍からの経過（ms）。ビジュアライザ用の連続した減衰には使わず、
     /// 枠の間も減衰を続けて描くための量（drawVisualizerRhythm の ageMs に当たる）。
     func ledAgeMilliseconds(now: Double) -> Double? {
-        guard let snapshot, snapshot.locked, let ledBeat else { return nil }
+        guard let snapshot, let ledBeat else { return nil }
         let analysed = Double(snapshot.frameCount) * snapshot.hopSeconds
         let wall = columnFrameTime.map { now - $0 } ?? 0
         return max(0, (analysed - ledBeat) * 1000 + wall * 1000)
@@ -746,7 +807,7 @@ final class ETRhythmState {
     /// いまのロックの epoch の直前 32 拍で、帯域ごと・スロットごとの、重み付き中央値からのずれとばらつき、
     /// それにスウィングとジッタ。拍に乗っていないあいだは nil。
     func lensSummary() -> ETRhythmLens? {
-        guard snapshot?.locked == true, let segment = openSegment else { return nil }
+        guard snapshot?.analysisValid == true, let segment = openSegment else { return nil }
         var count = [Int](repeating: 0, count: 18)
         var sum = [Double](repeating: 0, count: 18)
         var squareSum = [Double](repeating: 0, count: 18)

@@ -272,8 +272,8 @@ struct NoteSpectrogramView: View {
                     .padding(8)
                 }
             }
-            // 上流 :748-755 の並びは Color → Pitch Resolution → Layout → Volume →
-            // Time Span → Regular Note Limit → Lowest Note → Highest Note。
+            // 上流の並びは Color → Pitch Resolution → Layout → Volume →
+            // Time Span → Lowest Note → Highest Note（2.13.0 で Regular Note Limit が無くなった）。
             if !graphOnly { controls }
             ForEach(node.spec.params) { param in
                 parameterRow(param)
@@ -859,57 +859,8 @@ private struct NoteSpectrogramGraph: View {
 }
 
 // MARK: - 1 枠
-
-struct ETNoteSnapshot {
-
-    let sampleRate: Double
-    let time: Double
-    let hopSeconds: Double
-    let frameIndex: UInt32
-    /// 細分ごとの確からしさ。440 個（note_spectrogram.js:321-332）。
-    let confidence: [Float]
-    /// 同じ並びの dB（床は -240）。
-    let level: [Float]
-
-    init?(_ frame: ETFrame?) {
-        guard let frame = frame, frame.matches(version: 3),
-              frame.hasPayload(bytes: 3548) else { return nil }
-
-        let payload = frame.payloadView
-        guard let rate = payload.f32(at: 0),
-              let seconds = payload.f32(at: 4),
-              let pitchCount = payload.u16(at: 8),
-              let firstMidi = payload.u16(at: 10),
-              let hop = payload.f32(at: 12),
-              let index = payload.u32(at: 16),
-              let modeCode = payload.u32(at: 20),
-              let generation = payload.u32(at: 24) else { return nil }
-
-        // note_spectrogram.js:313-319 と同じ門。
-        guard rate.isFinite, rate > 0, seconds.isFinite, seconds >= 0,
-              pitchCount == UInt16(ETNoteBand.pitches),
-              firstMidi == UInt16(ETNoteBand.firstMidi),
-              hop.isFinite, hop > 0, modeCode == UInt32(ETNoteBand.divisions),
-              generation != 0 else { return nil }
-
-        guard let fineConfidence = payload.floats(at: 28, count: ETNoteBand.pitches),
-              let fineLevel = payload.floats(at: 1788, count: ETNoteBand.pitches)
-            else { return nil }
-        // 同 :324-331。1 つでも外れていたら枠ごと捨てる。
-        for pitch in 0..<ETNoteBand.pitches {
-            let value = fineConfidence[pitch]
-            guard value.isFinite, value >= 0, value <= 1,
-                  fineLevel[pitch].isFinite else { return nil }
-        }
-
-        sampleRate = Double(rate)
-        time = Double(seconds)
-        hopSeconds = Double(hop)
-        frameIndex = index
-        confidence = fineConfidence
-        level = fineLevel
-    }
-}
+//
+// ETNoteSnapshot（枠の読み）は DSP/NoteSpectrogramFrame.swift。Foundation だけで試せるように外へ出した。
 
 struct ETNoteProbe {
     let midi: Int
@@ -924,13 +875,11 @@ struct ETNoteProbe {
 final class ETNoteBand: ObservableObject {
 
     static let columns = 256
-    /// 88 鍵。note_spectrogram.js:4 の MULTI_F0_NOTE_COUNT。
-    static let notes = 88
-    /// 1 半音を割る数。同 :5 の MULTI_F0_FINE_DIVISIONS。
-    static let divisions = 5
-    /// 440。同 :7 の MULTI_F0_PITCH_COUNT。
-    static let pitches = notes * divisions
-    static let firstMidi = 21
+    /// 数は枠の読みと同じもの（ETNoteLayout、NoteSpectrogramFrame.swift）。
+    static let notes = ETNoteLayout.notes
+    static let divisions = ETNoteLayout.divisions
+    static let pitches = ETNoteLayout.pitches
+    static let firstMidi = ETNoteLayout.firstMidi
     static let lastMidi = firstMidi + notes - 1
 
     @Published private(set) var revision: UInt32 = 0
@@ -990,6 +939,9 @@ final class ETNoteBand: ObservableObject {
     private var loudness = [UInt8](repeating: 0,
                                    count: ETNoteBand.notes * ETNoteBand.columns)
     private var times = [Double](repeating: .nan, count: ETNoteBand.columns)
+    /// その列に入れた枠（generation, frameIndex）。後の枠が運ぶ直しの当て先を探すのに使う。
+    private var frames = [(generation: UInt32, index: UInt32)?](repeating: nil,
+                                                                count: ETNoteBand.columns)
     /// RGBA、前乗算。Normal では 4 バイトとも同じ値（使うのは alpha だけ）。
     private var pixels: [UInt8] = []
 
@@ -1041,12 +993,35 @@ final class ETNoteBand: ObservableObject {
             loudness[note * Self.columns + column] = Self.byte(Float(levelReference.normalized(db)))
         }
         times[column] = snapshot.time
+        frames[column] = (snapshot.generation, snapshot.frameIndex)
         paint(column: column)
 
         head = (head + 1) % Self.columns
         if count < Self.columns { count += 1 }
+        for fix in snapshot.revisions {
+            revise(generation: snapshot.generation, index: snapshot.frameIndex &- fix.age,
+                   confidence: fix.confidence)
+        }
         image = makeImage()
         revision &+= 1
+    }
+
+    /// 前の枠の確からしさを直す（2.13.0。上流 _applyFrameRevision、note_spectrogram.js:760-781）。
+    /// 当て先は最新から age 枠までの列だけを探す。無い（取りこぼした、もう流れた）なら何もしない。
+    /// dB（Volume）は直さない。上流も volumeLevelHistory はそのまま。
+    private func revise(generation: UInt32, index: UInt32, confidence: [Float]) {
+        guard confidence.count == Self.pitches else { return }
+        let reach = min(count, Int(ETNoteLayout.maximumRevisionAge) + 1)
+        for back in 1...max(1, reach) where back <= count {
+            let column = (head - back + Self.columns) % Self.columns
+            guard let frame = frames[column], frame.generation == generation,
+                  frame.index == index else { continue }
+            for pitch in 0..<Self.pitches {
+                fine[pitch * Self.columns + column] = Self.byte(confidence[pitch])
+            }
+            paint(column: column)
+            return
+        }
     }
 
     /// 溜めた列を全部捨てる。枠の出どころ（手元・PC）が替わったとき。音量の目盛りも既定へ戻す。
@@ -1060,6 +1035,7 @@ final class ETNoteBand: ObservableObject {
         for i in levels.indices { levels[i] = -240 }
         for i in loudness.indices { loudness[i] = 0 }
         for i in times.indices { times[i] = .nan }
+        for i in frames.indices { frames[i] = nil }
         for i in pixels.indices { pixels[i] = 0 }
         image = nil
         revision &+= 1

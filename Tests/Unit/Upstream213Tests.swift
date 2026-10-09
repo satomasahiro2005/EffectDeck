@@ -7,6 +7,7 @@
 //    - Adaptive Prediction の resetToken（実行時の数）を保存形式に書かず・読まず・比べないこと
 //    - 読み込みで上流の setParameters と同じ所へ着地すること（Weight Decay、SFZ の音域と強さ）
 //    - Adaptive Prediction は All（-2）に置くと素通し（上流の supportedChannelModes）
+//    - 枠の版: Note Spectrogram は 24 / 5（8840 バイト）、Rhythm Analyzer は 28 / 4（1496 バイト）
 
 import XCTest
 
@@ -203,5 +204,76 @@ final class Upstream213Tests: XCTestCase {
         let keys = (ape["params"] as? [[String: Any]] ?? []).compactMap { $0["key"] as? String }
         XCTAssertFalse(keys.contains("resetToken"))
         XCTAssertEqual(keys.count, 9)
+    }
+
+    // MARK: Note Spectrogram の枠（版 5）
+
+    private func noteFrame(version: UInt16 = 5, bytes: Int = 8840, revisionAge: UInt32 = 8,
+                           ages: (UInt32, UInt32) = (2, 4), confidence: Float = 0.5,
+                           revised: Float = 0.75) -> ETFrame {
+        var p = [UInt8](repeating: 0, count: max(bytes, 8840))
+        func put(_ b: [UInt8], _ o: Int) { TelemetryBytes.put(b, at: o, into: &p) }
+        put(TelemetryBytes.f32(48000), 0)
+        put(TelemetryBytes.f32(1.5), 4)
+        put([UInt8(440 & 0xff), UInt8(440 >> 8)], 8)
+        put([21, 0], 10)
+        put(TelemetryBytes.f32(0.02), 12)
+        put(TelemetryBytes.u32(100), 16)
+        put(TelemetryBytes.u32(5), 20)
+        put(TelemetryBytes.u32(3), 24)
+        put(TelemetryBytes.u32(revisionAge), 28)
+        for i in 0..<440 {
+            put(TelemetryBytes.f32(confidence), 32 + 4 * i)
+            put(TelemetryBytes.f32(-30), 1792 + 4 * i)
+            put(TelemetryBytes.f32(revisionAge == 0 ? 0 : revised), 3552 + 4 * i)
+            put(TelemetryBytes.f32(ages.0 == 0 ? 0 : 0.25), 5316 + 4 * i)
+            put(TelemetryBytes.f32(ages.1 == 0 ? 0 : 0.125), 7080 + 4 * i)
+        }
+        put(TelemetryBytes.u32(ages.0), 5312)
+        put(TelemetryBytes.u32(ages.1), 7076)
+        return ETFrame(type: 24, version: version, tapId: 3, sequence: 1, dropped: false,
+                       payload: Array(p.prefix(bytes)))
+    }
+
+    func testNoteSpectrogramFrameVersion5() throws {
+        XCTAssertEqual(ETNoteLayout.payloadBytes, 8840)
+        XCTAssertEqual(ETNoteLayout.levelOffset, 1792)
+        XCTAssertEqual(ETNoteLayout.revisedOffset, 3552)
+        XCTAssertEqual(ETNoteLayout.intermediateOffset, 5312)
+        let s = try XCTUnwrap(ETNoteSnapshot(noteFrame()))
+        XCTAssertEqual(s.frameIndex, 100)
+        XCTAssertEqual(s.generation, 3)
+        XCTAssertEqual(s.hopSeconds, 0.02, accuracy: 1e-7)
+        XCTAssertEqual(s.confidence.count, 440)
+        XCTAssertEqual(s.confidence[0], 0.5)
+        XCTAssertEqual(s.level[439], -30)
+        // 並びは上流の MULTI_F0_REVISION_PLANES（2, 4, 8）。
+        XCTAssertEqual(s.revisions.map(\.age), [2, 4, 8])
+        XCTAssertEqual(s.revisions[0].confidence[10], 0.25)
+        XCTAssertEqual(s.revisions[1].confidence[10], 0.125)
+        XCTAssertEqual(s.revisions[2].confidence[10], 0.75)
+        // 面の age が 0 なら、その直しは無い。
+        let early = try XCTUnwrap(ETNoteSnapshot(noteFrame(revisionAge: 0, ages: (2, 0))))
+        XCTAssertEqual(early.revisions.map(\.age), [2])
+    }
+
+    func testNoteSpectrogramRejectsOtherVersionsAndBadPlanes() {
+        XCTAssertNil(ETNoteSnapshot(noteFrame(version: 3)), "2.12.0 の版")
+        XCTAssertNil(ETNoteSnapshot(noteFrame(bytes: 3548)), "2.12.0 の長さ")
+        XCTAssertNil(ETNoteSnapshot(noteFrame(revisionAge: 7)))
+        XCTAssertNil(ETNoteSnapshot(noteFrame(ages: (4, 4))), "面の age は決まっている")
+        XCTAssertNil(ETNoteSnapshot(noteFrame(confidence: 1.5)))
+        XCTAssertNil(ETNoteSnapshot(noteFrame(revised: -0.1)))
+        XCTAssertNil(ETNoteSnapshot(nil))
+    }
+
+    // MARK: 枠の版
+
+    func testFrameVersions() {
+        XCTAssertEqual(ETNoteLayout.frameType, 24)
+        XCTAssertEqual(ETNoteLayout.version, 5)
+        XCTAssertEqual(ETFrameType.rhythmAnalyzer.rawValue, 28)
+        XCTAssertEqual(ETRhythm.version, 4)
+        XCTAssertEqual(ETRhythm.payloadBytes, 1496)
     }
 }
