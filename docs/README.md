@@ -27,6 +27,7 @@ The contracts for users and language models are at the top of the repository:
 | [notes/effetune-2.10.0.md](notes/effetune-2.10.0.md) | What the EffeTune 2.10.0 integration changed |
 | [notes/effetune-2.11.0.md](notes/effetune-2.11.0.md) | What the EffeTune 2.11.0 (DSP 0.11.0) integration changed |
 | [notes/effetune-2.12.0.md](notes/effetune-2.12.0.md) | What the EffeTune 2.12.0 (DSP 0.12.0) integration changed |
+| [notes/effetune-2.13.0.md](notes/effetune-2.13.0.md) | What the EffeTune 2.13.0 (DSP 0.13.0) integration changed |
 | [notes/au-post-insert.md](notes/au-post-insert.md) | The first AUv3 host, a fixed post-insert. Superseded by AU nodes in the chain |
 | [notes/mde-routing-question.md](notes/mde-routing-question.md) | The question for issues #3 and #4: when iOS keeps a player on the EffectDeck route |
 | [notes/mde-routing-answer.md](notes/mde-routing-answer.md) | The answer, reconstructed from iOS 27's `MediaExperience` (Japanese) |
