@@ -47,6 +47,8 @@ struct SettingsView: View {
     private static let panes = Pane.allCases.filter { $0 != .remote || ETFeatures.remoteControl }
 
     @State private var pane: Pane = .audio
+    /// Remote の面の Scan QR Code。シートは List に付ける（RemoteContent の頭）。
+    @State private var scanning = false
 
     var body: some View {
         NavigationStack {
@@ -69,9 +71,15 @@ struct SettingsView: View {
                 case .remote:
                     // PC の EffeTune を操る設定（ツールバーのシートと同じ節）。音の設定ではないので
                     // Audio に混ぜず、面を分ける。面の名前は Remote（EffeTune では何の面か読めない）。
-                    RemoteSections()
+                    RemoteRows(scan: { scanning = true })
                 case .about:
                     about
+                }
+            }
+            .sheet(isPresented: $scanning) {
+                RemoteScannerView { url in
+                    scanning = false
+                    RemoteMirror.shared.pair(url)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
