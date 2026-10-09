@@ -123,6 +123,7 @@ enum ETChainEditing {
     static let bassExtenderType = "BassExtenderPlugin"
     /// BassManagementDesigners.typeと同じ字（あちらはSwiftUIを連れてくるのでここからは引けない）。
     static let bassManagementType = "BassManagementPlugin"
+    static let adaptivePredictionType = "AdaptivePredictionEffectPlugin"
 
     /// 上流が受けないChに置かれた段。**descriptorではenabled 0で渡す**
     /// （カーネルを回さず、遅延もengineの合計に入らない）。
@@ -132,6 +133,8 @@ enum ETChainEditing {
     ///   Bass Extender   mono / stereo-pair（bass_extender.js:15-19）
     ///     → 既定（-1）と対（16以降）だけ。Allは幅によらず外す
     ///   Bass Management all（bass_management.js:15-19）→ All（-2）だけ
+    ///   Adaptive Prediction mono / single / stereo-pair（adaptive_prediction_effect.js:21-24）
+    ///     → All（-2）だけ外す。幅によらない（カーネルも 3ch 以上は素通し。kernel.cpp の process）
     /// 上流のbypassは入力をそのまま出力busへ渡す（offline-processor.js:878-879）。
     /// enabled 0はbusを移さないので、**入力と出力のbusが違う段だけ**音が食い違う。
     static func isChannelBypassed(type: String, channelSpec: Int8) -> Bool {
@@ -140,6 +143,8 @@ enum ETChainEditing {
             return !(channelSpec == -1 || channelSpec >= 16)
         case bassManagementType:
             return channelSpec != -2
+        case adaptivePredictionType:
+            return channelSpec == -2
         default:
             return false
         }

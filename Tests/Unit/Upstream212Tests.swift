@@ -22,12 +22,8 @@ final class Upstream212Tests: XCTestCase {
 
     // MARK: カタログ
 
-    func testUpstreamVersionIs0_12_0() {
-        XCTAssertEqual(ETUpstreamVersion, "0.12.0")
-    }
-
+    // 版とカタログの数は Upstream213Tests が見る（2.13.0 で 112 種）。
     func testNewEffectsAreInTheCatalog() throws {
-        XCTAssertEqual(ETCatalog.count, 110)
         let analog = try spec("AnalogMeterPlugin")
         XCTAssertEqual(analog.name, "Analog Meter")
         XCTAssertEqual(analog.category, "analyzer")

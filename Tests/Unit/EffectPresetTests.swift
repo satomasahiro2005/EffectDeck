@@ -48,8 +48,8 @@ final class EffectPresetTests: XCTestCase {
             XCTAssertNotNil(ETCatalog.first { $0.name == name }, "\(name) が catalog に無い")
         }
         // 数が変わったら、上流を進めたということ。意図した変更か確かめる。
-        XCTAssertEqual(names.count, 29)
-        XCTAssertEqual(ETEffectPresetList.count, 163)
+        XCTAssertEqual(names.count, 30)
+        XCTAssertEqual(ETEffectPresetList.count, 167)
     }
 
     /// 131 件の params が全部読めて、鍵が catalog に届いていること。
@@ -115,7 +115,8 @@ final class EffectPresetTests: XCTestCase {
         // 見ていないものが増えたということ。416 → 449 は EffeTune 2.10.0 で
         // 効果が 3 本増えたぶん（Pitch Meter / Spatial Mapper / TV Audio Simulator）。
         // 449 → 466 は EffeTune 2.12.0 の Analog Meter の 17 件（Mode の文字）。
-        XCTAssertEqual(checked, 466, "数えた文字列の数が変わった")
+        // 466 → 471 は EffeTune 2.13.0 の Cassette Artifacts の 5 件（Mode の文字 "All"）。
+        XCTAssertEqual(checked, 471, "数えた文字列の数が変わった")
     }
 
     // MARK: - 適用

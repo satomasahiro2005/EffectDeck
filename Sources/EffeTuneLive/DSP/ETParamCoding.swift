@@ -274,9 +274,51 @@ enum ETUpstreamNormalize {
             return rhythmAnalyzer(params: params, previous: previous, values: values, from: dict)
         case "TonalBalanceEQPlugin":
             return tonalBalance(params: params, previous: previous, values: values)
+        case "AdaptivePredictionEffectPlugin":
+            return adaptivePrediction(params: params, values: values, from: dict)
+        case "SFZNotePlayerPlugin":
+            return sfzNotePlayer(params: params, values: values)
         default:
             return values
         }
+    }
+
+    /// plugins/resonator/adaptive_prediction_effect.js:110-130 の setParameters（Weight Decay）。
+    /// 0 は無限大（減衰しない）で、0 より大きく 0.5 未満は 0.5 にする。画面の目盛りも 0.5 から。
+    /// resetToken は runtimeOnly なので decode が読まない（Reset を押すたびに変わる実行時の数）。
+    private static func adaptivePrediction(params: [ETParam], values input: [Float],
+                                           from dict: [String: Any]) -> [Float] {
+        var values = input
+        guard dict["weightDecay"] != nil,
+              let p = params.first(where: { $0.key == "weightDecay" }),
+              values.indices.contains(p.offset) else { return values }
+        let v = values[p.offset]
+        if v.isFinite, v > 0, v < 0.5 { values[p.offset] = 0.5 }
+        return values
+    }
+
+    /// plugins/others/sfz_note_player.js:45-60 の setParameters。Lowest / Highest Note・Max Voices・
+    /// Octave は整数に丸め、Highest Note は Lowest Note より下にしない。Velocity 127 Level は
+    /// Velocity 1 Level より 1 dB 以上上にする。ほかの鍵が来なくても毎回かける（上流と同じ）。
+    private static func sfzNotePlayer(params: [ETParam], values input: [Float]) -> [Float] {
+        var values = input
+        func index(_ key: String) -> Int? {
+            guard let p = params.first(where: { $0.key == key }),
+                  values.indices.contains(p.offset) else { return nil }
+            return p.offset
+        }
+        // **Int(_:) にしない。**ここの値は bounded の前で、1e30 も来る（Int の外で落ちる）。
+        // 丸めは JS の Math.round（.5 は +∞ 側。-1.5 は -1）。
+        for key in ["mn", "mx", "pl", "os"] {
+            if let k = index(key), values[k].isFinite { values[k] = (values[k] + 0.5).rounded(.down) }
+        }
+        if let mn = index("mn"), let mx = index("mx"), values[mn] > values[mx] {
+            values[mx] = values[mn]
+        }
+        if let vf = index("vf"), let vc = index("vc"), values[vc] < values[vf] + 1 {
+            values[vc] = values[vf] + 1
+        }
+        return values
     }
 
     /// plugins/analyzer/rhythm_analyzer.js:167-178 の setParameters（Min / Max BPM）。

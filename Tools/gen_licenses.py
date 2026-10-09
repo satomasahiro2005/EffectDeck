@@ -26,7 +26,7 @@ ITEMS = [
     # 注意書きは DPF の ISC と、元になった René Nyffenegger のコードの zlib 形式の 2 つ。
     ("DPF Base64", "ISC, zlib-style", "Filipe Coelho, Jean Pierre Cimalando, René Nyffenegger",
      "Licenses/dpf-base64.LICENSE"),
-    # Rhythm Analyzer（2.12.0）の g2_math.h にある atan / atan2 は fdlibm 5.3 の移植。
+    # Rhythm Analyzer の rd6_math.h（2.12.0 では g2_math.h、2.13.0 で改名）にある atan / atan2 は fdlibm 5.3 の移植。
     # 注意書きは Sun Microsystems のもので、ソースの頭のコメントにしか無い。
     ("fdlibm", "Sun Microsystems permissive", "Sun Microsystems, Inc.", "Licenses/fdlibm.LICENSE"),
     # Synthetic Binaural Room（MIT、M0Rf30/easyeffects-presets）は外してある。使うのは
@@ -42,12 +42,8 @@ COPIES = {
     # 頭のコメントのうち、節の見出し（// Helpers）は注意書きでないので写さない。罫線（// ---）は
     # 見出しに挙げなくても落とす。
     "Licenses/dpf-base64.LICENSE": ("Vendor/ysfx/sources/base64/Base64.hpp", ("Helpers",)),
-    # g2_math.h の頭のコメントは、fdlibm の注意書きの後に、このファイルの説明（注意書きでない）が続く。
-    "Licenses/fdlibm.LICENSE": (
-        "Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/g2_math.h",
-        ("Portable math for the G2 path. Only IEEE basic operations, frexp/ldexp/nearbyint and the",
-         "rhythm_d portable functions, so native and WASM agree bit for bit (build with -ffp-contract=off",
-         "on Clang).")),
+    # rd6_math.h の頭のコメントは fdlibm の注意書きだけ（2.12.0 の g2_math.h にあったファイルの説明は無い）。
+    "Licenses/fdlibm.LICENSE": "Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/rd6_math.h",
 }
 
 

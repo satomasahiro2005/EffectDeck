@@ -14,7 +14,7 @@ Website: [effectdeck.nemut.ai](https://effectdeck.nemut.ai/)
 
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/EffectDeck?label=release&color=3B82F6)](https://github.com/satomasahiro2005/EffectDeck/releases)
 [![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
-![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.12.0-3B82F6)
+![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.13.0-3B82F6)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Discord](https://img.shields.io/discord/1554111611067695114?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://fxdB.nemut.ai/)
 

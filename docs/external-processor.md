@@ -43,7 +43,9 @@ measured yet: `align_input` lining up an external node's input channels when the
 with different latencies, and an AU or JSFX processor on a device.
 
 The patches are kept in this repository until the corresponding upstream EffeTune change
-is available at the pinned submodule revision.
+is available at the pinned submodule revision. EffeTune 2.13.0's `Engine::setPipelineObserver`
+does not replace them: it is a C++-only, read-only before/after view of a node's audio and
+cannot run host processing at a node's position.
 
 ## Descriptor rules
 

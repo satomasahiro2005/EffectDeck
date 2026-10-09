@@ -1,8 +1,8 @@
 diff --git a/dsp/core/abi.cpp b/dsp/core/abi.cpp
-index 53c5ed2..855aeb5 100644
+index 1e5f5a1..7c98d98 100644
 --- a/dsp/core/abi.cpp
 +++ b/dsp/core/abi.cpp
-@@ -184,6 +184,27 @@ std::uint32_t et_instance_asset_begin(et_engine engine, et_instance instance, st
+@@ -190,6 +190,27 @@ std::uint32_t et_instance_asset_begin(et_engine engine, et_instance instance, st
    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(staging));
  }
  
@@ -31,10 +31,10 @@ index 53c5ed2..855aeb5 100644
                                     std::uint32_t byte_size, std::uint32_t format_tag) {
    effetune::Engine *target = findEngine(engine);
 diff --git a/dsp/include/effetune/abi.h b/dsp/include/effetune/abi.h
-index e681152..fc583ea 100644
+index 92e87c1..d66d947 100644
 --- a/dsp/include/effetune/abi.h
 +++ b/dsp/include/effetune/abi.h
-@@ -138,6 +138,14 @@ ET_EXPORT uint32_t et_instance_asset_begin(et_engine engine, et_instance instanc
+@@ -141,6 +141,14 @@ ET_EXPORT uint32_t et_instance_asset_begin(et_engine engine, et_instance instanc
                                             uint32_t path_count, uint32_t input_count,
                                             uint32_t processing_channels, uint32_t footprint_bytes,
                                             uint32_t byte_size);

@@ -741,6 +741,8 @@ class SourceTests(unittest.TestCase):
             # int main を持つ単体ツール。project.yml が積まないので読む対象にも入れない。
             write(repo / "Vendor/effetune/dsp/plugins/eq/tonal_balance_eq/calibrate_tables.cpp", "")
             write(repo / "Vendor/effetune/dsp/plugins/eq/tonal_balance_eq/kernel.cpp", "")
+            write(repo / "Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/eval.cpp", "")
+            write(repo / "Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp", "")
             files = CRB.source_files(repo)
             self.assertEqual(files["Sources/Shared/ETPipeline.c"], {"app"})
             self.assertEqual(files["Sources/Shared/LocalLink.m"], {"app", "device"})
@@ -752,6 +754,8 @@ class SourceTests(unittest.TestCase):
             self.assertIn("Vendor/effetune/dsp/core/graph.cpp", files)
             self.assertNotIn("Vendor/effetune/dsp/plugins/eq/tonal_balance_eq/calibrate_tables.cpp", files)
             self.assertIn("Vendor/effetune/dsp/plugins/eq/tonal_balance_eq/kernel.cpp", files)
+            self.assertNotIn("Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/eval.cpp", files)
+            self.assertIn("Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp", files)
 
     def test_abi_names_from_headers_and_patches(self):
         with TempDir() as d:

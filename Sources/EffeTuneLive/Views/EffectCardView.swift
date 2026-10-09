@@ -113,7 +113,8 @@ struct EffectCardView: View {
                             TabbedParameterList(index: index, node: node, dsp: dsp, tabs: tabs)
                         } else {
                             VStack(alignment: .leading, spacing: 12) {
-                                ForEach(node.spec.params) { param in
+                                // runtimeOnly（Adaptive Prediction の resetToken）は画面の行を持たない。
+                                ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
                                     ParameterRow(param: param, nodeIndex: index,
                                                  values: node.values, dsp: dsp)
                                 }

@@ -1,8 +1,8 @@
 diff --git a/dsp/core/abi.cpp b/dsp/core/abi.cpp
-index 855aeb5..6ebbed1 100644
+index 7c98d98..cebdb75 100644
 --- a/dsp/core/abi.cpp
 +++ b/dsp/core/abi.cpp
-@@ -414,6 +414,15 @@ et_status et_pipeline_configure(et_engine engine, const std::uint8_t *descriptor
+@@ -420,6 +420,15 @@ et_status et_pipeline_configure(et_engine engine, const std::uint8_t *descriptor
    return target == nullptr ? ET_ERR_ARGS : target->configurePipeline(descriptor, descriptor_bytes);
  }
  
@@ -15,14 +15,14 @@ index 855aeb5..6ebbed1 100644
 +  }
 +}
 +
- std::uint32_t et_pipeline_latency(et_engine engine) {
-   const effetune::Engine *target = findEngine(engine);
-   return target == nullptr ? 0u : target->pipelineLatency();
+ et_status et_pipeline_refresh_latency(et_engine engine) {
+   effetune::Engine *target = findEngine(engine);
+   return target == nullptr ? ET_ERR_ARGS : target->refreshPipelineLatency();
 diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
-index 18a2f1a..31f97b6 100644
+index 479df59..97bdf6c 100644
 --- a/dsp/core/engine.cpp
 +++ b/dsp/core/engine.cpp
-@@ -666,20 +666,22 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -741,20 +741,22 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
      const std::uint8_t *record = descriptor + kDescriptorHeaderBytes + index * kDescriptorNodeBytes;
      PipelineNode node{};
      node.instance = readU32(record);
@@ -49,7 +49,7 @@ index 18a2f1a..31f97b6 100644
          return ET_ERR_DESC;
        }
      }
-@@ -692,7 +694,7 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -767,7 +769,7 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
    snapshot.node_count_ = node_count;
    snapshot.channel_count_ = max_channels_;
    for (std::uint32_t index = 0u; index < node_count; ++index) {
@@ -58,7 +58,7 @@ index 18a2f1a..31f97b6 100644
    }
    PipelineLatencyUpdate update;
    const et_status status = preparePipelineLatencyUpdate(snapshot, update);
-@@ -711,6 +713,12 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -790,6 +792,12 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
    return ET_OK;
  }
  
@@ -71,7 +71,7 @@ index 18a2f1a..31f97b6 100644
  et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapshot) const noexcept {
    snapshot = {};
    if (!pipeline_configured_) {
-@@ -722,7 +730,9 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
+@@ -801,7 +809,9 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
    snapshot.node_count_ = pipeline_count_;
    snapshot.channel_count_ = max_channels_;
    for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
@@ -82,7 +82,7 @@ index 18a2f1a..31f97b6 100644
    }
    return ET_OK;
  }
-@@ -871,7 +881,10 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
+@@ -951,7 +961,10 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
      return ET_ERR_STATE;
    }
    for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
@@ -94,7 +94,29 @@ index 18a2f1a..31f97b6 100644
        return ET_ERR_STATE;
      }
    }
-@@ -938,8 +951,8 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+@@ -1017,8 +1030,10 @@ et_status Engine::reservePipelineLatency() noexcept {
+     const auto &node = pipeline_[index];
+     if (!node.enabled || !node.sectionGate)
+       continue;
+-    const auto range = findInstance(node.instance)->kernel->latencyRange();
+     const auto current = snapshot.latencies_[index];
++    // External nodes report one latency through the host callback; they have no range.
++    const auto range = node.external ? LatencyRange{current, current}
++                                     : findInstance(node.instance)->kernel->latencyRange();
+     if (range.minimum > current || range.maximum < current ||
+         range.maximum - range.minimum > std::numeric_limits<std::uint32_t>::max() - variation) {
+       return ET_ERR_DESC;
+@@ -1106,7 +1121,8 @@ bool Engine::pipelineTapLatency(et_instance instance, PipelineTapLatency &latenc
+   if (!pipeline_configured_)
+     return false;
+   for (std::uint32_t i = 0; i < pipeline_count_; ++i) {
+-    if (pipeline_[i].instance == instance && pipeline_[i].enabled && pipeline_[i].sectionGate) {
++    if (!pipeline_[i].external && pipeline_[i].instance == instance && pipeline_[i].enabled &&
++        pipeline_[i].sectionGate) {
+       latency = pipeline_tap_latency_[i];
+       return true;
+     }
+@@ -1146,8 +1162,8 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
      if (node.enabled == 0u || node.sectionGate == 0u) {
        continue;
      }
@@ -105,7 +127,7 @@ index 18a2f1a..31f97b6 100644
        return ET_ERR_DESC;
      }
      float *input = arena_.bus(node.inputBus);
-@@ -958,7 +971,29 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+@@ -1167,7 +1183,29 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
        }
      };
  
@@ -135,12 +157,12 @@ index 18a2f1a..31f97b6 100644
 +    } else if (node.channelSpec == -2) {
        if (node.inputBus == node.outputBus) {
          align_input(input, 0u, channel_count);
-         processSlot(*slot, input, channel_count, frame_count, time_seconds);
+         processSlot(*slot, input, channel_count, frame_count, info, node.instance);
 diff --git a/dsp/core/engine.h b/dsp/core/engine.h
-index f34956b..75f05ab 100644
+index 736f569..f9fa99e 100644
 --- a/dsp/core/engine.h
 +++ b/dsp/core/engine.h
-@@ -64,6 +64,7 @@ public:
+@@ -85,6 +85,7 @@ public:
  
    et_status configurePipeline(const std::uint8_t *descriptor,
                                std::uint32_t descriptor_bytes) noexcept;
@@ -148,7 +170,7 @@ index f34956b..75f05ab 100644
    class PipelineLatencySnapshot;
    class PipelineLatencyUpdate;
    // Capture/apply run on the engine's owning thread between process calls. Preparation
-@@ -132,6 +133,8 @@ private:
+@@ -168,6 +169,8 @@ private:
  
    struct PipelineNode {
      et_instance instance = 0;
@@ -157,9 +179,9 @@ index f34956b..75f05ab 100644
      std::uint8_t enabled = 0;
      std::uint8_t inputBus = 0;
      std::uint8_t outputBus = 0;
-@@ -192,6 +195,8 @@ private:
-   bool prepared_ = false;
+@@ -244,6 +247,8 @@ private:
    bool pipeline_configured_ = false;
+   bool pipeline_latency_reserved_ = false;
    bool pipeline_delay_history_dirty_ = false;
 +  et_pipeline_external_process pipeline_external_process_ = nullptr;
 +  void *pipeline_external_context_ = nullptr;
@@ -167,7 +189,7 @@ index f34956b..75f05ab 100644
  
  // Fixed-size value for caller-owned, synchronized transfer to the preparation thread.
 diff --git a/dsp/include/effetune/abi.h b/dsp/include/effetune/abi.h
-index fc583ea..19444e4 100644
+index d66d947..c99af46 100644
 --- a/dsp/include/effetune/abi.h
 +++ b/dsp/include/effetune/abi.h
 @@ -17,7 +17,12 @@ extern "C" {
@@ -183,13 +205,13 @@ index fc583ea..19444e4 100644
  typedef struct et_runtime_event_state {
    uint32_t generation;
    uint32_t latched;
-@@ -173,6 +178,9 @@ ET_EXPORT uint32_t et_telemetry_read(et_engine engine, uint8_t *output, uint32_t
+@@ -176,6 +181,9 @@ ET_EXPORT uint32_t et_telemetry_read(et_engine engine, uint8_t *output, uint32_t
  
  ET_EXPORT et_status et_pipeline_configure(et_engine engine, const uint8_t *descriptor,
                                            uint32_t descriptor_bytes);
 +ET_EXPORT void et_pipeline_set_external_callback(et_engine engine,
 +                                                  et_pipeline_external_process process,
 +                                                  void *context);
- ET_EXPORT uint32_t et_pipeline_latency(et_engine engine);
- ET_EXPORT et_status et_pipeline_process(et_engine engine, uint32_t channel_count,
-                                         uint32_t frame_count, double time_seconds,
+ /* Control-side refresh; may allocate and free compensation storage. */
+ ET_EXPORT et_status et_pipeline_refresh_latency(et_engine engine);
+ /* Reserve storage off the audio thread after configuration and before processing. */

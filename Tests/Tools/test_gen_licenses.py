@@ -21,7 +21,7 @@ class GenLicensesTests(unittest.TestCase):
         self.assertIn("permission notice appear in all copies", text)
 
     def test_lists_fdlibm(self):
-        # Rhythm Analyzer（2.12.0）の g2_math.h にある atan / atan2 は fdlibm 5.3 の移植。
+        # Rhythm Analyzer の rd6_math.h（2.13.0、2.12.0 では g2_math.h）にある atan / atan2 は fdlibm 5.3 の移植。
         entry = next(item for item in self.gl.ITEMS if item[0] == "fdlibm")
         self.assertEqual(entry[3], "Licenses/fdlibm.LICENSE")
         text = (ROOT / entry[3]).read_text("utf-8")

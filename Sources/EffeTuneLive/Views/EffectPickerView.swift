@@ -135,7 +135,13 @@ struct EffectPickerView: View {
     /// 中身は dsp が決めている（EffeTuneDSP.swift:142）。
     /// Section だけカーネルが無いのは、音を触らないから
     /// （上流も plugins/control/section.js の processor は `return data;` だけ）。
-    private var catalog: [ETEffect] { dsp.available }
+    private var catalog: [ETEffect] { dsp.available.filter { !Self.hiddenTypes.contains($0.type) } }
+
+    /// カーネルは居るが、まだ選ばせない型。**カタログからは消さない**（プリセット・共有リンク・
+    /// PC から届いた鎖が名指すと読めなくなる）。ここで一覧に出さないだけ。
+    /// SFZ Note Player（2.13.0）は SFZ 音源の取り込みがまだ無い。資産が無いと dry（既定 20%）だけを
+    /// 鳴らすので、取り込みを入れるまでは一覧に出さない。
+    static let hiddenTypes: Set<String> = ["SFZNotePlayerPlugin"]
 
     /// 効果のカテゴリ。**Section の居る control も上流と同じく「Control」で並べる。**
     /// 一度「Grouping」と呼び替えて末尾に分けたが、EffeTune に慣れた人は Control の中を探す。
@@ -1052,9 +1058,12 @@ struct EffectPickerView: View {
     /// `newEffects.isEmpty` を見る）。上流が新しいものを足したときに、
     /// その型をここへ並べる。**一度足したら、次の版で必ず外すこと。**
     /// いつまでも「New」と出ていると意味を失う。
-    /// いまは空（節は出ない）。dsp 0.12.0 の 3 つ（Analog Meter / Rhythm Analyzer / Tonal Balance EQ）は
-    /// 2026.10.04 で出したので 2026.10.08 で外した。
-    static let newTypes: [String] = []
+    /// いまは dsp 0.13.0（EffeTune 2.13.0）で足された Adaptive Prediction。もう 1 つの SFZ Note Player は
+    /// まだ一覧に出さない（hiddenTypes）ので載せない。出すときにここへも足す。
+    /// dsp 0.12.0 の 3 つ（Analog Meter / Rhythm Analyzer / Tonal Balance EQ）は 2026.10.08 で外した。
+    static let newTypes: [String] = [
+        "AdaptivePredictionEffectPlugin",
+    ]
     static let newKey = "__new"
 
     private var newEffects: [ETEffect] {

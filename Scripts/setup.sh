@@ -221,13 +221,13 @@ echo "--- 解析のモデルを埋め込む ---"
 # upstream の tree_models/models.cmake と同じことをする。
 # kernel.cpp が読む *.generated.h と、中身を持つアセンブリを吐く。
 # 2.12.0 で embed_models.py が analyzer/tree_models/ に移り、Note Spectrogram の 3 本に
-# Rhythm Analyzer の 5 本が加わった。出力先は Generated/note-models のまま（名前を変えると
-# project.yml・check_release_binary・.gitignore が動く）。
+# Rhythm Analyzer の 5 本が加わった。2.13.0 で Note Spectrogram はコンパイル済みの
+# HarmNet の重み（harmnet_weights.h）に替わり、G2 は無くなったので、残りは Rhythm
+# Analyzer の 3 本（oblivious 形式）だけ。出力先は Generated/note-models のまま（名前を
+# 変えると project.yml・check_release_binary・.gitignore が動く）。
 AN="Vendor/effetune/dsp/plugins/analyzer"
 rm -rf Generated/note-models && mkdir -p Generated/note-models
-for entry in note_spectrogram/learned_model note_spectrogram/fine_model note_spectrogram/octave_model \
-             rhythm_analyzer/rhythm_d_low rhythm_analyzer/rhythm_d_mid rhythm_analyzer/rhythm_d_high \
-             rhythm_analyzer/g2_level rhythm_analyzer/g2_hazard; do
+for entry in rhythm_analyzer/rhythm_d_low rhythm_analyzer/rhythm_d_mid rhythm_analyzer/rhythm_d_high; do
   python3 "$AN/tree_models/embed_models.py" "$AN/$entry.json" Generated/note-models --target macho 2>&1 | tail -2
   gen_ok "${PIPESTATUS[0]}" "embed_models.py $entry"
 done

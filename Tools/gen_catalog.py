@@ -133,8 +133,12 @@ UI_AFTER = {
 # catalog には残し、ETParam.runtimeOnly で印を付ける（ETParamCoding が書かず・読まない）。
 # Tonal Balance EQ の mp（測定の一時停止）は TONAL_BALANCE_EQ_DEFAULTS にも getParameters にも
 # 無く、画面の操作も無い。ライブラリの bindings だけが立てる実行時の旗。
+# Adaptive Prediction（2.13.0）の resetToken は Reset を押すたびに増える数。kernel は値が変わったら学習を
+# 捨てる。上流は getSerializableParameters で消し、プリセットの照合からも外す
+# （getPresetComparisonExcludedKeys）。
 RUNTIME_ONLY = {
     ("TonalBalanceEQPlugin", "measurementPaused"),
+    ("AdaptivePredictionEffectPlugin", "resetToken"),
 }
 
 
@@ -161,6 +165,7 @@ CHAIN_UNSUPPORTED = {
     "RoomEqPlugin": "it needs a room measurement made in the app",
     "CrosstalkCancellationPlugin": "it needs a measurement made in the app",
     "FIRCrossoverPlugin": "its crossover is designed in the app, not from the keys listed here",
+    "SFZNotePlayerPlugin": "it needs an SFZ instrument that the user imports",
 }
 
 # 保存している値が見た目の数と違うもの。(type, メンバ名) -> (印, 説明)。
@@ -609,8 +614,8 @@ OPENERS = "([{"
 CLOSERS = ")]}"
 
 
-def split_args(t, lp):
-    """t[lp] が '(' のとき、トップレベルのカンマで割った引数を返す。
+def split_args(t, lp, close=")"):
+    """t[lp] が '('（close が ']' なら '['）のとき、トップレベルのカンマで割った引数を返す。
 
     テンプレート文字列の ${…} も 1 つの塊として飛ばす。閉じ括弧が無ければ None。
     """
@@ -648,7 +653,7 @@ def split_args(t, lp):
         if c in OPENERS:
             depth += 1
         elif c in CLOSERS:
-            if depth == 0 and c == ")":
+            if depth == 0 and c == close:
                 args.append("".join(cur))
                 return [a.strip() for a in args]
             depth -= 1
@@ -817,6 +822,24 @@ def read_ui(path, keys):
         elif last in keys and first is not None:
             # 引数の位置がヘルパごとに違うので、名前と並び順だけもらう。
             put(last, m.start(), label=first)
+        elif (first is None and string_of(at(args, 1)) in keys
+              and string_of(at(args, 2)) is not None
+              and (len(args) <= 6 or string_of(args[6]) is not None)):
+            # 第1引数が置き場所（DOM 要素）で、key とラベルがその後ろに来る形。
+            #   adaptive_prediction_effect.js:155  addParameter(predictionControls, 'gap', 'Gap', 0, 500, 0.1, 'ms')
+            # 8 番目（toDisplay）があると目盛りがモデル値そのものでない（Weight Decay の 0 は
+            # 無限大）ので、createParameterControl と同じく範囲も単位も持ってこない。
+            # 7 番目が単位の字でないもの（phase_select_eq.js の _createNumberField は getter）は
+            # 別の形なので拾わない。
+            lo = hi = step = unit = None
+            if len(args) <= 7:
+                lo, hi, step = (number_of(at(args, 3)), number_of(at(args, 4)),
+                                number_of(at(args, 5)))
+                unit = "" if len(args) <= 6 else string_of(at(args, 6))
+                if lo is None or hi is None or step is None:
+                    lo = hi = step = unit = None
+            put(string_of(at(args, 1)), m.start(), label=string_of(at(args, 2)),
+                unit=unit, lo=lo, hi=hi, step=step)
 
     # 3. label 要素に直書きしているもの（bit_crusher.js:235 の 'TPDF Dither:' など）。
     #    textContent から次の textContent までを 1 かたまりと見て、
@@ -860,7 +883,34 @@ def read_ui(path, keys):
                     lo = hi = step = None
         put(key, pos, label=label.rstrip(":").strip(), lo=lo, hi=hi, step=step)
 
+    # 4. 行を表で持ち、ループで作成関数に渡しているもの（sfz_note_player.js:522, 526）。
+    #      for (const [key, label] of [['hi', 'Highest'], ['md', 'Middle'], …]) createCheckboxControl(…)
+    #      for (const [key, labelText, min, max, step, unit] of [['th', 'Threshold', 0.01, 1, 0.01, ''], …])
+    #    中身が [key, ラベル] か [key, ラベル, 最小, 最大, 刻み, 単位] のリテラルだけの配列を拾う。
+    #    ほかの段で取れなかった key にしか効かない。同じ行に並ぶ行は書いた順に並べる
+    #    （行番号が同じだと params.json の順になり、Highest / Middle / Lowest が逆になる）。
+    for m in TUPLE_ROW.finditer(text):
+        args = split_args(text, m.start(), close="]")
+        if args is None or len(args) not in (2, 6):
+            continue
+        key, label = string_of(args[0]), string_of(args[1])
+        if key not in keys or key in found or label is None:
+            continue
+        lo = hi = step = unit = None
+        if len(args) == 6:
+            lo, hi, step = number_of(args[2]), number_of(args[3]), number_of(args[4])
+            unit = string_of(args[5])
+            if lo is None or hi is None or step is None or unit is None:
+                continue
+        put(key, m.start(), label=label, unit=unit, lo=lo, hi=hi, step=step)
+        line = found[key]["line"]
+        found[key]["line"] = line + (m.start() - text.rfind("\n", 0, m.start())) / 10000.0
+
     return found
+
+
+# [ 'key', 'Label' … ] の始まり。split_args は開き括弧の位置から読む。
+TUPLE_ROW = re.compile(r"\[(?=\s*(?:'[^'\\]*'|\"[^\"\\]*\")\s*,\s*(?:'|\"|this\._t\s*\())")
 
 
 def display_order(lines):

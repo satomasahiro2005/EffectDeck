@@ -3,9 +3,9 @@
 EffectDeck is an iPhone app that runs an effect chain on the audio of other
 apps. The built-in effects are EffeTune's, and a chain is a JSON list of them
 that the app imports. The request names both versions, for example
-`EffectDeck v2026.09.22 (EffeTune DSP 0.12.0)`. The effect names and keys for
+`EffectDeck v2026.09.22 (EffeTune DSP 0.13.0)`. The effect names and keys for
 it are in the folder named after the EffeTune DSP version,
-[`chain/v0.12.0/`](chain/v0.12.0/index.md): the effect list (`index.md`) and
+[`chain/v0.13.0/`](chain/v0.13.0/index.md): the effect list (`index.md`) and
 one file per category. If the request does not name the versions, ask the
 user; EffectDeck shows them in **Settings → About** (*App version* and
 *EffeTune DSP*). If there is no folder for that EffeTune DSP version, that
@@ -92,14 +92,14 @@ If a rule conflicts with what you know about EffeTune, this document wins.
 
 ## Where to look things up
 
-Replace `0.12.0` with the EffeTune DSP version the request names.
+Replace `0.13.0` with the EffeTune DSP version the request names.
 
 | | |
 |---|---|
-| Every effect name, with what it is for | <https://raw.githubusercontent.com/satomasahiro2005/EffectDeck/main/chain/v0.12.0/index.md> |
-| Keys, ranges, options and defaults | one file per category, linked from the effect list, for example <https://raw.githubusercontent.com/satomasahiro2005/EffectDeck/main/chain/v0.12.0/eq.md> |
-| The same, as JSON | <https://raw.githubusercontent.com/satomasahiro2005/EffectDeck/main/chain/v0.12.0/effects.json> |
-| What an effect does (not its keys) | EffeTune's `docs/plugins` at the `dsp-v0.12.0` tag: <https://github.com/Frieve-A/effetune/tree/dsp-v0.12.0/docs/plugins> |
+| Every effect name, with what it is for | <https://raw.githubusercontent.com/satomasahiro2005/EffectDeck/main/chain/v0.13.0/index.md> |
+| Keys, ranges, options and defaults | one file per category, linked from the effect list, for example <https://raw.githubusercontent.com/satomasahiro2005/EffectDeck/main/chain/v0.13.0/eq.md> |
+| The same, as JSON | <https://raw.githubusercontent.com/satomasahiro2005/EffectDeck/main/chain/v0.13.0/effects.json> |
+| What an effect does (not its keys) | EffeTune's `docs/plugins` at the `dsp-v0.13.0` tag: <https://github.com/Frieve-A/effetune/tree/dsp-v0.13.0/docs/plugins> |
 
 ## The chain
 

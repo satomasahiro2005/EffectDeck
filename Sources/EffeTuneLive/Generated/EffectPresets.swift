@@ -289,7 +289,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Flagship Deck Metal",
       group: "",
       json: #"""
-      {"dg":"Reference","tp":"Type IV","nr":"Dolby C","bs":0,"rl":6,"wf":0.04,"hs":-70,"dp":0,"az":0,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Reference","tp":"Type IV","nr":"Dolby C","bs":0,"rl":6,"wf":0.04,"hs":-70,"dp":0,"az":0,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -297,7 +297,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Hi-Fi Chrome",
       group: "",
       json: #"""
-      {"dg":"Hi-Fi","tp":"Type II","nr":"Dolby B","bs":0,"rl":8,"wf":0.1,"hs":-64,"dp":0.5,"az":1,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Hi-Fi","tp":"Type II","nr":"Dolby B","bs":0,"rl":8,"wf":0.1,"hs":-64,"dp":0.5,"az":1,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -305,7 +305,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Pocket Cassette Player",
       group: "",
       json: #"""
-      {"dg":"Portable","tp":"Type I","nr":"Off","bs":0,"rl":12,"wf":0.4,"hs":-54,"dp":4,"az":4,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Portable","tp":"Type I","nr":"Off","bs":0,"rl":12,"wf":0.4,"hs":-54,"dp":4,"az":4,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -313,7 +313,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Worn Mixtape",
       group: "",
       json: #"""
-      {"dg":"Consumer","tp":"Type I","nr":"Off","bs":-3,"rl":15,"wf":0.65,"hs":-50,"dp":12,"az":-5,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Consumer","tp":"Type I","nr":"Off","bs":-3,"rl":15,"wf":0.65,"hs":-50,"dp":12,"az":-5,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -321,7 +321,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Hot Deck Saturation",
       group: "",
       json: #"""
-      {"dg":"Consumer","tp":"Type II","nr":"Off","bs":1,"rl":18,"wf":0.2,"hs":-58,"dp":1,"az":1,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Consumer","tp":"Type II","nr":"Off","bs":1,"rl":18,"wf":0.2,"hs":-58,"dp":1,"az":1,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "FM Radio Simulator",
@@ -794,6 +794,38 @@ let ETEffectPresetList: [ETEffectPreset] = [
       group: "",
       json: #"""
       {"rt":0.3,"dp":30,"rn":25,"rc":3,"rs":-4,"cp":30,"cs":80}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "surprise",
+      label: "Surprise",
+      group: "",
+      json: #"""
+      {"gap":1,"learn":0.02,"weightDecay":0,"autonomy":0,"original":0,"residual":1,"prediction":0,"freeze":false,"hold":false}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "prediction",
+      label: "Prediction",
+      group: "",
+      json: #"""
+      {"gap":5,"learn":0.02,"weightDecay":0,"autonomy":0,"original":0,"residual":0,"prediction":1,"freeze":false,"hold":false}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "resonator",
+      label: "Resonator",
+      group: "",
+      json: #"""
+      {"gap":10,"learn":0.02,"weightDecay":0,"autonomy":0.98,"original":0.6,"residual":0,"prediction":0.6,"freeze":false,"hold":false}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "hold",
+      label: "Hold",
+      group: "",
+      json: #"""
+      {"gap":10,"learn":0.02,"weightDecay":0,"autonomy":1,"original":0,"residual":0,"prediction":1,"freeze":true,"hold":true}
       """#),
     ETEffectPreset(
       effect: "Horn Resonator",

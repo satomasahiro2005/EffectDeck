@@ -90,10 +90,11 @@ targets:
         includes: ["**/*.cpp", "**/*.h"]
         excludes: ["**/*test*.cpp"]
       # calibrate_tables.cpp は Tonal Balance EQ の表を作る単体ツール（int main を持つ）。
-      # 積むと Swift の @main と _main が衝突する。
+      # 積むと Swift の @main と _main が衝突する。2.13.0 の rhythm_analyzer/eval.cpp も
+      # 同じ（Rhythm Analyzer の評価ドライバ。upstream はテストとしてだけ組む）。
       - path: Vendor/effetune/dsp/plugins
         includes: ["**/*.cpp", "**/*.h"]
-        excludes: ["**/*test*.cpp", "**/calibrate_tables.cpp"]
+        excludes: ["**/*test*.cpp", "**/calibrate_tables.cpp", "**/rhythm_analyzer/eval.cpp"]
       - path: Vendor/effetune/dsp/vendor/pffft/src
         includes: ["**/*.c", "**/*.h"]
         excludes: ["**/*test*"]

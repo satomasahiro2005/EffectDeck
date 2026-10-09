@@ -193,6 +193,60 @@ class JsReadingTests(unittest.TestCase):
         # 読めない定数は触らない（引数がずれたままなので範囲は取れない。ラベルは末尾の鍵から取れる）。
         self.assertIsNone(found["ot"]["lo"])
 
+    def test_read_ui_tuple_rows_fed_to_a_loop(self):
+        # 2.13.0 の SFZ Note Player: 行を [key, ラベル, 最小, 最大, 刻み, 単位] の表で持ち、ループで
+        # createParameterControl に渡す。チェックボックスは [key, ラベル] の表。読めないと params.json の
+        # 名前（"Retrigger Drop Db"）と空の単位になった。同じ行に並ぶものは書いた順（Highest が先）。
+        text = """
+            createUI() {
+                for (const [key, label] of [['hi', 'Highest'], ['md', 'Middle'], ['lo', 'Lowest']]) {
+                    c.appendChild(this.createCheckboxControl(label, this[key], v => v, key));
+                }
+                for (const [key, labelText, min, max, step, unit] of [
+                    ['th', 'Threshold', 0.01, 1, 0.01, ''],
+                    ['rd', 'Retrigger Drop', 1, 96, 1, 'dB'],
+                    ['dm', 'Dry', 0, 100, 1, '%'], ['wm', 'Wet', 0, 100, 1, '%'],
+                    ['xx', 'Not A Row', 'a', 'b']
+                ]) c.appendChild(this.createParameterControl(labelText, min, max, step, this[key], v => v, unit, key));
+                const options = [['th', 'ignored']];
+            }
+        """
+        with TempDir() as tmp:
+            found = self.gc.read_ui(self.js(tmp, text), {"hi", "md", "lo", "th", "rd", "dm", "wm", "xx"})
+        self.assertEqual(found["rd"]["label"], "Retrigger Drop")
+        self.assertEqual((found["rd"]["lo"], found["rd"]["hi"], found["rd"]["step"], found["rd"]["unit"]),
+                         (1.0, 96.0, 1.0, "dB"))
+        self.assertEqual(found["th"]["unit"], "")
+        self.assertEqual(found["th"]["label"], "Threshold", "先に読んだ行が勝つ")
+        self.assertEqual(found["hi"]["label"], "Highest")
+        self.assertIsNone(found["hi"]["lo"])
+        self.assertNotIn("xx", found, "4 要素の行は表の形でない")
+        order = sorted(["lo", "md", "hi", "dm", "wm"], key=lambda k: found[k]["line"])
+        self.assertEqual(order, ["hi", "md", "lo", "dm", "wm"])
+
+    def test_read_ui_helper_with_a_parent_first(self):
+        # 2.13.0 の Adaptive Prediction: addParameter(parent, key, label, min, max, step, unit, toDisplay)。
+        # toDisplay がある行（Weight Decay の 0 = 無限大）は範囲も単位も持ってこない。
+        # 7 番目が単位の字でない形（phase_select_eq.js の _createNumberField の getter）は拾わない。
+        text = """
+            createUI() {
+                addParameter(predictionControls, 'gap', 'Gap', 0, 500, 0.1, 'ms');
+                addParameter(predictionControls, 'learn', 'Learn', 0, 0.1, 0.001);
+                addParameter(predictionControls, 'wd', 'Weight Decay', 0.5, 60, 0.5, 's', v => v);
+                this._createNumberField(fields, 'fl', 'Core Low Frequency', 20, 40000, 1,
+                    () => selected().fl, value => value, 'Hz', 'log');
+            }
+        """
+        with TempDir() as tmp:
+            found = self.gc.read_ui(self.js(tmp, text), {"gap", "learn", "wd", "fl"})
+        self.assertEqual((found["gap"]["label"], found["gap"]["lo"], found["gap"]["hi"],
+                          found["gap"]["step"], found["gap"]["unit"]), ("Gap", 0.0, 500.0, 0.1, "ms"))
+        self.assertEqual(found["learn"]["unit"], "")
+        self.assertEqual(found["wd"]["label"], "Weight Decay")
+        self.assertIsNone(found["wd"]["lo"])
+        self.assertIsNone(found["wd"]["unit"])
+        self.assertNotIn("fl", found)
+
     def test_resolve_spreads_keeps_line_count(self):
         text = "const R = [1, 2];\nf(...R,\n  3, ...Q)\n"
         out = self.gc.resolve_spreads(text)
@@ -318,6 +372,14 @@ class MainTests(unittest.TestCase):
         self.assertIn("offset: 1, count: 1, runtimeOnly: true)", swift)
         self.assertIn("floatCount: 2", swift)
         self.assertEqual([p["key"] for p in data["effects"][0]["params"]], ["am"])
+
+    def test_real_tables_for_2_13_0(self):
+        # Adaptive Prediction の resetToken は Reset で増える実行時の数（上流は保存も比較もしない）。
+        # SFZ Note Player は利用者が取り込む SFZ 音源が要るので、鎖の字では組めない。
+        self.assertIn(("AdaptivePredictionEffectPlugin", "resetToken"), self.gc.RUNTIME_ONLY)
+        self.assertIn(("TonalBalanceEQPlugin", "measurementPaused"), self.gc.RUNTIME_ONLY)
+        self.assertEqual(self.gc.CHAIN_UNSUPPORTED["SFZNotePlayerPlugin"],
+                         "it needs an SFZ instrument that the user imports")
 
     def test_ui_after_moves_a_helper_row_behind_its_neighbour(self):
         # Averaging Time の行を作る関数は createUI より前にあり、ラベルの行が先頭に化ける。

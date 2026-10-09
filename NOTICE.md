@@ -102,7 +102,7 @@ following restrictions:
 
 ## fdlibm
 
-EffeTune's Rhythm Analyzer (`Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/g2_math.h`)
+EffeTune's Rhythm Analyzer (`Vendor/effetune/dsp/plugins/analyzer/rhythm_analyzer/rd6_math.h`)
 carries `atan` and `atan2` derived from fdlibm 5.3 (`s_atan.c`, `e_atan2.c`). The notice is
 in the file's header. `Licenses/fdlibm.LICENSE` is a copy of it, which
 `Tools/gen_licenses.py` reads and checks against the header.
