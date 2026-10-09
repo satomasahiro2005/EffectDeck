@@ -402,7 +402,7 @@ private struct ETNoteChoiceRow<Option: Hashable & Identifiable>: View {
 
 /// 上流 createNoteRangeControl（note_spectrogram.js:645-699）に当たる。
 /// 値の欄は打ち込ませない（上流も :673 で readOnly）。動かすのはつまみだけ。
-private struct ETNoteRangeRow: View {
+struct ETNoteRangeRow: View {
 
     let param: ETParam
     let nodeIndex: Int

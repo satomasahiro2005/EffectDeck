@@ -79,7 +79,7 @@ final class EffectPresetStoreCore {
     /// （PipelineForm.swift の irKey）。
     static func params(for node: ETChainNode) -> [String: Any] {
         var params = ETParamCoding.encode(params: node.spec.params, values: node.values)
-        if !node.irId.isEmpty { params[ETChainText.irKey] = node.irId }
+        if !node.irId.isEmpty { params[ETChainText.assetKey(forType: node.spec.type)] = node.irId }
         // designerの材料（5Band FIR PEQの帯域など）も同じ綴りで入れる。上流のプリセットは
         // getSerializableParametersの中身そのものなので、これらも入っている
         // （plugin-preset-dialog.js:145）。入れないとlt / fdしか残らない。

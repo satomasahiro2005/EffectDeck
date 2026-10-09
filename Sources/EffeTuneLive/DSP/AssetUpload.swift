@@ -72,12 +72,15 @@ extension AssetUpload {
                      slot: UInt32 = 0,
                      payload: [UInt8],
                      info: BeginInfo,
-                     formatTag: UInt32 = AssetUpload.formatTagF32MultiChannel) throws {
+                     formatTag: UInt32 = AssetUpload.formatTagF32MultiChannel,
+                     capacity: Int = AssetUpload.capacityBytes) throws {
+        // capacity は 1 枠の上限。FIR 系の 7 種は 32MiB、SFZ Note Player は 1GiB（sfz_note_player/bank.h の kCapacity）。
         let request = try beginRequest(engine: engine,
                                        instance: instance,
                                        slot: slot,
                                        payload: payload,
-                                       info: info)
+                                       info: info,
+                                       capacity: capacity)
 
         // 書き込み先が取れない環境なら、確保させる前に落とす。
         guard canStage else { throw ETAssetUploadError.stagingAddressUnavailable }

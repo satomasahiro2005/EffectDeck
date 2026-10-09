@@ -21,9 +21,12 @@ enum PipelineStore {
 
     private static let log = Logger(subsystem: "ai.nemut.effetune", category: "store")
 
-    /// IR Reverbの素材の鍵。綴りはETIRLoader.presetKey（IRLoader.swiftはAVFoundationに
-    /// 触るのでこのファイルからは引けない。ETChainText.irKeyと同じ理由で同じ字を持つ）。
-    private static let irKey = ETChainText.irKey
+    /// 段の素材の鍵（IR は `ir`、SFZ は `sf`）。SFZ の鍵は 24 桁の小文字の 16 進だけ（上流の setParameters と同じ。
+    /// 外れた字は空にする）。
+    private static func assetID(_ params: [String: Any], type: String) -> String {
+        let value = params[ETChainText.assetKey(forType: type)] as? String ?? ""
+        return type == ETChainText.sfzType && !ETSFZ.isValidID(value) ? "" : value
+    }
 
     // MARK: - 読んだ1段
 
@@ -124,7 +127,7 @@ enum PipelineStore {
         var o = ETParamCoding.encode(params: item.spec.params, values: item.values)
         // IR Reverb の素材は float に載らないので、鍵をここで足す。
         // 綴りは上流に合わせて `ir`（ir_reverb.js:866）。
-        if !item.irId.isEmpty { o[irKey] = item.irId }
+        if !item.irId.isEmpty { o[ETChainText.assetKey(forType: item.spec.type)] = item.irId }
         // 図の見せ方（float に載らない）。綴りは上流のまま。
         ETDisplayParam.write(item.display, type: item.spec.type, into: &o)
         // designerの材料（floatに載らない）。綴りは上流のまま。
@@ -218,7 +221,7 @@ enum PipelineStore {
                 outputBus: bus(entry["outputBus"] ?? entry["ob"]),
                 channelSpec: ETChannel.spec(from: ch),
                 sectionName: "",
-                irId: params[irKey] as? String ?? "",
+                irId: assetID(params, type: spec.type),
                 display: ETDisplayParam.read(params, type: spec.type),
                 design: ETDesignParam.read(params, type: spec.type)))
         }

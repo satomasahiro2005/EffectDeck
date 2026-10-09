@@ -37,6 +37,8 @@ enum ETEffectViews {
         "BassExtenderPlugin",
         // つまみと Reset だけ（AdaptivePredictionView.swift）。
         "AdaptivePredictionEffectPlugin",
+        // バンクの選択欄とつまみだけ（SFZNotePlayerView.swift）。
+        "SFZNotePlayerPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。
@@ -88,6 +90,7 @@ enum ETEffectViews {
         "PowerAmpSagPlugin",
         "RhythmAnalyzerPlugin",
         "RoomEqPlugin",
+        "SFZNotePlayerPlugin",
         "SaturationPlugin",
         "SpectrogramPlugin",
         "SpectrumAnalyzerPlugin",
@@ -105,6 +108,8 @@ enum ETEffectViews {
         switch node.spec.type {
         case "AdaptivePredictionEffectPlugin":
             AdaptivePredictionView(index: index, node: node, dsp: dsp)
+        case "SFZNotePlayerPlugin":
+            SFZNotePlayerView(index: index, node: node, dsp: dsp)
         case "AnalogMeterPlugin":
             AnalogMeterView(index: index, node: node, dsp: dsp)
         case "PitchMeterPlugin":

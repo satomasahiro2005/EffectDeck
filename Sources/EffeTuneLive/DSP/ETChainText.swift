@@ -359,6 +359,15 @@ enum ETChainText {
     /// このファイルからは引けない）。PipelineStore.parseはどの段でも読む。
     /// PipelineForm.swiftも同じ理由でこれを引く。
     static let irKey = "ir"
+    /// SFZ Note Player のバンクの鍵。綴りは上流のまま `sf`（plugins/others/sfz_note_player.js の getParameters）。
+    /// 24 桁の小文字の 16 進。段の素材の鍵は ETChainNode.irId に載せ、どの綴りで書くかは型で決める（assetKey）。
+    static let sfzKey = "sf"
+    static let sfzType = "SFZNotePlayerPlugin"
+
+    /// 段の素材の鍵（IR Reverb は `ir`、SFZ Note Player は `sf`）の綴り。
+    static func assetKey(forType type: String) -> String {
+        type == sfzType ? sfzKey : irKey
+    }
     /// 上流が書くが音に効かないので、読まなくても言わない鍵。オブジェクト配列の行の中にも効く。
     /// - Modal Resonatorの`sr`は選択中のタブの添字（modal_resonator.js:30-32、
     ///   EffectPresetApply.matchingPresetIdの注記）
@@ -595,7 +604,7 @@ enum ETChainText {
             } else if let p = lists[key] {
                 params[key] = fixList(raw, p, spec: spec, label: label, report: &report)
             } else if display[key] != nil || design[key] != nil || quiet.contains(key)
-                        || quietEverywhere.contains(key) || key == irKey {
+                        || quietEverywhere.contains(key) || key == irKey || key == sfzKey {
                 continue
             } else {
                 report.add(label, to: \.ignored)

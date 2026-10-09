@@ -668,7 +668,7 @@ final class EffeTuneDSP: ObservableObject {
         replaceChain(with: saved)
     }
 
-    /// 鎖に残っている鍵から、資産（いまは IR だけ）を入れ直す。
+    /// 鎖に残っている鍵から、資産（IR と SFZ のバンク）を入れ直す。
     ///
     /// **ビューに置いてはいけない。** 畳んだカードはビューが作られないので
     /// `.task` が走らず、開くまで素通しのままになる（実機で確認）。
@@ -701,6 +701,11 @@ final class EffeTuneDSP: ObservableObject {
     func reloadAsset(at index: Int) -> Bool {
         guard contains(slot: index) else { return false }
         let node = self[slot: index]
+        // SFZ Note Player のバンクは読み込みが重いので、別のスレッドで読んで送る（SFZLoader）。
+        if node.spec.type == ETChainText.sfzType {
+            guard node.instance != 0 else { return false }
+            return SFZLoader.shared.reload(slot: index, dsp: self)
+        }
         guard !node.irId.isEmpty, node.instance != 0 else { return false }
         let width = Self.routedChannels(of: node)
         let line = ETIRLoader.reload(irId: node.irId,

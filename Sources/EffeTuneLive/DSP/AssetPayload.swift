@@ -288,7 +288,8 @@ enum AssetUpload {
                              instance: UInt32,
                              slot: UInt32 = 0,
                              payload: [UInt8],
-                             info: BeginInfo) throws -> BeginRequest {
+                             info: BeginInfo,
+                             capacity: Int = AssetUpload.capacityBytes) throws -> BeginRequest {
         guard engine != 0, instance != 0 else { throw ETAssetUploadError.engineNotReady }
         guard payload.count >= headerBytes else { throw ETAssetUploadError.payloadTooShort }
         guard readLittleEndian(payload, 0) == magic else { throw ETAssetUploadError.badMagic }
@@ -320,9 +321,9 @@ enum AssetUpload {
                                                pathCount: Int(info.pathCount),
                                                inputCount: Int(info.inputCount))
         let footprint = info.footprintBytes.map { Int($0) } ?? estimated
-        guard footprint >= payload.count, footprint <= capacityBytes else {
+        guard footprint >= payload.count, footprint <= capacity else {
             throw ETAssetUploadError.tooLarge(bytes: max(footprint, payload.count),
-                                              capacity: capacityBytes)
+                                              capacity: capacity)
         }
 
         return BeginRequest(engine: engine,

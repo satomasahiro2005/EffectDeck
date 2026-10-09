@@ -192,6 +192,39 @@ final class Upstream213Tests: XCTestCase {
         XCTAssertEqual(try at(load(s, [:], current: current), "mx"), 90)
     }
 
+    /// バンクの鍵は段の `irId` に載せ、保存の綴りは型で決まる（SFZ は `sf`、IR Reverb は `ir`）。
+    /// 24 桁の小文字の 16 進でないものは空に戻す（上流の setParameters と同じ）。
+    func testSFZBankKeyIsSavedAsSf() throws {
+        let id = "0123456789abcdef01234567"
+        XCTAssertEqual(ETChainText.assetKey(forType: "SFZNotePlayerPlugin"), "sf")
+        XCTAssertEqual(ETChainText.assetKey(forType: "IRReverbPlugin"), "ir")
+        var node = ETChainNode(spec: try spec("SFZNotePlayerPlugin"), values: try spec("SFZNotePlayerPlugin").defaults)
+        node.irId = id
+        let written = PipelineStore.shortForm([PipelineStore.Loaded(node)])
+        XCTAssertEqual(written[0]["sf"] as? String, id)
+        XCTAssertNil(written[0]["ir"])
+        let back = PipelineStore.parse(written, catalog: ETCatalog)
+        XCTAssertEqual(back.first?.irId, id, "書いて読み戻すと鍵が残る")
+        // 外れた鍵は読まない。
+        for bad in ["0123456789ABCDEF01234567", "0123", "", "zzzzzzzzzzzzzzzzzzzzzzzz"] {
+            var stage = written[0]
+            stage["sf"] = bad
+            XCTAssertEqual(PipelineStore.parse([stage], catalog: ETCatalog).first?.irId, "", bad)
+        }
+        // IR Reverb は今までどおり `ir`。
+        var ir = ETChainNode(spec: try spec("IRReverbPlugin"), values: try spec("IRReverbPlugin").defaults)
+        ir.irId = "abc"
+        let irWritten = PipelineStore.shortForm([PipelineStore.Loaded(ir)])
+        XCTAssertEqual(irWritten[0]["ir"] as? String, "abc")
+        XCTAssertNil(irWritten[0]["sf"])
+        // 利用者のプリセットも同じ綴り。
+        XCTAssertEqual(EffectPresetStoreCore.params(for: node)["sf"] as? String, id)
+        // PC へ送る形からバンクの鍵が消えたら、params では消せないので鎖ごと送り直す。
+        let cleared = try XCTUnwrap(ETRemoteProjection.entry(for: PipelineStore.Loaded({ var n = node; n.irId = ""; return n }())))
+        let with = try XCTUnwrap(ETRemoteProjection.entry(for: PipelineStore.Loaded(node)))
+        XCTAssertEqual(ETRemoteProjection.removedKeys(sent: with, now: cleared), ["sf"])
+    }
+
     func testSFZIsNotForChains() throws {
         let url = try XCTUnwrap(TestResource.url("effects", "json", subdirectory: "chain/v0.13.0"))
         let data = try Data(contentsOf: url)

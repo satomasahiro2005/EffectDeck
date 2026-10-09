@@ -85,8 +85,9 @@ struct EffectPresetsView: View {
         // （PipelineStore.swift:74-77 と同じ扱い）。段に書いてから入れ直す。
         // 入れ直しを DSP にやらせるのは、畳んだカードにはビューが無いため
         // （EffeTuneDSP.reloadAssets の注記）。
-        if let ir = params[ETIRLoader.presetKey] as? String,
-           !ir.isEmpty, ir != node.irId {
+        if let ir = params[ETChainText.assetKey(forType: node.spec.type)] as? String,
+           !ir.isEmpty, ir != node.irId,
+           node.spec.type != ETChainText.sfzType || ETSFZ.isValidID(ir) {
             dsp.setIRId(ir, at: index)
             dsp.reloadAssets()
         }

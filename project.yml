@@ -345,6 +345,14 @@ targets:
       - path: Sources/EffeTuneLive/DSP/RhythmAnalyzerModel.swift
       # 2.13.0 の Note Spectrogram の枠（版 5）の読み。Foundation だけ（Upstream213Tests）。
       - path: Sources/EffeTuneLive/DSP/NoteSpectrogramFrame.swift
+      # 2.13.0 の SFZ Note Player の取り込み（SFZ の読み・バンクの入れ物と鍵・カーネルへ送る資産・置き場）。
+      # Foundation だけ（SFZTests）。見本は上流の js/sfz/*.js が作ったもの（Tools/golden/sfz_golden.mjs）。
+      - path: Sources/EffeTuneLive/DSP/SFZParser.swift
+      - path: Sources/EffeTuneLive/DSP/SFZBank.swift
+      - path: Sources/EffeTuneLive/DSP/SFZAsset.swift
+      - path: Sources/EffeTuneLive/DSP/SFZLibraryFiles.swift
+      - path: Tests/Fixtures/SFZ/sfz-golden.json
+        buildPhase: resources
       - path: Sources/EffeTuneLive/DSP/ETChannel.swift
       - path: Sources/EffeTuneLive/Generated/SystemPresets.swift
       - path: Sources/EffeTuneLive/Generated/UpstreamVersion.swift
