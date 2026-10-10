@@ -309,10 +309,10 @@ final class Upstream213Tests: XCTestCase {
     }
 
     func testNoteSpectrogramFrameVersion5() throws {
-        XCTAssertEqual(ETNoteLayout.payloadBytes, 8840)
-        XCTAssertEqual(ETNoteLayout.levelOffset, 1792)
-        XCTAssertEqual(ETNoteLayout.revisedOffset, 3552)
-        XCTAssertEqual(ETNoteLayout.intermediateOffset, 5312)
+        XCTAssertEqual(ETNoteFrameLayout.payloadBytes, 8840)
+        XCTAssertEqual(ETNoteFrameLayout.levelOffset, 1792)
+        XCTAssertEqual(ETNoteFrameLayout.revisedOffset, 3552)
+        XCTAssertEqual(ETNoteFrameLayout.intermediateOffset, 5312)
         let s = try XCTUnwrap(ETNoteSnapshot(noteFrame()))
         XCTAssertEqual(s.frameIndex, 100)
         XCTAssertEqual(s.generation, 3)
@@ -343,8 +343,8 @@ final class Upstream213Tests: XCTestCase {
     // MARK: 枠の版
 
     func testFrameVersions() {
-        XCTAssertEqual(ETNoteLayout.frameType, 24)
-        XCTAssertEqual(ETNoteLayout.version, 5)
+        XCTAssertEqual(ETNoteFrameLayout.frameType, 24)
+        XCTAssertEqual(ETNoteFrameLayout.version, 5)
         XCTAssertEqual(ETFrameType.rhythmAnalyzer.rawValue, 28)
         XCTAssertEqual(ETRhythm.version, 4)
         XCTAssertEqual(ETRhythm.payloadBytes, 1496)
@@ -368,25 +368,25 @@ final class Upstream213Tests: XCTestCase {
         let l = ledger(first: 100, count: 10)
         XCTAssertEqual(l.head, 2)
         let latest: UInt32 = 109
-        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+        XCTAssertEqual(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
                                                    generation: 1, index: latest &- 2), 7)
-        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+        XCTAssertEqual(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
                                                    generation: 1, index: latest &- 4), 5)
         // 8 枠前は輪（8 列）の外。流れているので何もしない。
-        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+        XCTAssertNil(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
                                                  generation: 1, index: latest &- 8))
     }
 
     func testRevisionColumnReachesEightFramesBackOnALargeBand() {
         let l = ledger(first: 1000, count: 40, columns: 64)
-        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 40,
+        XCTAssertEqual(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 40,
                                                    generation: 1, index: 1039 &- 8), 40 - 1 - 8)
     }
 
     func testRevisionColumnWrapsFrameIndex() {
         let l = ledger(first: UInt32.max - 3, count: 8, columns: 16)
         // 枠は ... max-1, max, 0, 1, 2, 3。最新（3）の 4 枠前は max。
-        XCTAssertEqual(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
+        XCTAssertEqual(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 8,
                                                    generation: 1, index: UInt32(3) &- 4), 3)
         XCTAssertEqual(l.frames[3]?.index, UInt32.max)
     }
@@ -395,11 +395,11 @@ final class Upstream213Tests: XCTestCase {
         var l = ledger(first: 10, count: 6, columns: 16)
         // 枠 13 を取りこぼした。
         l.frames[3] = nil
-        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 6,
+        XCTAssertNil(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 6,
                                                  generation: 1, index: 13))
-        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 6,
+        XCTAssertNil(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 6,
                                                  generation: 2, index: 12))
-        XCTAssertNil(ETNoteLayout.revisionColumn(frames: l.frames, head: l.head, count: 0,
+        XCTAssertNil(ETNoteFrameLayout.revisionColumn(frames: l.frames, head: l.head, count: 0,
                                                  generation: 1, index: 12))
     }
 }

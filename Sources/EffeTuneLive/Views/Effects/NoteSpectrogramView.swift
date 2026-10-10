@@ -868,11 +868,11 @@ final class ETNoteBand: ObservableObject {
 
     /// 512 列。2.13.0 は枠を全部入れる（50 fps）ので、Time Span 10 秒が 500 列になる。
     static let columns = 512
-    /// 数は枠の読みと同じもの（ETNoteLayout、NoteSpectrogramFrame.swift）。
-    static let notes = ETNoteLayout.notes
-    static let divisions = ETNoteLayout.divisions
-    static let pitches = ETNoteLayout.pitches
-    static let firstMidi = ETNoteLayout.firstMidi
+    /// 数は枠の読みと同じもの（ETNoteFrameLayout、NoteSpectrogramFrame.swift）。
+    static let notes = ETNoteFrameLayout.notes
+    static let divisions = ETNoteFrameLayout.divisions
+    static let pitches = ETNoteFrameLayout.pitches
+    static let firstMidi = ETNoteFrameLayout.firstMidi
     static let lastMidi = firstMidi + notes - 1
 
     @Published private(set) var revision: UInt32 = 0
@@ -1017,7 +1017,7 @@ final class ETNoteBand: ObservableObject {
     /// dB（Volume）は直さない。上流も volumeLevelHistory はそのまま。
     private func revise(generation: UInt32, index: UInt32, confidence: [Float]) {
         guard confidence.count == Self.pitches,
-              let column = ETNoteLayout.revisionColumn(frames: frames, head: head, count: count,
+              let column = ETNoteFrameLayout.revisionColumn(frames: frames, head: head, count: count,
                                                        generation: generation, index: index)
         else { return }
         for pitch in 0..<Self.pitches {

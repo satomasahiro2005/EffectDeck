@@ -27,7 +27,7 @@
 
 import Foundation
 
-enum ETNoteLayout {
+enum ETNoteFrameLayout {
     /// 88 鍵。note_spectrogram.js:6 の MULTI_F0_NOTE_COUNT。
     static let notes = 88
     /// 1 半音を割る数。同 :7 の MULTI_F0_FINE_DIVISIONS。
@@ -55,7 +55,7 @@ enum ETNoteLayout {
     static let maximumRevisionAge: UInt32 = 8
 }
 
-extension ETNoteLayout {
+extension ETNoteFrameLayout {
     /// 直しの当て先の列。最新（head の 1 つ前）から age + 1 列ぶんだけ遡って、枠の番号が合う列を探す。
     /// 枠の番号は UInt32 で折り返すので、index は呼ぶ側が `frameIndex &- age` で出す。
     /// 取りこぼした・もう流れた・世代が違うなら nil。
@@ -97,9 +97,9 @@ struct ETNoteSnapshot {
     let revisions: [ETNoteRevision]
 
     init?(_ frame: ETFrame?) {
-        guard let frame = frame, frame.type == ETNoteLayout.frameType,
-              frame.matches(version: ETNoteLayout.version),
-              frame.hasPayload(bytes: ETNoteLayout.payloadBytes) else { return nil }
+        guard let frame = frame, frame.type == ETNoteFrameLayout.frameType,
+              frame.matches(version: ETNoteFrameLayout.version),
+              frame.hasPayload(bytes: ETNoteFrameLayout.payloadBytes) else { return nil }
 
         let payload = frame.payloadView
         guard let rate = payload.f32(at: 0),
@@ -114,30 +114,30 @@ struct ETNoteSnapshot {
 
         // note_spectrogram.js:364-371 と同じ門。
         guard rate.isFinite, rate > 0, seconds.isFinite, seconds >= 0,
-              pitchCount == UInt16(ETNoteLayout.pitches),
-              firstMidi == UInt16(ETNoteLayout.firstMidi),
-              hop.isFinite, hop > 0, modeCode == UInt32(ETNoteLayout.divisions),
+              pitchCount == UInt16(ETNoteFrameLayout.pitches),
+              firstMidi == UInt16(ETNoteFrameLayout.firstMidi),
+              hop.isFinite, hop > 0, modeCode == UInt32(ETNoteFrameLayout.divisions),
               generation != 0,
-              revisionAge == 0 || revisionAge == ETNoteLayout.maximumRevisionAge else { return nil }
+              revisionAge == 0 || revisionAge == ETNoteFrameLayout.maximumRevisionAge else { return nil }
 
-        guard let fineConfidence = payload.floats(at: ETNoteLayout.confidenceOffset,
-                                                  count: ETNoteLayout.pitches),
-              let fineLevel = payload.floats(at: ETNoteLayout.levelOffset,
-                                             count: ETNoteLayout.pitches)
+        guard let fineConfidence = payload.floats(at: ETNoteFrameLayout.confidenceOffset,
+                                                  count: ETNoteFrameLayout.pitches),
+              let fineLevel = payload.floats(at: ETNoteFrameLayout.levelOffset,
+                                             count: ETNoteFrameLayout.pitches)
             else { return nil }
         // 同 :375-384。1 つでも外れていたら枠ごと捨てる。
-        for pitch in 0..<ETNoteLayout.pitches {
+        for pitch in 0..<ETNoteFrameLayout.pitches {
             let value = fineConfidence[pitch]
             guard value.isFinite, value >= 0, value <= 1,
                   fineLevel[pitch].isFinite else { return nil }
         }
         // 同 :386-398。面の age は 0（無い）か決まった値だけ。直しの値も 0〜1。
         var revisions: [ETNoteRevision] = []
-        for plane in ETNoteLayout.revisionPlanes {
+        for plane in ETNoteFrameLayout.revisionPlanes {
             guard let age = payload.u32(at: plane.ageOffset),
                   age == 0 || age == plane.age else { return nil }
             if age == 0 { continue }
-            guard let values = payload.floats(at: plane.levelsOffset, count: ETNoteLayout.pitches),
+            guard let values = payload.floats(at: plane.levelsOffset, count: ETNoteFrameLayout.pitches),
                   values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else { return nil }
             revisions.append(ETNoteRevision(age: age, confidence: values))
         }
