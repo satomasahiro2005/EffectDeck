@@ -5,7 +5,7 @@ enum ETFeatures {
 
     /// EffeTune Remote Control（DSP/RemoteMirror.swift・Views/RemoteScannerView.swift）。
     ///
-    /// **開けてある。**上流の EffeTune が 2.13.0 で LAN のリモート API を出した（docs/remote-v1.md）ので、
+    /// **開けてある。**上流の EffeTune が 2.13.0 で LAN のリモート API を出した（Vendor/effetune/docs/remote-v1.md）ので、
     /// 店の版（Release）でもつなぐ相手が居る。以前はここを Debug と Beta（ET_BETA）だけに絞っていた。
     /// 閉じるときは `false` を返すだけで、入口が全部閉じる（入口の確認は下の一覧）。
     ///

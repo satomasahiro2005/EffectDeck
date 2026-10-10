@@ -244,7 +244,7 @@ final class RemoteProtocolTests: XCTestCase {
 
     // MARK: 公式の EffeTune 2.13.0（dsp を出さない）
 
-    /// 公式 2.13.0 の hello の返事（electron/remote-control-host.cjs、docs/remote-v1.md）。
+    /// 公式 2.13.0 の hello の返事（electron/remote-control-host.cjs、Vendor/effetune/docs/remote-v1.md）。
     /// dsp も build も無く、features は origin / savePreset / irSync / sync1。telemetry と overlays は無い。
     private func official(app: String = "2.13.0", effects: [String]? = ETRemoteHostInfo.localEffectNames)
         -> ETRemoteHostInfo {
