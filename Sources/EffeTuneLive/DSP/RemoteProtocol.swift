@@ -333,6 +333,15 @@ enum ETRemotePresetMirror {
         return ""
     }
 
+    /// 写しに入れない PC のプリセット（名前）。**中身が手元のプリセットのどれかと同じなら、手元から送ったものの戻り。**
+    /// 写すと、つないだ PC の数だけ自分のプリセットの複製がフォルダに増える（2026-10-11）。
+    /// 名前は見ない。名前がぶつかって `名前 (iPad)` で送ったものも、中身で外れる。
+    /// 中身はどちらも ETRemotePresetSync.canonical（PC に合わせて写した形）で渡す。
+    /// 手元は写しのフォルダ（どの PC のものも）を除いたもの。PC 同士で同じものは、それぞれの写しに残る。
+    static func ownCopies(pc: [String: String], local: Set<String>) -> Set<String> {
+        Set(pc.compactMap { local.contains($0.value) ? $0.key : nil })
+    }
+
     /// PC が presetsChanged を送るのは hello に sync: 1 を載せた接続だけ。それを受けられる PC（sync1）か。
     static func isLive(_ info: ETRemoteHostInfo?) -> Bool {
         info?.supports("sync1") == true

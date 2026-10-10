@@ -1083,8 +1083,22 @@ final class RemoteMirror: ObservableObject {
         let base = presetMirrorFolder()
         if ticket > mirroredTicket, !base.isEmpty {
             mirroredTicket = ticket
+            // 手元から送ったものの戻りは写さない（ETRemotePresetMirror.ownCopies）。写しは丸ごと入れ替えるので、
+            // 前に写してしまった複製も次の入れ替えで消える。
+            let store = PresetStore.shared
+            var localCanon: Set<String> = []
+            for name in store.names where !store.isRemoteFolder(ETUserPresetName.folder(name)) {
+                let loaded = store.load(name)
+                guard !loaded.isEmpty else { continue }
+                localCanon.insert(ETRemotePresetSync.canonical(ETRemoteProjection.project(loaded, host: host).pipeline))
+            }
+            var pcCanon: [String: String] = [:]
+            for (name, loaded) in pc.items {
+                pcCanon[name] = ETRemotePresetSync.canonical(ETRemoteProjection.project(loaded, host: host).pipeline)
+            }
+            let own = ETRemotePresetMirror.ownCopies(pc: pcCanon, local: localCanon)
             var forms: [String: [[String: Any]]] = [:]
-            for (name, loaded) in pc.items { forms[name] = PipelineStore.shortForm(loaded) }
+            for (name, loaded) in pc.items where !own.contains(name) { forms[name] = PipelineStore.shortForm(loaded) }
             // 同じ名前の人のフォルダが在れば `名前 2` へ入る（PresetStoreCore.mirrorTarget）。
             let changed = PresetStore.shared.mirrorFolder(base, incoming: forms, unreadable: pc.unreadable)
             if changed.written > 0 || changed.deleted > 0 {

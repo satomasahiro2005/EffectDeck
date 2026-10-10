@@ -492,6 +492,24 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(plan, [.init(source: "Plain", target: "Plain")])
     }
 
+    // MARK: - v2: プリセットの写し（PC → EffectDeck）
+
+    /// 手元から送ったものの戻りは写さない。PC を 2 台つないでも自分のプリセットが 2 つずつ増えない。
+    func testMirrorSkipsWhatCameFromHere() {
+        let own = ETRemotePresetMirror.ownCopies(pc: ["Mine": "m", "Made on PC": "p"], local: ["m", "x"])
+        XCTAssertEqual(own, ["Mine"])
+    }
+
+    /// 名前がぶつかって `名前 (iPad)` で送ったものも、中身で外れる。同じ名前でも中身が違う PC のものは残る。
+    func testMirrorMatchesByContentNotName() {
+        let own = ETRemotePresetMirror.ownCopies(pc: ["N": "pc", "N (iPad)": "pad"], local: ["pad"])
+        XCTAssertEqual(own, ["N (iPad)"])
+    }
+
+    func testMirrorKeepsEverythingWhenNothingIsLocal() {
+        XCTAssertEqual(ETRemotePresetMirror.ownCopies(pc: ["A": "a"], local: []), [])
+    }
+
     /// PC には何も戻さない（PC → EffectDeck は plan に無い。写しのフォルダ）。
     func testPresetPushNeverTouchesTheLocalSide() {
         let plan = ETRemotePresetSync.plan(pc: ["OnlyPC": "p"], local: [:])

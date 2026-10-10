@@ -28,6 +28,9 @@ struct SFZNotePlayerView: View {
 
     @ObservedObject private var library = SFZLibrary.shared
     @ObservedObject private var loader = SFZLoader.shared
+    /// PC の鎖を編集している間は取り込ませない。PC へ届くのはバンクの鍵だけで、サンプルは送れない
+    /// （上流に送る手が無い。docs/notes/effetune-2.13.0.md）。取り込んでも PC では鳴らない。
+    @ObservedObject private var remote = RemoteMirror.shared
     @State private var picking = false
     /// フォルダに SFZ が複数あるとき、どれを取り込むかを選ぶ間の控え。
     @State private var pending: PendingFolder?
@@ -97,7 +100,7 @@ struct SFZNotePlayerView: View {
                 .disabled(loading)
             }
             HStack(spacing: 8) {
-                ETMeasurementButton(title: "Import Folder…", isEnabled: !loading) {
+                ETMeasurementButton(title: "Import Folder…", isEnabled: !loading && !remote.isRemote) {
                     folderError = nil
                     pending = nil
                     picking = true
