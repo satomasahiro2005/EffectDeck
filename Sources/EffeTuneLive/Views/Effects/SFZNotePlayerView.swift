@@ -3,7 +3,7 @@
 //
 //  上流 plugins/others/sfz_note_player.js の createUI（図は無い）。並びは
 //    SFZ の選択欄 + Import Folder… + Remove
-//    （フォルダに SFZ が複数あるときだけ）どれを取り込むかの選択欄 + Import
+//    （フォルダに SFZ が複数あるときだけ）どれを取り込むかの一覧（confirmationDialog。押したものを取り込む）
 //    赤い状態行
 //    Highest / Middle / Lowest（音域の帯）→ Threshold → Retrigger Drop → Note Hold → Velocity 1 Level →
 //    Velocity 127 Level → Max Voices → Dry → Wet → Octave → Output Gain → Timing → Lowest Note → Highest Note
@@ -34,7 +34,6 @@ struct SFZNotePlayerView: View {
     @State private var picking = false
     /// フォルダに SFZ が複数あるとき、どれを取り込むかを選ぶ間の控え。
     @State private var pending: PendingFolder?
-    @State private var choice = ""
     /// フォルダを開く段階の失敗（段の状態には載らない）。
     @State private var folderError: String?
 
@@ -50,7 +49,6 @@ struct SFZNotePlayerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             bankRow
-            if let pending { instrumentRow(pending) }
             if let line = errorLine {
                 Text(line)
                     .font(.system(size: 11))
@@ -116,21 +114,23 @@ struct SFZNotePlayerView: View {
                     loader.remove(bankID: node.irId, for: node.id, dsp: dsp)
                 }
             }
-        }
-    }
-
-    private func instrumentRow(_ pending: PendingFolder) -> some View {
-        HStack(spacing: 8) {
-            Picker("SFZ", selection: $choice) {
-                ForEach(pending.paths, id: \.self) { Text($0).tag($0) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            Spacer(minLength: 8)
-            ETMeasurementButton(title: "Import") {
-                self.pending = nil
-                loader.importFolder(pending.files, selectedPath: choice, into: node.id, dsp: dsp,
-                                    keepAccessTo: pending.folder)
+            // **フォルダを選んだらすぐ一覧を出す。**前は Import Folder… の下に選択欄と Import の行を足していたので、
+            // 取り込みの口が上下に 2 つ並び、フォルダを選んだ後にもう一度 Import を押す順が読めなかった。
+            // fileImporter（Import Folder…）とも alert（body）とも別のビューに付ける（上の注記と同じ理由）。
+            .confirmationDialog("Choose an SFZ", isPresented: Binding(
+                get: { pending != nil },
+                set: { if !$0 { pending = nil } }),
+                titleVisibility: .visible,
+                presenting: pending
+            ) { pending in
+                ForEach(pending.paths, id: \.self) { path in
+                    Button(path) {
+                        self.pending = nil
+                        loader.importFolder(pending.files, selectedPath: path, into: node.id, dsp: dsp,
+                                            keepAccessTo: pending.folder)
+                    }
+                }
+                Button("Cancel", role: .cancel) { self.pending = nil }
             }
         }
     }
@@ -165,7 +165,6 @@ struct SFZNotePlayerView: View {
                 if paths.count == 1 {
                     loader.importFolder(files, selectedPath: paths[0], into: node.id, dsp: dsp, keepAccessTo: url)
                 } else {
-                    choice = paths[0]
                     pending = PendingFolder(folder: url, files: files, paths: paths)
                 }
             } catch {
