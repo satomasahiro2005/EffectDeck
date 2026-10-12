@@ -6,9 +6,11 @@
 //   fxd.nemut.ai         人がプロフィールや投稿に打つための短い別名。**ページは持たない。**
 //                        AASA だけ effectdeck と同じものを返し、ほかは effectdeck の同じパスとクエリへ 301 する。
 //
-// **ページからアプリへ渡すボタンは置かない。**Universal Link は別のドメインへ飛ぶときにしか
+// **鎖のページの「アプリで開く」は fxd を指す。**Universal Link は別のドメインへ飛ぶときにしか
 // 立たず、effectdeck のページから effectdeck を指しても Safari の中でページが開くだけ。
-// 代わりに Smart App Banner（apple-itunes-app）の app-argument に今の URL を入れる。
+// fxd もアプリのドメインなので、アプリが入っていればそこで開き、入っていなければ 301 で同じページへ戻る。
+// カスタムスキームにしないのは、アプリが無いと Safari がアドレスが無効だと出すから。
+// Smart App Banner（apple-itunes-app）の app-argument にも今の URL を入れる。
 // /j の中身は # の後ろにあり、サーバーには届かない。app-argument に入れるのも、
 // ソースを戻すのもページの中の JS。
 //
@@ -765,6 +767,8 @@ ${paras(t.dev)}
 // バナーの app-argument に入れる今の URL。アプリ（ETFXDLink.route）は lang が付いていても読む。
 // **クエリは字のまま使う。**searchParams を触ると %2B や / の符号が書き換わる。
 const deckURL = (url) => `https://${DECK_HOST}${url.pathname}${url.search}`;
+// 「アプリで開く」の宛先。同じパスとクエリを fxd に載せる（頭の「鎖のページの『アプリで開く』」）。
+const openURL = (url) => `https://${LINK_HOST}${url.pathname}${url.search}`;
 
 // アプリの「Export to EffeTune without N external effects」と同じ言い方。
 const effeTuneLabel = (t, dropped) =>
@@ -790,16 +794,17 @@ function chainPage(url) {
           ? `<li class="section">${esc(e.name)}</li>`
           : `<li${e.off ? ' class="off"' : ""}>${esc(e.name)}${e.off ? `<span class="tag">${t.off}</span>` : ""}</li>`)
       .join("");
-    // PC の EffeTune で開く人への口（parse.js の effeTuneLink）。外の段を落とすなら数を添える。
+    // PC の EffeTune で開く人への口（parse.js の effeTuneLink）。ボタンにせず、鎖の下の 1 行のリンクにする。
+    // 外の段を落とすなら数を添える。
     const effetune = effeTuneLink(url.searchParams.get("p"));
     const toEffeTune = effetune
-      ? `<a class="btn gh" href="${esc(effetune.url)}">${effeTuneLabel(t, effetune.dropped)}</a>`
+      ? `<p class="muted"><a href="${esc(effetune.url)}">${effeTuneLabel(t, effetune.dropped)}</a></p>`
       : "";
     body = `
 <h1>${t.chainTitle}</h1>
-<p class="muted">${t.chainHowTo}</p>
-<div class="actions">${badge()}${toEffeTune}</div>
-<ul class="chain">${items}</ul>`;
+<div class="actions"><a class="btn guide" href="${esc(openURL(url))}">${t.openEffectDeck}</a>${badge()}</div>
+<ul class="chain">${items}</ul>
+${toEffeTune}`;
   } else {
     body = `
 <h1>${t.chainTitle}</h1>

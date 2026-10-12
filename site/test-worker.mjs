@@ -8,7 +8,7 @@
 //   fxd は AASA のほかは全部 301
 //   AASA は effectdeck と fxd が同じものを返す
 //   バナーの app-argument と、/j のインライン script と CSP のハッシュの一致
-//   開くボタンを置かない
+//   鎖のページだけが「アプリで開く」を fxd へ向けて置く（ほかのページは fxd を指さない）
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -196,8 +196,8 @@ try {
     const chain = (await get(DECK, `/?p=${p}`)).body;
     assert.ok(chain.includes('<meta property="og:description" content="An effect chain shared from EffectDeck: Volume, Parametric EQ">'));
     assert.ok(!chain.includes('property="og:url"'), "a share link is not canonical");
-    // PC の EffeTune へ渡す口（内蔵だけの鎖なので中身はそのまま）
-    assert.ok(chain.includes(`<a class="btn gh" href="https://effetune.frieve.com/effetune.html?p=${p.replace(/\+/g, "%2B")}">Open in EffeTune</a>`));
+    // PC の EffeTune へ渡す口はボタンでなくリンク（内蔵だけの鎖なので中身はそのまま）
+    assert.ok(chain.includes(`<p class="muted"><a href="https://effetune.frieve.com/effetune.html?p=${p.replace(/\+/g, "%2B")}">Open in EffeTune</a></p>`));
     const ext = Buffer.from(JSON.stringify([{ nm: "Volume" }, { nm: "Gain", external: "au:x" }])).toString("base64");
     assert.ok((await get(DECK, `/?p=${ext}`)).body.includes(">Open in EffeTune without 1 external effect</a>"));
     const og = await get(DECK, "/og.png");
@@ -266,15 +266,16 @@ try {
     assert.ok(!/\.faq p\{[^}]*color/.test(home), "FAQ answers are grey");
   });
 
-  await test("chain: app-argument is the full effectdeck URL with the raw query, no Open button", async () => {
+  // 「アプリで開く」は fxd を指す（Universal Link は別のドメインへ飛ぶときにしか立たない。worker.js の頭）。
+  await test("chain: app-argument is the full effectdeck URL, Open in EffectDeck points at fxd with the raw query", async () => {
     for (const q of [`?p=${p}`, `?p=${encodeURIComponent(p)}&lang=ja`]) {
       const r = await get(DECK, "/" + q);
       assert.equal(r.status, 200, q);
       const arg = `https://${DECK}/${q}`.replace(/&/g, "&amp;");
       assert.ok(r.body.includes(`<meta name="apple-itunes-app" content="app-id=${APP}, app-argument=${arg}">`), q);
-      assert.ok(!r.body.includes('class="btn"'), "Open button");
-      assert.ok(!/Open in EffectDeck|EffectDeck で開く/.test(r.body));
-      assert.ok(!r.body.includes(FXD));
+      const open = `https://${FXD}/${q}`.replace(/&/g, "&amp;");
+      assert.ok(r.body.includes(`<a class="btn guide" href="${open}">Open in EffectDeck</a>`), q);
+      assert.equal(r.body.split(FXD).length - 1, 1, "fxd only in the Open button");
       assert.ok(r.body.includes(`apps.apple.com/app/effectdeck/id${APP}`));
       assert.ok(r.body.includes("Parametric EQ"));
     }

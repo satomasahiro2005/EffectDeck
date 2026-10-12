@@ -77,8 +77,8 @@ export const TEXT = {
 
   appStoreAlt: "Download on the App Store",
   chainTitle: "Effect chain",
-  // ページからアプリへ渡すボタンは無い（worker.js の頭）。Safari のバナーか、アプリの貼り付けで渡す。
-  chainHowTo: "If EffectDeck is installed, Safari shows a banner with <strong>Open</strong> at the top of this page. In another browser, copy this page's address and open EffectDeck. It offers to paste the link.",
+  // 鎖のページの「アプリで開く」（fxd へ飛ぶ。worker.js の頭）。
+  openEffectDeck: "Open in EffectDeck",
   // 鎖のページから EffeTune の Web 版へ（parse.js の effeTuneLink）。AU・JSFX は向こうに無いので落とす。
   openEffeTune: "Open in EffeTune",
   openEffeTuneWithout1: "Open in EffeTune without 1 external effect",
