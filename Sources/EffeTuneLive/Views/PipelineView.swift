@@ -665,22 +665,24 @@ struct PipelineView: View {
         if rowsHeight != height { rowsHeight = height }
     }
 
-    /// 行の中身の中での上端が変わった（送っただけでは来ない）。**2列のときだけ。**
+    /// 行の中身の中での上端か幅が変わった（送っただけでは来ない）。**2列のときだけ。**
     /// 読んでいるカードなら、動いたぶん送り直す（ETReadingKeeper）。
     ///
     /// **測れたその場で直す。**次の回へ回すと、その間はずれた位置のまま描かれうる。
-    private func contentMoved(_ id: UUID, _ top: CGFloat) {
+    /// ただし幅が変わった回（回したときなど）は送らない。そちらは覚えたカードへ戻す側
+    /// （resized / restoreAnchor）が、組み直しが終わってから送る。
+    private func contentMoved(_ id: UUID, _ edge: ETRowEdge) {
         guard usesSplit else { return }
         let scroll = brake.scrollView
         let least = -(scroll?.adjustedContentInset.top ?? 0)
         let offset = scroll?.contentOffset.y ?? 0
         /// 送り直してよいか。読んでいるカードのときだけ聞かれる。
         func keeps() -> Bool {
-            guard let scroll else { return false }
+            guard let scroll, !viewport.resizing else { return false }
             let touched = scroll.isTracking || scroll.isDragging || scroll.isDecelerating
             return !touched && viewport.anchor == nil && offset > least + 0.5
         }
-        let moved = keeper.moved(id, to: top, order: dsp.chain.map(\.id), keeps: keeps())
+        let moved = keeper.moved(id, to: edge, order: dsp.chain.map(\.id), keeps: keeps())
         guard moved != 0, let scroll else { return }
         // 上が縮んだときは一番上より上へは送らない。
         scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: max(least, offset + moved)),
@@ -736,6 +738,21 @@ struct PipelineView: View {
             var t = Transaction()
             t.disablesAnimations = true
             withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
+        }
+    }
+
+    /// 右の幅が変わった（回した、左の一覧を出し入れした、窓の幅を変えた）。
+    /// 覚えたカードへ戻すのは**次の回に1回だけ**。
+    ///
+    /// 回したあと、少し送るまでカードが違う所に描かれていた（#13）。そのころは幅を測ったその場で
+    /// scrollToしていた。その回はまだ組み直しの最中で、回したときは回る動き（UIKitのアニメーション）の中に居る。
+    /// 次の回なら組み直しも済み、回る動きの外から普段の送りとして頼める。
+    /// 戻すまでの間は、中身の高さが変わっても戻さず（onScrollGeometryChange）、
+    /// 読んでいる位置も保たない（contentMoved）。どちらも同じ回の中で送ってしまうので。
+    private func resized(_ proxy: ScrollViewProxy) {
+        viewport.beginResize()
+        Task { @MainActor in
+            if viewport.endResize() { restoreAnchor(proxy) }
         }
     }
 
@@ -986,10 +1003,11 @@ struct PipelineView: View {
                         // 落としても入らなかった（9/20 に帯を画面の底まで伸ばして直した所が、これで死んでいた）。
                         // VStack（Lazy でない）なので、消えるのは鎖から外れたか畳んで隠れたときだけ。
                         .onDisappear { unmeasured(row.node.id) }
-                        // 中身の中での上端。送っても変わらず、上の行の高さが変わったときだけ来る。
+                        // 中身の中での上端と幅。送っても変わらず、上の行の高さか右の幅が変わったときだけ来る。
                         // 使うのは2列の右だけ。
-                        .onGeometryChange(for: CGFloat.self) {
-                            $0.frame(in: .named(Self.contentSpace)).minY
+                        .onGeometryChange(for: ETRowEdge.self) {
+                            let frame = $0.frame(in: .named(Self.contentSpace))
+                            return ETRowEdge(top: frame.minY, width: frame.width)
                         } action: { if split { contentMoved(row.node.id, $0) } }
                                 .opacity(dragging == row.node.id ? 0 : 1)
                         // 掴みは UIKit の長押しで受ける（DragHandle.swift の頭）。
@@ -1104,8 +1122,14 @@ struct PipelineView: View {
             if split, phase == .idle { followReading() }
         }
         // 覚えている間は、中身の高さが変わるたびに戻す（遅れて大きさを決めるAUの画面）。
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
-            restoreAnchor(proxy)
+        // **幅も見る。**幅が変わった回は組み直しの最中なので、その場では戻さず次の回へ回す（resized）。
+        // 下の幅のonGeometryChangeとどちらが先に来るかは決まっていないので、こちらでも見る。
+        .onScrollGeometryChange(for: CGSize.self) { $0.contentSize } action: { old, new in
+            if old.width != new.width {
+                resized(proxy)
+            } else if !viewport.resizing {
+                restoreAnchor(proxy)
+            }
         }
         // **器の背面で落とし先を受ける。**鎖が短いと、最後の段より下は
         // どの行にも属さない余白になる。中身を画面の高さまで伸ばす手もあるが、
@@ -1170,7 +1194,8 @@ struct PipelineView: View {
             // 覚えている最中なら覚え直さない。切り替えた直後は列が広がる間に何度も来て、
             // そのときの見えている範囲はまだ新しい並べ方のものではない。
             if viewport.anchor == nil { viewport.arm(split: true) }
-            restoreAnchor(proxy)
+            // 覚えるのはこの場で（見えているカードはまだ前の幅のもの）、戻すのは次の回（resized）。
+            resized(proxy)
         }
         .onChange(of: viewport.jump) { _, jump in jumpTo(jump, proxy) }
         // 並べ方を切り替えた直後。行が並んでから戻すので次の回に回す。
