@@ -75,14 +75,21 @@ static os_log_t ETLinkLog(void) {
 // 狙いの溜まり 1024 フレーム（21ms）から見れば誤差。
 //
 // **戻すときはここ。**実機で HAL の overload や音切れが出たら、繋がっている側を
-// 2ms・leeway 0 のタイマーへ戻す（_kickReady を NO にすれば、retimePump が
+// 2ms・leeway 0 のタイマーへ戻す（_kickReady を false にすれば、retimePump が
 // その周期を入れ、音のスレッドは signal を撃たない。セマフォかスレッドを
-// 作れなかったときも同じ形に落ちる）。2ms の粒が受け手の谷の下限を決めていた経緯
+// 作れなかったとき、起こし役の wait が失敗したときも同じ形に落ちる）。
+// 2ms の粒が受け手の谷の下限を決めていた経緯
 // （ET_LINK_TARGET_FRAMES = 1024 は実機で詰めた値）は変えていない。
 #define TX_WAIT_NS          (200ull * NSEC_PER_MSEC)
 #define TX_WAIT_LEEWAY_NS   (100ull * NSEC_PER_MSEC)
 // 起こし役が使えないときだけ使う、繋がっている側の周期（前の 2ms・leeway 0）。
 #define TX_LIVE_NS          (2ull * NSEC_PER_MSEC)
+// 送り手のタイマーに入れてある周期。
+typedef enum {
+    ETLinkTimerWait,   // 繋がっていない: 200ms で connect を試す
+    ETLinkTimerOff,    // 繋がっている: 止める（起こすのは音を積んだときと WRITE）
+    ETLinkTimerLive,   // 繋がっているが起こし役が居ない: 前の 2ms
+} ETLinkTimerMode;
 
 @implementation ETLinkSender {
     int _fd;
@@ -97,23 +104,19 @@ static os_log_t ETLinkLog(void) {
     size_t _txLen;
     size_t _txOff;
     uint32_t _txSamples;
-    // いまタイマーに入れてある周期が「繋がっている側」か。
-    // 同じ値の set_timer を毎回撃たないための札。
-    // 繋がっている側ではタイマーを FOREVER に置いて止めてある。
-    BOOL _timedLive;
+    // いまタイマーに入れてある周期。同じ値の set_timer を毎回撃たないための札。
+    ETLinkTimerMode _timerMode;
 
     // 起こし役のスレッドから _q を起こす口。**cancel も release もしない。**
     // stop のあとも起こし役が merge しにくるかもしれないので、
     // gHandlerPtr（EffeTuneDriver.m）と同じく、解放して消える経路そのものを無くす。
-    // _kickRT は同じものを ARC の外で読むための別名。
     dispatch_source_t _kick;
-    __unsafe_unretained dispatch_source_t _kickRT;
     // 音のスレッドが signal し、起こし役が wait するセマフォ。**destroy しない。**
     // 両方とも init で作り、gLinkSender を出す前に揃える。
-    // _kickReady が NO（作れなかった）なら音のスレッドは撃たず、
+    // _kickReady が false（作れなかった・起こし役が抜けた）なら音のスレッドは撃たず、
     // 繋がっている側は 2ms のタイマーで回る（上の「戻すときはここ」）。
     semaphore_t _kickSem;
-    BOOL _kickReady;
+    _Atomic bool _kickReady;
     // true のあいだは音のスレッドから起こさない。起こしたあと pump が読み位置を
     // 見るまでと、送れずに書き込み可能を待っているあいだ。
     _Atomic bool _kickPending;
@@ -147,9 +150,7 @@ static __unsafe_unretained ETLinkSender *gLinkSender;
         __weak typeof(self) weak = self;
         dispatch_source_set_event_handler(_kick, ^{ [weak pump]; });
         dispatch_resume(_kick);
-        _kickRT = _kick;
-        _kickReady = [self startKickThread];
-        if (!_kickReady) {
+        if (![self startKickThread]) {
             os_log_error(ETLinkLog(), "ET 起こし役を作れない 繋がっている側は 2ms で回す");
         }
     }
@@ -162,21 +163,22 @@ static void *ETLinkKickThread(void *arg) {
     pthread_setname_np("ai.nemut.effetune.link.kick");
     __unsafe_unretained ETLinkSender *s = (__bridge ETLinkSender *)arg;
     semaphore_t sem = s->_kickSem;
-    __unsafe_unretained dispatch_source_t kick = s->_kickRT;
+    // _kick は解放しない（init の決まり）ので、ARC の外で持って足りる。
+    __unsafe_unretained dispatch_source_t kick = s->_kick;
     for (;;) {
         kern_return_t kr = semaphore_wait(sem);
         if (kr == KERN_SUCCESS) {
             dispatch_source_merge_data(kick, 1);
         } else if (kr != KERN_ABORTED) {
-            // 起きないはず（セマフォは destroy しない）。黙って回り続けないよう、
-            // 2ms ごとに起こす形へ落とす（前のタイマーと同じ粒）。
-            static int logged = 0;
-            if (logged++ < 5) os_log_error(ETLinkLog(), "ET 起こし役 semaphore_wait 失敗 kr=%d", kr);
-            usleep(2000);
+            // 起きないはず（セマフォは destroy しない）。ここで回り続けると、
+            // 止まっているあいだも空回りする。起こし役をやめて、作れなかったときと
+            // 同じ 2ms のタイマーへ落とす。最後に 1 回起こして retimePump を通す。
+            os_log_error(ETLinkLog(), "ET 起こし役 semaphore_wait 失敗 kr=%d 2ms へ戻す", kr);
+            atomic_store_explicit(&s->_kickReady, false, memory_order_release);
             dispatch_source_merge_data(kick, 1);
+            return NULL;
         }
     }
-    return NULL;
 }
 
 /// 起こし役のセマフォとスレッドを作る。init からだけ呼ぶ（音のスレッドではない）。
@@ -190,11 +192,14 @@ static void *ETLinkKickThread(void *arg) {
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     // 音を積んだ瞬間に起きて merge するだけなので、待たされないよう上の段で回す。
     pthread_attr_set_qos_class_np(&attr, QOS_CLASS_USER_INTERACTIVE, 0);
+    // 立てる前に true にする。起こし役が抜けるときの false を後から潰さないため。
+    atomic_store_explicit(&_kickReady, true, memory_order_relaxed);
     pthread_t th;
     int rc = pthread_create(&th, &attr, ETLinkKickThread, (__bridge void *)self);
     pthread_attr_destroy(&attr);
     // 作れなかったときのセマフォは捨てない（誰も signal しないので害が無く、
     // destroy しない決まりを崩さない）。
+    if (rc != 0) atomic_store_explicit(&_kickReady, false, memory_order_relaxed);
     return rc == 0;
 }
 
@@ -216,7 +221,7 @@ static void *ETLinkKickThread(void *arg) {
     // DISPATCH_TIME_NOW から始めるので、**最初の 1 回は必ずすぐ撃つ**。
     // 繋がった時点で pump が下の retimePump を呼び、タイマーを止める
     // （以降は音を積んだ瞬間に起こす）。
-    _timedLive = NO;
+    _timerMode = ETLinkTimerWait;
     dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, TX_WAIT_NS, TX_WAIT_LEEWAY_NS);
     __weak typeof(self) weak = self;
     dispatch_source_set_event_handler(_timer, ^{ [weak pump]; });
@@ -229,16 +234,18 @@ static void *ETLinkKickThread(void *arg) {
 /// 起こし役を作れなかったときだけ、繋がっている側も 2ms で回す。
 /// 呼ぶのは _q の上（pump の中）だけ。
 - (void)retimePump {
-    BOOL live = (_fd >= 0);
-    if (live == _timedLive) return;
+    ETLinkTimerMode mode = (_fd < 0) ? ETLinkTimerWait
+             : atomic_load_explicit(&_kickReady, memory_order_acquire) ? ETLinkTimerOff
+             : ETLinkTimerLive;
+    if (mode == _timerMode) return;
     dispatch_source_t t = _timer;
     if (!t) return;
-    _timedLive = live;
-    if (live && !_kickReady) {
+    _timerMode = mode;
+    if (mode == ETLinkTimerLive) {
         // 起こし役が居ない。音のスレッドは起こさないので、前の 2ms で回す。
         dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)TX_LIVE_NS),
                                   TX_LIVE_NS, 0);
-    } else if (live) {
+    } else if (mode == ETLinkTimerOff) {
         dispatch_source_set_timer(t, DISPATCH_TIME_FOREVER, TX_WAIT_NS, 0);
     } else {
         dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)TX_WAIT_NS),
@@ -292,7 +299,7 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
     uint64_t w = atomic_load_explicit(&s->_w, memory_order_relaxed);
     w = ETLinkRingPush(s->_ring, ET_LINK_SEND_RING_SAMPLES, w, samples, frames, channels);
     atomic_store_explicit(&s->_w, w, memory_order_release);
-    if (s->_kickReady &&
+    if (atomic_load_explicit(&s->_kickReady, memory_order_relaxed) &&
         atomic_load_explicit(&s->_live, memory_order_relaxed) &&
         !atomic_exchange_explicit(&s->_kickPending, true, memory_order_acq_rel)) {
         semaphore_signal(s->_kickSem);
@@ -308,6 +315,10 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
     }
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    // 本体が落ちた（スワイプで閉じた・jetsam）直後の send は EPIPE になる。
+    // これが無いと SIGPIPE で拡張ごと死ぬ。EPIPE は下の flushPending が
+    // ふつうの送信失敗として受け、再接続の待ちへ戻る。
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
 
     struct sockaddr_in a;
     memset(&a, 0, sizeof(a));
@@ -397,8 +408,10 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
         if (_fd < 0) return;
         atomic_store_explicit(&_kickPending, false, memory_order_release);
         atomic_store_explicit(&_live, true, memory_order_release);
-        [self retimePump];   // 繋がった。タイマーを止める
     }
+    // 繋がったらタイマーを止める。繋がっているあいだに起こし役が抜けたときは
+    // ここで 2ms へ移る。変わらなければ比べて戻るだけ。
+    [self retimePump];
 
     if (![self flushPending]) return;   // 前回の残りが先
 
@@ -589,15 +602,18 @@ static ETLinkJitter gJitter = ET_LINK_JITTER_INIT;
     dispatch_source_set_cancel_handler(_acceptSrc, ^{ close(lfd); [weak listenerClosed]; });
     _acceptPaused = NO;
     _acceptMisses = 0;
-    dispatch_resume(_acceptSrc);
 
     // 待ち受けが死んでいないかを見に行く（わけは上の「待ち受けが死んでも」）。
     // suspend はしない（止めるときは FOREVER に置く）ので、cancel だけで捨てられる。
+    // **accept の source を起こす前に作る。**listen した時点で拡張の connect が積まれていることがあり
+    // （200ms ごとに繋ぎ直している）、起こした途端に _q で acceptPeer が走る。後から作ると、
+    // acceptPeer が FOREVER に置いた後でここが 5 秒に置き直し、相手が居る間も見回りが続く。
     _probeSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _q);
     dispatch_source_set_timer(_probeSrc, dispatch_time(DISPATCH_TIME_NOW, (int64_t)RX_PROBE_NS),
                               RX_PROBE_NS, RX_PROBE_LEEWAY_NS);
     dispatch_source_set_event_handler(_probeSrc, ^{ [weak checkListener]; });
     dispatch_resume(_probeSrc);
+    dispatch_resume(_acceptSrc);
     return YES;
 }
 

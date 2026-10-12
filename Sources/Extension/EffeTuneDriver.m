@@ -662,7 +662,7 @@ static OSStatus ET_StopIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt3
     pthread_mutex_lock(&gStateMutex);
     ETZeroTimeStamp_StopIO(&gTimeline);
     pthread_mutex_unlock(&gStateMutex);
-    os_log(gLog, "StopIO frames=%llu 無音=%llu", (unsigned long long)gIOCount,
+    os_log(gLog, "StopIO frames=%llu 無音累計=%llu", (unsigned long long)gIOCount,
            (unsigned long long)atomic_load_explicit(&gSilentFrames, memory_order_relaxed));
     return noErr;
 }
