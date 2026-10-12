@@ -14,6 +14,9 @@
 #import <string.h>
 #import <os/log.h>
 #import <stdatomic.h>
+#import <pthread.h>
+#import <time.h>
+#import <mach/mach.h>
 
 static os_log_t ETLinkLog(void) {
     static os_log_t l;
@@ -46,25 +49,40 @@ static os_log_t ETLinkLog(void) {
 // 粒は WriteMix の 1 回分そのもので、2ms のタイマーより粗くなる所は無い
 // （タイマーは 0〜2ms の位相ぶん余計に待っていた）。
 //
-// 起こし方で捨てた案:
-//   - セマフォと専用スレッド: 待つだけのスレッドが 1 本増え、ソケットの状態が
-//     _q の外へ出る。signal も最後は mach の呼び出しで、重さは変わらない。
+// 起こし方:
+//   音のスレッド → semaphore_signal → 起こし役のスレッド（ETLinkKickThread）
+//   → dispatch_source_merge_data（DATA_OR）→ _q の pump。
+// 音のスレッドが撃つのは mach の semaphore_signal 1 回だけ。init で作った
+// セマフォと、init で立てて semaphore_wait で寝かせてあるスレッドを起こすだけで、
+// スレッドの生成も確保も vm_map も無い。ソケットの状態は今までどおり _q だけが持つ
+// （起こし役は merge するだけ）。音のスレッドからは「寝ていれば 1 回だけ」
+// （_kickPending）なので、1 回の書き出しの間に何度積んでも signal は 1 回。
+//
+// 捨てた案:
+//   - 音のスレッドから直に dispatch_source_merge_data: OR と lock-free な push で
+//     済むのは _q が起きているときだけ。pump は次の WriteMix より前に読み切って
+//     寝るので、毎回 _q を root queue へ積み直し、_dispatch_root_queue_poke_slow
+//     から __workq_kernreturn(REQTHREADS) のシステムコールになる。暇な worker が
+//     居なければ（IO が数秒止まって libdispatch が worker を畳んだあとの StartIO）
+//     カーネルがその場でスレッドを作り、スタックを mach_vm_map する。vm_map の
+//     ロックを他のスレッドが持っていれば音のスレッドがそこで待つ。
+//     （前の版はこれを採っていて、「寝ていれば 1 回だけ」は重複を減らすだけで、
+//     毎回 1 回の起床は残っていた。）
 //   - 音のスレッドからタイマーの suspend/resume: 回数の数え違いが即クラッシュになる。
 //   - 音のスレッド側で最小間隔やフレーム数の閾値を置いて束ねる: 束ねたぶんだけ
 //     遅れる。遅れは受け手の谷の深さにそのまま乗る。
-// 採ったのは DISPATCH_SOURCE_TYPE_DATA_OR への dispatch_source_merge_data。
-// libdispatch の実装では pending の OR と _q への lock-free な push だけで、
-// ロックも確保も ObjC 呼び出しも無い。**ただしこれは実装の性質で、リアルタイム安全の
-// 保証としては文書に書かれていない。**だから音のスレッドからは「寝ていれば 1 回だけ」
-// （_kickPending）にしてあり、1 回の書き出しの間に何度積んでも呼ぶのは 1 回。
+// 起こし役を挟むぶん、届くのはスレッドの起床 1 回ぶん遅れる（数十 µs）。
+// 狙いの溜まり 1024 フレーム（21ms）から見れば誤差。
 //
 // **戻すときはここ。**実機で HAL の overload や音切れが出たら、繋がっている側を
-// 2ms・leeway 0 のタイマーへ戻す（retimePump の live の枝を
-// set_timer(NOW+2ms, 2ms, 0) にして、kick を撃たない）。フラグ・C 関数・WRITE の
-// 通知は残してよい。2ms の粒が受け手の谷の下限を決めていた経緯
+// 2ms・leeway 0 のタイマーへ戻す（_kickReady を NO にすれば、retimePump が
+// その周期を入れ、音のスレッドは signal を撃たない。セマフォかスレッドを
+// 作れなかったときも同じ形に落ちる）。2ms の粒が受け手の谷の下限を決めていた経緯
 // （ET_LINK_TARGET_FRAMES = 1024 は実機で詰めた値）は変えていない。
 #define TX_WAIT_NS          (200ull * NSEC_PER_MSEC)
 #define TX_WAIT_LEEWAY_NS   (100ull * NSEC_PER_MSEC)
+// 起こし役が使えないときだけ使う、繋がっている側の周期（前の 2ms・leeway 0）。
+#define TX_LIVE_NS          (2ull * NSEC_PER_MSEC)
 
 @implementation ETLinkSender {
     int _fd;
@@ -84,12 +102,18 @@ static os_log_t ETLinkLog(void) {
     // 繋がっている側ではタイマーを FOREVER に置いて止めてある。
     BOOL _timedLive;
 
-    // 音のスレッドから _q を起こす口。**cancel も release もしない。**
-    // stop のあとも音のスレッドが merge しにくるかもしれないので、
+    // 起こし役のスレッドから _q を起こす口。**cancel も release もしない。**
+    // stop のあとも起こし役が merge しにくるかもしれないので、
     // gHandlerPtr（EffeTuneDriver.m）と同じく、解放して消える経路そのものを無くす。
     // _kickRT は同じものを ARC の外で読むための別名。
     dispatch_source_t _kick;
     __unsafe_unretained dispatch_source_t _kickRT;
+    // 音のスレッドが signal し、起こし役が wait するセマフォ。**destroy しない。**
+    // 両方とも init で作り、gLinkSender を出す前に揃える。
+    // _kickReady が NO（作れなかった）なら音のスレッドは撃たず、
+    // 繋がっている側は 2ms のタイマーで回る（上の「戻すときはここ」）。
+    semaphore_t _kickSem;
+    BOOL _kickReady;
     // true のあいだは音のスレッドから起こさない。起こしたあと pump が読み位置を
     // 見るまでと、送れずに書き込み可能を待っているあいだ。
     _Atomic bool _kickPending;
@@ -124,8 +148,54 @@ static __unsafe_unretained ETLinkSender *gLinkSender;
         dispatch_source_set_event_handler(_kick, ^{ [weak pump]; });
         dispatch_resume(_kick);
         _kickRT = _kick;
+        _kickReady = [self startKickThread];
+        if (!_kickReady) {
+            os_log_error(ETLinkLog(), "ET 起こし役を作れない 繋がっている側は 2ms で回す");
+        }
     }
     return self;
+}
+
+/// 起こし役のスレッド。音のスレッドの signal を待って _q を起こすだけ。
+/// 送り手はプロセスに 1 つで解放されないので、arg は ARC の外で受ける。
+static void *ETLinkKickThread(void *arg) {
+    pthread_setname_np("ai.nemut.effetune.link.kick");
+    __unsafe_unretained ETLinkSender *s = (__bridge ETLinkSender *)arg;
+    semaphore_t sem = s->_kickSem;
+    __unsafe_unretained dispatch_source_t kick = s->_kickRT;
+    for (;;) {
+        kern_return_t kr = semaphore_wait(sem);
+        if (kr == KERN_SUCCESS) {
+            dispatch_source_merge_data(kick, 1);
+        } else if (kr != KERN_ABORTED) {
+            // 起きないはず（セマフォは destroy しない）。黙って回り続けないよう、
+            // 2ms ごとに起こす形へ落とす（前のタイマーと同じ粒）。
+            static int logged = 0;
+            if (logged++ < 5) os_log_error(ETLinkLog(), "ET 起こし役 semaphore_wait 失敗 kr=%d", kr);
+            usleep(2000);
+            dispatch_source_merge_data(kick, 1);
+        }
+    }
+    return NULL;
+}
+
+/// 起こし役のセマフォとスレッドを作る。init からだけ呼ぶ（音のスレッドではない）。
+- (BOOL)startKickThread {
+    if (semaphore_create(mach_task_self(), &_kickSem, SYNC_POLICY_FIFO, 0) != KERN_SUCCESS) {
+        _kickSem = MACH_PORT_NULL;
+        return NO;
+    }
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    // 音を積んだ瞬間に起きて merge するだけなので、待たされないよう上の段で回す。
+    pthread_attr_set_qos_class_np(&attr, QOS_CLASS_USER_INTERACTIVE, 0);
+    pthread_t th;
+    int rc = pthread_create(&th, &attr, ETLinkKickThread, (__bridge void *)self);
+    pthread_attr_destroy(&attr);
+    // 作れなかったときのセマフォは捨てない（誰も signal しないので害が無く、
+    // destroy しない決まりを崩さない）。
+    return rc == 0;
 }
 
 - (BOOL)connected { return _fd >= 0; }
@@ -156,6 +226,7 @@ static __unsafe_unretained ETLinkSender *gLinkSender;
 
 /// いまの接続の状態に合う周期をタイマーへ入れ直す。**同じなら何もしない。**
 /// 繋がっているあいだはタイマーを止める（起こすのは pushInterleaved と WRITE）。
+/// 起こし役を作れなかったときだけ、繋がっている側も 2ms で回す。
 /// 呼ぶのは _q の上（pump の中）だけ。
 - (void)retimePump {
     BOOL live = (_fd >= 0);
@@ -163,7 +234,11 @@ static __unsafe_unretained ETLinkSender *gLinkSender;
     dispatch_source_t t = _timer;
     if (!t) return;
     _timedLive = live;
-    if (live) {
+    if (live && !_kickReady) {
+        // 起こし役が居ない。音のスレッドは起こさないので、前の 2ms で回す。
+        dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)TX_LIVE_NS),
+                                  TX_LIVE_NS, 0);
+    } else if (live) {
         dispatch_source_set_timer(t, DISPATCH_TIME_FOREVER, TX_WAIT_NS, 0);
     } else {
         dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)TX_WAIT_NS),
@@ -204,21 +279,23 @@ static __unsafe_unretained ETLinkSender *gLinkSender;
     ETLinkSenderPushInterleaved(samples, frames, channels);
 }
 
-/// 音のスレッドの入口。objc_msgSend も ARC も通らない（IR を見て 0 個を確かめること）。
-/// 積んだあと、送り手が寝ていれば 1 回だけ起こす。
+/// 音のスレッドの入口。objc_msgSend も ARC も libdispatch も通らない
+/// （IR を見て 0 個を確かめること）。
+/// 積んだあと、送り手が寝ていれば 1 回だけ起こし役へ signal する。
 /// **順序が肝。**積む（_w の release）→ _kickPending の交換。pump は先に
 /// _kickPending を false にしてから _w を読むので、ここが「すでに起こした」と
 /// 見たなら、その pump は後から _w を読んでこの積みも見る。
-/// 0 を merge しても何も起きないので 1 を渡す。
+/// 起こし役が数え残した signal は次の wait をすぐ返すだけで、pump が 1 回空振りする。
 void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t channels) {
     __unsafe_unretained ETLinkSender *s = gLinkSender;
     if (!s || !samples || frames == 0) return;
     uint64_t w = atomic_load_explicit(&s->_w, memory_order_relaxed);
     w = ETLinkRingPush(s->_ring, ET_LINK_SEND_RING_SAMPLES, w, samples, frames, channels);
     atomic_store_explicit(&s->_w, w, memory_order_release);
-    if (atomic_load_explicit(&s->_live, memory_order_relaxed) &&
+    if (s->_kickReady &&
+        atomic_load_explicit(&s->_live, memory_order_relaxed) &&
         !atomic_exchange_explicit(&s->_kickPending, true, memory_order_acq_rel)) {
-        dispatch_source_merge_data(s->_kickRT, 1);
+        semaphore_signal(s->_kickSem);
     }
 }
 
@@ -368,6 +445,21 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
 // 相手は 1 つだけ。相手が居るあいだは待ち受けの通知を止め（suspend）、
 // 次の接続は backlog で待たせる。止めないと、待たされている接続のぶんだけ
 // レベルトリガの READ が鳴り続ける。
+//
+// **待ち受けが死んでも READ は鳴らない。**裏で止まっていたあいだに iOS がソケットを
+// defunct にすると、待ち受けの TCP は閉じられ、来た SYN は RST で返される
+// （拡張の connect は errno=61 を繰り返す）。XNU の filt_soread は待ち受けの
+// ソケットでは so_comp が空かどうかしか見ず、EOF を通知しない。非ブロッキングの
+// accept も so_comp が空なら so_error を見る前に EWOULDBLOCK を返す。
+// だから死んだかどうかは通知ではなく自分で見に行く（checkListener）。
+// defunct は so_error に EBADF を残すので、getsockopt(SO_ERROR) で分かる。
+// 見に行くのは、相手が切れたとき（相手と待ち受けは同時に defunct になる）と、
+// 相手が居ないあいだの RX_PROBE_NS ごと。止められていたあいだに期限が来ていれば、
+// 戻った直後に 1 回撃つ。
+#define RX_PROBE_NS         (5ull * NSEC_PER_SEC)
+#define RX_PROBE_LEEWAY_NS  (1ull * NSEC_PER_SEC)
+// 作ってからこの時間のうちに捨てた待ち受けは、作り直しの間を倍にしていく（30 秒まで）。
+#define RX_RELISTEN_QUICK_NS (10ull * NSEC_PER_SEC)
 
 @implementation ETLinkReceiver {
     int _listenFd;
@@ -382,6 +474,14 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
     // 捨てたあと作り直すか。どちらも _q の上でだけ触る。わけは acceptPeer。
     uint32_t _acceptMisses;
     BOOL _relisten;
+    // 相手が居ないあいだ、待ち受けが生きているかを見に行くタイマー（checkListener）。
+    // 相手が居るあいだは FOREVER に置く。待ち受けと一緒に作り、一緒に捨てる。
+    dispatch_source_t _probeSrc;
+    // 待ち受けを作った時刻（CLOCK_MONOTONIC_RAW の ns）。主スレッドの start が書き、
+    // _q の listenerClosed が読む（その待ち受けの resume より前に書くので順序は付いている）。
+    uint64_t _listenBuiltNs;
+    // 作り直しの前に置く秒数。すぐ捨てられる待ち受けが続くと倍にしていく。_q の持ち物。
+    uint32_t _relistenDelay;
     dispatch_source_t _peerSrc;
     float *_ring;
     _Atomic uint64_t _w;
@@ -470,6 +570,7 @@ static ETLinkJitter gJitter = ET_LINK_JITTER_INIT;
     int fl = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     _listenFd = fd;
+    _listenBuiltNs = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
     _rxLen = 0;
     os_log_error(ETLinkLog(), "ET receiver 待ち受け開始 port=%d", ET_LINK_PORT);
 
@@ -489,6 +590,14 @@ static ETLinkJitter gJitter = ET_LINK_JITTER_INIT;
     _acceptPaused = NO;
     _acceptMisses = 0;
     dispatch_resume(_acceptSrc);
+
+    // 待ち受けが死んでいないかを見に行く（わけは上の「待ち受けが死んでも」）。
+    // suspend はしない（止めるときは FOREVER に置く）ので、cancel だけで捨てられる。
+    _probeSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _q);
+    dispatch_source_set_timer(_probeSrc, dispatch_time(DISPATCH_TIME_NOW, (int64_t)RX_PROBE_NS),
+                              RX_PROBE_NS, RX_PROBE_LEEWAY_NS);
+    dispatch_source_set_event_handler(_probeSrc, ^{ [weak checkListener]; });
+    dispatch_resume(_probeSrc);
     return YES;
 }
 
@@ -502,6 +611,7 @@ static ETLinkJitter gJitter = ET_LINK_JITTER_INIT;
         // dropPeer が先に resume してから cancel する。
         [self dropPeer];
         self->_relisten = NO;
+        if (self->_probeSrc) { dispatch_source_cancel(self->_probeSrc); self->_probeSrc = nil; }
         if (self->_acceptSrc) { dispatch_source_cancel(self->_acceptSrc); self->_acceptSrc = nil; }
         self->_listenFd = -1;
         self->_rxLen = 0;
@@ -556,26 +666,39 @@ static void ETLinkReceiverTakeChunk(void *ctx, const uint8_t *payload, uint32_t 
 - (void)acceptPeer {
     if (_listenFd < 0 || _peerFd >= 0) return;
     int c = accept(_listenFd, NULL, NULL);
-    // **失敗を黙って捨てると空回りする。**周期で回していたときは、失敗しても
+    // **失敗を黙って捨てると空回りしうる。**周期で回していたときは、失敗しても
     // 次の accept は 20ms 後だった。レベルトリガの READ では、fd が読める
     // ままなら handler がすぐまた呼ばれ、_q が CPU を 1 本使い切る。
-    // 読めるのに受けられないのは、接続は溜まっているのに fd が尽きた（EMFILE
-    // など）か、待ち受けが壊れた（裏で止まっていたあいだに iOS が defunct に
-    // して EOF が立ち、accept は ECONNABORTED などを返し続ける）とき。
-    // どちらも待っても直らないので、待ち受けを捨てて作り直す。
+    //
+    // fd や記憶域が尽きた（EMFILE / ENFILE / ENOBUFS / ENOMEM）ときは作り直さない。
+    // 作り直しても足りないものは増えない（閉じた 1 本を socket がすぐ使う）。
+    // XNU の accept は so_comp から外してから fd を取り、取れなければその接続を
+    // 閉じて捨てる（rdar://8554930）ので、READ は鳴り続けないはずだが、
+    // 念のため待ち受けの通知を 1 秒止める（pauseAcceptBriefly）。
+    //
+    // それ以外（ECONNABORTED や EINVAL など）は待ち受けを捨てて作り直す。
+    // 作り直しの間は listenerClosed が延ばす。
+    // **defunct の待ち受けはここへ来ない。**READ が鳴らず、accept も EWOULDBLOCK を
+    // 返すだけだから（上の「待ち受けが死んでも」）。そちらは checkListener が拾う。
     //
     // EAGAIN だけは様子を見る。読めると言われて何も無いのは 1 回なら空振りで
     // 済むが、同じ理由で鳴り続けることもありうるので、受けられないまま
     // 空振りが 64 回たまったら同じく作り直す（受けたら数え直す）。
-    // ECONNABORTED は「先に切れた接続」の意味でも返るが、それを作り直しに
-    // しても失うのはその場の待ち受けだけ（相手は居ない）。
     if (c < 0) {
         int e = errno;
         if ((e == EAGAIN || e == EWOULDBLOCK || e == EINTR) && ++_acceptMisses < 64) return;
+        if (e == EMFILE || e == ENFILE || e == ENOBUFS || e == ENOMEM) {
+            static int logged = 0;
+            if (logged++ < 20) os_log_error(ETLinkLog(), "ET accept 失敗 errno=%d 1 秒止める", e);
+            [self pauseAcceptBriefly];
+            return;
+        }
         [self abandonListener:e];
         return;
     }
     _acceptMisses = 0;
+    // 相手が居るあいだは待ち受けを見に行かない（見るのは切れたとき）。
+    if (_probeSrc) dispatch_source_set_timer(_probeSrc, DISPATCH_TIME_FOREVER, RX_PROBE_NS, 0);
     int fl = fcntl(c, F_GETFL, 0);
     fcntl(c, F_SETFL, fl | O_NONBLOCK);
     _peerFd = c;
@@ -598,28 +721,83 @@ static void ETLinkReceiverTakeChunk(void *ctx, const uint8_t *payload, uint32_t 
     _acceptPaused = YES;
 }
 
-/// 受けられなくなった待ち受けを捨てる。_q の上で呼ぶ。
-/// 相手が居ないときにしか来ない（acceptPeer は相手が居れば accept しない）ので、
-/// 止めた待ち受けを resume する必要は無い。作り直しは cancel handler が
+/// fd が尽きたときに、待ち受けの通知を 1 秒止める。_q の上で呼ぶ。
+/// 止めるのに使うのは相手が居るときと同じ _acceptPaused なので、その間に
+/// stop が来ても dropPeer が resume してから cancel する（止めたままの source は
+/// cancel handler が呼ばれず、解放するとクラッシュする）。abandonListener も同じ。
+- (void)pauseAcceptBriefly {
+    if (_acceptPaused || !_acceptSrc) return;
+    dispatch_suspend(_acceptSrc);
+    _acceptPaused = YES;
+    dispatch_source_t src = _acceptSrc;
+    __weak typeof(self) weak = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)NSEC_PER_SEC), _q, ^{
+        ETLinkReceiver *s = weak;
+        if (!s) return;
+        // 止めた本人のまま、まだ止まっているときだけ戻す（作り直し・stop の後は触らない）。
+        if (s->_acceptSrc == src && s->_acceptPaused && s->_peerFd < 0) {
+            dispatch_resume(src);
+            s->_acceptPaused = NO;
+        }
+    });
+}
+
+/// 待ち受けが生きているかを見に行く。_q の上で呼ぶ。相手が居るあいだは見ない
+/// （待ち受けは止めてあり、相手と待ち受けは同時に defunct になるので、相手が
+/// 切れたとき dropPeer から見れば足りる）。
+/// defunct は so_error に EBADF を残す。SO_ERROR は読むと 0 に戻るが、
+/// 0 でなければどのみち捨てるので構わない。getsockopt 自体が失敗しても捨てる。
+/// accept を撃って確かめる形は使えない（EWOULDBLOCK が先に返る）。
+- (void)checkListener {
+    if (_listenFd < 0 || _peerFd >= 0) return;
+    int e = 0;
+    socklen_t l = sizeof(e);
+    if (getsockopt(_listenFd, SOL_SOCKET, SO_ERROR, &e, &l) != 0) e = errno ? errno : EBADF;
+    if (e != 0) [self abandonListener:e];
+}
+
+/// 使えなくなった待ち受けを捨てる。_q の上で呼ぶ。
+/// 相手が居ないときにしか来ない（acceptPeer は相手が居れば accept しない。
+/// checkListener も相手が居れば見ない）。止めてあるのは pauseAcceptBriefly の
+/// 1 秒だけで、そのときは resume してから cancel する。作り直しは cancel handler が
 /// fd を閉じた後の listenerClosed から。
 - (void)abandonListener:(int)err {
     static int logged = 0;
     if (logged++ < 20) {
-        os_log_error(ETLinkLog(), "ET accept 失敗 errno=%d 待ち受けを作り直す", err);
+        os_log_error(ETLinkLog(), "ET 待ち受けが使えない errno=%d 作り直す", err);
     }
     _relisten = YES;
-    if (_acceptSrc) { dispatch_source_cancel(_acceptSrc); _acceptSrc = nil; }
+    if (_probeSrc) { dispatch_source_cancel(_probeSrc); _probeSrc = nil; }
+    if (_acceptSrc) {
+        if (_acceptPaused) { dispatch_resume(_acceptSrc); _acceptPaused = NO; }
+        dispatch_source_cancel(_acceptSrc);
+        _acceptSrc = nil;
+    }
     _listenFd = -1;
     _acceptMisses = 0;
 }
 
 /// 待ち受けの fd を閉じた。_q の上で（cancel handler から）呼ばれる。
 /// stop で畳んだときは何もしない。
+///
+/// **間は作り直しをまたいで延ばす。**relistenAfter の倍々は start が失敗したときしか
+/// 効かず、作るたびに成功してすぐ捨てられる形（同じ理由で毎回 abandon される）では
+/// 主スレッドと _q を往復し続ける。作ってから RX_RELISTEN_QUICK_NS のうちに
+/// 捨てたなら前の間を倍に（1, 2, 4 … 30 秒）、長く持ったなら待たずに作り直す。
 - (void)listenerClosed {
     if (!_relisten) return;
     _relisten = NO;
+    uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
+    if (now - _listenBuiltNs < RX_RELISTEN_QUICK_NS) {
+        _relistenDelay = _relistenDelay == 0 ? 1 : (_relistenDelay * 2 > 30 ? 30 : _relistenDelay * 2);
+    } else {
+        _relistenDelay = 0;
+    }
+    uint32_t delay = _relistenDelay;
+    uint32_t retry = delay == 0 ? 1 : (delay * 2 > 30 ? 30 : delay * 2);
     // start は AudioIO と同じ主スレッドで呼ぶ（_listenFd を見て二重に作らないため）。
-    dispatch_async(dispatch_get_main_queue(), ^{ [self relistenAfter:1]; });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delay * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{ [self relistenAfter:retry]; });
 }
 
 /// 待ち受けを作り直す。主スレッドで呼ぶ。
@@ -681,6 +859,13 @@ static void ETLinkReceiverTakeChunk(void *ctx, const uint8_t *payload, uint32_t 
     if (_acceptPaused && _acceptSrc) {
         dispatch_resume(_acceptSrc);
         _acceptPaused = NO;
+    }
+    // 相手が切れたのは、iOS が相手と待ち受けを一緒に defunct にしたせいかもしれない。
+    // その場で見て、生きていれば相手が居ないあいだの見回りへ戻す。
+    [self checkListener];
+    if (_probeSrc) {
+        dispatch_source_set_timer(_probeSrc, dispatch_time(DISPATCH_TIME_NOW, (int64_t)RX_PROBE_NS),
+                                  RX_PROBE_NS, RX_PROBE_LEEWAY_NS);
     }
 }
 

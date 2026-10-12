@@ -41,7 +41,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 /// 音のスレッドから呼ぶ。内部のリングに積み、送り手が寝ていれば 1 回だけ起こす。
-/// objc_msgSend も ARC も通らない。送信は別スレッド（送り手の _q）。
+/// objc_msgSend も ARC も libdispatch も通らない（起こすのは semaphore_signal 1 回）。
+/// 送信は別スレッド（送り手の _q）。
 void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t channels);
 
 /// 受け手（プレイヤー側）。
