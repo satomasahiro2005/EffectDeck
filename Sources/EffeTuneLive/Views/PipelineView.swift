@@ -1812,7 +1812,7 @@ struct PipelineView: View {
     /// 例外が 2 つ。
     ///   - Level Meter は「図だけ」で止める。畳むと名前の行に細い棒が出る形で、
     ///     音が来ているかを見るために置く道具だから
-    ///   - 図を持たないもの（IR Reverb）は「図だけ」の段が無いので 開く ↔ 畳む
+    ///   - 図を持たないもの（SFZ Note Player）は「図だけ」の段が無いので 開く ↔ 畳む
     private func cycle(_ node: EffeTuneDSP.Node) {
         let id = node.id
         let hasGraph = ETEffectViews.hasGraph(node.spec.type)
