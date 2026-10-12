@@ -43,6 +43,7 @@ enum ETIRLoader {
     @MainActor
     @discardableResult
     static func reload(irId: String,
+                       nodeID: UUID,
                        engine: UInt32,
                        instance: UInt32,
                        processingRate: Double,
@@ -55,6 +56,7 @@ enum ETIRLoader {
               let entry = IRLibrary.shared.entries.first(where: { $0.id == irId })
         else { return nil }
         return try? load(url: entry.url,
+                         nodeID: nodeID,
                          engine: engine,
                          instance: instance,
                          processingRate: processingRate,
@@ -86,12 +88,15 @@ enum ETIRLoader {
     /// 入れ替わりうるので、重い伸縮は面ごとに別のコアへ散らすだけにしてある
     /// （ETIRPreparation.resampleChannels）。
     ///
-    /// - Parameter options: 下ごしらえのつまみ（dc / co / dt / tr）。段のNode.designから引く
-    ///   （ETIRPreparation.Options(designParams:)）。
+    /// - Parameters:
+    ///   - nodeID: 段の id。EDC グラフ（ETIRGraphStore）を段ごとに置くため。
+    ///   - options: 下ごしらえのつまみ（dc / co / dt / tr）。段のNode.designから引く
+    ///     （ETIRPreparation.Options(designParams:)）。
     /// - Returns: UI へ出す 1 行。「4ch True Stereo / 48000 Hz / 1.2 s」の形。
     @MainActor
     @discardableResult
     static func load(url: URL,
+                     nodeID: UUID,
                      engine: UInt32,
                      instance: UInt32,
                      processingRate: Double,
@@ -149,6 +154,32 @@ enum ETIRLoader {
         // 送ったら組み直す。カーネルは資産が入って初めてその段を有効と数える。
         // 入れ直しのときは呼び手（reloadAssets）がまとめて 1 回呼ぶ。
         EffeTuneDSP.shared.republish()
+
+        // EDC グラフ。**Current は今カーネルへ送った面そのもの、Original は decay・trim の前の面**
+        // （上流の emit.analysis / prepare.analysis.original と同じ。IRAnalysis.swift の冒頭）。
+        // 重いので解析は裏へ出し、送るところまでは同期のまま。キーが前と同じなら走らない。
+        let attributes = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        ETIRGraphStore.shared.analyze(
+            nodeID: nodeID,
+            key: ETIRGraphStore.Key(path: url.path,
+                                    modified: attributes?.contentModificationDate,
+                                    fileSize: attributes?.fileSize,
+                                    processingRate: processingRate,
+                                    rateDivider: resolved.rateDivider,
+                                    convolutionRate: resolved.convolutionRate,
+                                    topology: resolved.topology.rawValue,
+                                    assetChannels: resolved.assetChannels,
+                                    directCut: options.directCut,
+                                    cutOffsetMs: options.cutOffsetMs,
+                                    decayPercent: options.decayPercent,
+                                    trimPercent: options.trimPercent,
+                                    emittedFrames: emitted.channels.first?.count ?? 0),
+            source: ETIRGraphSource(originalChannels: staged.originalChannels,
+                                    emittedChannels: emitted.channels,
+                                    sampleRate: resolved.convolutionRate,
+                                    onsetFrame: staged.onsetFrame,
+                                    cutFrame: staged.cutFrame,
+                                    sourceStartFrame: staged.sourceStartFrame))
 
         let frames = emitted.channels.first?.count ?? 0
         // 長さはふつう素材の長さ。カーネルに収めるために切ったときは、送った長さを出す

@@ -61,6 +61,8 @@ struct EffectCardView: View {
     @State private var sheet: Sheet?
     /// 2列のとき。開閉の印を出さない（Components.swiftのetCardsPinnedOpen）。
     @Environment(\.etCardsPinnedOpen) private var pinnedOpen
+    /// IR Reverb の図が出来たか（showsCollapsedGraph）。IR を入れ替えたときだけ変わる。
+    @ObservedObject private var irGraphs = ETIRGraphStore.shared
 
     var body: some View {
         if node.isSection {
@@ -334,9 +336,17 @@ struct EffectCardView: View {
     /// 畳んだときに図だけを出すか。
     ///
     /// **`has` ではなく `hasGraph`。** 専用の画面はあるが図は描かないもの
-    /// （IR Reverb）を `has` で拾うと、畳んでいるのに取り込む口と状態行が
-    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（実機で確認）。
-    private var showsCollapsedGraph: Bool { ETEffectViews.hasGraph(node.spec.type) }
+    /// （SFZ Note Player など）を `has` で拾うと、畳んでいるのに取り込む口や状態行が
+    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（IR Reverb で実機確認。
+    /// 今の IR Reverb は図を持ち、etGraphOnly では図だけを返す）。
+    ///
+    /// **IR Reverb は IR が入っているときだけ。**入っていなければ図が無いので（IRReverbDecayGraph）、
+    /// 図を出すことにすると畳んだカードに余白だけが残る。
+    private var showsCollapsedGraph: Bool {
+        guard ETEffectViews.hasGraph(node.spec.type) else { return false }
+        if node.spec.type == "IRReverbPlugin" { return irGraphs.graphs[node.id] != nil }
+        return true
+    }
 
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。

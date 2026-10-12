@@ -4,13 +4,19 @@
 //  上流はカードの頭に「Import file… / Choose from library…」と状態行・情報行を置き、
 //  その下に EDC（エネルギー減衰）グラフを出す
 //  （Vendor/effetune/plugins/reverb/ir_reverb.js:1952-1987）。
-//  ここで作ったのは IR を取り込む口までで、グラフは出していない。
+//  ここも同じ並びで、取り込む口・名前と情報行・グラフ・つまみの順に置く。
 //
-//  --- グラフを出していない理由 ---
-//  上流のグラフは IR の PCM から包絡と EDC を計算して描いている
-//  （ir_reverb.js:1787-1934）。テレメトリでは来ない値なので、材料は IR そのもの。
-//  ETIRLoader が読んだ面はカーネルへ送ったあと手放していて、描く用に
-//  持ち続けてはいない。出すなら包絡を先に畳んでから残す形になる。
+//  --- グラフ ---
+//  描くのは IRReverbDecayGraph.swift。点は送った IR（カーネルが受け取った面）と、
+//  decay・trim の前の面から ETIRGraphStore が裏で計算して持つ。
+//  以前は出していなかった。ETIRLoader が読んだ面を送ったあとで手放していて、描く材料が
+//  残っていなかったため。今は load が送ったあとに、送った面と decay・trim の前の面を
+//  解析へ渡す（DSP/IRLoader.swift）。曲線は IR が無ければ描けないので、入っていないときは枠だけ。
+//
+//  **畳んだカード（etGraphOnly）ではグラフだけを返す。** 取り込む口・状態行・選択肢・つまみを
+//  ここで返すと、畳んでいるのに隣のカードに重なってボタンを塞いだ（実機で確認。
+//  EffectCardView の showsCollapsedGraph の注釈）。ParameterRow は畳むと自分で消えるが、
+//  choiceRow・Toggle・スライダーは消えないので、行ごとでなく editor 丸ごと外す。
 //
 //  上流の metadata 行（ir_reverb.js:1719-1741。秒数・ch 数・トポロジ・レート変換・
 //  レイテンシ・MiB）に当たるのが notice の 2 行目で、送り込めたときに
@@ -55,14 +61,42 @@ struct IRReverbView: View {
     @State private var loaded: String?
     /// 送り込めなかった理由。上流の文をそのまま出す。
     @State private var failure: String?
+    /// 畳んだカードのとき true。グラフだけを出す（上の「グラフ」の注釈）。
+    @Environment(\.etGraphOnly) private var graphOnly
 
     /// ボタンの帯で出す選択肢。残りは ParameterRow に任せる。
     private static let stripKeys: Set<String> = ["cm", "lt", "cr"]
 
     var body: some View {
+        if graphOnly {
+            decayGraph
+        } else {
+            editor
+        }
+    }
+
+    /// 上流の順（metadata → グラフ → Channel Mode…、ir_reverb.js:2018-2034）。
+    private var decayGraph: some View {
+        IRReverbDecayGraph(nodeID: node.id,
+                           preDelayMs: value("pd"),
+                           directCut: preparation.directCut)
+    }
+
+    /// Pre Delay などカタログのつまみの値。無ければ 0。
+    private func value(_ key: String) -> Double {
+        guard let param = node.spec.params.first(where: { $0.key == key }),
+              node.values.indices.contains(param.offset) else { return 0 }
+        return Double(node.values[param.offset])
+    }
+
+    private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
             source
-            notice
+            // **何も入っていなければ箱ごと出さない。**「No impulse response loaded」の 1 行のために
+            // ファイル名の箱が場所を取っていた。入っていない段は Import file… の行だけで分かる。
+            // 送り込めなかった理由は出すので、failure があるときは残す。
+            if hasNotice { notice }
+            decayGraph
 
             ForEach(node.spec.params) { param in
                 if case .enumeration(let options) = param.kind,
@@ -130,6 +164,10 @@ struct IRReverbView: View {
     /// 上流の metadata 行（ir_reverb.js:1719-1741）に当たるもの。
     /// 入っていれば「4ch True Stereo / 48000 Hz / 1.23 s」、
     /// 入っていなければ上流と同じ 1 行（:1721）を出す。
+    private var hasNotice: Bool {
+        !node.irId.isEmpty || loaded != nil || failure != nil || dsp.assetInfo[node.id] != nil
+    }
+
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
             // 名前が先。何を使っているかが分からないと、聴き比べのときに困る。
@@ -199,6 +237,7 @@ struct IRReverbView: View {
         failure = nil
         do {
             loaded = try ETIRLoader.load(url: url,
+                                         nodeID: node.id,
                                          engine: dsp.engine,
                                          instance: node.instance,
                                          processingRate: dsp.sampleRate,
