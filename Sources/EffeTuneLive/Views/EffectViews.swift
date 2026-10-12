@@ -16,9 +16,8 @@ enum ETEffectViews {
     /// 増えたらここに足す。
     private static let withoutGraph: Set<String> = [
         "SpatialMapperPlugin",
-        // 取り込む口と状態行だけ。曲線は IR が無いと描けない
-        // （IRReverbView.swift の冒頭に理由がある）。
-        "IRReverbPlugin",
+        // （IRReverbPlugin は2026-10にここから外した。EDC のグラフを足したため。
+        //  畳んだ形では IRReverbView がグラフだけを返す。IRReverbView.swift の冒頭を読むこと。）
         // 資産を送り込む 6 種。操作するのは設計の設定で、描く材料
         // （測定や設計した応答）はテレメトリでは来ない。
         "CrosstalkCancellationPlugin",
