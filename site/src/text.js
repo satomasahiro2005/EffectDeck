@@ -79,6 +79,10 @@ export const TEXT = {
   chainTitle: "Effect chain",
   // ページからアプリへ渡すボタンは無い（worker.js の頭）。Safari のバナーか、アプリの貼り付けで渡す。
   chainHowTo: "If EffectDeck is installed, Safari shows a banner with <strong>Open</strong> at the top of this page. In another browser, copy this page's address and open EffectDeck. It offers to paste the link.",
+  // 鎖のページから EffeTune の Web 版へ（parse.js の effeTuneLink）。AU・JSFX は向こうに無いので落とす。
+  openEffeTune: "Open in EffeTune",
+  openEffeTuneWithout1: "Open in EffeTune without 1 external effect",
+  openEffeTuneWithoutN: "Open in EffeTune without {n} external effects",
   jsfxHowTo: "If EffectDeck is installed, Safari shows a banner with <strong>Open</strong> at the top of this page. Otherwise, copy the script below and use <strong>Import JSFX → From Clipboard</strong> in the app.",
   // /write。依頼文（links.js の CHATGPT_Q）の前後に 1 行ずつ。説明を増やさない。
   writeTitle: "Write a JSFX effect with ChatGPT",
@@ -153,7 +157,7 @@ export const FAQ = [
 // **中身を変えたら updated も変える。**
 export const PRIVACY = {
   title: "Privacy Policy",
-  updated: "Last updated 2026-09-27",
+  updated: "Last updated 2026-10-12",
   body: `
 <p>
   nemut.ai does not collect or store any of your data. There is no account to sign
@@ -210,10 +214,10 @@ export const PRIVACY = {
   <a href="${OPENAI_PRIVACY}">OpenAI Privacy Policy</a>.
 </p>
 <p>
-  Sharing a JSFX script, or a chain that uses AUv3 plug-ins or JSFX effects, makes a link
-  on effectdeck.nemut.ai. Sharing a chain of only built-in effects, or exporting a chain to
-  EffeTune, makes a link to the EffeTune web app on effetune.frieve.com, which nemut.ai
-  does not run. The chain or the script is carried in the link itself. Nothing is
+  Sharing a chain or a JSFX script makes a link on effectdeck.nemut.ai, or a link to the
+  EffeTune web app on effetune.frieve.com, which nemut.ai does not run. The page for a chain
+  link on effectdeck.nemut.ai also links to the EffeTune web app. The chain or the script is
+  carried in the link itself. Nothing is
   uploaded when the link is made. When EffectDeck opens an effectdeck.nemut.ai link, it
   reads the link on the device and contacts no server.
 </p>

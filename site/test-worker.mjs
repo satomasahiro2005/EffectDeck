@@ -197,6 +197,10 @@ try {
     const chain = (await get(DECK, `/?p=${p}`)).body;
     assert.ok(chain.includes('<meta property="og:description" content="An effect chain shared from EffectDeck: Volume, Parametric EQ">'));
     assert.ok(!chain.includes('property="og:url"'), "a share link is not canonical");
+    // PC の EffeTune へ渡す口（内蔵だけの鎖なので中身はそのまま）
+    assert.ok(chain.includes(`<a class="btn gh" href="https://effetune.frieve.com/effetune.html?p=${p.replace(/\+/g, "%2B")}">Open in EffeTune</a>`));
+    const ext = Buffer.from(JSON.stringify([{ nm: "Volume" }, { nm: "Gain", external: "au:x" }])).toString("base64");
+    assert.ok((await get(DECK, `/?p=${ext}`)).body.includes(">Open in EffeTune without 1 external effect</a>"));
     const og = await get(DECK, "/og.png");
     assert.equal(og.status, 200);
     assert.equal(og.headers.get("content-type"), "image/png");

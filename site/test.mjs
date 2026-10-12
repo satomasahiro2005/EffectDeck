@@ -196,10 +196,54 @@ await test("share links: effectdeck.nemut.ai only for JSFX and chains with AUv3 
   assert.ok(!LLMS_TXT.includes("Chains and JSFX scripts are shared"));
 });
 
+// アプリのETShareLink.effeTuneFormと同じ形に落とす（ShareLinkTests）。
+await test("chain page: EffeTune link drops external effects like ETShareLink.effeTuneForm", async () => {
+  const { effeTuneLink, EFFETUNE_APP } = parse;
+  const b64 = (v) => Buffer.from(JSON.stringify(v)).toString("base64");
+  const read = (link) => {
+    const u = new URL(link.url);
+    assert.equal(`${u.origin}${u.pathname}`, EFFETUNE_APP);
+    // 上流と同じ読み方（URLSearchParams）で + が残り、文字集合の検査を通ること
+    const p = u.searchParams.get("p");
+    assert.match(p, /^[A-Za-z0-9+/=]+$/);
+    return JSON.parse(Buffer.from(p, "base64").toString("utf8"));
+  };
+  const chain = [
+    { nm: "Section", cm: "Main", en: true },
+    { nm: "Volume", en: true, vl: -3 },
+    { nm: "Gain", en: true, external: "au:aufx:gain:ACME", externalInstance: "x" },
+    { nm: "Router", en: false, external: "au:aufx:rout:ACME", ib: 2, ob: 0, ch: "L" },
+    { jsfx: "Tape Wobble" },
+    { nm: "Section", cm: "", en: true, rr: true },
+    { nm: "Delay", en: true },
+  ];
+  const link = effeTuneLink(b64(chain));
+  assert.equal(link.dropped, 3);
+  assert.deepEqual(read(link), [
+    { nm: "Section", cm: "Main", en: true },
+    { nm: "Volume", en: true, vl: -3 },
+    { nm: "Volume", en: false, vl: 0, ib: 2, ob: 0, ch: "L" },
+    { nm: "Section", cm: "", en: true },
+    { nm: "Delay", en: true },
+  ]);
+  // 内蔵だけなら何も落とさない。+ が出る名前でも %2B で書く
+  const plain = [{ nm: "Section", cm: "日本語~~>" }, { nm: "Volume~" }];
+  const plainLink = effeTuneLink(b64(plain));
+  assert.equal(plainLink.dropped, 0);
+  assert.ok(plainLink.url.includes("%2B") && !plainLink.url.includes("+"), plainLink.url);
+  assert.deepEqual(read(plainLink), plain);
+  // 何も残らない・ロング形式・読めないものはボタンを出さない
+  assert.equal(effeTuneLink(b64([{ jsfx: "Only" }])), null);
+  assert.equal(effeTuneLink(b64({ pipeline: [{ name: "Volume" }] })), null);
+  assert.equal(effeTuneLink("not base64 at all"), null);
+  // 長い鎖でも落ちない
+  assert.ok(effeTuneLink(b64(Array.from({ length: 500 }, () => ({ nm: "Volume", en: true, vl: 0 })))));
+});
+
 // プライバシーポリシーのLinksは、アプリが取りに行く先と開く先を全部言う（text.jsのPRIVACYの頭）。
 await test("privacy: Links covers every download and every page the app opens", async () => {
   const body = PRIVACY.body.replace(/\s+/g, " ");
-  assert.equal(PRIVACY.updated, "Last updated 2026-09-27");
+  assert.equal(PRIVACY.updated, "Last updated 2026-10-12");
   for (const s of [
     "From Link</strong> downloads the JSFX script or impulse response",
     "the EffectDeck share extension downloads it the same way",

@@ -15,7 +15,7 @@
 // ページは英語だけ（2026-09-26 に日本語をやめた）。古いリンクの ?lang= は読まずに捨てる。
 
 import { decodeFXD } from "./fxd.js";
-import { chainEntries } from "./parse.js";
+import { chainEntries, effeTuneLink } from "./parse.js";
 import { TEXT, FAQ, PRIVACY, LLMS_TXT } from "./text.js";
 import { GUIDE, SOURCES } from "./guide.js";
 import { GUIDE_SHOTS } from "./shots.js";
@@ -763,6 +763,12 @@ ${paras(t.dev)}
 // **クエリは字のまま使う。**searchParams を触ると %2B や / の符号が書き換わる。
 const deckURL = (url) => `https://${DECK_HOST}${url.pathname}${url.search}`;
 
+// アプリの「Export to EffeTune without N external effects」と同じ言い方。
+const effeTuneLabel = (t, dropped) =>
+  dropped === 0 ? t.openEffeTune
+    : dropped === 1 ? t.openEffeTuneWithout1
+    : t.openEffeTuneWithoutN.replace("{n}", String(dropped));
+
 function chainPage(url) {
   const t = TEXT;
   const entries = chainEntries(url.searchParams.get("p"));
@@ -781,10 +787,15 @@ function chainPage(url) {
           ? `<li class="section">${esc(e.name)}</li>`
           : `<li${e.off ? ' class="off"' : ""}>${esc(e.name)}${e.off ? `<span class="tag">${t.off}</span>` : ""}</li>`)
       .join("");
+    // PC の EffeTune で開く人への口（parse.js の effeTuneLink）。外の段を落とすなら数を添える。
+    const effetune = effeTuneLink(url.searchParams.get("p"));
+    const toEffeTune = effetune
+      ? `<a class="btn gh" href="${esc(effetune.url)}">${effeTuneLabel(t, effetune.dropped)}</a>`
+      : "";
     body = `
 <h1>${t.chainTitle}</h1>
 <p class="muted">${t.chainHowTo}</p>
-<div class="actions">${badge()}</div>
+<div class="actions">${badge()}${toEffeTune}</div>
 <ul class="chain">${items}</ul>`;
   } else {
     body = `
