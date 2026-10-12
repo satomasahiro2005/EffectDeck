@@ -291,9 +291,10 @@ export const GUIDE = {
         { p: `${b("Presets &rarr; Save current chain")} keeps a copy of the chain as it is now. It is a copy: editing the chain later does not change the preset.` },
         { h: "Make a link", id: "link" },
         { ul: [
-          // 内蔵の効果だけの鎖はEffeTuneのWeb版のリンクになる（ETShareLink.url(for:)）。
-          `${b("Presets &rarr; Share this chain")}. A chain of only built-in effects is shared as a link to the EffeTune web app, so someone on a computer can open it too.`,
-          "JSFX scripts, and chains that use AUv3 plug-ins or JSFX effects, are shared as links on effectdeck.nemut.ai. With the app installed, they open in the app. The chain travels, the plug-ins do not: whoever opens it needs the same ones.",
+          // 鎖はいつもeffectdeck.nemut.aiのリンクになる（ETShareLink.deckURL(for:)）。EffeTuneへはそのページから（parse.jsのeffeTuneLink）。
+          `${b("Presets &rarr; Share this chain")}. Chains and JSFX scripts are shared as links on effectdeck.nemut.ai. With the app installed, they open in the app.`,
+          `Without the app, the link shows the chain with ${b("Open in EffeTune")}, so someone on a computer can open it in the EffeTune web app. AUv3 plug-ins and JSFX effects are left out there.`,
+          "The chain travels, the plug-ins do not: whoever opens it needs the same ones.",
           "A chain link does not carry JSFX source code. A JSFX script shared on its own does: the whole script is in the link, after the #, which browsers never send to a server.",
           "Impulse response files are not in links either. Send the file, or say where it came from and under what terms.",
           "With Output Correction on, you can share the chain alone or with the correction included. Either way, which headphones it belongs to stays on your device.",
