@@ -446,6 +446,7 @@ const ldScript = (data) =>
 async function page({
   title, body, status = 200, script = null, banner = null,
   description = TEXT.description, canonical = null, width = "", ld = null, noindex = false,
+  ogImage = OG_IMAGE, ogAlt = OG_ALT,
 }) {
   const t = TEXT;
   const bannerContent = banner ? bannerPrefix + banner : `app-id=${APP_STORE_ID}`;
@@ -465,17 +466,17 @@ ${noindex ? `<meta name="robots" content="noindex, follow">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
-${canonical ? `<meta property="og:url" content="${esc(canonical)}">\n` : ""}<meta property="og:image" content="${OG_IMAGE}">
+${canonical ? `<meta property="og:url" content="${esc(canonical)}">\n` : ""}<meta property="og:image" content="${ogImage}">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="${OG_ALT}">
+<meta property="og:image:alt" content="${esc(ogAlt)}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@${TWITTER.split("/").pop()}">
 <meta name="twitter:title" content="${esc(title)}">
 <meta name="twitter:description" content="${esc(description)}">
-<meta name="twitter:image" content="${OG_IMAGE}">
-<meta name="twitter:image:alt" content="${OG_ALT}">
+<meta name="twitter:image" content="${ogImage}">
+<meta name="twitter:image:alt" content="${esc(ogAlt)}">
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" href="/icon.png">
@@ -709,7 +710,8 @@ function guideIndex() {
 <ol class="cards">
 ${guideCards()}
 </ol>`;
-  return page({ title: `${g.title} — EffectDeck`, body, canonical: `${ORIGIN}/guide`, description: g.description, width: "wide" });
+  return page({ title: `${g.title} — EffectDeck`, body, canonical: `${ORIGIN}/guide`, description: g.description, width: "wide",
+    ogImage: `${ORIGIN}/og/guide.png`, ogAlt: "EffectDeck Guide, with three screens of the app" });
 }
 
 // /guide/<slug>。前へ／次へは GUIDE.pages の並び。
@@ -733,6 +735,7 @@ ${LIGHTBOX}`;
   return page({
     title: `${g.title} — EffectDeck`, body, canonical: `${ORIGIN}/guide/${g.slug}`, description: g.description,
     script: LIGHTBOX_JS,
+    ogImage: `${ORIGIN}/og/guide-${g.slug}.png`, ogAlt: `EffectDeck Guide: ${g.title}`,
   });
 }
 

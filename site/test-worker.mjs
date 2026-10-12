@@ -177,14 +177,18 @@ try {
     for (const path of ["/", ...PAGES, "/privacy", `/?p=${p}`, "/j", "/write"]) {
       const r = await get(DECK, path);
       const meta = (attr, key) => new RegExp(`<meta ${attr}="${key.replace(/[:.]/g, "\\$&")}" content="([^"]*)">`).exec(r.body)?.[1];
-      assert.equal(meta("property", "og:image"), `https://${DECK}/og.png`, path);
+      // ガイドは自分の絵（public/og、tools/og-guide.mjs）。ほかは og.png
+      const guide = /^\/guide(?:\/([a-z]+))?$/.exec(path);
+      const og = guide ? `/og/guide${guide[1] ? "-" + guide[1] : ""}.png` : "/og.png";
+      assert.equal(meta("property", "og:image"), `https://${DECK}${og}`, path);
+      if (guide) assert.ok(existsSync(new URL(`public${og}`, here)), og);
       assert.equal(meta("property", "og:image:width"), "1200");
       assert.equal(meta("property", "og:image:height"), "630");
       assert.ok(meta("property", "og:title"), path);
       assert.ok(meta("property", "og:description"), path);
       assert.equal(meta("property", "og:type"), "website");
       assert.equal(meta("name", "twitter:card"), "summary_large_image");
-      assert.equal(meta("name", "twitter:image"), `https://${DECK}/og.png`);
+      assert.equal(meta("name", "twitter:image"), `https://${DECK}${og}`, path);
       assert.ok(meta("name", "twitter:title"), path);
     }
     const home = (await get(DECK, "/")).body;

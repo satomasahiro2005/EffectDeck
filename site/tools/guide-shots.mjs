@@ -27,7 +27,7 @@ const CARDS = {
   "card-correction": ["g-correction-5", 0.1],
   "card-effects": ["g-effects-3", 0.06],
   "card-brir": ["g-brir-7", 0.08],
-  "card-chatgpt": ["g-chatgpt-3", 0.14],
+  "card-chatgpt": ["g-chatgpt-1", 0.4],
   "card-share": ["g-share-5", 0.62],
 };
 
