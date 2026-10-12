@@ -37,6 +37,10 @@ enum ETShareLink {
 
     /// Make a link which the official EffeTune web app can read.
     ///
+    /// **共有の画面からは使わない。**共有はいつも `deckURL`。EffeTune へは effectdeck.nemut.ai の
+    /// 鎖のページが同じ形に落として渡す（site/src/parse.js の effeTuneLink）。
+    /// `effeTuneForm` を変えたら、あちらも揃える（site/test.mjs が同じ落とし方を見張る）。
+    ///
     /// External processors are an EffectDeck extension and must never leak into
     /// an official EffeTune link. An in-place processor can simply disappear.
     /// A processor which routes between buses is replaced by a 0 dB Volume so
