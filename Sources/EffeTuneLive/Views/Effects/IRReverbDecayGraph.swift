@@ -51,8 +51,17 @@ struct IRReverbDecayGraph: View {
 
     private static let decibelRange: ClosedRange<Double> = -90...0
 
+    /// **IR が入っていなければ何も出さない。**上流は canvas を空にして枠だけ残すが、
+    /// こちらでは読み込めていない段に図 1 枚分の空白が居座るだけになる（畳んだカードでも同じ）。
+    @ViewBuilder
     var body: some View {
-        let graph = store.graphs[nodeID]
+        if let graph = store.graphs[nodeID] {
+            canvas(graph)
+        }
+    }
+
+    private func canvas(_ graph: ETIRGraph) -> some View {
+        let graph: ETIRGraph? = graph
         let layout = graph?.layout(preDelayMs: preDelayMs, directCut: directCut)
         let probeValues = probe.flatMap { seconds in graph.map { (seconds, $0.readout(seconds: seconds)) } }
 
