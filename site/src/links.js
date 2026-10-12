@@ -41,3 +41,27 @@ export const CHATGPT_Q =
   "First read https://github.com/satomasahiro2005/EffectDeck/blob/main/JSFX.md " +
   "and follow it. Then ask me what effect I want.";
 export const CHATGPT = "https://chatgpt.com/?q=" + encodeURIComponent(CHATGPT_Q);
+
+// ページの主張の出典。**人物の経歴は一次資料で確かめたものだけ書く**（2026-10-10 に確認）。
+// SONY_STORY: ソニーグループ R&D センター Tokyo Laboratory 19 の「主任研究員 / Distinguished Engineer」として
+//   連載 Inside the Minds of Sony's Corporate Distinguished Engineers #1 に出ている。日本語のページ。
+// FRIEVE_PREFERENCE: Fidelity と Preference を分ける考え方（note、日本語）。
+export const SONY_STORY = "https://www.sony.com/ja/SonyInfo/technology/stories/entries/2021_kobayashi/";
+export const FRIEVE_PREFERENCE = "https://note.com/frievea/n/na9057ee0bed3";
+export const FRIEVE_AUDIO = "https://note.com/frievea/n/n8de6451b1efd";
+// 移植の確かめ（公開しているテスト）。IR の前処理は上流のコードから golden を作って突き合わせている。
+export const IR_GOLDEN = "https://github.com/satomasahiro2005/EffectDeck/blob/main/Tools/ir_prepare_golden.mjs";
+export const TESTS = "https://github.com/satomasahiro2005/EffectDeck/tree/main/Tests";
+
+// 補正と BRIR の入手先。**AutoEq は autoeq.app が正面**（repo の results は普通の人向けでないと README が言う）。
+export const AUTOEQ = "https://autoeq.app/";
+export const AUTOEQ_REPO = "https://github.com/jaakkopasanen/AutoEq";
+// 機種ごとの <model> ParametricEQ.txt（autoeq.app の EqualizerAPO ParametricEq と同じ形式）。
+export const AUTOEQ_RESULTS = "https://github.com/jaakkopasanen/AutoEq/tree/master/results";
+// ASH Listening Set は素のデータ（CC BY-NC-SA 4.0 が原則）。ASH Toolset は生成する道具（AGPL-3.0）で、
+// Simulation Export の True Stereo WAV BRIRs が BRIR_True_Stereo.wav（4ch、LL/LR/RL/RR）を出す。
+export const ASH_SET = "https://github.com/ShanonPearce/ASH-Listening-Set";
+// 部屋ごとに BRIR_Rxx_C1_True_Stereo.wav（4ch）がそのまま置いてある。ガイドはこれを 1 つ落とすだけにした。
+export const ASH_BRIRS = "https://github.com/ShanonPearce/ASH-Listening-Set/tree/main/BRIRs";
+export const ASH_TOOLSET = "https://github.com/ShanonPearce/ASH-Toolset";
+export const IR_REVERB_DOC = "https://effetune.frieve.com/dsp/effects/ir-reverb/";

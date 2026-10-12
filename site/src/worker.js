@@ -17,6 +17,8 @@
 import { decodeFXD } from "./fxd.js";
 import { chainEntries } from "./parse.js";
 import { TEXT, FAQ, PRIVACY, LLMS_TXT } from "./text.js";
+import { GUIDE, SOURCES } from "./guide.js";
+import { GUIDE_SHOTS } from "./shots.js";
 import { ORIGIN, homeLd } from "./seo.js";
 import {
   DECK_HOST, LINK_HOST, DISCORD_HOST, DISCORD_INVITE, DISCORD, APP_ID, APP_STORE, APP_STORE_ID, GITHUB, RELEASES, TESTFLIGHT, TWITTER,
@@ -160,6 +162,12 @@ async function deck(url) {
     case "/j":
     case "/j/":
       return jsfxPage();
+    case "/guide":
+    case "/guide/":
+      return guideIndex();
+    case "/about":
+    case "/about/":
+      return aboutPage();
     case "/write":
     case "/write/":
       return writePage();
@@ -194,6 +202,8 @@ async function deck(url) {
     case "/icon-dark.png":
       return asset(iconDark, "image/png");
   }
+  const part = /^\/guide\/([a-z]+)\/?$/.exec(path);
+  if (part) return guidePage(part[1]);
   const shot = /^\/assets\/shot-([a-z]+)\.webp$/.exec(path);
   if (shot && Object.hasOwn(SHOT_BYTES, shot[1])) return asset(SHOT_BYTES[shot[1]], "image/webp");
   return notFound();
@@ -207,7 +217,7 @@ Sitemap: ${ORIGIN}/sitemap.xml
 // 載せるのは公式のページだけ。共有の鎖や JSFX のページは人ごとに違うので入れない。
 const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${["/", "/write", "/privacy"].map((p) => `  <url><loc>${ORIGIN}${p}</loc></url>`).join("\n")}
+${["/", "/guide", ...GUIDE.pages.map((g) => `/guide/${g.slug}`), "/about", "/write", "/privacy"].map((p) => `  <url><loc>${ORIGIN}${p}</loc></url>`).join("\n")}
 </urlset>
 `;
 
@@ -326,6 +336,84 @@ pre{background:var(--surface);border:1px solid var(--rule);border-radius:8px;pad
 .src-head{display:flex;justify-content:flex-end;margin:24px 0 0;padding:6px 8px;background:var(--surface);border:1px solid var(--rule);border-bottom:0;border-radius:8px 8px 0 0}
 .src-head+pre{border-radius:0 0 8px 8px}
 pre.prompt{white-space:pre-wrap;overflow-wrap:anywhere;max-height:none;font-size:14px;line-height:1.6}
+[id]{scroll-margin-top:16px}
+.hero h1{max-width:22ch;margin-inline:auto}
+.hero .lead{max-width:40rem}
+.btn.guide{display:inline-flex;align-items:center;height:48px;padding:0 20px;border-radius:10px}
+.hero{position:relative;isolation:isolate;overflow:hidden;padding-bottom:40px}
+.hero .actions+.actions{margin-top:0}
+.hero-bg{z-index:-1;pointer-events:none}
+.hero-bg{position:absolute;inset:0}
+.hero-bg img{display:none;position:absolute;top:56px;width:230px;height:auto;border-radius:22px;opacity:.5;
+  -webkit-mask-image:linear-gradient(#000 30%,transparent 85%);mask-image:linear-gradient(#000 30%,transparent 85%)}
+@media (prefers-color-scheme:dark){.hero-bg img{opacity:.4}}
+@media (min-width:1000px){.hero-bg .fan-0{display:block;left:0}.hero-bg .fan-2{display:block;right:0}}
+.hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:140px;background:linear-gradient(transparent,var(--bg));z-index:-1;pointer-events:none}
+.cards{list-style:none;padding:0;margin:16px 0 20px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;max-width:none}
+.cards li{margin:0}
+.cards a{display:block;height:100%;padding:16px 18px;border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:inherit;text-decoration:none}
+.cards a:hover{border-color:var(--accent)}
+.cards h3{margin:0 0 4px}
+.cards p{margin:0;color:var(--muted);font-size:.95rem}
+.cards .num{display:block;font:600 .8rem/1.4 var(--mono);color:var(--accent);margin-bottom:6px}
+@media (min-width:720px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (min-width:960px){.cards{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.toc{list-style:none;padding:0;margin:20px 0 0;display:flex;flex-wrap:wrap;gap:8px;max-width:none}
+.toc li{margin:0}
+.toc a{display:inline-block;padding:6px 12px;border:1px solid var(--rule);border-radius:999px;text-decoration:none;font-size:.9rem}
+.toc a:hover{border-color:var(--accent)}
+.chapter-n{display:block;font:600 .8rem/1.4 var(--mono);color:var(--accent);letter-spacing:.04em;margin-bottom:4px}
+.chapter-n .opt{color:var(--muted);font-weight:500}
+.goal{font-size:1.08rem}
+.guide h3{margin:28px 0 8px}
+ol{margin:0 0 12px;padding-left:1.4em;max-width:70ch}
+.note{border-left:3px solid var(--rule);padding:2px 0 2px 14px}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font:500 .9rem/1.4 var(--mono)}
+.flow span.step{padding:6px 10px;border:1px solid var(--rule);border-radius:8px;background:var(--surface)}
+.flow span.arr{color:var(--muted)}
+.done{margin:20px 0 0;padding:12px 16px;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+.done p{margin:0 0 4px;font:600 .85rem/1.4 var(--mono);color:var(--muted)}
+.done ul{margin:0}
+.done li:last-child{margin-bottom:0}
+table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:.95rem}
+th,td{text-align:left;padding:8px 10px 8px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:600}
+td:first-child{white-space:nowrap;padding-right:16px}
+.sources li{font-size:.95rem}
+a.zoom{display:block;cursor:zoom-in;border-radius:18px}
+a.zoom:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+dialog#lightbox{padding:0;border:0;margin:0;background:transparent;width:100vw;height:100dvh;max-width:100vw;max-height:100dvh;color:#fff}
+dialog#lightbox[open]{display:flex;align-items:center;justify-content:center;gap:12px}
+dialog#lightbox::backdrop{background:rgba(0,0,0,.88)}
+#lightbox figure{margin:0;display:flex;flex-direction:column;align-items:center;min-width:0}
+#lightbox img{display:block;max-height:calc(100dvh - 104px);max-width:min(92vw,620px);width:auto;height:auto;border-radius:22px;background:#f2f2f7;cursor:zoom-out}
+#lightbox p{margin:12px 0 0;max-width:min(92vw,620px);font-size:.92rem;line-height:1.5;text-align:center;color:#e6edf3}
+#lightbox button{flex:0 0 auto;width:44px;height:44px;border:0;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;font:400 1.7rem/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
+#lightbox button:hover{background:rgba(255,255,255,.26)}
+#lightbox .lb-close{position:fixed;top:14px;right:14px}
+@media (max-width:640px){#lightbox .lb-prev,#lightbox .lb-next{display:none}}
+.crumbs{font-size:.88rem;color:var(--muted);margin:0 0 12px}
+.crumbs a{color:inherit}
+.lead.goal{font-size:1.1rem;margin-bottom:8px}
+.pager{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin:48px 0 0;padding-top:24px;border-top:1px solid var(--rule)}
+.pager a{display:block;padding:12px 16px;border:1px solid var(--rule);border-radius:10px;text-decoration:none;color:var(--fg);font-weight:600;line-height:1.4}
+.pager a:hover{border-color:var(--accent)}
+.pager span{display:block;font:600 .75rem/1.4 var(--mono);color:var(--muted);margin-bottom:4px}
+.pager .next{grid-column:2;text-align:right}
+.shotrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:20px 14px;margin:12px 0 24px}
+.shotrow figure,figure.wide{margin:0}
+figure.wide{margin:12px 0 24px;max-width:44rem}
+.shotrow img{display:block;width:100%;height:auto;border-radius:18px;border:1px solid var(--rule);background:#f2f2f7}
+@media (prefers-color-scheme:dark){.shotrow img{filter:brightness(.88)}}
+.ph{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px dashed var(--rule);border-radius:18px;background:repeating-linear-gradient(135deg,var(--surface) 0 10px,transparent 10px 20px);color:var(--muted);text-align:center}
+.ph.phone{aspect-ratio:552/1200}
+.ph.landscape{aspect-ratio:16/9;border-radius:12px}
+.ph.thumb{aspect-ratio:16/10;border-radius:8px;margin:0 0 12px}
+.ph svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:1.5;opacity:.7}
+img.shot-thumb{display:block;width:100%;height:auto;aspect-ratio:16/10;object-fit:cover;border-radius:8px;margin:0 0 12px;border:1px solid var(--rule)}
+img.shot-landscape{display:block;width:100%;height:auto;border-radius:12px;border:1px solid var(--rule)}
+.ph .ph-id{font:500 .72rem/1.3 var(--mono);overflow-wrap:anywhere}
+figcaption.cap{margin-top:8px;font-size:.82rem;line-height:1.45;color:var(--muted)}
 footer.site{margin-top:56px;border-top:1px solid var(--rule);color:var(--muted);font-size:.88rem}
 footer.site .wrap{padding-block:28px 40px}
 footer.site a{color:inherit}
@@ -397,14 +485,14 @@ ${ld ? ldScript(ld) + "\n" : ""}<style>${CSS}</style>
 <body${width ? ` class="${width}"` : ""}>
 <header class="site"><div class="wrap">
 <a class="brand" href="/"><picture><source srcset="/icon-dark.png" media="(prefers-color-scheme: dark)"><img src="/icon.png" alt=""></picture>EffectDeck</a>
-<nav class="site"><a href="/#faq">FAQ</a><a href="/#jsfx">JSFX</a><a class="icon" href="${GITHUB}" aria-label="GitHub" title="GitHub">${ICON_GITHUB}</a><a class="icon" href="${DISCORD}" aria-label="Discord" title="Discord">${ICON_DISCORD}</a></nav>
+<nav class="site"><a href="/guide">Guide</a><a href="/#faq">FAQ</a><a class="icon" href="${GITHUB}" aria-label="GitHub" title="GitHub">${ICON_GITHUB}</a><a class="icon" href="${DISCORD}" aria-label="Discord" title="Discord">${ICON_DISCORD}</a></nav>
 </div></header>
 <main class="wrap">
 ${body}
 </main>
 <footer class="site"><div class="wrap">
 <p>${t.disclaimer}</p>
-<a href="/privacy">${t.privacy}</a><span class="sep">·</span><a href="${GITHUB}">GitHub</a><span class="sep">·</span><a href="${DISCORD}">Discord</a><span class="sep">·</span><a href="${RELEASES}">${t.releaseNotes}</a><span class="sep">·</span><a href="${TESTFLIGHT}">${t.betaLink}</a><span class="sep">·</span>© 2026 nemut.ai
+<a href="/about">About</a><span class="sep">·</span><a href="/privacy">${t.privacy}</a><span class="sep">·</span><a href="${GITHUB}">GitHub</a><span class="sep">·</span><a href="${DISCORD}">Discord</a><span class="sep">·</span><a href="${RELEASES}">${t.releaseNotes}</a><span class="sep">·</span><a href="${TESTFLIGHT}">${t.betaLink}</a><span class="sep">·</span>© 2026 nemut.ai
 </div></footer>
 </body>
 </html>`;
@@ -429,40 +517,147 @@ const badge = () =>
 
 const paras = (list) => list.map((p) => `<p>${p}</p>`).join("\n");
 
+// MARK: - 画像とプレースホルダー
+
+// 撮るまでの枠。**id がそのまま撮ったときのファイル名**（assets/shot-<id>.webp）。説明は枠の下に出し、
+// 本物に差し替えても説明は figcaption として残る。
+const PH_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>`;
+const placeholder = (id, kind) =>
+  `<div class="ph ${kind}" role="img" aria-label="Screenshot to come: ${esc(id)}">${PH_ICON}<span class="ph-id">${esc(id)}</span></div>`;
+
+// 撮ってある枠は本物（public/shots/<id>.webp、静的アセット）。一覧は tools/guide-shots.mjs が書く src/shots.js。
+// 無い枠は撮るまでプレースホルダーのまま。
+const SHOT_SIZE = { phone: [552, 1200], thumb: [640, 400] };
+function picture(id, kind, alt) {
+  if (!GUIDE_SHOTS.has(id)) return placeholder(id, kind);
+  const [w, h] = SHOT_SIZE[kind] ?? [];
+  const size = w ? ` width="${w}" height="${h}"` : "";
+  return `<img class="shot-${kind}" src="/shots/${id}.webp"${size} alt="${esc(alt)}" loading="lazy" decoding="async">`;
+}
+
+// 押すと大きく開く画像（lightbox）。大きい版は public/shots/full/<id>.webp（tools/guide-shots.mjs）。
+// 枠のまま（撮っていない）のものとカードの絵は包まない。
+const zoomable = (html, href, caption) =>
+  `<a class="zoom" href="${href}" data-cap="${esc(plain(caption))}">${html}</a>`;
+
+// 縦長の画面 1 枚。TEXT.shots にある名前なら本物の画像。
+function phoneShot([id, caption]) {
+  const real = TEXT.shots.find((x) => x.file === id);
+  let pic;
+  if (real) {
+    pic = zoomable(`<img src="/assets/shot-${real.file}.webp" width="552" height="1200" alt="${esc(real.alt)}" loading="lazy" decoding="async">`,
+      `/assets/shot-${real.file}.webp`, caption);
+  } else {
+    pic = picture(id, "phone", plain(caption));
+    if (GUIDE_SHOTS.has(id)) pic = zoomable(pic, `/shots/full/${id}.webp`, caption);
+  }
+  return `<figure>${pic}<figcaption class="cap">${caption}</figcaption></figure>`;
+}
+
+function wideShot([id, caption]) {
+  let pic = picture(id, "landscape", plain(caption));
+  if (GUIDE_SHOTS.has(id)) pic = zoomable(pic, `/shots/full/${id}.webp`, caption);
+  return `<figure class="wide">${pic}<figcaption class="cap">${caption}</figcaption></figure>`;
+}
+
+// MARK: - lightbox
+
+// 標準の <dialog>。Esc・背景・× で閉じる。←→ とボタンとスワイプで同じページの前後の画像へ。
+// **CSP は script のハッシュで許す**（page の script）。外から何も読まない。
+const LIGHTBOX = `<dialog id="lightbox" aria-label="Screenshot">
+<button type="button" class="lb-close" data-close aria-label="Close">&times;</button>
+<button type="button" class="lb-prev" data-prev aria-label="Previous">&lsaquo;</button>
+<figure><img alt=""><p></p></figure>
+<button type="button" class="lb-next" data-next aria-label="Next">&rsaquo;</button>
+</dialog>`;
+
+const LIGHTBOX_JS = inline(`(() => {
+const run = () => {
+  const links = [...document.querySelectorAll("a.zoom")];
+  const d = document.getElementById("lightbox");
+  if (!links.length || !d || !d.showModal) return;
+  const img = d.querySelector("img"), cap = d.querySelector("p");
+  let at = 0, x0 = null;
+  const show = (n) => {
+    at = (n + links.length) % links.length;
+    const a = links[at];
+    img.src = a.href;
+    img.alt = a.querySelector("img")?.alt || "";
+    cap.textContent = a.dataset.cap || "";
+  };
+  links.forEach((a, n) => a.addEventListener("click", (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault(); show(n); d.showModal();
+  }));
+  d.addEventListener("click", (e) => {
+    if (e.target.closest("[data-prev]")) show(at - 1);
+    else if (e.target.closest("[data-next]")) show(at + 1);
+    else d.close();
+  });
+  d.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") { e.preventDefault(); show(at - 1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); show(at + 1); }
+  });
+  d.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+  d.addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 50) show(at + (dx < 0 ? 1 : -1));
+  });
+  d.addEventListener("close", () => img.removeAttribute("src"));
+};
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run); else run();
+})();`);
+
+// alt に入れる字（説明の HTML からタグを外す）。
+const plain = (html) => html.replace(/<[^>]*>/g, "").replace(/&[a-z]+;/g, " ");
+
+// ガイドの 1 ページを指すカード。トップの Get started と /guide の目次で同じもの。
+const partLabel = (i, g) => `Part ${i + 1}${g.tag ? ` · ${g.tag}` : ""}`;
+const guideCards = () => GUIDE.pages
+  .map((g, i) => `<li><a href="/guide/${g.slug}">${picture(`card-${g.slug}`, "thumb", "")}<span class="num">${partLabel(i, g)}</span><h3>${g.title}</h3><p>${g.card}</p></a></li>`)
+  .join("\n");
+
 // MARK: - /
 
 function homePage() {
   const t = TEXT;
-  const shots = t.shots
-    .map((s) => `<li><figure><img src="/assets/shot-${s.file}.webp" width="552" height="1200" alt="${esc(s.alt)}" decoding="async"><figcaption>${esc(s.label)}</figcaption></figure></li>`)
-    .join("\n");
+  // 見出しの左右の端に画面をまっすぐ置く（場所を取らない）。真ん中（fan-1）は文字と重なるので出さない。読む物ではないので alt は空。
+  // App Store のバッジの周りは無地にする決まり。画面は文字の列の外（左右の端）にだけ置く。
+  const backdrop = t.shots
+    .map((s, i) => `<img class="fan-${i}" src="/assets/shot-${s.file}.webp" width="552" height="1200" alt="" decoding="async">`)
+    .join("");
   const faq = FAQ.map((f) => `<div><h3>${esc(f.q)}</h3><p>${f.a}</p></div>`).join("\n");
   const body = `
 <section class="hero">
+<div class="hero-bg" aria-hidden="true">${backdrop}</div>
 <picture><source srcset="/icon-dark.png" media="(prefers-color-scheme: dark)"><img class="hero-icon" src="/icon.png" width="112" height="112" alt=""></picture>
 <h1>EffectDeck</h1>
 <p class="lead">${t.tagline}</p>
-<div class="actions">${badge()}<a class="btn gh" href="${GITHUB}">GitHub</a></div>
+<div class="actions">${badge()}</div>
+<div class="actions"><a class="btn guide" href="/guide">${t.guideLink}</a><a class="btn gh" href="${GITHUB}">GitHub</a></div>
 <p class="foss">${t.foss}</p>
 </section>
 
-<ul class="shots">
-${shots}
-</ul>
+
+<section id="start">
+<h2>${t.startTitle}</h2>
+<p>${t.startLead}</p>
+<ol class="cards">
+${guideCards()}
+</ol>
+</section>
+
+<section id="why">
+<h2>${t.whyTitle}</h2>
+${paras(t.why)}
+</section>
 
 <div class="cols">
-<section id="how">
-<h2>${t.howTitle}</h2>
-${paras(t.home)}
-</section>
-<section id="jsfx">
-<h2>${t.jsfxTitle}</h2>
-${paras(t.jsfx)}
-<p class="links">${t.jsfxLinks.join("")}</p>
-</section>
-<section id="share">
-<h2>${t.shareTitle}</h2>
-${paras(t.share)}
+<section id="about">
+<h2>${t.aboutTitle}</h2>
+${paras(t.aboutShort)}
+<p><a href="/about">${t.aboutMore}</a></p>
 </section>
 <section id="support">
 <h2>${t.supportTitle}</h2>
@@ -476,13 +671,87 @@ ${paras(t.support)}
 ${faq}
 </div>
 </section>
-
-<section id="about">
-<h2>${t.aboutTitle}</h2>
-${paras(t.about)}
-</section>
 `;
   return page({ title: t.title, body, canonical: `${ORIGIN}/`, width: "wide", ld: homeLd() });
+}
+
+// MARK: - /guide
+
+// 文面は guide.js。block の種類はそちらの頭に書いた。**script は置かない**（CSP は script-src 'none' のまま）。
+// ページの h1 が題なので、ページの中の見出しは h2。
+function guideBlock(k) {
+  if (k.h) return `<h2${k.id ? ` id="${k.id}"` : ""}>${k.h}</h2>`;
+  if (k.p) return `<p>${k.p}</p>`;
+  if (k.note) return `<p class="note">${k.note}</p>`;
+  if (k.ol) return `<ol>${k.ol.map((x) => `<li>${x}</li>`).join("")}</ol>`;
+  if (k.ul) return `<ul>${k.ul.map((x) => `<li>${x}</li>`).join("")}</ul>`;
+  if (k.flow) {
+    const steps = k.flow.map((x) => `<span class="step">${x}</span>`).join(`<span class="arr" aria-hidden="true">&rarr;</span>`);
+    return `<p class="flow">${steps}</p>`;
+  }
+  if (k.table) {
+    const head = k.table.head.map((x) => `<th scope="col">${x}</th>`).join("");
+    const rows = k.table.rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join("")}</tr>`).join("");
+    return `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  if (k.shots) return `<div class="shotrow">${k.shots.map(phoneShot).join("")}</div>`;
+  if (k.wide) return wideShot(k.wide);
+  if (k.done) return `<div class="done"><p>You are there when</p><ul>${k.done.map((x) => `<li>${x}</li>`).join("")}</ul></div>`;
+  throw new Error(`unknown guide block: ${JSON.stringify(k)}`);
+}
+
+// /guide は目次だけ。
+function guideIndex() {
+  const g = GUIDE;
+  const body = `
+<h1>${g.title}</h1>
+<p class="lead">${g.lead}</p>
+<ol class="cards">
+${guideCards()}
+</ol>`;
+  return page({ title: `${g.title} — EffectDeck`, body, canonical: `${ORIGIN}/guide`, description: g.description, width: "wide" });
+}
+
+// /guide/<slug>。前へ／次へは GUIDE.pages の並び。
+function guidePage(slug) {
+  const pages = GUIDE.pages;
+  const i = pages.findIndex((x) => x.slug === slug);
+  if (i < 0) return notFound();
+  const g = pages[i];
+  const prev = pages[i - 1];
+  const next = pages[i + 1];
+  const pager = `<nav class="pager" aria-label="Guide">${
+    prev ? `<a class="prev" rel="prev" href="/guide/${prev.slug}"><span>Previous</span>${prev.title}</a>` : ""}${
+    next ? `<a class="next" rel="next" href="/guide/${next.slug}"><span>Next</span>${next.title}</a>` : ""}</nav>`;
+  const body = `
+<p class="crumbs"><a href="/guide">${GUIDE.title}</a> <span aria-hidden="true">/</span> ${partLabel(i, g)}</p>
+<h1>${g.title}</h1>
+<p class="lead goal">${g.goal}</p>
+${g.blocks.map(guideBlock).join("\n")}
+${pager}
+${LIGHTBOX}`;
+  return page({
+    title: `${g.title} — EffectDeck`, body, canonical: `${ORIGIN}/guide/${g.slug}`, description: g.description,
+    script: LIGHTBOX_JS,
+  });
+}
+
+// MARK: - /about
+
+function aboutPage() {
+  const t = TEXT;
+  const body = `
+<h1>${t.aboutPageTitle}</h1>
+<h2 id="effetune">${t.aboutTitle}</h2>
+${paras(t.about)}
+<h2 id="port">${t.devTitle}</h2>
+${paras(t.dev)}
+<h2 id="sources">${SOURCES.title}</h2>
+<ul class="sources">${SOURCES.items.map((x) => `<li>${x}</li>`).join("")}</ul>`;
+  return page({
+    title: `${t.aboutPageTitle} — EffectDeck`, body, canonical: `${ORIGIN}/about`,
+    description: "EffectDeck runs EffeTune's open-source DSP by Yoshiyuki Kobayashi (Frieve-A). Where it comes from, how the iOS port is checked, and the sources behind the site.",
+  });
 }
 
 // MARK: - /?p=

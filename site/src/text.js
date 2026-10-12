@@ -8,10 +8,17 @@
 // それは GitHub の README と releases に書き、ページからはフッターの Release notes で指す。
 // JSFX や共有リンクは機能として書くだけで、どのビルドからかは言わない。
 // FOSS（無料・MIT）はリリースで変わらないので書いてよい（トップにも出す）。
+//
+// 2026-10-10 トップを作り直した。**言うことの芯は「機器を買い替えなくても、欲しい音は DSP で作れる」。**
+// 補正は目的でなく好みの音を作るための土台。主張の条件（歪み・ノイズ・最大音圧・装着・左右差・HRTF の個人差）は
+// Why DSP? で 1 度だけ正確に言い、ほかの節で弱め直さない。
+// EffeTune の作者の経歴は Sony の一次資料（links.js の SONY_STORY）で確かめた字だけ。
+// 公認・監修・共同開発と読める書き方をしない。
 
 import {
   APP_STORE, RELEASES, GITHUB, LICENSE, ISSUES, JSFX_MD, CHAIN_MD, TWITTER, EMAIL, DISCORD,
   EFFETUNE, APPLE_PRIVACY, CLOUDFLARE_PRIVACY, OPENAI_PRIVACY,
+  SONY_STORY, FRIEVE_PREFERENCE, IR_GOLDEN, TESTS,
 } from "./links.js";
 
 const a = (href, label) => `<a href="${href}">${label}</a>`;
@@ -20,52 +27,52 @@ const mail = `<a href="mailto:${EMAIL}">${EMAIL}</a>`;
 export const TEXT = {
   // <title> と og:title。検索に出る言い回しをそのまま入れる。
   title: "EffectDeck — audio effects for any app on iPhone and iPad",
-  description: "EffectDeck puts an effect chain on the audio of any app on iPhone and iPad: built-in effects, AUv3 plug-ins, impulse responses, and JSFX effects you write or have ChatGPT write. Free and open source (MIT). Requires iOS 27.",
+  description: "EffectDeck puts an effect chain on the audio of any app on iPhone and iPad: EffeTune's effects, AUv3 plug-ins, impulse responses, and JSFX effects you write or have ChatGPT write. Free and open source (MIT). Requires iOS 27.",
   // トップの頭。リリースで変わらないことだけ（何か・App Store・GitHub・FOSS）。
-  tagline: "Any effect on the audio of any app on your iPhone or iPad, through the Media Device Extension in iOS 27. Combine the built-in effects, AUv3 plug-ins and impulse responses, or write the effect you want in JSFX.",
+  // **決め台詞を書かない**（スローガンは AI Slop と言われた）。h1 はアプリの名前、頭は何をするものかだけ。
+  tagline: "Runs EffeTune's DSP on the audio of any app on your iPhone or iPad, through the Media Device Extension in iOS 27: EQ, dynamics, saturation, reverb, spatial effects and analyzers, plus AUv3 plug-ins, impulse responses and JSFX.",
   foss: `Free and open source (${a(LICENSE, "MIT")})`,
-  howTitle: "How it works",
-  home: [
-    "Pick EffectDeck as the output in Control Center, and audio from any app that shows up in Now Playing goes through your effect chain, then out through the speaker, headphones or AirPods you were already using.",
-    "You choose what goes in the chain. EQ, dynamics, saturation, reverb, spatial effects and analyzers are built in. AUv3 plug-ins on your iPhone or iPad, impulse responses and AutoEQ profiles load into it. An effect that does not exist yet can be written as a JSFX script.",
-    "It is built on the Media Device Extension that arrived in iOS 27, so it needs iOS 27 or later.",
-  ],
   // スクリーンショットの下の字は名札。説明を書かない。
   shots: [
     { file: "effects", label: "Effects", alt: "Effect chain with Stereo Blend and Multiband Saturation" },
     { file: "analyzers", label: "Analyzers", alt: "Level meter, spectrogram, spectrum analyzer and stereo meter" },
     { file: "routing", label: "Routing", alt: "Effects with bus routing badges" },
   ],
-  jsfxTitle: "JSFX",
-  jsfx: [
-    "EffectDeck loads JSFX, the script format REAPER uses. One text file is one effect.",
-    `${a(JSFX_MD, "JSFX.md")} sets out what EffectDeck supports and what it rejects. It is written to be handed to a language model as it is.`,
-    // アプリはページを挟まずchatgpt.comを直に開く（EffectPickerView.writeJSFX、61efe19）。
-    "In the app, <strong>Write JSFX with ChatGPT</strong> (under Plugins) opens ChatGPT with a short request that points it at JSFX.md. Import the file it returns with <strong>Import JSFX → From Files</strong>, or copy the script and use <strong>From Clipboard</strong>. A paid ChatGPT plan works better, since the free tier may skip the linked file and miss the rules.",
-    // 鎖はJSFXと対になるので同じ節に置く。llms.txtはこの1行と同じことだけを書く。
-    // 戻し方はCHAIN.mdの「Handing the chain over」と同じ2つ（リンクか、コードブロックを貼る）。
-    `<strong>Build with ChatGPT…</strong> (at the top of the effect list) opens ChatGPT the same way to ask for a chain of the built-in effects, following ${a(CHAIN_MD, "CHAIN.md")}. Tap the link it returns, or copy the chain and use <strong>Import from clipboard</strong> in Presets.`,
+  whyTitle: "Why DSP?",
+  why: [
+    "What you hear is the sound pressure that reaches your two ears, not the price of whatever produced it. Two systems that deliver the same signal to your ears sound the same. When what is left between them is below what hearing can detect, they sound the same in practice.",
+    "Much of the difference between two pairs of headphones is linear: a difference in frequency response, which an EQ can compensate once it has been measured. A pair of speakers in a room is a transfer function, which convolution with the right impulse response can reproduce. Tube harmonics, tape flutter and record noise are processes, and there is DSP for each of them.",
+    "What processing cannot change is the hardware's own floor: its distortion and noise, how loud it plays before it gives out, how it seals and sits on your head, how well its two sides match. How a simulated speaker images also depends on your own head and ears.",
   ],
-  // **ページからChatGPTへは/writeを挟む。**依頼文を見せてコピーもでき、有料版を勧める1行もそこに置く。
-  // アプリは2026-09-27から/writeを通らない（依頼文にアプリとDSPの版を入れるため、自分で持つ）。
-  jsfxLinks: [a(JSFX_MD, "JSFX.md"), a(CHAIN_MD, "CHAIN.md"), a("/write", "Write JSFX with ChatGPT")],
-  shareTitle: "Share links",
-  // **内蔵の効果だけの鎖はEffeTuneのWeb版のリンクになる**（ETShareLink.url(for:)）。
-  // effectdeck.nemut.aiで作るのはAUかJSFXを含む鎖とJSFXだけ（PresetsView、ETFXDLink）。
-  share: [
-    "JSFX scripts, and chains that use AUv3 plug-ins or JSFX effects, are shared as links on effectdeck.nemut.ai. With the app installed, they open in the app. A chain of only built-in effects is shared as a link to the EffeTune web app.",
-    "A JSFX link carries the whole script after the #. Browsers do not send that part to the server.",
-  ],
+  // Get started。カードの中身は guide.js の pages（目次の /guide と同じもの）。
+  startTitle: "Get started",
+  startLead: "Six parts. Read them in any order; correcting your headphones is optional.",
+  guideLink: "Read the guide",
   supportTitle: "Support",
   support: [
     `In the app, <strong>Settings → Report a problem</strong> fills in the diagnostics and the log for you. You can also ask on ${a(DISCORD, "Discord")}, open an issue on ${a(ISSUES, "GitHub")} or write to ${a(TWITTER, "@ainemut")} on Twitter. Email: ${mail}.`,
   ],
   faqTitle: "FAQ",
-  aboutTitle: "An independent project",
+  aboutTitle: "Built on EffeTune DSP",
+  // 経歴は SONY_STORY のプロフィールと本文の字（R&D センター・主任研究員・Distinguished Engineer、
+  // 1999 年入社で業務用オーディオの信号処理、のちエコーキャンセラーと 12 音解析、それから機械学習）。
   about: [
-    `EffectDeck is made by nemut.ai. It is <strong>not affiliated with, endorsed by, or supported by ${a(EFFETUNE, "EffeTune")} or its author, Yoshiyuki Kobayashi (Frieve-A).</strong> It bundles EffeTune's DSP under the MIT license.`,
-    "Send anything about EffectDeck to nemut.ai, not to EffeTune.",
-    `The source is on ${a(GITHUB, "GitHub")} under the MIT license.`,
+    `EffectDeck's effects are the DSP from ${a(EFFETUNE, "EffeTune")}, the open-source audio processor by Yoshiyuki Kobayashi (Frieve-A), compiled for iOS and used under the MIT license. They are EffeTune's own code, not a lookalike.`,
+    `EffeTune describes itself with one line: “No audiophile myths, Just pure science.” EffectDeck starts from the same place: its effects are processes you can measure, and its source is open.`,
+    `Kobayashi is a researcher and Distinguished Engineer at ${a(SONY_STORY, "Sony Group's R&amp;D Center")}. He joined Sony in 1999 to work on signal processing for professional audio, then on echo cancellation and music analysis, before moving to machine learning. He ${a(FRIEVE_PREFERENCE, "argues")} for keeping fidelity and preference apart: let the hardware be faithful and inexpensive, and let DSP carry the taste. EffectDeck takes that idea to everyday listening on a phone.`,
+    `<strong>EffectDeck is an independent project by nemut.ai. It is not affiliated with, endorsed by, or supported by EffeTune or its author.</strong> Send anything about EffectDeck to nemut.ai, not to EffeTune.`,
+  ],
+  // トップに置く短い版。長い方（about と dev と出典）は /about。
+  aboutShort: [
+    `EffectDeck's effects are the DSP from ${a(EFFETUNE, "EffeTune")}, the open-source audio processor by Yoshiyuki Kobayashi (Frieve-A), a researcher and Distinguished Engineer at ${a(SONY_STORY, "Sony Group's R&amp;D Center")} who started at Sony in signal processing for professional audio. The code is EffeTune's own, compiled for iOS under the MIT license.`,
+    "<strong>EffectDeck is an independent project by nemut.ai. It is not affiliated with, endorsed by, or supported by EffeTune or its author.</strong>",
+  ],
+  aboutMore: "Where it comes from, and how the port is checked",
+  aboutPageTitle: "About EffectDeck",
+  devTitle: "Ported with care, open to inspection",
+  dev: [
+    `EffectDeck is written by a computer science student who studied digital signal processing for it. The port is checked against EffeTune itself: the impulse-response preparation is tested against ${a(IR_GOLDEN, "golden output generated from the upstream code")}, and the ${a(TESTS, "tests")} are in the repository.`,
+    `The whole app is on ${a(GITHUB, "GitHub")} under the MIT license. You do not have to take the processing on trust; you can read it.`,
   ],
 
   appStoreAlt: "Download on the App Store",
@@ -99,7 +106,19 @@ export const TEXT = {
 export const FAQ = [
   {
     q: "Can iOS run system-wide audio effects like JamesDSP or ViPER4Android?",
-    a: "Since iOS 27, for media playback. The Media Device Extension lets an app appear as an audio output in Control Center. EffectDeck uses it to run an effect chain on audio from any app with a Now Playing transport, such as music and podcast apps and Safari. Games are not covered. No jailbreak is involved.",
+    a: "Since iOS 27, for media playback. The Media Device Extension lets an app appear as an audio output in Control Center. EffectDeck uses it to run an effect chain on audio from any app with a Now Playing transport, such as music and podcast apps and Safari. Games are not covered. No jailbreak is involved. Not every system-wide EQ is exact: on Android, Poweramp Equalizer and Wavelet go through the DynamicsProcessing API, whose EQ bands have only a cutoff frequency and a gain, so a parametric correction is approximated with fixed bands. EffectDeck, like RootlessJamesDSP on Android, receives the audio itself and runs its filters on the samples, so filters are applied exactly as set.",
+  },
+  {
+    q: "Can software really make cheap headphones sound like expensive ones?",
+    a: "Within limits, and the limits are known. A difference in frequency response is linear, and an EQ can compensate it once it has been measured; the acoustics of speakers in a room can be added by convolution. Processing cannot remove the distortion, the noise or the output limit of the drivers themselves, or fix how they seal on your head, and imaging depends on your own ears. See <a href=\"/#why\">Why DSP?</a>",
+  },
+  {
+    q: "Does EffectDeck make music sound better just by running?",
+    a: "No, and it does not claim to. The effects change the sound in ways you can measure and hear. Whether the change is better is your call, and the analyzers are there so you can see what changed.",
+  },
+  {
+    q: "Do I have to correct my headphones first?",
+    a: "No. A correction is a starting point, not the goal, and using the effects without one is fine. If you do correct, Output Correction keeps it apart from your chain and switches it with the output. See the <a href=\"/guide\">guide</a>.",
   },
   {
     q: "Which iOS version does it need?",
@@ -114,13 +133,10 @@ export const FAQ = [
     a: `Built in: EQ, dynamics, saturation, reverb, spatial effects and analyzers such as a spectrum analyzer and a spectrogram, ported from EffeTune. It also hosts AUv3 effect plug-ins installed on the device, loads impulse responses and AutoEQ profiles, and runs single-file JSFX effects; ${a(JSFX_MD, "JSFX.md")} lists what is supported.`,
   },
   {
-    q: "Is it free?",
-    a: `Yes. EffectDeck is free and open source under the MIT license. The source is on ${a(GITHUB, "GitHub")}.`,
+    q: "Do paid audio apps sound better?",
+    a: `No. An EQ, a compressor or a reverb is math: the same filter with the same settings gives the same output, whatever the app costs. EffectDeck is free and open source under the MIT license, with no subscription, account or ads, and the source is on ${a(GITHUB, "GitHub")}.`,
   },
-  {
-    q: "It says Unable to Connect. What is wrong?",
-    a: "Usually Spotify with Canvas on. A track with a Canvas plays as video, and iOS does not route it to EffectDeck; turn Canvas off in Spotify's settings, then restart Spotify. Otherwise, restart the player app, then EffectDeck, then the iPhone.",
-  },
+
   {
     q: "Does my audio leave the device?",
     a: `No. Audio is processed and played back on the device, is not recorded, and makes no network connection. See the ${a("/privacy", "privacy policy")}.`,
@@ -281,6 +297,15 @@ export const LLMS_TXT = `# EffectDeck
 
 > EffectDeck is an iPhone and iPad app that runs an effect chain on audio from other apps. It requires iOS 27 or later. It is free and open source (MIT). It is an independent project by nemut.ai, not affiliated with, endorsed by, or supported by EffeTune or its author.
 
+## The idea
+
+- The effects are measurable processes, and the app includes analyzers (spectrum, spectrogram, meters) to show what changed.
+- Fidelity and preference are kept apart: faithful, inexpensive hardware, and the sound you like made with DSP.
+
+- Much of what sets one piece of audio gear apart from another can be measured and recreated with digital signal processing: frequency response with EQ, speakers in a room with convolution (BRIR), tube, tape and vinyl character with the corresponding effects.
+- The limits are the hardware's own distortion, noise, maximum level, fit and seal, channel matching, and the listener's own head and ears (HRTF).
+- EffectDeck's built-in effects are EffeTune's DSP by Yoshiyuki Kobayashi (Frieve-A), a researcher and Distinguished Engineer at Sony Group's R&D Center. EffectDeck is independent and not endorsed by him or by Sony.
+
 ## How it works
 
 - EffectDeck uses the Media Device Extension added in iOS 27. It appears as an audio output in Control Center.
@@ -297,6 +322,14 @@ export const LLMS_TXT = `# EffectDeck
 ## Links
 
 - Website: https://effectdeck.nemut.ai/
+- Guide: https://effectdeck.nemut.ai/guide
+  - Connect: https://effectdeck.nemut.ai/guide/connect
+  - Headphone correction (AutoEq, 15Band PEQ, Output Correction): https://effectdeck.nemut.ai/guide/correction
+  - Effects and chains: https://effectdeck.nemut.ai/guide/effects
+  - Speakers in headphones (True Stereo BRIR in IR Reverb): https://effectdeck.nemut.ai/guide/brir
+  - Chains and JSFX with ChatGPT: https://effectdeck.nemut.ai/guide/chatgpt
+  - Sharing: https://effectdeck.nemut.ai/guide/share
+- About (EffeTune DSP, how the port is checked, sources): https://effectdeck.nemut.ai/about
 - App Store: ${APP_STORE}
 - Source (MIT): ${GITHUB}
 - README: ${GITHUB}#readme

@@ -17,6 +17,13 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import { Miniflare } from "miniflare";
 import { CHATGPT, CHATGPT_Q } from "./src/links.js";
+import { GUIDE } from "./src/guide.js";
+import { GUIDE_SHOTS } from "./src/shots.js";
+import { existsSync } from "node:fs";
+
+// 公式のページ（トップとプライバシーと /write 以外）。ガイドは 1 ページずつ。
+const GUIDE_SLUGS = GUIDE.pages.map((g) => g.slug);
+const PAGES = ["/guide", ...GUIDE_SLUGS.map((s) => `/guide/${s}`), "/about"];
 
 const here = new URL(".", import.meta.url);
 const vector = JSON.parse(readFileSync(new URL("test-vector.json", here), "utf8"));
@@ -104,6 +111,7 @@ try {
       `/?p=${encodeURIComponent(p)}&lang=ja`,
       "/privacy",
       "/write",
+      ...PAGES,
       "/nope?x=1",
     ]) {
       const r = await get(FXD, path);
@@ -154,7 +162,8 @@ try {
     assert.equal(app.operatingSystem, "iOS 27");
     assert.equal(app.offers.price, "0");
     const faq = ld["@graph"].find((x) => x["@type"] === "FAQPage");
-    const onPage = [...r.body.matchAll(/<div><h3>([^<]*)<\/h3>/g)].map((x) => x[1].replace(/&#39;/g, "'"));
+    const faqBox = /<div class="faq">([\s\S]*?)<\/section>/.exec(r.body)[1];
+    const onPage = [...faqBox.matchAll(/<div><h3>([^<]*)<\/h3>/g)].map((x) => x[1].replace(/&#39;/g, "'"));
     assert.ok(onPage.length >= 4);
     assert.deepEqual(faq.mainEntity.map((q) => q.name), onPage);
     for (const s of app.screenshot) {
@@ -165,7 +174,7 @@ try {
   });
 
   await test("Open Graph and Twitter card tags on every page, image from our origin", async () => {
-    for (const path of ["/", "/privacy", `/?p=${p}`, "/j", "/write"]) {
+    for (const path of ["/", ...PAGES, "/privacy", `/?p=${p}`, "/j", "/write"]) {
       const r = await get(DECK, path);
       const meta = (attr, key) => new RegExp(`<meta ${attr}="${key.replace(/[:.]/g, "\\$&")}" content="([^"]*)">`).exec(r.body)?.[1];
       assert.equal(meta("property", "og:image"), `https://${DECK}/og.png`, path);
@@ -201,7 +210,7 @@ try {
       assert.equal(r.headers.get("content-language"), null);
       assert.equal(r.headers.get("vary"), null);
     }
-    for (const path of ["/", "/privacy", "/j?lang=ja", "/write", `/?p=${p}&lang=ja`, "/nope"]) {
+    for (const path of ["/", ...PAGES, "/privacy", "/j?lang=ja", "/write", `/?p=${p}&lang=ja`, "/nope"]) {
       const r = await get(DECK, path, { lang: "ja" });
       assert.ok(r.body.includes('<html lang="en">'), path);
       assert.ok(!/[぀-ヿ一-鿿]/.test(r.body), `Japanese in ${path}`);
@@ -225,7 +234,7 @@ try {
   // リリースごとに変わることはページに書かない。TestFlight はフッターの名札 1 本だけ。
   await test("TestFlight only as one footer link on each page; hero is App Store + GitHub + FOSS", async () => {
     const footer = (body) => /<footer class="site">[\s\S]*<\/footer>/.exec(body)[0];
-    for (const path of ["/", "/privacy", "/j", "/write", `/?p=${p}`, "/nope"]) {
+    for (const path of ["/", ...PAGES, "/privacy", "/j", "/write", `/?p=${p}`, "/nope"]) {
       const r = await get(DECK, path);
       const f = footer(r.body);
       const outside = r.body.replace(f, "");
@@ -240,6 +249,7 @@ try {
     assert.ok(hero.includes(`apps.apple.com/app/effectdeck/id${APP}`), "App Store badge");
     assert.ok(hero.includes('<a class="btn gh" href="https://github.com/satomasahiro2005/EffectDeck">GitHub</a>'));
     assert.ok(hero.includes("Media Device Extension in iOS 27"));
+    assert.ok(hero.includes("<h1>EffectDeck</h1>"));
     assert.match(hero, /<p class="foss">Free and open source \(<a href="[^"]+\/LICENSE">MIT<\/a>\)<\/p>/);
     // JSFX は全部の版に入ったので頭に書いてよい。版の話はしない。
     assert.ok(!/App Store version/.test(hero), "hero talks about builds");
@@ -328,7 +338,7 @@ try {
 
   // /write。依頼文は links.js の CHATGPT_Q そのもの（アプリと同じ字）。
   let writeJS;
-  await test("/write: the request in a read-only box, Copy, Open ChatGPT, CSP hash, linked from home", async () => {
+  await test("/write: the request in a read-only box, Copy, Open ChatGPT, CSP hash, linked from the ChatGPT guide", async () => {
     const r = await get(DECK, "/write");
     assert.equal(r.status, 200);
     assert.ok(r.body.includes("<h1>Write a JSFX effect with ChatGPT</h1>"));
@@ -353,9 +363,8 @@ try {
     writeJS = m[1];
     assert.ok(r.headers.get("content-security-policy").includes(`script-src '${sha(writeJS)}'`));
     assert.equal((await get(DECK, "/write/")).status, 200);
-    const home = (await get(DECK, "/")).body;
-    const jsfx = /<section id="jsfx">[\s\S]*?<\/section>/.exec(home)[0];
-    assert.ok(jsfx.includes('<a href="/write">Write JSFX with ChatGPT</a>'));
+    const guide = (await get(DECK, "/guide/chatgpt")).body;
+    assert.ok(guide.includes('<a href="/write">Write JSFX with ChatGPT</a>'));
     assert.ok((await get(DECK, "/llms.txt")).body.includes(`https://${DECK}/write`));
   });
 
@@ -412,6 +421,121 @@ try {
     assert.equal((await get(DECK, "/", { method: "POST" })).status, 405);
   });
 
+  // トップは主張（Why DSP?）→ ガイドの入口 → 出自（短く）→ Support → FAQ。ガイドは 1 ページずつ。
+  await test("home: the guide first (a button under the headline and a card per page), then Why DSP, then provenance", async () => {
+    const home = (await get(DECK, "/")).body;
+    const order = ['id="start"', 'id="why"', 'id="about"', 'id="support"', 'id="faq"'].map((s) => home.indexOf(s));
+    assert.ok(order.every((i) => i > 0), JSON.stringify(order));
+    assert.deepEqual([...order].sort((a, b) => a - b), order, "section order");
+    // トップで持たなくなった節（中身はガイドへ移した）
+    for (const id of ["how", "jsfx", "share", "examples"]) assert.ok(!home.includes(`<section id="${id}">`), id);
+    const start = /<section id="start">[\s\S]*?<\/section>/.exec(home)[0];
+    assert.deepEqual([...start.matchAll(/href="\/guide\/([a-z]+)"/g)].map((m) => m[1]), GUIDE_SLUGS);
+    assert.equal(start.match(/class="(ph thumb|shot-thumb)"/g)?.length, GUIDE_SLUGS.length, "a picture on every card");
+    const about = /<section id="about">[\s\S]*?<\/section>/.exec(home)[0];
+    assert.ok(about.includes("not affiliated with, endorsed by, or supported by"));
+    assert.ok(about.includes("https://www.sony.com/ja/SonyInfo/technology/stories/entries/2021_kobayashi/"));
+    assert.ok(about.includes('href="/about"'));
+    assert.ok(!/endorsed by Sony|Sony-approved|supervised by/i.test(home));
+    assert.ok(home.includes('<a href="/guide">Guide</a>'), "nav");
+    const hero = /<section class="hero">[\s\S]*?<\/section>/.exec(home)[0];
+    assert.ok(hero.includes('href="/guide"'), "the guide is one tap from the headline");
+    assert.ok(!home.includes("What the measurements say"), "no claims about blind comparison");
+  });
+
+  await test("/guide is the contents; /guide/<part> are pages with prev/next and only the lightbox script", async () => {
+    const index = await get(DECK, "/guide");
+    assert.equal(index.status, 200);
+    assert.deepEqual([...index.body.matchAll(/href="\/guide\/([a-z]+)"/g)].map((m) => m[1]), GUIDE_SLUGS);
+    assert.ok(index.body.includes(`<link rel="canonical" href="https://${DECK}/guide">`));
+    const titles = new Set();
+    const ids = [];
+    for (const [i, slug] of GUIDE_SLUGS.entries()) {
+      const r = await get(DECK, `/guide/${slug}`);
+      assert.equal(r.status, 200, slug);
+      assert.equal((await get(DECK, `/guide/${slug}/`)).status, 200, `${slug}/`);
+      // 外から読む script は無い。インラインの lightbox 1 本だけで、CSP はそのハッシュだけ許す
+      const scripts = [...r.body.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+      assert.equal(scripts.length, 1, slug);
+      assert.ok(!/<script[^>]+src=/.test(r.body), slug);
+      assert.ok(r.headers.get("content-security-policy").includes(`script-src '${sha(scripts[0])}'`), slug);
+      assert.ok(r.body.includes('<dialog id="lightbox"'), slug);
+      assert.ok(r.body.includes(`<link rel="canonical" href="https://${DECK}/guide/${slug}">`), slug);
+      const title = /<title>([^<]+)<\/title>/.exec(r.body)[1];
+      titles.add(title);
+      assert.equal(r.body.match(/<h1>/g).length, 1, slug);
+      assert.ok(r.body.includes('<p class="crumbs"><a href="/guide">Guide</a>'), slug);
+      // 前へ／次へは並びのとおり
+      const prev = /rel="prev" href="\/guide\/([a-z]+)"/.exec(r.body)?.[1];
+      const next = /rel="next" href="\/guide\/([a-z]+)"/.exec(r.body)?.[1];
+      assert.equal(prev, GUIDE_SLUGS[i - 1], `${slug} prev`);
+      assert.equal(next, GUIDE_SLUGS[i + 1], `${slug} next`);
+      assert.ok(['class="ph ', "/assets/shot-", 'src="/shots/'].some((x) => r.body.includes(x)), `${slug} has pictures`);
+      assert.ok(r.body.includes('class="done"'), slug);
+      ids.push(...[...r.body.matchAll(/<span class="ph-id">([^<]+)<\/span>/g)].map((m) => m[1]));
+      // 撮ってある枠は本物（静的アセット /shots/<id>.webp）。
+      ids.push(...[...r.body.matchAll(/src="\/shots\/([a-z0-9-]+)\.webp"/g)].map((m) => m[1]));
+      for (const [, img] of r.body.matchAll(/src="(\/assets\/shot-[a-z]+\.webp)"/g)) {
+        assert.equal((await get(DECK, img)).status, 200, img);
+      }
+    }
+    assert.equal(titles.size, GUIDE_SLUGS.length, "every page has its own title");
+    // 枠（撮ったものと撮るまでのもの）。名前（＝撮ったときのファイル名）はガイド全体で重ならない
+    assert.ok(ids.length >= 45, `${ids.length} pictures`);
+    assert.equal(new Set(ids).size, ids.length, "placeholder ids repeat");
+    assert.equal((await get(DECK, "/guide/nope")).status, 404);
+    assert.equal((await get(DECK, "/guide/connect/x")).status, 404);
+  });
+
+  await test("guide pages use the app's own labels; BRIR is one downloaded True Stereo file with Dry and Direct Cut off", async () => {
+    const all = (await Promise.all(GUIDE_SLUGS.map((s) => get(DECK, `/guide/${s}`)))).map((r) => r.body).join("\n");
+    for (const label of ["Output Correction", "Save current chain", "Share this chain", "Import from clipboard", "System Presets",
+      "15Band PEQ", "IR Reverb", "Direct Cut", "Wet Level", "BRIR_R01_C1_True_Stereo.wav"]) {
+      assert.ok(all.includes(label), label);
+    }
+    const brir = (await get(DECK, "/guide/brir")).body;
+    assert.match(brir, /Turn <strong>Dry<\/strong> off/);
+    assert.match(brir, /<strong>Direct Cut<\/strong> off/);
+    assert.match(brir, /CC BY-NC-SA 4\.0/);
+    assert.ok(brir.includes("https://github.com/ShanonPearce/ASH-Listening-Set/tree/main/BRIRs"));
+    // Unable to Connect（Spotify の Canvas）は Spotify 側で直ったので書かない
+    assert.ok(!/Unable to Connect|Canvas/.test(all), "Unable to Connect is gone");
+    assert.ok(!/Chapter \d/.test(all), "no chapter numbers left in the text");
+    const chatgpt = (await get(DECK, "/guide/chatgpt")).body;
+    assert.match(chatgpt, /paid plan is recommended/);
+    assert.ok(chatgpt.includes('<a href="/write">Write JSFX with ChatGPT</a>'));
+    assert.ok(!all.includes("aes.org"), "AES links are names only (not verified)");
+  });
+
+  // src/shots.js（tools/guide-shots.mjs が書く）に載っている画像は public/shots に在る。載っている枠は本物を出す。
+  await test("guide shots: every listed image exists, and listed ids render as images", async () => {
+    for (const id of GUIDE_SHOTS) {
+      assert.ok(existsSync(new URL(`public/shots/${id}.webp`, here)), id);
+      // 押して開く大きい版（カードの絵は押させないので無い）
+      if (!id.startsWith("card-")) assert.ok(existsSync(new URL(`public/shots/full/${id}.webp`, here)), `full/${id}`);
+    }
+    const all = (await Promise.all(GUIDE_SLUGS.map((s) => get(DECK, `/guide/${s}`)))).map((r) => r.body).join(" ")
+      + (await get(DECK, "/")).body;
+    for (const id of GUIDE_SHOTS) {
+      if (!all.includes(id)) continue;
+      assert.ok(all.includes(`src="/shots/${id}.webp"`), `${id} should be an image`);
+      if (!id.startsWith("card-")) assert.ok(all.includes(`<a class="zoom" href="/shots/full/${id}.webp"`), `${id} opens large`);
+      assert.ok(!all.includes(`<span class="ph-id">${id}</span>`), `${id} is still a placeholder`);
+    }
+  });
+
+  await test("/about: EffeTune provenance, the port, and the sources", async () => {
+    const r = await get(DECK, "/about");
+    assert.equal(r.status, 200);
+    assert.equal((await get(DECK, "/about/")).status, 200);
+    for (const id of ["effetune", "port", "sources"]) assert.ok(r.body.includes(`id="${id}"`), id);
+    assert.ok(r.body.includes("not affiliated with, endorsed by, or supported by"));
+    assert.ok(r.body.includes("Distinguished Engineer"));
+    assert.ok(r.body.includes("ir_prepare_golden.mjs"));
+    assert.ok(!r.body.includes("aes.org"));
+    assert.ok(r.body.includes(`<link rel="canonical" href="https://${DECK}/about">`));
+  });
+
   await test("robots.txt and sitemap list only the official pages; share pages are noindex", async () => {
     const robots = await get(DECK, "/robots.txt");
     assert.equal(robots.status, 200);
@@ -420,13 +544,13 @@ try {
     assert.equal(map.status, 200);
     assert.match(map.headers.get("content-type"), /^application\/xml/);
     assert.deepEqual([...map.body.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]),
-      ["https://effectdeck.nemut.ai/", "https://effectdeck.nemut.ai/write", "https://effectdeck.nemut.ai/privacy"]);
+      ["/", ...PAGES, "/write", "/privacy"].map((x) => `https://effectdeck.nemut.ai${x}`));
     for (const path of [`/?p=${p}`, "/j"]) {
       const res = await get(DECK, path);
       assert.equal(res.headers.get("x-robots-tag"), "noindex, follow", path);
       assert.ok(res.body.includes('<meta name="robots" content="noindex, follow">'), path);
     }
-    for (const path of ["/", "/write", "/privacy"]) {
+    for (const path of ["/", ...PAGES, "/write", "/privacy"]) {
       const res = await get(DECK, path);
       assert.equal(res.headers.get("x-robots-tag"), null, path);
       assert.ok(!res.body.includes('name="robots"'), path);

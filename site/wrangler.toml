@@ -36,3 +36,7 @@ fallthrough = true
 type = "Data"
 globs = ["**/*.webp"]
 fallthrough = true
+
+# ガイドの画像（tools/guide-shots.mjs が書く）。ファイルがあればそれを返し、無いパスは Worker へ。
+[assets]
+directory = "./public"

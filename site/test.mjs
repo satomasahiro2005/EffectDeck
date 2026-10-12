@@ -11,6 +11,11 @@ import { decodeFXD } from "./src/fxd.js";
 import * as parse from "./src/parse.js";
 import { DECK_HOST, APP_STORE, TESTFLIGHT, GITHUB, RELEASES, JSFX_MD, CHAIN_MD, CHATGPT, CHATGPT_Q, OPENAI_PRIVACY, EMAIL } from "./src/links.js";
 import { TEXT, FAQ, LLMS_TXT, PRIVACY } from "./src/text.js";
+import { GUIDE } from "./src/guide.js";
+
+// ガイドの 1 ページの字（block の字を全部つないだもの）
+const guideText = (slug) => JSON.stringify(GUIDE.pages.find((g) => g.slug === slug).blocks);
+const guideParas = (slug) => GUIDE.pages.find((g) => g.slug === slug).blocks.flatMap((b) => b.p ? [b.p] : b.ul ?? []);
 import { homeLd, plainText } from "./src/seo.js";
 
 const { chainEntries } = parse;
@@ -75,7 +80,7 @@ await test("no language negotiation is left", async () => {
   assert.equal(parse.pickLang, undefined);
   assert.deepEqual(Object.keys(TEXT).filter((k) => k === "en" || k === "ja"), []);
   // 文面に日本語が残っていない（仮名・漢字）
-  const all = JSON.stringify({ TEXT, FAQ }) + LLMS_TXT;
+  const all = JSON.stringify({ TEXT, FAQ, GUIDE }) + LLMS_TXT;
   assert.ok(!/[\u3040-\u30ff\u4e00-\u9fff]/.test(all));
 });
 
@@ -126,18 +131,19 @@ await test("no release status in the text: no TestFlight or beta outside the foo
     assert.ok(!release.test(label(JSON.stringify(v))), `TEXT.${k}: ${JSON.stringify(v)}`);
   }
   assert.equal(TEXT.betaLink, "Beta (TestFlight)");
+  assert.ok(!release.test(label(JSON.stringify(GUIDE))), "GUIDE");
   for (const f of FAQ) assert.ok(!release.test(f.q + f.a), f.q);
   assert.ok(!release.test(JSON.stringify(homeLd())), "JSON-LD");
   assert.ok(!release.test(label(LLMS_TXT)), "llms.txt");
   assert.ok(!LLMS_TXT.includes(TESTFLIGHT));
   // JSFX は機能として書く
-  assert.match(TEXT.jsfx[0], /^EffectDeck loads JSFX/);
+  assert.ok(guideParas("chatgpt").some((p) => p.startsWith("EffectDeck loads JSFX")));
   assert.ok(FAQ.some((f) => f.a.includes(JSFX_MD)), "FAQ links JSFX.md");
   assert.ok(FAQ.some((f) => /free and open source under the MIT license/.test(f.a)), "FAQ says FOSS");
 });
 
 // /writeで見せる依頼文（links.jsの頭）。決め事はJSFX.mdにあり、依頼は短く保つ。
-await test("/write text: a short request that points at JSFX.md, linked from home and llms.txt", async () => {
+await test("/write text: a short request that points at JSFX.md, linked from the ChatGPT guide and llms.txt", async () => {
   assert.equal(decodeURIComponent(CHATGPT.slice("https://chatgpt.com/?q=".length)), CHATGPT_Q);
   assert.ok(CHATGPT_Q.startsWith("Write a JSFX effect for EffectDeck. First read "));
   assert.ok(CHATGPT_Q.includes(JSFX_MD));
@@ -150,17 +156,16 @@ await test("/write text: a short request that points at JSFX.md, linked from hom
   assert.ok(TEXT.writePlan.includes(`href="${JSFX_MD}"`));
   assert.match(TEXT.writeReturn, /Import JSFX → From Files/);
   assert.match(TEXT.writeReturn, /From Clipboard/);
-  assert.ok(TEXT.jsfxLinks.some((l) => l.includes('href="/write"')));
-  assert.ok(!TEXT.jsfxLinks.some((l) => l.includes("chatgpt.com")), "home goes through /write");
+  assert.ok(guideText("chatgpt").includes('href=\\"/write\\"'));
+  assert.ok(!JSON.stringify(GUIDE).includes("chatgpt.com"), "the site goes through /write");
   assert.ok(LLMS_TXT.includes("https://effectdeck.nemut.ai/write"));
 });
 
 // 鎖を組ませるCHAIN.md。JSFX.mdの隣に置き、llms.txtはページと同じことだけを書く（text.jsの頭）。
-await test("CHAIN.md: linked next to JSFX.md on the home page and in llms.txt", async () => {
+await test("CHAIN.md: linked next to JSFX.md in the ChatGPT guide and in llms.txt", async () => {
   assert.equal(CHAIN_MD, "https://github.com/satomasahiro2005/EffectDeck/blob/main/CHAIN.md");
-  assert.equal(TEXT.jsfxLinks[1], `<a href="${CHAIN_MD}">CHAIN.md</a>`);
-  assert.ok(TEXT.jsfxLinks[0].includes(`href="${JSFX_MD}"`));
-  const para = TEXT.jsfx.find((p) => p.includes(CHAIN_MD));
+  assert.ok(guideText("chatgpt").includes(`href=\\"${JSFX_MD}\\"`));
+  const para = guideParas("chatgpt").find((p) => p.includes(CHAIN_MD) && p.includes("opens ChatGPT"));
   assert.ok(para, "the JSFX section says what CHAIN.md is for");
   assert.match(para, /Build with ChatGPT…/);
   assert.match(para, /Import from clipboard/);
@@ -172,10 +177,10 @@ await test("CHAIN.md: linked next to JSFX.md on the home page and in llms.txt", 
 // アプリの2つの口はchatgpt.comを直に開く（EffectPickerView.writeJSFX / buildChain、61efe19）。
 // /writeはページ側の道で、アプリはそこを通らない。
 await test("the app opens ChatGPT directly; the page still goes through /write", async () => {
-  const para = TEXT.jsfx.find((p) => p.includes("Write JSFX with ChatGPT"));
+  const para = guideParas("chatgpt").find((p) => p.includes("opens ChatGPT with a short request"));
   assert.match(para, /opens ChatGPT with a short request that points it at JSFX\.md/);
-  assert.ok(!/opens a page/.test(JSON.stringify(TEXT)), "the app no longer opens a page");
-  const chain = TEXT.jsfx.find((p) => p.includes(CHAIN_MD));
+  assert.ok(!/opens a page/.test(JSON.stringify({ TEXT, GUIDE })), "the app no longer opens a page");
+  const chain = guideParas("chatgpt").find((p) => p.includes(CHAIN_MD) && p.includes("opens ChatGPT"));
   assert.match(chain, /opens ChatGPT the same way/);
   assert.match(chain, /Tap the link it returns/);
   assert.match(LLMS_TXT, /Write JSFX with ChatGPT \(under Plugins\) opens ChatGPT/);
@@ -184,8 +189,9 @@ await test("the app opens ChatGPT directly; the page still goes through /write",
 
 // 内蔵の効果だけの鎖はEffeTuneのWeb版のリンクになる（ETShareLink.url(for:)）。
 await test("share links: effectdeck.nemut.ai only for JSFX and chains with AUv3 or JSFX", async () => {
-  assert.match(TEXT.share[0], /^JSFX scripts, and chains that use AUv3 plug-ins or JSFX effects, are shared as links on effectdeck\.nemut\.ai\./);
-  assert.match(TEXT.share[0], /A chain of only built-in effects is shared as a link to the EffeTune web app\./);
+  const share = guideParas("share");
+  assert.ok(share.some((p) => /^JSFX scripts, and chains that use AUv3 plug-ins or JSFX effects, are shared as links on effectdeck\.nemut\.ai\./.test(p)));
+  assert.ok(share.some((p) => /A chain of only built-in effects is shared as a link to the EffeTune web app/.test(p)));
   assert.match(LLMS_TXT, /A chain of only built-in effects is shared as a link to the EffeTune web app\./);
   assert.ok(!LLMS_TXT.includes("Chains and JSFX scripts are shared"));
 });
