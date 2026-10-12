@@ -359,6 +359,8 @@ struct PipelineView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { ETDisplayPump.shared.stop() }
             else { ETDisplayPump.shared.start { io.pollTelemetry() } }
+            // tick の重い問い合わせも同じ .background だけで減らす。戻ったら一度に読み直す。
+            io.setBackground(phase == .background)
             // 背景では PC にアナライザの枠を作らせない。同じく .background だけで切る。
             RemoteMirror.shared.setAppActive(phase != .background)
             if phase == .active { drainShared() }
