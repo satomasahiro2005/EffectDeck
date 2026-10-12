@@ -3,8 +3,8 @@
 //   effectdeck.nemut.ai  アプリが作る共有リンクの宛先で、唯一の associated domain。
 //                        AASA とページを返す。アプリが入っていればリンクはアプリで開き、
 //                        入っていなければ同じ URL のページに着く。
-//   fxd.nemut.ai         人がプロフィールや投稿に打つための短い別名。**ページも AASA も持たない。**
-//                        AASA を含めて全部を effectdeck の同じパスとクエリへ 301 する。
+//   fxd.nemut.ai         人がプロフィールや投稿に打つための短い別名。**ページは持たない。**
+//                        AASA だけ effectdeck と同じものを返し、ほかは effectdeck の同じパスとクエリへ 301 する。
 //
 // **ページからアプリへ渡すボタンは置かない。**Universal Link は別のドメインへ飛ぶときにしか
 // 立たず、effectdeck のページから effectdeck を指しても Safari の中でページが開くだけ。
@@ -112,8 +112,11 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
 
-    // **fxd は 301 だけ。AASA も転送する。**パスとクエリをそのまま付け替える（# はブラウザが引き継ぐ）。
-    // Apple は転送された AASA を読まないので、fxd は associated domain にならない。それでよい。
+    // **fxd は AASA だけ自分で返し、ほかは 301。**パスとクエリをそのまま付け替える（# はブラウザが引き継ぐ）。
+    // Apple は転送された AASA を読まないので、前は fxd が associated domain にならなかった。
+    // 鎖のページの「アプリで開く」は fxd を指す（Universal Link は別のドメインへ飛ぶときにしか立たない）ので、
+    // fxd もアプリのドメインにする。アプリが入っていなければ、301 で effectdeck の同じページへ戻る。
+    if (url.hostname === LINK_HOST && AASA_PATHS.has(url.pathname)) return aasa();
     if (url.hostname === LINK_HOST) {
       return new Response(null, {
         status: 301,

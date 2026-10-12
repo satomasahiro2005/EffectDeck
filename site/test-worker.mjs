@@ -5,8 +5,8 @@
 // fxd.nemut.ai と effectdeck.nemut.ai のどちらの名前で来たかがそのまま Worker に届く。
 //
 // 見ているのは振り分けの約束。
-//   fxd は AASA も含めて全部 301（AASA の分岐を fxd の上へ戻すとここで落ちる）
-//   AASA を返すのは effectdeck だけ
+//   fxd は AASA のほかは全部 301
+//   AASA は effectdeck と fxd が同じものを返す
 //   バナーの app-argument と、/j のインライン script と CSP のハッシュの一致
 //   開くボタンを置かない
 
@@ -100,10 +100,8 @@ try {
     assert.equal(img.headers.get("content-type"), "image/png");
   });
 
-  await test("fxd: everything 301s to effectdeck with the same path and query, AASA included", async () => {
+  await test("fxd: everything but AASA 301s to effectdeck with the same path and query", async () => {
     for (const path of [
-      "/.well-known/apple-app-site-association",
-      "/apple-app-site-association",
       "/",
       "/j",
       "/j/",
@@ -124,9 +122,10 @@ try {
     assert.equal(post.headers.get("location"), `https://${DECK}/j`);
   });
 
-  await test("effectdeck: AASA 200 application/json, the only host that serves it", async () => {
-    for (const path of ["/.well-known/apple-app-site-association", "/apple-app-site-association"]) {
-      const r = await get(DECK, path);
+  // fxd も同じ AASA を返す（鎖のページの「アプリで開く」が fxd を指すため。worker.js の入口）。
+  await test("effectdeck and fxd: AASA 200 application/json, the same document", async () => {
+    for (const [host, path] of [DECK, FXD].flatMap((h) => ["/.well-known/apple-app-site-association", "/apple-app-site-association"].map((x) => [h, x]))) {
+      const r = await get(host, path);
       assert.equal(r.status, 200, path);
       assert.equal(r.headers.get("content-type"), "application/json");
       const d = JSON.parse(r.body).applinks.details[0];

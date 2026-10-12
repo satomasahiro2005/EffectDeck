@@ -2,7 +2,7 @@
 
 // アプリが作る共有リンクの宛先で、唯一の associated domain（ETFXDLink.host / ETShareLink.deckBase）。
 export const DECK_HOST = "effectdeck.nemut.ai";
-// **短い方は人が打つための別名。**ページも AASA も持たず、全部を DECK_HOST へ 301。
+// **短い方は人が打つための別名。**ページは持たず、AASA のほかは全部を DECK_HOST へ 301。
 // アプリはこの名前でリンクを作らない（受けるだけ）。
 export const LINK_HOST = "fxd.nemut.ai";
 
