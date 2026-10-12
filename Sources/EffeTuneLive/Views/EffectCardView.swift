@@ -334,8 +334,9 @@ struct EffectCardView: View {
     /// 畳んだときに図だけを出すか。
     ///
     /// **`has` ではなく `hasGraph`。** 専用の画面はあるが図は描かないもの
-    /// （IR Reverb）を `has` で拾うと、畳んでいるのに取り込む口と状態行が
-    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（実機で確認）。
+    /// （SFZ Note Player など）を `has` で拾うと、畳んでいるのに取り込む口や状態行が
+    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（IR Reverb で実機確認。
+    /// 今の IR Reverb は図を持ち、etGraphOnly では図だけを返す）。
     private var showsCollapsedGraph: Bool { ETEffectViews.hasGraph(node.spec.type) }
 
 

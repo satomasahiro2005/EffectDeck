@@ -315,6 +315,10 @@ targets:
       - path: Sources/EffeTuneLive/DSP/IRPreparation.swift
       - path: Tests/Fixtures/IR/prepare-golden.json
         buildPhase: resources
+      # IR ReverbのEDCグラフの数字（IRAnalysisTests）。見本はTools/ir_analysis_golden.mjsで作り直せる。
+      - path: Sources/EffeTuneLive/DSP/IRAnalysis.swift
+      - path: Tests/Fixtures/IR/analysis-golden.json
+        buildPhase: resources
       # 鎖の意味と正規形。Foundation だけなので実機なしで試せる。
       # 判断をここへ出してあるのは、そのため（PipelineRulesTests）。
       - path: Sources/EffeTuneLive/DSP/PipelineAnalysis.swift

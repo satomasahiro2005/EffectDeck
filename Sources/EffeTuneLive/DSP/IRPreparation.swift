@@ -235,6 +235,11 @@ enum ETIRPreparation {
         var truncated: Bool
         var initialGains: [Float]
         var finalGains: [Float]
+        /// 上流の analysis.original（ir-preparation.js:367-373）の材料。全部の面を、頭の無音と
+        /// Direct Cut とフェードインと最初の利得まで済ませた形で、**decay（dt）・trim（tr）・最後の利得の前**に
+        /// 控えたもの。EDC の図の点線（Original）がこれ。画面の図のためだけに持つ（IRAnalysis.swift）。
+        /// 選んだ面（selectChannels）の後も変えない。送る面は `channels` の方。
+        var originalChannels: [[Float]]
 
         var frames: Int { channels.first?.count ?? 0 }
     }
@@ -347,7 +352,9 @@ enum ETIRPreparation {
     /// `x * gain`をFloatで計算しても結果は同じになる。
     ///
     /// 上流が返すanalysis（包絡・EDC・L1の上限）は画面の図の材料で、送る面には効かない。
-    /// ここでは計算しない。rt60も、dtが100のときは使われないので測らない。
+    /// ここでは計算しない。図の分は IRAnalysis.swift が、`originalChannels`（上流の analysis.original の
+    /// 材料）と送った面から別に計算する（重いので呼び手が裏で回す）。L1の上限とpeakDbは図が使わないので
+    /// どこでも計算しない。rt60も、dtが100のときは使われないのでここでは測らない。
     ///
     /// - Parameters:
     ///   - source: 面。長さは全部同じ。1〜16面
@@ -403,6 +410,10 @@ enum ETIRPreparation {
         let initialGains = reference?.initialGains
             ?? normalizationGains(channelEnergies(channels, from: 0), topology: topology)
         applyGains(&channels, initialGains)
+        // 上流の originalAnalysis を取る点（:367-373）。decay・trim・最後の利得の前。
+        // 後ろの工程が channels を書き換えるとき（既定のままなら最後の利得だけ）に1回写しが取られる。
+        // 解析が終われば呼び手が手放すので、Prepared には持たせっぱなしにしない。
+        let original = channels
 
         let shape: DecayShape?
         if let reference {
@@ -444,7 +455,8 @@ enum ETIRPreparation {
                         sourceStartFrame: startFrame,
                         truncated: truncated,
                         initialGains: initialGains,
-                        finalGains: finalGains)
+                        finalGains: finalGains,
+                        originalChannels: original)
     }
 
     /// onset.js:1-23のdetectOnsetFromEnergies。
@@ -494,7 +506,8 @@ enum ETIRPreparation {
     }
 
     /// frameEnergies（:80-91）。`from`より前は見ない（上流のsubarrayと同じ）。
-    private static func frameEnergies(_ channels: [[Float]], from offset: Int, gains: [Float]?) -> [Double] {
+    /// IRAnalysis.swift も使う（EDC を1か所にしか持たないため private にしない）。
+    static func frameEnergies(_ channels: [[Float]], from offset: Int, gains: [Float]?) -> [Double] {
         let length = channels[0].count - offset
         var energies = [Double](repeating: 0, count: length)
         for c in channels.indices {
@@ -576,7 +589,8 @@ enum ETIRPreparation {
     }
 
     /// estimateRt60（:167-189）。computeEdc（:156-165）を含む。
-    private static func estimateRt60(_ channels: [[Float]], from offset: Int,
+    /// IRAnalysis.swift も使う（RT60 の推定を1か所にしか持たないため private にしない）。
+    static func estimateRt60(_ channels: [[Float]], from offset: Int,
                                      sampleRate: Double, gains: [Float]?) -> Double? {
         let energies = frameEnergies(channels, from: offset, gains: gains)
         var accumulated = [Double](repeating: 0, count: energies.count)

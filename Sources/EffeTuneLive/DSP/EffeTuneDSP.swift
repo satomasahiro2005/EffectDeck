@@ -675,6 +675,8 @@ final class EffeTuneDSP: ObservableObject {
     /// 音の側の話なので、鎖が戻った時点でここがやる。
     func reloadAssets() {
         let all = nodes
+        // 鎖ごと入れ替わった後は、居なくなった段の EDC グラフを捨てる。
+        ETIRGraphStore.shared.retain(Set(all.map(\.id)))
         for i in all.indices where !all[i].irId.isEmpty {
             reloadAsset(at: i)
         }
@@ -709,6 +711,7 @@ final class EffeTuneDSP: ObservableObject {
         guard !node.irId.isEmpty, node.instance != 0 else { return false }
         let width = Self.routedChannels(of: node)
         let line = ETIRLoader.reload(irId: node.irId,
+                                     nodeID: node.id,
                                      engine: engine,
                                      instance: node.instance,
                                      processingRate: sampleRate,
@@ -722,6 +725,9 @@ final class EffeTuneDSP: ObservableObject {
                                                         processedWidth: width)
         // 同じ値を書き戻すと @Published がカードを描き直させるので、変わるときだけ書く。
         if assetInfo[node.id] != shown { assetInfo[node.id] = shown }
+        // 幅 0 の段では資産がinstanceと一緒に消えているので、EDC グラフも消す（assetLineAfterReload と同じ規則）。
+        // 幅があるのに送れなかったときは前の資産が鳴り続けているので、図も前のまま残す。
+        if line == nil, width < 1 { ETIRGraphStore.shared.clear(nodeID: node.id) }
         return line != nil
     }
 
@@ -1212,6 +1218,7 @@ final class EffeTuneDSP: ObservableObject {
         if unloaded {
             self[slot: index].irId = ""
             assetInfo[self[slot: index].id] = nil
+            ETIRGraphStore.shared.clear(nodeID: self[slot: index].id)
             AssetUpload.clear(engine: engine, instance: self[slot: index].instance)
         }
         // SFZ は読み込みの状態も戻す（読み込み中なら結果を捨て、失敗の文も消す）。

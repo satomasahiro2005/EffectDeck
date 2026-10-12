@@ -391,7 +391,10 @@ final class SiteShots: XCTestCase {
 
     func test_brir_6_to_10() {
         let app = pasteChain("W3sibm0iOiJJUiBSZXZlcmIiLCJlbiI6dHJ1ZSwiZGUiOmZhbHNlLCJkYyI6ZmFsc2V9LHsibm0iOiJMZXZlbCBNZXRlciIsImVuIjp0cnVlfV0", args: ["-ETSeed", "none"])
-        tap(app, "IR Reverb", type: .staticText)  // 畳んで出るので開く（label が同じ電源のスイッチは押さない）
+        // 畳んで出る。IR Reverb は図を持つので「図だけ → 名前だけ → 開く」の順に進み、開くには2回押す
+        // （PipelineView.cycle）。label が同じ電源のスイッチは押さない。
+        tap(app, "IR Reverb", type: .staticText)
+        tap(app, "IR Reverb", type: .staticText)
         tap(app, "Import file…")
         pickFile(app, "BRIR_R01_C1_True_Stereo", shot: "g-brir-6")
         scrollTop(app)
