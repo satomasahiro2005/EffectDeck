@@ -71,7 +71,7 @@ export const GUIDE = {
       slug: "correction",
       title: "Correct your headphones",
       tag: "Optional",
-      card: "Give your headphones a known starting point, kept apart from the sound you make.",
+      card: "Tell ChatGPT which headphones you have and it makes the correction from an AutoEq measurement, kept apart from the sound you make.",
       description: "Have ChatGPT set up an AutoEq correction for your headphones in EffectDeck, or import one into 15Band PEQ yourself, and keep it per output device with Output Correction.",
       goal: "Separate what your headphones do to the sound from what you want to do to it.",
       blocks: [

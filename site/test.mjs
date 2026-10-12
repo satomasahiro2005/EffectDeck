@@ -132,8 +132,8 @@ await test("no release status in the text: no TestFlight or beta outside the foo
   }
   assert.equal(TEXT.betaLink, "Beta (TestFlight)");
   assert.ok(!release.test(label(JSON.stringify(GUIDE))), "GUIDE");
-  for (const f of FAQ) assert.ok(!release.test(f.q + f.a), f.q);
-  assert.ok(!release.test(JSON.stringify(homeLd())), "JSON-LD");
+  for (const f of FAQ) assert.ok(!release.test(label(f.q + f.a)), f.q);
+  assert.ok(!release.test(label(JSON.stringify(homeLd()))), "JSON-LD");
   assert.ok(!release.test(label(LLMS_TXT)), "llms.txt");
   assert.ok(!LLMS_TXT.includes(TESTFLIGHT));
   // JSFX は機能として書く

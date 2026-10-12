@@ -27,7 +27,7 @@ const mail = `<a href="mailto:${EMAIL}">${EMAIL}</a>`;
 export const TEXT = {
   // <title> と og:title。検索に出る言い回しをそのまま入れる。
   title: "EffectDeck — audio effects for any app on iPhone and iPad",
-  description: "EffectDeck puts an effect chain on the audio of any app on iPhone and iPad: EffeTune's effects, AUv3 plug-ins, impulse responses, and JSFX effects you write or have ChatGPT write. Free and open source (MIT). Requires iOS 27.",
+  description: "EffectDeck puts an effect chain on the audio of any app on iPhone and iPad: EffeTune's effects, AUv3 plug-ins, impulse responses and JSFX effects. Tell ChatGPT which headphones you have and it sets up the correction from an AutoEq measurement; describe a sound and it makes the chain or writes a JSFX effect. Free and open source (MIT). Requires iOS 27.",
   // トップの頭。リリースで変わらないことだけ（何か・App Store・GitHub・FOSS）。
   // **決め台詞を書かない**（スローガンは AI Slop と言われた）。h1 はアプリの名前、頭は何をするものかだけ。
   tagline: "Runs EffeTune's DSP on the audio of any app on your iPhone or iPad, through the Media Device Extension in iOS 27: EQ, dynamics, saturation, reverb, spatial effects and analyzers, plus AUv3 plug-ins, impulse responses and JSFX.",
@@ -122,7 +122,7 @@ export const FAQ = [
   },
   {
     q: "Do I have to correct my headphones first?",
-    a: "No. A correction is a starting point, not the goal, and using the effects without one is fine. If you do correct, Output Correction keeps it apart from your chain and switches it with the output. See the <a href=\"/guide\">guide</a>.",
+    a: "No. A correction is a starting point, not the goal, and using the effects without one is fine. If you do correct, the quick way is ChatGPT: tap Build with ChatGPT…, say which headphones you have, and tap the link it returns. It finds the measurement on AutoEq and sets up the EQ. Output Correction keeps the correction apart from your chain and switches it with the output. See the <a href=\"/guide/correction\">guide</a>.",
   },
   {
     q: "Which iOS version does it need?",
