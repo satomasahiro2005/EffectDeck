@@ -44,6 +44,26 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
 
     private var reportTimer: Timer?
 
+    /// 状態の行を出す間隔。
+    ///
+    /// 前は 1 秒ごとに固定で、配送が続くあいだ拡張を毎秒起こしていた。
+    /// 1 秒の粒が要るのは Xcode から繋いで流れを見ているときだけなので、
+    /// Debug ビルドだけ 1 秒にする。ストアと TestFlight のビルドは 1 分に 1 行。
+    /// docs/battery-log.md §2 の式は差分で組んであるので、間隔が変わっても使える。
+    /// 実行時の切り替えは付けていない。拡張は App Group のファイルを書けず
+    /// （LocalLink.h の頭）、起動引数も受け取らないので、確かめられた経路が無い。
+    #if DEBUG
+    private static let reportEvery: TimeInterval = 1
+    #else
+    private static let reportEvery: TimeInterval = 60
+    #endif
+
+    /// 前回の行を出した時点の累計。行には増分を載せる。
+    /// 送り手の数（送信・起床・send）は start のたびに 0 へ戻るので、
+    /// 前回より小さければ今回の値をそのまま増分とする。
+    private var reportLast: (at: TimeInterval, total: UInt64, calls: UInt64,
+                             silent: UInt64, sent: UInt64, pumps: UInt64, sends: UInt64)?
+
     /// 配送が止まったあと、少し待ってから送り手を落とすための札。
     /// 系が停止と再開を短い間に往復させることが在るので、即座に落とさない。
     private var senderStopWork: DispatchWorkItem?
@@ -357,16 +377,49 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         senderStopWork?.cancel()
         senderStopWork = nil
         ETLinkSender.shared.start()
+        // 音のスレッドで走るので、何も捕まえず、C 関数を直に呼ぶ
+        // （ObjC のメソッドだと objc_msgSend と、シングルトンの retain/release が毎回入る）。
         EffeTuneDriver.shared.startCapture { planes, channels, frames, _ in
-            ETLinkSender.shared.pushInterleaved(planes[0], frames: frames, channels: channels)
+            ETLinkSenderPushInterleaved(planes[0], frames, channels)
         }
 
+        // 最初の 1 行は 2 秒後に出す。Scripts/bridge_probe.sh は 30 秒だけ録って
+        // 「受信 frames=」が 0 行なら配送が走らなかったと読むので、
+        // 間隔が 60 秒でもその窓に必ず 1 行入るようにしてある。
         reportTimer?.invalidate()
-        reportTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            _ = self
-            log.notice("受信 frames=\(EffeTuneDriver.shared.framesDelivered) 接続=\(ETLinkSender.shared.connected) 送信=\(ETLinkSender.shared.sentFrames)")
+        reportLast = nil
+        let every = Self.reportEvery
+        let timer = Timer(fire: Date().addingTimeInterval(2), interval: every, repeats: true) { [weak self] _ in
+            self?.reportStatus()
         }
+        timer.tolerance = every * 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        reportTimer = timer
+    }
+
+    /// 状態の行。先頭の「受信 frames=… 接続=… 送信=…」は
+    /// Scripts/bridge_probe.sh と docs/battery-log.md §2 が読むので変えない。
+    /// 後ろに足した増分は、WriteMix が無音のまま来続けているか・止まっているかを見るためのもの:
+    ///   WriteMix の増分 ÷ 間 ÷ 48000 が 1 前後で 無音 ≒ WriteMix → 無音の PCM が流れ続けている
+    ///   WriteMix の増分が 0 前後 → ホストが IO を止めていて、橋は眠っているだけ
+    ///   WriteMix のフレーム ÷ 回数 → IO ブロックの大きさ（送り手の起床の上限もこれで決まる）
+    private func reportStatus() {
+        let drv = EffeTuneDriver.shared
+        let snd = ETLinkSender.shared
+        let now = ProcessInfo.processInfo.systemUptime
+        let cur = (at: now, total: drv.writeMixFramesTotal, calls: drv.writeMixCalls,
+                   silent: drv.silentFrames, sent: snd.sentFrames,
+                   pumps: snd.pumpCount, sends: snd.sendCalls)
+        var tail = ""
+        if let last = reportLast {
+            func d(_ c: UInt64, _ p: UInt64) -> UInt64 { c >= p ? c - p : c }
+            let secs = Int((cur.at - last.at).rounded())
+            tail = " 間=\(secs)s WriteMix=+\(d(cur.total, last.total))/\(d(cur.calls, last.calls))回"
+                + " 無音=+\(d(cur.silent, last.silent)) 起床=+\(d(cur.pumps, last.pumps))"
+                + " send=+\(d(cur.sends, last.sends))"
+        }
+        reportLast = cur
+        log.notice("受信 frames=\(drv.framesDelivered) 接続=\(snd.connected) 送信=\(snd.sentFrames)\(tail, privacy: .public)")
     }
 
     func stopRealtimeSampleDelivery(session: MediaOutputSession) {
@@ -376,7 +429,9 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         EffeTuneDriver.shared.stopCapture()
 
         // **送り手も止める。**ここは捕まえる側を外すだけで、送り手の 2ms タイマー
-        // （500 回/秒）は回り続けていた。落とすのは deactivateDevice と quit だけで、
+        // （500 回/秒）は回り続けていた（当時の話。いまの送り手は音を積んだ瞬間にしか
+        // 起きないので、音が来ないあいだは眠るが、接続と 200ms の再試行は持ったまま）。
+        // 落とすのは deactivateDevice と quit だけで、
         // その 2 つが来ないまま配送が止まっている窓の長さには上限が無い。
         //
         // **即座には落とさない。**stop は _fd を閉じるので、受け手は切断として

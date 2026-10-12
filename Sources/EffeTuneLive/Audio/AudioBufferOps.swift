@@ -117,6 +117,60 @@ enum ETAudioBufferOps {
         }
     }
 
+    // MARK: - 素通しの遅延の輪
+
+    // 素通しのとき 96/192kHz へ上げて下げる往復を飛ばすための部品（AudioIO の render）。
+    // 往復は高域を少し削って ETResampler_LatencySamples だけ遅らせる。
+    // 遅れだけを輪で真似れば、入切のたびに音が時間方向へ飛ばない。
+    // 輪の長さは 2 の冪（マスクで回す）。行は channel * length から始まる。
+
+    /// `frames` 分のプレーナ（行の幅 = frames）を輪へ流し込む。返すのは次の書き込み位置。
+    /// 素通しでまだ輪が温まっていないブロックが、往復を通しつつ最近の乾いた音を貯めるのに使う。
+    static func feedRing(_ planar: UnsafePointer<Float>, frames: Int, channels: Int,
+                         ring: UnsafeMutablePointer<Float>, length: Int, position: Int) -> Int {
+        guard frames > 0, channels > 0, length > 0 else { return position }
+        let mask = length - 1
+        for c in 0..<channels {
+            let row = ring + c * length
+            let src = planar + c * frames
+            for i in 0..<frames { row[(position + i) & mask] = src[i] }
+        }
+        return (position + frames) & mask
+    }
+
+    /// プレーナをその場で `delay` サンプル遅らせる。1 サンプルずつ「入れてから、delay 前を読む」。
+    /// delay が length より小さければ、frames が length を超えても同じ結果になる。
+    /// 履歴は輪の中身で、最初は 0。返すのは次の書き込み位置。
+    static func delayThrough(_ planar: UnsafeMutablePointer<Float>, frames: Int, channels: Int,
+                             ring: UnsafeMutablePointer<Float>, length: Int, position: Int,
+                             delay: Int) -> Int {
+        guard frames > 0, channels > 0, length > 0, delay >= 0, delay < length else { return position }
+        let mask = length - 1
+        for c in 0..<channels {
+            let row = ring + c * length
+            let dst = planar + c * frames
+            for i in 0..<frames {
+                let x = dst[i]
+                row[(position + i) & mask] = x
+                dst[i] = row[(position + i - delay) & mask]
+            }
+        }
+        return (position + frames) & mask
+    }
+
+    /// 輪を古い方から新しい方へ並べ直す。出力は行の幅が length のプレーナ。
+    /// 素通しをやめるとき、リサンプラの履歴を「ずっと通していた」ときと同じにするために使う。
+    static func unrollRing(_ ring: UnsafePointer<Float>, length: Int, channels: Int, position: Int,
+                           into out: UnsafeMutablePointer<Float>) {
+        guard channels > 0, length > 0 else { return }
+        let mask = length - 1
+        for c in 0..<channels {
+            let row = ring + c * length
+            let dst = out + c * length
+            for i in 0..<length { dst[i] = row[(position + i) & mask] }
+        }
+    }
+
     // MARK: - 負荷
 
     /// 1 ブロックの負荷（使った時間 / 使える時間）を 1 次の平滑で溜める。係数 0.1。

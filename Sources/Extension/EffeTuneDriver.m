@@ -74,6 +74,18 @@ static Boolean          gRegistered = false;  // 直近の登録が生きてい�
 // 実機で確かめた。ここは常に 1 を返す。
 static UInt64           gIOCount    = 0;
 
+/// WriteMix の累計。**gIOCount と違って 0 に戻らない。**
+/// gIOCount は StartIO と startCapture で 0 に戻るので、そこから取る増分は負になりうる。
+/// 報告の行（EffeTuneLiveExtension.swift）はこちらの増分を使う。
+/// 数えるのは常に行う（relaxed の足し算とフレームの走査だけで軽い）。
+/// 出すかどうかだけが報告の側で決まる。
+/// gSilentFrames は中身が厳密に 0.0f だけだった WriteMix のフレーム数。
+/// 「無音の PCM が流れ続けているか」を実機で見分けるための数で、
+/// フレーム数での表現を考える前にこれで確かめる（docs/battery-log.md の 5）。
+static _Atomic uint64_t gWriteMixFramesTotal = 0;
+static _Atomic uint64_t gWriteMixCalls       = 0;
+static _Atomic uint64_t gSilentFrames        = 0;
+
 /// ゼロタイムスタンプの状態と、走っている印（kAudioDevicePropertyDeviceIsRunning）。
 /// 計算は ETZeroTimeStamp.c にあり、Tests/Native/driver で確かめている。
 /// タイムラインの世代（seed）は **StartIO で張り直したときだけ進める。**
@@ -650,7 +662,8 @@ static OSStatus ET_StopIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt3
     pthread_mutex_lock(&gStateMutex);
     ETZeroTimeStamp_StopIO(&gTimeline);
     pthread_mutex_unlock(&gStateMutex);
-    os_log(gLog, "StopIO frames=%llu", (unsigned long long)gIOCount);
+    os_log(gLog, "StopIO frames=%llu 無音累計=%llu", (unsigned long long)gIOCount,
+           (unsigned long long)atomic_load_explicit(&gSilentFrames, memory_order_relaxed));
     return noErr;
 }
 
@@ -725,6 +738,22 @@ static OSStatus ET_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID dev
 
     gIOCount += frames;
 
+    // 数えるだけ。ロックも確保も ObjC も無い（relaxed の足し算と読むだけの走査）。
+    // handler を入れていないときも数える（gIOCount と同じ）。
+    // 音が鳴っているあいだは最初の 1 サンプルで走査が終わる。無音のときは
+    // 全サンプルを 1 回比べるが、直後のリングへの写しが同じ量を読むのと同じ程度。
+    // **厳密な 0 だけ**を無音とするのは、フレーム数で表すなら損なく置き換えられるのが
+    // 厳密な 0 だけだから（-0.0 は無音、ディザの非正規数は音）。
+    atomic_fetch_add_explicit(&gWriteMixFramesTotal, frames, memory_order_relaxed);
+    atomic_fetch_add_explicit(&gWriteMixCalls, 1, memory_order_relaxed);
+    {
+        const float *sp = (const float *)ioMainBuffer;
+        const size_t ns = (size_t)frames * kChannelCount;
+        size_t i = 0;
+        while (i < ns && sp[i] == 0.0f) i++;
+        if (i == ns) atomic_fetch_add_explicit(&gSilentFrames, frames, memory_order_relaxed);
+    }
+
     // atomic に読んで __unsafe_unretained で受ける。理由は gHandlerPtr の宣言のところ。
     // ここで strong なローカルに受け直すと retain/release が復活するので書き換えないこと。
     void *hp = atomic_load_explicit(&gHandlerPtr, memory_order_acquire);
@@ -779,6 +808,9 @@ static OSStatus ET_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID de
 - (double)sampleRate { return kSampleRate; }
 - (uint32_t)channelCount { return kChannelCount; }
 - (uint64_t)framesDelivered { return gIOCount; }
+- (uint64_t)writeMixFramesTotal { return atomic_load_explicit(&gWriteMixFramesTotal, memory_order_relaxed); }
+- (uint64_t)writeMixCalls       { return atomic_load_explicit(&gWriteMixCalls, memory_order_relaxed); }
+- (uint64_t)silentFrames        { return atomic_load_explicit(&gSilentFrames, memory_order_relaxed); }
 
 /// vtable を埋めるのはプロセスに 1 回だけ。
 ///

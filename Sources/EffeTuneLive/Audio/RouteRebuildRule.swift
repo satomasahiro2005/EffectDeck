@@ -55,3 +55,46 @@ struct ETRouteRebuildRule {
         return actual != built
     }
 }
+
+/// tick の 1 回で、どの見直しをするか。**AVAudioSession に触らない。**
+///
+/// 前面では今までどおり全部やる。背景では、再接続に要るもの（followPeer・ロック画面・
+/// 音が続いたかの判定・診断の行）を毎回残し、AVAudioSession への問い合わせと
+/// 誰にも見られない画面用の publish は、何かが落ち着いていないときだけにする。
+/// 経路の変化は通知（routeChange・AVAudioEngineConfigurationChange）が撃つので、
+/// ここは通知の取りこぼしを拾う保険と、時間で動く部品の見張りだけを受け持つ。
+struct ETTickPlan: Equatable {
+    var route: Bool
+    var rebuild: Bool
+    var display: Bool
+    var diagnostic: Bool
+
+    /// 診断の行を出す間隔（tick の数。約 6 秒）。docs/battery-log.md が読む。
+    static let diagnosticEvery = 20
+
+    /// 通知のあと、経路とレートを毎回見る秒数。レートが落ち着くまでの 1 秒に
+    /// 組み直しの規則（3 目盛り + 1 秒）が収まる長さを取る。
+    static let watchSeconds: TimeInterval = 5
+
+    /// - Parameters:
+    ///   - background: scenePhase が .background か（.inactive は前面扱い）。
+    ///   - tick: 通算の目盛り。
+    ///   - now: `ProcessInfo.processInfo.systemUptime`。
+    ///   - watchUntil: ここまでは見張る（start() と経路・engine の通知で延ばす）。
+    ///   - rebuildPending: レートか本数の食い違いを数えている途中か。
+    ///     数え終わるまで毎回見ないと、規則の「3 目盛り」が 6 秒おきに間延びする。
+    ///   - onVirtual: 走っていて、出力先が仮想デバイスのまま。引き剥がしの 3 秒再試行が
+    ///     経路の問い合わせで動くので、毎回見る。
+    static func make(background: Bool, tick: Int, now: TimeInterval, watchUntil: TimeInterval,
+                     rebuildPending: Bool, onVirtual: Bool) -> ETTickPlan {
+        let diagnostic = tick % diagnosticEvery == 0
+        guard background else {
+            return ETTickPlan(route: true, rebuild: true, display: true, diagnostic: diagnostic)
+        }
+        let watching = now < watchUntil
+        return ETTickPlan(route: diagnostic || onVirtual || watching,
+                          rebuild: diagnostic || rebuildPending || watching,
+                          display: false,
+                          diagnostic: diagnostic)
+    }
+}
