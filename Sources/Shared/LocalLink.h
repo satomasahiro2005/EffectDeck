@@ -28,11 +28,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, readonly) ETLinkSender *shared;
 @property (nonatomic, readonly) BOOL connected;
 @property (nonatomic, readonly) uint64_t sentFrames;
+/// 送り手が起きた回数と、send を撃った回数。start のたびに 0 から数える。
+/// 周期で回していた頃の 500 回/秒が、音を積んだ回数まで減ったかを実機で確かめるための数
+/// （どちらも _q が書き、読むほうは競合を承知の概算）。
+@property (nonatomic, readonly) uint64_t pumpCount;
+@property (nonatomic, readonly) uint64_t sendCalls;
 - (void)start;
 - (void)stop;
-/// リアルタイムスレッドから呼ぶ。内部のリングに積むだけで、送信は別スレッド。
+/// ObjC のメソッドから呼ぶ版。中身は下の ETLinkSenderPushInterleaved。
+/// リアルタイムスレッドからは C 関数のほうを呼ぶこと（こちらは objc_msgSend を通る）。
 - (void)pushInterleaved:(const float *)samples frames:(uint32_t)frames channels:(uint32_t)channels;
 @end
+
+/// 音のスレッドから呼ぶ。内部のリングに積み、送り手が寝ていれば 1 回だけ起こす。
+/// objc_msgSend も ARC も通らない。送信は別スレッド（送り手の _q）。
+void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t channels);
 
 /// 受け手（プレイヤー側）。
 @interface ETLinkReceiver : NSObject
@@ -42,6 +52,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) uint64_t receivedFrames;
 /// まだ読み出していないフレーム数。そのまま遅延になる。
 @property (nonatomic, readonly) uint32_t bufferedFrames;
+/// 相手の fd が読める（または切れた）という通知で動いた回数と、recv を撃った回数。
+/// 周期で回していた頃の 1000 回/秒が、届いた回数まで減ったかを実機で確かめるための数。
+/// start のたびに 0 から数える（_q が書き、読むほうは競合を承知の概算）。
+@property (nonatomic, readonly) uint64_t readEvents;
+@property (nonatomic, readonly) uint64_t recvCalls;
 
 /// 再同期のときに置く、書き位置からの遅れ（フレーム）。
 /// 遅れの表示にはこちらを使う。bufferedFrames はその瞬間の溜まりで、
