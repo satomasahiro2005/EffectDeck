@@ -27,11 +27,13 @@ const mail = `<a href="mailto:${EMAIL}">${EMAIL}</a>`;
 export const TEXT = {
   // <title> と og:title。検索に出る言い回しをそのまま入れる。
   title: "EffectDeck — audio effects for any app on iPhone and iPad",
-  description: "EffectDeck puts an effect chain on the audio of any app on iPhone and iPad: EffeTune's effects, AUv3 plug-ins, impulse responses and JSFX effects. Tell ChatGPT which headphones you have and it sets up the correction from an AutoEq measurement; describe a sound and it makes the chain or writes a JSFX effect. Free and open source (MIT). Requires iOS 27.",
+  description: "EffectDeck puts an effect chain on the audio of any app on iPhone and iPad: over 100 effects from EffeTune, AUv3 plug-ins, impulse responses and JSFX effects. Tell ChatGPT which headphones you have and it sets up the correction from an AutoEq measurement; describe a sound and it makes the chain or writes a JSFX effect. Free and open source (MIT). Requires iOS 27.",
   // トップの頭。リリースで変わらないことだけ（何か・App Store・GitHub・FOSS）。
   // **決め台詞を書かない**（スローガンは AI Slop と言われた）。h1 はアプリの名前、頭は何をするものかだけ。
-  tagline: "Runs EffeTune's DSP on the audio of any app on your iPhone or iPad, through the Media Device Extension in iOS 27: EQ, dynamics, saturation, reverb, spatial effects and analyzers, plus AUv3 plug-ins, impulse responses and JSFX.",
-  foss: `Free and open source (${a(LICENSE, "MIT")})`,
+  // 数は DSP の型の数（DSP ready kinds=113、EffeTuneDSP.swift の起動の行）を丸めたもの。版で増減しても外れない「Over 100」にする。
+  // 「内蔵に無い効果は ChatGPT が JSFX で書く」で、内蔵の数に上限が無いことを事実で言う。
+  tagline: "Over 100 effects from EffeTune's DSP, on the audio of any app through the Media Device Extension in iOS 27. Tell ChatGPT the sound you want: it sets up the chain, and writes in JSFX any effect that is not built in.",
+  foss: `Free and open source (${a(LICENSE, "MIT")}). No account, ads or subscription.`,
   // スクリーンショットの下の字は名札。説明を書かない。
   shots: [
     { file: "effects", label: "Effects", alt: "Effect chain with Stereo Blend and Multiband Saturation" },

@@ -257,7 +257,9 @@ try {
     assert.ok(hero.includes('<a class="btn gh" href="https://github.com/satomasahiro2005/EffectDeck">GitHub</a>'));
     assert.ok(hero.includes("Media Device Extension in iOS 27"));
     assert.ok(hero.includes("<h1>EffectDeck</h1>"));
-    assert.match(hero, /<p class="foss">Free and open source \(<a href="[^"]+\/LICENSE">MIT<\/a>\)<\/p>/);
+    assert.match(hero, /<p class="foss">Free and open source \(<a href="[^"]+\/LICENSE">MIT<\/a>\)\. No account, ads or subscription\.<\/p>/);
+    // 頭で AI（アプリから ChatGPT に頼む）を 1 文で言う
+    assert.ok(hero.includes("Tell ChatGPT the sound you want"));
     // JSFX は全部の版に入ったので頭に書いてよい。版の話はしない。
     assert.ok(!/App Store version/.test(hero), "hero talks about builds");
     assert.match(home, /<meta name="description" content="[^"]*Free and open source \(MIT\)[^"]*">/);
