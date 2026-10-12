@@ -77,8 +77,8 @@ export const TEXT = {
 
   appStoreAlt: "Download on the App Store",
   chainTitle: "Effect chain",
-  // ページからアプリへ渡すボタンは無い（worker.js の頭）。Safari のバナーか、アプリの貼り付けで渡す。
-  chainHowTo: "If EffectDeck is installed, Safari shows a banner with <strong>Open</strong> at the top of this page. In another browser, copy this page's address and open EffectDeck. It offers to paste the link.",
+  // 鎖のページの「アプリで開く」（fxd へ飛ぶ。worker.js の頭）。
+  openEffectDeck: "Open in EffectDeck",
   // 鎖のページから EffeTune の Web 版へ（parse.js の effeTuneLink）。AU・JSFX は向こうに無いので落とす。
   openEffeTune: "Open in EffeTune",
   openEffeTuneWithout1: "Open in EffeTune without 1 external effect",
@@ -321,7 +321,7 @@ export const LLMS_TXT = `# EffectDeck
 - In the app, Write JSFX with ChatGPT (under Plugins) opens ChatGPT with a short request that points it at JSFX.md. https://effectdeck.nemut.ai/write has the same kind of request to paste into ChatGPT or another assistant. The returned file is imported with Import JSFX → From Files, or the copied script with From Clipboard.
 - CHAIN.md describes how a language model writes a chain of the built-in effects that EffectDeck imports. In the app, Build with ChatGPT… (at the top of the effect list) opens ChatGPT the same way to ask for one. The chain comes back as a link to tap, or is copied and imported with Import from clipboard in Presets.
 - EffectDeck is free on the App Store and its source is on GitHub under the MIT license.
-- JSFX scripts, and chains that use AUv3 plug-ins or JSFX effects, are shared as links on https://effectdeck.nemut.ai/ . A JSFX link carries the script after the #. A chain of only built-in effects is shared as a link to the EffeTune web app.
+- Chains and JSFX scripts are shared as links on https://effectdeck.nemut.ai/ . A JSFX link carries the script after the #. The page for a chain link also opens the chain in the EffeTune web app, without AUv3 plug-ins and JSFX effects.
 
 ## Links
 

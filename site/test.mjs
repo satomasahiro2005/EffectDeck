@@ -187,13 +187,14 @@ await test("the app opens ChatGPT directly; the page still goes through /write",
   assert.match(LLMS_TXT, /comes back as a link to tap/);
 });
 
-// 内蔵の効果だけの鎖はEffeTuneのWeb版のリンクになる（ETShareLink.url(for:)）。
-await test("share links: effectdeck.nemut.ai only for JSFX and chains with AUv3 or JSFX", async () => {
+// 鎖はいつもeffectdeck.nemut.aiのリンクになる（ETShareLink.deckURL(for:)）。EffeTuneへはそのページから。
+await test("share links: always effectdeck.nemut.ai, EffeTune from the chain page", async () => {
   const share = guideParas("share");
-  assert.ok(share.some((p) => /^JSFX scripts, and chains that use AUv3 plug-ins or JSFX effects, are shared as links on effectdeck\.nemut\.ai\./.test(p)));
-  assert.ok(share.some((p) => /A chain of only built-in effects is shared as a link to the EffeTune web app/.test(p)));
-  assert.match(LLMS_TXT, /A chain of only built-in effects is shared as a link to the EffeTune web app\./);
-  assert.ok(!LLMS_TXT.includes("Chains and JSFX scripts are shared"));
+  assert.ok(share.some((p) => /Chains and JSFX scripts are shared as links on effectdeck\.nemut\.ai\./.test(p)));
+  assert.ok(share.some((p) => /Open in EffeTune/.test(p)));
+  assert.ok(!share.some((p) => /A chain of only built-in effects is shared as a link to the EffeTune web app/.test(p)));
+  assert.match(LLMS_TXT, /Chains and JSFX scripts are shared as links on https:\/\/effectdeck\.nemut\.ai\/ \./);
+  assert.ok(!LLMS_TXT.includes("A chain of only built-in effects is shared as a link to the EffeTune web app"));
 });
 
 // アプリのETShareLink.effeTuneFormと同じ形に落とす（ShareLinkTests）。
