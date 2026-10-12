@@ -92,7 +92,10 @@ struct IRReverbView: View {
     private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
             source
-            notice
+            // **何も入っていなければ箱ごと出さない。**「No impulse response loaded」の 1 行のために
+            // ファイル名の箱が場所を取っていた。入っていない段は Import file… の行だけで分かる。
+            // 送り込めなかった理由は出すので、failure があるときは残す。
+            if hasNotice { notice }
             decayGraph
 
             ForEach(node.spec.params) { param in
@@ -161,6 +164,10 @@ struct IRReverbView: View {
     /// 上流の metadata 行（ir_reverb.js:1719-1741）に当たるもの。
     /// 入っていれば「4ch True Stereo / 48000 Hz / 1.23 s」、
     /// 入っていなければ上流と同じ 1 行（:1721）を出す。
+    private var hasNotice: Bool {
+        !node.irId.isEmpty || loaded != nil || failure != nil || dsp.assetInfo[node.id] != nil
+    }
+
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
             // 名前が先。何を使っているかが分からないと、聴き比べのときに困る。
