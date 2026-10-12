@@ -167,8 +167,18 @@ struct PipelineView: View {
     /// 2列を出しているか。
     private var usesSplit: Bool { layoutSplit ?? wantsSplit }
 
-    /// その行を開いて出すか。2列では全部開く。iPhoneの覚えは書き換えない。
-    private func isOpen(_ id: UUID) -> Bool { usesSplit || expanded.contains(id) }
+    /// 2列で図だけにしている段。**iPhoneの開閉の覚えとは別に持つ。**
+    ///
+    /// 2列は全部開いて出すが、図を持つものは1列と同じく図だけの形にもできる。
+    /// 押すと 開く ↔ 図だけ を行き来する。
+    /// 名前の行だけには畳まない（左の一覧が名前を並べている）。
+    /// 端末には残さない（collapsedFully と同じ）。
+    @State private var splitGraphOnly: Set<UUID> = []
+
+    /// その行を開いて出すか。2列では図だけにしたもの以外を開く。iPhoneの覚えは書き換えない。
+    private func isOpen(_ id: UUID) -> Bool {
+        usesSplit ? !splitGraphOnly.contains(id) : expanded.contains(id)
+    }
 
     // MARK: - 並べ替え
     //
@@ -945,10 +955,10 @@ struct PipelineView: View {
                         index: row.index,
                         node: row.node,
                         dsp: dsp,
-                        // 2列では全部開く。iPhoneの開閉の覚えは読まない。
+                        // 2列では図だけにしたもの以外を開く。iPhoneの開閉の覚えは読まない。
                         isExpanded: isOpen(row.node.id),
                         isCollapsedFully: !split && dsp.collapsedFully.contains(row.node.id),
-                        toggleExpanded: split ? {} : { cycle(row.node) },
+                        toggleExpanded: split ? { toggleGraphOnly(row.node) } : { cycle(row.node) },
                         // 隣は鎖の隣ではなく**画面の隣**。畳んだ Section の配下と
                         // 入れ替わって行が消えないように、ドラッグと同じ道を通す。
                         moveUp: { moveRow(row.visible, to: row.visible - 1) },
@@ -1805,6 +1815,17 @@ struct PipelineView: View {
         } else {
             dsp.collapsedFully.remove(id)
             expanded.insert(id)
+        }
+    }
+
+    /// 2列で押したとき。図を持つものだけ 開く ↔ 図だけ。図を持たないものは開いたまま。
+    /// 動かさないのは cycle(_:) と同じ理由。
+    private func toggleGraphOnly(_ node: EffeTuneDSP.Node) {
+        guard !node.isSection, ETEffectViews.hasGraph(node.spec.type) else { return }
+        if splitGraphOnly.contains(node.id) {
+            splitGraphOnly.remove(node.id)
+        } else {
+            splitGraphOnly.insert(node.id)
         }
     }
 
