@@ -1,6 +1,6 @@
 // node site/tools/guide-shots.mjs <撮った PNG の置き場>
 //
-// ガイドの枠に入れる画像を作る。撮影は Tests/UI/SiteShots.swift（iPhone のシミュレータ）。
+// ガイドの枠に入れる画像を作る。撮影は iPhone のシミュレータ。
 //   <置き場>/<id>.png → public/shots/<id>.webp（縦長の画面は幅 552 に縮める。README の 3 枚と同じ大きさ）
 //   カードの絵（card-<slug>）は、下の CARDS の画面の上の方を 16:10 で切り出す
 //   <置き場>/<id>.png → public/shots/full/<id>.webp（押して大きく開いたときの版。幅 1000）
