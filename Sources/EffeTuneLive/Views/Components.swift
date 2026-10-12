@@ -707,6 +707,7 @@ extension EnvironmentValues {
     /// カードを開いたままにするか。**2列のときだけ真。**
     ///
     /// 開閉の印（カードの矢印とSectionの44ptのボタン）を出さない。
+    /// ただし図を持つカードは図だけの形にできるので、矢印を出す。
     /// 開いているかどうかはPipelineViewが渡すisExpandedが決めていて、
     /// iPhoneの開閉の覚え（dsp.expanded / dsp.collapsedFully）は書かない。
     @Entry var etCardsPinnedOpen: Bool = false

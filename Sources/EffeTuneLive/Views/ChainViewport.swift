@@ -36,6 +36,25 @@ final class ETChainViewport {
     /// 1列のときに見えているカード。帯には出さない（左の一覧が無いので）。
     /// 2列へ切り替えるときに、どこを読んでいたかを知るためだけに持つ。
     @ObservationIgnored private var stackShown: Set<UUID> = []
+    /// 右の幅が変わってから、まだ戻していない回の数（beginResize / endResize）。
+    @ObservationIgnored private var pendingResizes = 0
+
+    /// 右の幅が変わり、覚えたカードへ戻すのを次の回へ回している最中か。
+    ///
+    /// **この間は送りに触らない。**回したあと、少し送るまでカードが違う所に描かれていた（#13）。
+    /// 幅が測れる回はまだ組み直しの最中で、回したときは回る動き（UIKitのアニメーション）の中に居る。
+    /// そこでscrollTo（覚えたカードへ戻す）とUIScrollViewのsetContentOffset（読んでいる位置を保つ）が
+    /// 同じ回に送っていた。戻すのは組み直しが終わった次の回に1回だけ、scrollToで。
+    var resizing: Bool { pendingResizes > 0 }
+
+    /// 右の幅が変わった。次の回で`endResize`を呼ぶ。
+    func beginResize() { pendingResizes += 1 }
+
+    /// 回していた1つが終わった。**最後の1つなら真。**戻すのはそのときだけ。
+    func endResize() -> Bool {
+        pendingResizes = max(0, pendingResizes - 1)
+        return pendingResizes == 0
+    }
 
     /// カードが見え始めた・見えなくなった。**変わらないときは何も書かない。**
     /// `split`はそのカードが載っている並べ方。
@@ -161,14 +180,17 @@ final class ETRowGeometry {
 ///   - 一番上に居る。上の帯が出たら見えるように、一番上に居たままにする
 ///   - 鎖の並びが変わった。足す・消す・並べ替えには、それぞれの見せ方がある（revealNewなど）
 ///   - 並べ方の切り替えや幅の変化で、覚えたカードを上端へ戻している最中（restoreAnchor）
+///   - 行の幅が変わった（回した、左の一覧を出し入れした）。上端は全部の行で一度に変わり、
+///     測れるのは組み直しの最中（回したときは回る動きの中）。そこでUIScrollViewを直に送ると
+///     SwiftUIの送りと取り合う（#13）。幅の変化は覚えたカードへ戻す側（resized）に任せ、覚え直すだけにする
 ///
 /// **観測しない。**測れるたびに書くので、@Stateに置くとbodyが走り直す。
 @MainActor
 final class ETReadingKeeper {
     /// 読んでいるカード。
     private(set) var id: UUID?
-    /// 行ごとの中身の中での上端。
-    private var tops: [UUID: CGFloat] = [:]
+    /// 行ごとの中身の中での上端と、そのときの行の幅。
+    private var tops: [UUID: ETRowEdge] = [:]
     /// 読むカードを決めたとき、またはそのカードが最後に動いたときの鎖の並び。
     private var order: [UUID] = []
 
@@ -181,17 +203,18 @@ final class ETReadingKeeper {
         self.order = order
     }
 
-    /// 行の中身の中での上端が変わった。読んでいるカードなら、送り直す量を返す（0なら送らない）。
+    /// 行の中身の中での上端か幅が変わった。読んでいるカードなら、送り直す量を返す（0なら送らない）。
     ///   - order: いまの鎖の並び。読んでいるカードのときだけ読む
     ///   - keeps: 送り直してよいか。読んでいるカードのときだけ読む
-    func moved(_ row: UUID, to top: CGFloat,
+    func moved(_ row: UUID, to edge: ETRowEdge,
                order now: @autoclosure () -> [UUID], keeps: @autoclosure () -> Bool) -> CGFloat {
-        let old = tops.updateValue(top, forKey: row)
+        let old = tops.updateValue(edge, forKey: row)
         guard row == id else { return 0 }
         let current = now()
         defer { order = current }
-        guard let old, current == order, keeps() else { return 0 }
-        let moved = top - old
+        // 幅が変わった回は覚え直すだけ（上の「送り直さないとき」）。
+        guard let old, old.width == edge.width, current == order, keeps() else { return 0 }
+        let moved = edge.top - old.top
         return abs(moved) < 0.5 ? 0 : moved
     }
 
@@ -201,6 +224,14 @@ final class ETReadingKeeper {
         tops = [:]
         order = []
     }
+}
+
+/// 行の中身の中での上端と幅（PipelineView.contentSpaceで測る）。
+/// **幅も一緒に測る。**上端だけだと、上の行が伸びたのか、幅が変わって全部の行が組み直されたのかを
+/// 見分けられない（ETReadingKeeper）。高さは入れない。読んでいるカード自身が伸びても上端は動かない。
+struct ETRowEdge: Equatable, Sendable {
+    var top: CGFloat
+    var width: CGFloat
 }
 
 /// 右の鎖の1行を包む。見えているかを左の一覧へ知らせ、見えていない図を止める。

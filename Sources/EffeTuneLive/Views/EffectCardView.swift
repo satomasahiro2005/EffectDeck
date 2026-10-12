@@ -206,8 +206,8 @@ struct EffectCardView: View {
                 .accessibilityLabel("Routing \(ETRouting.badge(node))")
             }
 
-            // 2列では開閉しないので出さない。
-            if hasBody && !pinnedOpen {
+            // 2列では図を持つものだけが 開く ↔ 図だけ を行き来する。ほかは開いたままなので出さない。
+            if hasBody && (!pinnedOpen || showsCollapsedGraph) {
                 // **印であって押し所ではない。**
                 // 押すのは行そのもの（下の onTapGesture）。
                 // 矢印にも当たり判定があると、行の手つきと取り合って
