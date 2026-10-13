@@ -7,9 +7,11 @@ GitHub Actions の badges.yml が回し、出力先を孤立ブランチ badges 
 （main の履歴は増やさない）。前回の days.json が出力先にあれば読み、足りない日だけ取りに行く。
 
   rating.json     全世界の平均の星と件数。iTunes lookup を国ごとに引き、件数で重みづけして平均する。
-  downloads.json  全世界の累計ダウンロード数。売上レポート（SALES/SUMMARY/DAILY）の初回ダウンロードの
-                  Units を、出た日から昨日（太平洋時間）まで日ごとに足す。
-  days.json       日ごとの Units（次の回が足りない日だけ取りに行くため）
+  downloads.json  全世界の累計ダウンロード数。売上レポート（SALES/SUMMARY/DAILY）の初回ダウンロードと
+                  再ダウンロードの Units を、出た日から昨日（太平洋時間）まで日ごとに足す
+                  （App Store Connect の Total Downloads と同じ。アップデートは数えない）。
+  days.json       日ごとの Product Type Identifier 別の Units（次の回が足りない日だけ取りに行くため。
+                  数える種類を変えても取り直さずに済むよう、種類を絞らずに残す）
 
 売上レポートは Sales の権限がある API キーでないと 403 になる（asc.py の鍵は持っていない）。
 鍵は ASC_KEY_ID の ~/.appstoreconnect/private_keys/AuthKey_<id>.p8、ベンダー番号は ASC_VENDOR_NUMBER。
@@ -44,8 +46,9 @@ ro rs ru rw sa sb sc se sg si sk sl sn sr st sv sz tc td th tj tm tn to tr tt tw
 vc ve vg vn vu xk ye za zm zw
 """.split()
 
-# 初回ダウンロードの Product Type Identifier。アップデート（7…）と再ダウンロード（3…）は数えない。
-FIRST_DOWNLOAD = {"1", "1F", "1T", "1E", "1EP", "1EU", "F1"}
+# 数える Product Type Identifier。初回ダウンロード（1…）と再ダウンロード（3…）。アップデート（7…）は数えない。
+DOWNLOAD = {"1", "1F", "1T", "1E", "1EP", "1EU", "F1",
+            "3", "3F", "3T", "F3"}
 
 
 def get_json(url: str):
@@ -109,11 +112,14 @@ def downloads(days: dict, vendor: str, start: dt.date) -> dict:
         if key not in days:
             rows = sales_report(key, vendor)
             if rows is not None:
-                days[key] = sum(int(r["Units"]) for r in rows
-                                if r.get("Apple Identifier") == APP
-                                and r.get("Product Type Identifier") in FIRST_DOWNLOAD)
+                units = {}
+                for r in rows:
+                    if r.get("Apple Identifier") == APP:
+                        t = r["Product Type Identifier"]
+                        units[t] = units.get(t, 0) + int(r["Units"])
+                days[key] = units
             elif (today - d).days >= 3:
-                days[key] = 0
+                days[key] = {}
         d += dt.timedelta(days=1)
     return days
 
@@ -156,7 +162,7 @@ def main() -> int:
     released = lookup("us")["releaseDate"]  # 例 2026-09-30T07:00:00Z
     start = dt.date.fromisoformat(released[:10]) - dt.timedelta(days=1)
     days = downloads(days, vendor, start)
-    total = sum(days.values())
+    total = sum(n for units in days.values() for t, n in units.items() if t in DOWNLOAD)
     write(days_path, days)
     write(out / "downloads.json", badge("downloads", short(total)))
     print(f"downloads {total}（{len(days)} 日）")
