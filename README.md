@@ -13,10 +13,14 @@ Free and open source under the [MIT license](LICENSE).
 Website: [effectdeck.nemut.ai](https://effectdeck.nemut.ai/)
 
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/EffectDeck?label=release&color=3B82F6)](https://github.com/satomasahiro2005/EffectDeck/releases)
-[![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
 ![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.13.0-3B82F6)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Discord](https://img.shields.io/discord/1554111611067695114?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://fxdB.nemut.ai/)
+
+<!-- Downloads と Rating の数字は .github/workflows/badges.yml が孤立ブランチ badges に置く。 -->
+[![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsatomasahiro2005%2FEffectDeck%2Fbadges%2Fdownloads.json)](https://apps.apple.com/app/effectdeck/id6812467517)
+[![Rating](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsatomasahiro2005%2FEffectDeck%2Fbadges%2Frating.json)](https://apps.apple.com/app/effectdeck/id6812467517)
 
 <a href="https://apps.apple.com/app/effectdeck/id6812467517">
   <!-- 高さではなく幅で指定する。GitHub は img に height:auto を注入するので

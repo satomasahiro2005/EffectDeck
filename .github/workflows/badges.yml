@@ -1,0 +1,74 @@
+# README の Downloads と Rating のバッジの数字を Tools/badges.py で作り、孤立ブランチ badges に置く。
+# badges は毎回 1 コミットで作り直して force-push するので、main にも badges にも履歴は溜まらない。
+# README は shields.io の endpoint で raw.githubusercontent.com/.../badges/*.json を読む。
+#
+# 鍵は Environment "badges"（main からだけ・レビュアーなし）に置く。売上レポートは Sales の権限が要り、
+# asc-ops.yml の鍵（ASC_KEY_*）では 403 になるので、Sales だけの鍵を別に置いている。
+#   secret ASC_SALES_KEY_P8 / var ASC_SALES_KEY_ID / var ASC_VENDOR_NUMBER
+# 鍵が無いうちは Rating だけ更新する。
+name: Badges
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: badges
+  cancel-in-progress: false
+
+jobs:
+  badges:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: badges
+    timeout-minutes: 30
+    env:
+      ASC_KEY_ID: ${{ vars.ASC_SALES_KEY_ID }}
+      ASC_VENDOR_NUMBER: ${{ vars.ASC_VENDOR_NUMBER }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 前の回の数字を読む
+        shell: bash
+        run: |
+          mkdir -p out
+          if git fetch --no-tags --depth 1 origin refs/heads/badges; then
+            git archive FETCH_HEAD | tar -x -C out
+          fi
+      - name: API キーを置く
+        env:
+          ASC_SALES_KEY_P8: ${{ secrets.ASC_SALES_KEY_P8 }}
+        shell: bash
+        # set -x は使わない。鍵は表示しない。
+        run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_SALES_KEY_P8" ]; then
+            echo "Sales の鍵が無いので Rating だけ"; exit 0
+          fi
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          key="$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          if printf '%s' "$ASC_SALES_KEY_P8" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$ASC_SALES_KEY_P8" > "$key"
+          else
+            printf '%s' "$ASC_SALES_KEY_P8" | base64 --decode > "$key"
+          fi
+          grep -q 'BEGIN PRIVATE KEY' "$key"
+      - name: 数字を作る
+        shell: bash
+        run: python3 Tools/badges.py out
+      - name: badges に置く
+        shell: bash
+        run: |
+          cd out
+          git init -q -b badges
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "badges"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" badges
+      - name: 鍵を消す
+        if: always()
+        shell: bash
+        run: rm -rf "$HOME/.appstoreconnect"
