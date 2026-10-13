@@ -150,7 +150,7 @@ def main() -> int:
 
     avg, count = rating()
     write(out / "rating.json",
-          badge("rating", f"★ {avg:.1f} ({count})", "yellow") if count else badge("rating", "none", "lightgrey"))
+          badge("rating", f"★ {avg:.1f} ({count})", "D4A017") if count else badge("rating", "none", "lightgrey"))
     print(f"rating {avg:.3f} ({count})")
 
     vendor = os.environ.get("ASC_VENDOR_NUMBER", "")
