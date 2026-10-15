@@ -55,8 +55,8 @@ final class ETMiniMeters {
 
     private struct Column { var peak: Float; var color: (r: Float, g: Float, b: Float) }
     private static let columnCount = 1024
-    /// 0 dBFS の高さ（区画の半分に対する割合）。-0.5 dB ぶん。
-    private static let waveformHeadroom = CGFloat(pow(10, -0.5 / 20))
+    /// 0 dBFS の高さ（区画の半分に対する割合）。-0.2 dB ぶん（0.5 dB は空きすぎ）。
+    private static let waveformHeadroom = CGFloat(pow(10, -0.2 / 20))
     private var columns = [Column](repeating: Column(peak: 0, color: (0, 0, 0)), count: columnCount)
     private var columnHead = 0
     private var hopFill = 0
@@ -384,7 +384,7 @@ final class ETMiniMeters {
         let count = min(Int(rect.width), Self.columnCount)
         for k in 0..<count {
             let column = columns[(columnHead - 1 - k + 2 * Self.columnCount) % Self.columnCount]
-            // 0 dBFS を区画いっぱいにせず 0.5 dB ぶん空ける。音圧の高い曲はほぼ 0 dBFS に張り付き、
+            // 0 dBFS を区画いっぱいにせず 0.2 dB ぶん空ける。音圧の高い曲はほぼ 0 dBFS に張り付き、
             // いっぱいだと上下が切れて見える（本人「0.5dbくらいだけ開けれる？」）。
             let half = CGFloat(min(column.peak, 1)) * Self.waveformHeadroom * rect.height / 2
             guard half >= 0.5 else { continue }
