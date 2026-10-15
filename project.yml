@@ -215,6 +215,7 @@ targets:
           - "ETPipeline.*"
           - "ETResample.*"
           - "ETPreviewTone.*"
+          - "ETMeterTap.*"
           - "ETJSFXHost.*"
           - "ETLICEFont.*"
     settings:

@@ -1,22 +1,18 @@
 //  PiPVisualizer.swift
-//  図（Oscilloscope・Spectrum Analyzer など）を Picture in Picture の窓に出す。試作。
+//  Mini Meters（MiniMeters.swift の横長の帯）を Picture in Picture の窓に出す。試作。
 //
-//  **PiP は動画の口しか無い。**図を出すには、描いた絵を 1 枚ずつ CMSampleBuffer にして
+//  **PiP は動画の口しか無い。**描いた絵を 1 枚ずつ CMSampleBuffer にして
 //  AVSampleBufferDisplayLayer に流し、そのレイヤーを PiP の元にする
 //  （AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer:)）。
 //
-//  絵はカードの図そのもの。ETEffectViews.view を etGraphOnly で ImageRenderer に描かせる。
-//  図ごとに描き直す口を作らずに済み、カードと同じ見た目になる。
-//
 //  **背景でも描き続ける。**PiP は他のアプリの上で見るもので、そのあいだこのアプリは背景にいる。
-//  CADisplayLink（ETDisplayPump）は背景で止まるので、ここはタイマーで回し、
-//  背景ではテレメトリもこちらで汲む。DSP の出す速さも PiP のあいだは落とさない（ETDisplayPump.stop）。
+//  CADisplayLink は背景で止まるのでタイマーで回す。音は ETMeterTap から直に読むので、
+//  図のテレメトリ（ETDisplayPump）には頼らない。
 //
 //  レイヤーは窓のいちばん奥に 2pt で置く。PiP の元は窓に入っていないと始まらない。
 
 import AVKit
 import CoreMedia
-import SwiftUI
 import UIKit
 import os
 
@@ -25,40 +21,39 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     static let shared = ETPiPVisualizer()
 
-    /// PiP に出している段。nil なら出していない。
-    @Published private(set) var nodeID: UUID?
+    /// 測っている所（ET_METER_TAP_INPUT / ET_METER_TAP_OUTPUT）。nil なら出していない。
+    @Published private(set) var point: Int32?
 
-    /// PiP のあいだ。ETDisplayPump が DSP の出す速さを落とさないために見る。
-    var isActive: Bool { nodeID != nil }
-
-    /// 描く幅（pt）と倍率。PiP の窓は絵の縦横比に合わせて開く。
-    static let width: CGFloat = 360
-    private static let scale: CGFloat = 2
     private static let framesPerSecond = 30
 
-    private let log = Logger(subsystem: "ai.nemut.effetune", category: "pip")
+    fileprivate let log = Logger(subsystem: "ai.nemut.effetune", category: "pip")
     private let host = ETPiPHostView()
     private var controller: AVPictureInPictureController?
     private var possible: NSKeyValueObservation?
     /// 押されたが、まだ始められない（絵が 1 枚も入っていない）。
     private var wantsStart = false
     private var timer: DispatchSourceTimer?
-    private var renderer: ImageRenderer<ETPiPGraph>?
+    private var meters: ETMiniMeters?
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
-    private var poolSize = (width: 0, height: 0)
 
     private override init() { super.init() }
 
     // MARK: - 出す・しまう
 
-    func start(nodeID id: UUID) {
+    func start(point newPoint: Int32) {
         guard AVPictureInPictureController.isPictureInPictureSupported() else {
             log.error("PiP が使えない端末")
             return
         }
-        if nodeID == id, controller?.isPictureInPictureActive == true { return }
-        nodeID = id
+        ETMeterTap_SetPoint(newPoint)
+        if point != nil, controller?.isPictureInPictureActive == true {
+            // 出ている窓のまま、測る所だけ替える。
+            point = newPoint
+            meters?.reset()
+            return
+        }
+        point = newPoint
         attachHost()
         if controller == nil {
             let source = AVPictureInPictureController.ContentSource(
@@ -72,12 +67,10 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
                 Task { @MainActor in ETPiPVisualizer.shared.startIfPossible() }
             }
         }
-        let made = ImageRenderer(content: ETPiPGraph(nodeID: id, dsp: EffeTuneDSP.shared))
-        made.scale = Self.scale
-        made.proposedSize = ProposedViewSize(width: Self.width, height: nil)
-        renderer = made
+        let made = ETMiniMeters()
+        made.reset()
+        meters = made
         wantsStart = true
-        EffeTuneDSP.shared.setTelemetryRate(EffeTuneDSP.telemetryHz)
         startTimer()
         // 1 枚目はすぐ入れる。入らないと isPictureInPicturePossible が立たない。
         tick()
@@ -99,18 +92,15 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         controller.startPictureInPicture()
     }
 
-    private func teardown() {
+    fileprivate func teardown() {
         wantsStart = false
         timer?.cancel()
         timer = nil
-        renderer = nil
-        nodeID = nil
+        meters = nil
+        point = nil
+        ETMeterTap_SetPoint(Int32(ET_METER_TAP_OFF))
         host.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: true, completionHandler: nil)
         host.removeFromSuperview()
-        // 画面が出ていなければ、ETDisplayPump.stop が落とし損ねた速さをここで落とす。
-        if UIApplication.shared.applicationState == .background {
-            EffeTuneDSP.shared.setTelemetryRate(0)
-        }
     }
 
     private func attachHost() {
@@ -135,23 +125,9 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     private func tick() {
-        guard let id = nodeID else { return }
-        guard EffeTuneDSP.shared.chain.contains(where: { $0.id == id }) else {
-            // 段が消えた。
-            stop()
-            return
-        }
-        // 前にいるあいだは ETDisplayPump が汲んでいる。
-        if UIApplication.shared.applicationState != .active {
-            AudioIO.shared.pollTelemetry()
-        }
-        guard let image = renderer?.cgImage else { return }
-        enqueue(image)
-    }
-
-    private func enqueue(_ image: CGImage) {
-        guard let buffer = pixelBuffer(for: image),
-              let format,
+        guard let meters else { return }
+        meters.pull(rate: AudioIO.shared.sampleRate)
+        guard let buffer = pixelBuffer(meters), let format,
               let sample = sampleBuffer(buffer, format: format) else { return }
         let output = host.displayLayer.sampleBufferRenderer
         if output.status == .failed {
@@ -161,22 +137,19 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         if output.isReadyForMoreMediaData { output.enqueue(sample) }
     }
 
-    private func pixelBuffer(for image: CGImage) -> CVPixelBuffer? {
-        let width = image.width, height = image.height
-        if pool == nil || poolSize != (width, height) {
+    private func pixelBuffer(_ meters: ETMiniMeters) -> CVPixelBuffer? {
+        let width = ETMiniMeters.pixelWidth, height = ETMiniMeters.pixelHeight
+        if pool == nil {
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferWidthKey as String: width,
                 kCVPixelBufferHeightKey as String: height,
                 kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
-                kCVPixelBufferCGImageCompatibilityKey as String: true,
                 kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
             ]
             var made: CVPixelBufferPool?
             CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &made)
             pool = made
-            poolSize = (width, height)
-            format = nil
         }
         guard let pool else { return nil }
         var buffer: CVPixelBuffer?
@@ -190,10 +163,10 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
                 | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
-        let rect = CGRect(x: 0, y: 0, width: width, height: height)
-        context.setFillColor(UIColor.black.cgColor)
-        context.fill(rect)
-        context.draw(image, in: rect)
+        // 上を 0 にする（UIKit の字の描き方に合わせる）。
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        meters.draw(in: context)
         if format == nil {
             var made: CMVideoFormatDescription?
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer,
@@ -273,27 +246,6 @@ extension ETPiPVisualizer: AVPictureInPictureSampleBufferPlaybackDelegate {
         skipByInterval skipInterval: CMTime,
         completion completionHandler: @escaping () -> Void) {
         completionHandler()
-    }
-}
-
-// MARK: - 絵
-
-/// PiP に描く図。カードの図だけの形と同じもの。
-struct ETPiPGraph: View {
-    let nodeID: UUID
-    @ObservedObject var dsp: EffeTuneDSP
-
-    var body: some View {
-        if let index = dsp.chain.firstIndex(where: { $0.id == nodeID }) {
-            let node = dsp.chain[index]
-            ETEffectViews.view(index: index, node: node, dsp: dsp)
-                .id(node.resetCount)
-                .environment(\.etGraphOnly, true)
-                .padding(10)
-                .frame(width: ETPiPVisualizer.width)
-                .background(Color.black)
-                .environment(\.colorScheme, .dark)
-        }
     }
 }
 

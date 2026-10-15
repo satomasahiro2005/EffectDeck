@@ -229,12 +229,6 @@ struct EffectCardView: View {
             }
 
             Menu {
-                // 試作: 図を PiP の窓に出す（PiPVisualizer.swift）。
-                if ETEffectViews.hasGraph(node.spec.type) {
-                    Button { ETPiPVisualizer.shared.start(nodeID: node.id) } label: {
-                        Label("Picture in Picture", systemImage: "pip.enter")
-                    }
-                }
                 if node.externalID?.hasPrefix("jsfx:") == true {
                     Button { sheet = .jsfxSource } label: {
                         Label("View Source", systemImage: "doc.text.magnifyingglass")

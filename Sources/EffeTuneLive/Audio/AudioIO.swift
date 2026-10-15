@@ -587,6 +587,9 @@ final class AudioIO: ObservableObject {
                 state.pipeStatus = 0
                 state.ringFed = 0   // 輪に穴が空く（下の手順 6 の近道は温め直してから）
                 state.elapsed += Double(n) / state.sampleRate
+                // Mini Meters には無音を渡す。渡さないと図が最後の音のまま止まる。
+                ETMeterTap_Write(Int32(ET_METER_TAP_INPUT), nil, UInt32(channels), UInt32(n))
+                ETMeterTap_Write(Int32(ET_METER_TAP_OUTPUT), nil, UInt32(channels), UInt32(n))
                 return noErr
             }
 
@@ -596,6 +599,8 @@ final class AudioIO: ObservableObject {
             ETAudioBufferOps.spreadStereo(s, frames: n, into: p, channels: channels)
 
             ETPreviewTone_Render(p, UInt32(n), UInt32(channels), state.sampleRate)
+            // Mini Meters（PiP）の鎖の入口。写さない設定なら比べて戻るだけ。
+            ETMeterTap_Write(Int32(ET_METER_TAP_INPUT), p, UInt32(channels), UInt32(n))
 
             // 6. 本線のバスへ書いて、鎖を通して、読み戻す。
             //    バスの置き場は engine が持っているので、そこへ直接書く。
@@ -676,6 +681,9 @@ final class AudioIO: ObservableObject {
                 state.ringFed = 0   // 輪に穴が空くので、素通しの近道は温め直してから
             }
             state.elapsed += Double(n) / state.sampleRate
+
+            // Mini Meters（PiP）の鎖の出口。
+            ETMeterTap_Write(Int32(ET_METER_TAP_OUTPUT), p, UInt32(channels), UInt32(n))
 
             // 7. 出力へ書く。インターリーブの口・本数の過不足・容量を超えたフレームは
             //    ETAudioBufferOps.writeOutput が受け持つ（AudioBufferOpsTests）。
