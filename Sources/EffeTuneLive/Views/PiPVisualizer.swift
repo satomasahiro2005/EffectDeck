@@ -16,9 +16,13 @@
 //  起きたとき・前に来たときに窓とレイヤーと 1 枚目を用意し、押したらその場で始める。しまっても用意は残す。
 //
 //  **他のアプリに奪われたら、戻ったときに出し直す。**PiP は 1 つしか出ない。YouTube などが PiP を
-//  始めるとこちらは止められる。自分で閉じた（✕・アプリに戻すボタン・メニュー）のでなければ、
-//  このアプリが前に来たときにもう一度出す。✕ と奪われたのは、止まる前に setPlaying(false) が来るかで分ける
-//  （✕ は再生を止める扱いになる。奪われたときは来ない、と見ている。didStop のログで確かめる）。
+//  始めるとこちらは止められる。奪われたのなら、このアプリが前に来たときにもう一度出す。
+//  **✕ と奪われたのは、止まったときに他のアプリが鳴っているかで分ける。**実機のログ（10-16）では
+//  届く知らせ（setPlaying(false) → willStop → didStop、0.8 秒）も、止まった後の possible も同じで、
+//  違ったのは isOtherAudioPlaying と secondaryAudioShouldBeSilencedHint だけだった（奪われると真）。
+//  PiP を奪うアプリは動画を再生しているので必ず鳴っている。鳴っていなければ ✕。
+//  ただし音楽を流しながら外で ✕ を押したのは、奪われたのと見分けられず出し直す。
+//  出し直さないのは、メニューで止めた・アプリに戻すボタン・このアプリの中で ✕ を押したときも同じ。
 
 import AVKit
 import CoreMedia
@@ -50,25 +54,14 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         UIDevice.current.userInterfaceIdiom == .pad ? .large : .strip
     /// 止める理由が分かっているとき真（メニューで止めた・アプリに戻すボタン）。
     private var stopIsIntended = false
-    /// ✕ で閉じると、止まる前に一時停止が来る。その時刻。
-    private var pausedAt: CFTimeInterval = 0
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
     private var activeAt: CFTimeInterval = 0
     /// 奪われたときに出していた所。前に来たら出し直す。
     private var resumePoint: Int32?
     private var foreground: NSObjectProtocol?
 
-    private var probes: [NSObjectProtocol] = []
-
     private override init() {
         super.init()
-        for name in [AVAudioSession.interruptionNotification, AVAudioSession.silenceSecondaryAudioHintNotification,
-                     UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification] {
-            probes.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
-                let text = "\(note.name.rawValue) \(note.userInfo ?? [:])"
-                MainActor.assumeIsolated { ETPiPVisualizer.shared.probe(text) }
-            })
-        }
         foreground = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { ETPiPVisualizer.shared.becameActive() }
@@ -176,32 +169,21 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     /// PiP が止まった。自分で閉じたのでなければ、出していた所を控えて前に来たら出し直す。
-    /// 調べる用。✕ と奪われたのを分ける手がかりを 1 行に出す。
-    fileprivate func probe(_ label: String) {
-        let session = AVAudioSession.sharedInstance()
-        let c = controller
-        log.info("PiP 手がかり \(label, privacy: .public) t=\(CACurrentMediaTime(), privacy: .public) possible=\(c?.isPictureInPicturePossible == true, privacy: .public) active=\(c?.isPictureInPictureActive == true, privacy: .public) suspended=\(c?.isPictureInPictureSuspended == true, privacy: .public) other=\(session.isOtherAudioPlaying, privacy: .public) silence=\(session.secondaryAudioShouldBeSilencedHint, privacy: .public) state=\(UIApplication.shared.applicationState.rawValue, privacy: .public)")
-    }
-
     fileprivate func didStop() {
         starting = false
-        probe("didStop")
-        for delay in [0.3, 1.0, 3.0] {
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(delay))
-                ETPiPVisualizer.shared.probe("after \(delay)s")
-            }
-        }
         let now = CACurrentMediaTime()
         let state = UIApplication.shared.applicationState
-        let closedByUser = stopIsIntended || now - pausedAt < 1.5
+        let closedByUser = stopIsIntended
+        // 他のアプリが鳴っていなければ、奪われたのではない（外で ✕ を押した）。
+        let session = AVAudioSession.sharedInstance()
+        let otherPlaying = session.isOtherAudioPlaying || session.secondaryAudioShouldBeSilencedHint
         // 前にいて、前に来てから時間が経っている → このアプリの中で ✕ を押した。
         let closedInApp = state == .active && now - activeAt > 2
-        log.info("PiP が止まった intended=\(self.stopIsIntended, privacy: .public) paused=\(now - self.pausedAt, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
+        log.info("PiP が止まった intended=\(self.stopIsIntended, privacy: .public) other=\(otherPlaying, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
         let was = point
         stopIsIntended = false
         teardown()
-        guard !closedByUser, !closedInApp, let was else { return }
+        guard !closedByUser, !closedInApp, otherPlaying, let was else { return }
         resumePoint = was
         // 前に来た直後に奪われた（離れたアプリが PiP を始めた）なら、今出し直す。
         if state == .active { resume() }
@@ -220,10 +202,6 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         log.info("奪われた PiP を出し直す")
         // 前に来た回のうちはまだ始められないことがあるので、1 回遅らせる。
         Task { @MainActor in ETPiPVisualizer.shared.start(point: again) }
-    }
-
-    fileprivate func playbackPaused() {
-        pausedAt = CACurrentMediaTime()
     }
 
     fileprivate func restoring() {
@@ -334,11 +312,6 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 // MARK: - PiP の知らせ
 
 extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
-    nonisolated func pictureInPictureControllerWillStopPictureInPicture(
-        _ pictureInPictureController: AVPictureInPictureController) {
-        Task { @MainActor in ETPiPVisualizer.shared.probe("willStop") }
-    }
-
     nonisolated func pictureInPictureControllerWillStartPictureInPicture(
         _ pictureInPictureController: AVPictureInPictureController) {
         Task { @MainActor in
@@ -379,12 +352,7 @@ extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
 
 extension ETPiPVisualizer: AVPictureInPictureSampleBufferPlaybackDelegate {
     nonisolated func pictureInPictureController(
-        _ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
-        Task { @MainActor in ETPiPVisualizer.shared.probe("setPlaying \(playing)") }
-        // ✕ で閉じると止まる前にこれが来る（奪われたときは来ない）。
-        guard !playing else { return }
-        Task { @MainActor in ETPiPVisualizer.shared.playbackPaused() }
-    }
+        _ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {}
 
     /// 終わりの無い生の流れ。
     nonisolated func pictureInPictureControllerTimeRangeForPlayback(
