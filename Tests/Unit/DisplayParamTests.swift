@@ -16,7 +16,7 @@ final class DisplayParamTests: XCTestCase {
     func testTableCoversTheSixUpstreamTypes() {
         // hl（Highlight）は 2.14.0。
         XCTAssertEqual(Set(ETDisplayParam.table(for: "NoteSpectrogramPlugin").keys),
-                       ["cl", "pr", "ly", "vl", "ts", "hl"])
+                       ["cl", "pr", "ly", "vl", "ts", "hl", "os"])
         XCTAssertEqual(Set(ETDisplayParam.table(for: "SpectrogramPlugin").keys), ["sc", "cl", "kb"])
         XCTAssertEqual(Set(ETDisplayParam.table(for: "SpectrumAnalyzerPlugin").keys),
                        ["sc", "dm", "cl", "kb"])
@@ -64,7 +64,7 @@ final class DisplayParamTests: XCTestCase {
     func testWriteThenReadRoundTrips() throws {
         let cases: [(String, [String: String])] = [
             ("NoteSpectrogramPlugin", ["cl": "Instrument3", "pr": "High", "ly": "Piano", "vl": "false", "ts": "2.5",
-                                       "hl": "Vocal"]),
+                                       "hl": "Vocal", "os": "true"]),
             ("SpectrogramPlugin", ["sc": "linear", "cl": "Gray", "kb": "true"]),
             ("SpectrumAnalyzerPlugin", ["sc": "log-hq", "dm": "bar", "cl": "Fire", "kb": "false"]),
             ("PitchMeterPlugin", ["ly": "Guitar", "cl": "Mono"]),

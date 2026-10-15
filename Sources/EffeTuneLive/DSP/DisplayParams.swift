@@ -41,8 +41,8 @@ enum ETDisplayParam {
     static func table(for type: String) -> [String: Kind] {
         switch type {
         case "NoteSpectrogramPlugin":
-            // hl（Highlight）は 2.14.0。cl に Instrument3 / Instrument9 が増えた。
-            return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number, "hl": .text]
+            // hl（Highlight）と os（Onsets）は 2.14.0。cl に Instrument3 / Instrument9 が増えた。
+            return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number, "hl": .text, "os": .flag]
         case "SpectrogramPlugin":
             return ["sc": .text, "cl": .text, "kb": .flag]
         case "SpectrumAnalyzerPlugin":

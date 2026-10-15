@@ -196,10 +196,62 @@ final class Upstream214Tests: XCTestCase {
         XCTAssertNil(ETNoteSnapshot(noteFrame(version: 6, bytes: 9192, cents: .nan)))
     }
 
+    // MARK: Note Spectrogram の音色（型 31）
+
+    private func timbreFrame(event: UInt32, probabilities: [Float]? = nil, midi: UInt32 = 60,
+                             noteId: UInt32 = 5, tail: UInt32 = 0) -> ETFrame {
+        var p = [UInt8](repeating: 0, count: 80)
+        func put(_ b: [UInt8], _ o: Int) { for (i, v) in b.enumerated() { p[o + i] = v } }
+        put(TelemetryBytes.f32(48000), 0)
+        put(TelemetryBytes.f32(2), 4)
+        put(TelemetryBytes.f32(0.02), 8)
+        put(TelemetryBytes.u32(1), 12)
+        put(TelemetryBytes.u32(120), 16)
+        put(TelemetryBytes.u32(noteId), 20)
+        put(TelemetryBytes.u32(midi), 24)
+        put(TelemetryBytes.u32(event), 28)
+        put(TelemetryBytes.u32(100), 32)
+        put(TelemetryBytes.u32(0xffff_ffff), 36)
+        for (i, v) in (probabilities ?? []).enumerated() { put(TelemetryBytes.f32(v), 40 + i * 4) }
+        put(TelemetryBytes.u32(tail), 76)
+        return ETFrame(type: 31, version: 1, tapId: 1, sequence: 1, dropped: false, payload: p)
+    }
+
+    func testTimbreEventsAreRead() throws {
+        let start = try XCTUnwrap(ETNoteTimbreEvent(timbreFrame(event: 1)))
+        XCTAssertEqual(start.kind, .start)
+        XCTAssertNil(start.probabilities)
+        XCTAssertEqual(start.endFrameIndex, ETNoteTimbreEvent.openEnd)
+        let p: [Float] = [0.1, 0, 0, 0, 0, 0, 0, 0.2, 0.7]
+        let result = try XCTUnwrap(ETNoteTimbreEvent(timbreFrame(event: 2, probabilities: p)))
+        XCTAssertEqual(result.probabilities, p)
+        XCTAssertNil(ETNoteTimbreEvent(timbreFrame(event: 2, probabilities: [0.5])), "合計が 1 でない")
+        XCTAssertNil(ETNoteTimbreEvent(timbreFrame(event: 4)))
+        XCTAssertNil(ETNoteTimbreEvent(timbreFrame(event: 1, midi: 20)))
+        XCTAssertNil(ETNoteTimbreEvent(timbreFrame(event: 1, noteId: 0)))
+        XCTAssertNil(ETNoteTimbreEvent(timbreFrame(event: 1, tail: 1)))
+    }
+
+    func testTimbreColorsAndHighlight() {
+        // Vocal だけなら Vocal の色、3 分類では Bass と Vocal 以外は Other の色に寄る。
+        let vocal: [Float] = [0, 0, 0, 0, 0, 0, 0, 0, 1]
+        XCTAssertTrue(ETNoteTimbre.color(vocal, threeClass: false) == ETNoteTimbre.colors[8])
+        let guitar: [Float] = [0, 1, 0, 0, 0, 0, 0, 0, 0]
+        XCTAssertTrue(ETNoteTimbre.color(guitar, threeClass: true) == ETNoteTimbre.colors[7])
+        XCTAssertEqual(ETNoteTimbre.highlightProbability(guitar, target: "Other3"), 1)
+        XCTAssertEqual(ETNoteTimbre.highlightProbability(guitar, target: "Guitar"), 1)
+        XCTAssertEqual(ETNoteTimbre.highlightProbability(guitar, target: "Other9"), 0)
+        XCTAssertEqual(ETNoteTimbre.highlightProbability(nil, target: "Vocal"), 0)
+        XCTAssertEqual(ETNoteTimbre.highlights.map(\.value),
+                       ["None", "Vocal", "Bass", "Other3", "Guitar", "Piano", "Strings", "Wind", "Synth", "Organ",
+                        "Other9"])
+    }
+
     // MARK: 表示の設定
 
     func testDisplayTables() {
         XCTAssertEqual(ETDisplayParam.table(for: "NoteSpectrogramPlugin")["hl"], .text)
+        XCTAssertEqual(ETDisplayParam.table(for: "NoteSpectrogramPlugin")["os"], .flag)
         XCTAssertEqual(ETDisplayParam.table(for: "SFZNotePlayerPlugin"), ["cl": .text])
         XCTAssertEqual(ETDisplayParam.table(for: "AnalogMeterPlugin")["dc"], .number)
         XCTAssertEqual(ETDisplayParam.defaults(for: "AnalogMeterPlugin")["dc"], "0.0")

@@ -3,11 +3,16 @@
 //
 //  解析は重い（学習済みの木を回す）が、値は DSP から出てくるので、こちらは描くだけ。
 //
-//  テレメトリ: frameType 24、formatVersion 5（2.13.0）。枠の並びと読みは
+//  テレメトリ: frameType 24、formatVersion 6（2.14.0）。枠の並びと読みは
 //  DSP/NoteSpectrogramFrame.swift（ETNoteSnapshot。Foundation だけで試せる）。
-//  確からしさは 32 + p*4、dB は 1792 + p*4、長さは 8840。さらに 2・4・8 枠前の確からしさの直しを運ぶ。
-//  番号の出どころ: dsp/plugins/analyzer/note_spectrogram/kernel.cpp の writer.write(24u, 5u, ...)、
-//  note_spectrogram.js の MULTI_F0_TAP_FRAME / MULTI_F0_TELEMETRY_VERSION。
+//  確からしさは 32 + p*4、dB は 1792 + p*4、末尾に 88 鍵の音程のずれ（セント）、長さは 9192。
+//  さらに 2・4・8 枠前の確からしさの直しを運ぶ。
+//
+//  **音色（2.14.0）。**Color の Instrument (3) / (9) と Highlight は、音ごとの音色の判定（型 31、
+//  ETNoteTimbreEvent）で塗る。判定は音が始まってしばらくしてから届くので、それまでの列は灰色で、
+//  届いたらその音が鳴っていた列を全部塗り直す（3 回の描き直しで灰色から移す）。判定を DSP に走らせる
+//  te は保存しない値で、Color か Highlight か Onsets が要るときだけ立てる（上流 noteEventsEnabled）。
+//  Onsets は音の始まりに三角の印。High では帯の位置を DSP の音程のずれ（セント）で決める。
 //
 //  細分は 1 半音を 5 つに割ったもの（kernel.cpp:25 の kFineDivisions）。
 //  p = (midi - 21) * 5 + division で、division は 0 が一番低い。
@@ -38,6 +43,8 @@ enum ETNoteColor: String, CaseIterable, Identifiable {
     // （note_spectrogram.js:20-23 の MULTI_F0_COLORS の value）。
     case normal = "Normal"
     case rainbow = "Rainbow"
+    case instrument3 = "Instrument3"
+    case instrument9 = "Instrument9"
 
     var id: String { rawValue }
 
@@ -45,6 +52,27 @@ enum ETNoteColor: String, CaseIterable, Identifiable {
         switch self {
         case .normal:  return "Normal"
         case .rainbow: return "Note Colors"
+        case .instrument3: return "Instrument (3)"
+        case .instrument9: return "Instrument (9)"
+        }
+    }
+
+    var isInstrument: Bool { self == .instrument3 || self == .instrument9 }
+}
+
+/// 音色で強調する（2.14.0、上流 MULTI_F0_HIGHLIGHTS）。強調しない音は灰色へ寄せる。
+enum ETNoteHighlight: String, CaseIterable, Identifiable {
+    case none = "None", vocal = "Vocal", bass = "Bass", other3 = "Other3"
+    case guitar = "Guitar", piano = "Piano", strings = "Strings", wind = "Wind", synth = "Synth", organ = "Organ"
+    case other9 = "Other9"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .other3: return "Other (3)"
+        case .other9: return "Other (9)"
+        default: return rawValue
         }
     }
 }
@@ -60,7 +88,7 @@ enum ETNoteResolution: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .semitone: return "1/12 Octave"
-        case .high:     return "High (1/60 Octave)"
+        case .high:     return "High"
         }
     }
 }
@@ -95,9 +123,19 @@ struct ETNoteDisplay: Equatable {
     var volume: Bool = true
     /// 秒。上流 :726-729 の 1〜10、刻み 1。
     var timeSpan: Double = 2
+    /// 2.14.0。
+    var highlight: ETNoteHighlight = .none
+    var onsets: Bool = false
+
+    /// 音色の判定で塗るか（上流 timbreEnabled）。
+    var timbreEnabled: Bool { color.isInstrument || highlight != .none }
+    /// 音の始まりと終わりの知らせが要るか（上流 noteEventsEnabled）。DSP の te はこれ。
+    var noteEventsEnabled: Bool { onsets || timbreEnabled }
+    /// 帯で描くか（上流 _usesBarHistory）。2.14.0 から High も帯で、位置を音程のずれで決める。
+    var usesBars: Bool { volume || resolution == .high }
 
     /// 画像を作り直す必要があるか。向きと時間の幅は画像に関わらない。
-    var repaintKey: String { "\(color.rawValue)/\(resolution.rawValue)/\(volume)" }
+    var repaintKey: String { "\(color.rawValue)/\(resolution.rawValue)/\(volume)/\(highlight.rawValue)" }
 }
 
 /// 鍵盤の寸法。上流 2.12.0 は実物のピアノの比（白鍵の幅 23.5mm・長さ 150mm・黒鍵 95mm、
@@ -139,6 +177,17 @@ enum ETNoteKeyboard {
         (69, 130, 84), (19, 132, 116), (0, 130, 146), (56, 123, 167),
         (96, 115, 175), (129, 107, 168), (153, 99, 148), (167, 96, 119)
     ]
+
+    /// 小数の midi の色（隣の音名の色を混ぜる）。High の帯の Note Colors。
+    static func interpolatedColor(midi: Double) -> (r: Double, g: Double, b: Double) {
+        let lowerMidi = Int(midi.rounded(.down))
+        let fraction = midi - Double(lowerMidi)
+        let lower = noteColors[((lowerMidi % 12) + 12) % 12]
+        let upper = noteColors[(((lowerMidi + 1) % 12) + 12) % 12]
+        return (lower.r + (upper.r - lower.r) * fraction,
+                lower.g + (upper.g - lower.g) * fraction,
+                lower.b + (upper.b - lower.b) * fraction)
+    }
 
     /// 細分 1 つぶんの色。note_spectrogram.js:58-70 と同じ混ぜ方。
     static func fineColor(pitch: Int) -> (r: Double, g: Double, b: Double) {
@@ -257,7 +306,8 @@ struct NoteSpectrogramView: View {
             // 上流の並びは Color → Pitch Resolution → Layout → Volume →
             // Time Span → Lowest Note → Highest Note（2.13.0 で Regular Note Limit が無くなった）。
             if !graphOnly { controls }
-            ForEach(node.spec.params) { param in
+            // te（Timbre Enabled）は保存しない値で、行を出さない。Color・Highlight・Onsets から決まる。
+            ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
                 parameterRow(param)
             }
         }
@@ -270,6 +320,10 @@ struct NoteSpectrogramView: View {
         .etSaved($display.layout, key: "ly", index: index, dsp: dsp)
         .etSaved($display.volume, key: "vl", index: index, dsp: dsp)
         .etSaved($display.timeSpan, key: "ts", index: index, dsp: dsp)
+        .etSaved($display.highlight, key: "hl", index: index, dsp: dsp)
+        .etSaved($display.onsets, key: "os", index: index, dsp: dsp)
+        .onAppear { syncTimbre(display.noteEventsEnabled) }
+        .onChange(of: display.noteEventsEnabled) { _, on in syncTimbre(on) }
         .fullScreenCover(isPresented: $fullScreen, onDismiss: {
             ETInterfaceOrientation.request(.portrait)
             movingToFullScreen = false
@@ -287,6 +341,9 @@ struct NoteSpectrogramView: View {
                             options: ETNoteColor.allCases,
                             text: { $0.label },
                             selection: $display.color)
+            ETDisplayChoiceRow(title: "Highlight",
+                               options: ETNoteHighlight.allCases.map { (value: $0, label: $0.label) },
+                               selection: $display.highlight, style: .menu)
             ETNoteChoiceRow(title: "Pitch Resolution",
                             options: ETNoteResolution.allCases,
                             text: { $0.label },
@@ -297,6 +354,10 @@ struct NoteSpectrogramView: View {
                             selection: $display.layout)
             Toggle(isOn: $display.volume) {
                 Text("Volume").font(.system(size: 14))
+            }
+            .padding(.vertical, 2)
+            Toggle(isOn: $display.onsets) {
+                Text("Onsets").font(.system(size: 14))
             }
             .padding(.vertical, 2)
             timeSpanRow
@@ -323,6 +384,14 @@ struct NoteSpectrogramView: View {
                 .accessibilityValue("\(Int(display.timeSpan.rounded())) seconds")
         }
         .padding(.vertical, 2)
+    }
+
+    /// 音色の判定を DSP に走らせるか（te）。保存しない値なので、表示から毎回決めて送る。
+    private func syncTimbre(_ on: Bool) {
+        guard let te = node.spec.params.first(where: { $0.key == "te" }),
+              node.values.indices.contains(te.offset) else { return }
+        let want: Float = on ? 1 : 0
+        if node.values[te.offset] != want { dsp.setValue(want, at: index, offset: te.offset) }
     }
 
     /// 音の高さの 2 本だけ、値を音名で出す（上流 :675 と :693 の multiF0NoteName）。
@@ -562,6 +631,9 @@ private struct NoteSpectrogramGraph: View {
                     drawBands(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
                     drawGrid(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
                     drawRoll(&layer, frame: frame, rollWidth: rollWidth, slots: slots)
+                    if display.onsets {
+                        drawOnsets(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight, slots: slots)
+                    }
                     drawKeys(&layer, frame: frame, rollWidth: rollWidth,
                              gutter: gutter, rowHeight: rowHeight)
                     if let hover = probe {
@@ -577,6 +649,7 @@ private struct NoteSpectrogramGraph: View {
                 // 字は回さない。上流も Horizontal では 90 度戻している（:1222-1227）。
                 drawOctaveLabels(&context, frame: frame, rollWidth: rollWidth,
                                  gutter: gutter, rowHeight: rowHeight)
+                drawLegend(&context, in: plot.rect)
             },
             overlay: { plot in
                 // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
@@ -750,7 +823,8 @@ private struct NoteSpectrogramGraph: View {
     private func light(_ context: inout GraphicsContext,
                        _ keys: [(rect: CGRect, midi: Int, value: Double)]) {
         for key in keys {
-            let c = ETNoteKeyboard.noteColors[((key.midi % 12) + 12) % 12]
+            // 音色で塗っているときは判定の色（上流は Instrument のときだけ鍵に Highlight も掛ける）。
+            let c = band.keyColor(midi: key.midi)
             var lamp = context
             lamp.opacity = key.value
             lamp.fill(Path(key.rect),
@@ -846,6 +920,63 @@ private struct NoteSpectrogramGraph: View {
     private func ingest() {
         let frames = telemetry.drainFrames(tap: tapId, type: ETFrameType.noteSpectrogram.rawValue)
         band.push(contentsOf: frames.compactMap { ETNoteSnapshot($0) })
+        // 音色の知らせは同じ tap に型 31 で来る。音の枠の後に入れる（列の番号で当てるので）。
+        let timbre = telemetry.drainFrames(tap: tapId, type: ETNoteTimbreEvent.frameType)
+        band.push(timbre: timbre.compactMap { ETNoteTimbreEvent($0) })
+    }
+
+    /// 音の始まりの印（上流 _drawOnsets）。右向きの三角。Horizontal では面ごと回るので下向きになる。
+    private func drawOnsets(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                            rollWidth: CGFloat, rowHeight: CGFloat, slots: Int) {
+        let columnWidth = rollWidth / CGFloat(max(slots, 1))
+        let shown = min(band.count, slots)
+        let left = rollWidth - CGFloat(shown) * columnWidth
+        let size = min(rowHeight * 0.75, 10)
+        var layer = context
+        layer.clip(to: Path(CGRect(x: 0, y: 0, width: rollWidth, height: frame.height)))
+        for mark in band.onsets(slots: slots) where range.contains(mark.midi) {
+            let x = left + CGFloat(mark.displayColumn) * columnWidth
+            let y = frame.height - (CGFloat(mark.pitch - Double(range.lowerBound)) + 0.5) * rowHeight
+            var path = Path()
+            path.move(to: CGPoint(x: x, y: y - size / 2))
+            path.addLine(to: CGPoint(x: x, y: y + size / 2))
+            path.addLine(to: CGPoint(x: x + size, y: y))
+            path.closeSubpath()
+            layer.fill(path, with: .color(Color(red: mark.color.r / 255, green: mark.color.g / 255,
+                                                blue: mark.color.b / 255)))
+            layer.stroke(path, with: .color(.black.opacity(0.6)), lineWidth: 1)
+        }
+    }
+
+    /// 音色の凡例（上流 _drawTimbreLegend）。左上から並べ、入らなければ折り返す。
+    private func drawLegend(_ context: inout GraphicsContext, in rect: CGRect) {
+        var labels: [String] = []
+        switch display.color {
+        case .instrument3: labels = ["Vocal", "Bass", "Other"]
+        case .instrument9: labels = ETNoteTimbre.classes
+        default: break
+        }
+        if display.highlight != .none { labels.append("Highlight: \(display.highlight.label)") }
+        guard !labels.isEmpty else { return }
+        let padding: CGFloat = 6, line: CGFloat = 20, swatch: CGFloat = 14
+        var x = rect.minX + padding, y = rect.minY + padding
+        for label in labels {
+            let index = ETNoteTimbre.classes.firstIndex(of: label)
+            let text = context.resolve(Text(label).font(.system(size: 12)).foregroundStyle(.secondary))
+            let width = text.measure(in: CGSize(width: 1000, height: line)).width + (index == nil ? 0 : swatch)
+                + 2 * padding
+            if x > rect.minX + padding && x + width > rect.maxX - padding { x = rect.minX + padding; y += line }
+            guard y + line <= rect.maxY else { break }
+            context.fill(Path(CGRect(x: x, y: y, width: width, height: line)), with: .color(.black.opacity(0.55)))
+            if let index {
+                let c = ETNoteTimbre.colors[index]
+                context.fill(Path(CGRect(x: x + padding, y: y + 5, width: 10, height: 10)),
+                             with: .color(Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255)))
+            }
+            context.draw(text, at: CGPoint(x: x + padding + (index == nil ? 0 : swatch), y: y + line / 2),
+                         anchor: .leading)
+            x += width
+        }
     }
 }
 
@@ -897,7 +1028,7 @@ final class ETNoteBand: ObservableObject {
 
     /// 図の高さ（画素）に合わせて行の複製を決める。**描く前に呼ぶ。**
     func fit(height: CGFloat) {
-        let base = (display.resolution == .high || display.volume) ? Self.divisions : 1
+        let base = display.usesBars ? Self.divisions : 1
         // 上限を置く。88 音 × 5 細分 × 8 = 3520 行までで、それ以上は要らない
         // （iPhone の縦は @3x でも 2800 画素ほど）。
         let want = min(8, max(1, Int(height) / max(1, Self.notes * base)))
@@ -936,6 +1067,27 @@ final class ETNoteBand: ObservableObject {
                                                                 count: ETNoteBand.columns)
     /// RGBA、前乗算。Normal では 4 バイトとも同じ値（使うのは alpha だけ）。
     private var pixels: [UInt8] = []
+    /// 鍵ごとの音程のずれ（セント）。[note * columns + column]。High の帯の位置。
+    private var cents = [Float](repeating: 0, count: ETNoteBand.notes * ETNoteBand.columns)
+
+    // MARK: 音色（2.14.0）
+
+    private struct TimbreNote {
+        let noteId: UInt32
+        let midi: Int
+        let start: UInt32
+        var end: UInt32
+        var probabilities: [Float]?
+        var fade = 0
+    }
+    /// いま見えている音の音色。noteId で引く。
+    private var timbreNotes: [UInt32: TimbreNote] = [:]
+    /// 鍵ごとの noteId（始まりの順）。
+    private var timbreByPitch = [[UInt32]](repeating: [], count: ETNoteBand.notes)
+    /// 塗り直す枠の範囲 [start, end)。end が 0xffffffff はまだ続いている。
+    private var dirtyRanges: [(start: UInt32, end: UInt32)] = []
+    /// 音の枠の世代。違う世代の音色は捨てる。
+    private var activeGeneration: UInt32?
 
     /// 音量の目盛り。幅と床は上流の既定のまま（lr 24 / df -60）。
     private var levelReference = ETLevelReference()
@@ -955,7 +1107,7 @@ final class ETNoteBand: ObservableObject {
 
     private func allocate() {
         // Volume は太さを細分の行で出すので、半音表示でも 5 行いる。
-        let base = (display.resolution == .high || display.volume) ? Self.divisions : 1
+        let base = display.usesBars ? Self.divisions : 1
         let needed = base * rowScale
         let bytes = Self.notes * needed * Self.columns * 4
         guard rowsPerNote != needed || pixels.count != bytes else { return }
@@ -967,9 +1119,165 @@ final class ETNoteBand: ObservableObject {
     func push(contentsOf snapshots: [ETNoteSnapshot]) {
         var added = false
         for snapshot in snapshots where append(snapshot) { added = true }
-        guard added else { return }
+        // 判定が付いたばかりの音は、灰色から 3 回で色へ移す。
+        for (id, note) in timbreNotes where note.probabilities != nil && note.fade < ETNoteTimbre.fadeSteps {
+            timbreNotes[id]?.fade += 1
+            dirtyRanges.append((note.start, note.end))
+        }
+        let repainted = repaintDirty()
+        guard added || repainted else { return }
         image = makeImage()
         revision &+= 1
+    }
+
+    /// 音色の知らせを入れる（上流 handleTimbreTelemetry）。塗り直しは次の push でまとめる。
+    func push(timbre events: [ETNoteTimbreEvent]) {
+        guard display.noteEventsEnabled, !events.isEmpty else { return }
+        for event in events where event.generation == activeGeneration {
+            let slot = event.midi - Self.firstMidi
+            guard slot >= 0, slot < Self.notes else { continue }
+            if var note = timbreNotes[event.noteId] {
+                guard note.midi == event.midi, note.start == event.startFrameIndex else { continue }
+                if event.endFrameIndex != ETNoteTimbreEvent.openEnd, note.end != event.endFrameIndex {
+                    if note.probabilities != nil { dirtyRanges.append((event.endFrameIndex, note.end)) }
+                    note.end = event.endFrameIndex
+                }
+                if let p = event.probabilities {
+                    if note.probabilities == nil { note.fade = 0 }
+                    note.probabilities = p
+                    dirtyRanges.append((note.start, note.end))
+                }
+                timbreNotes[event.noteId] = note
+            } else {
+                // 鳴り直しは、終わりの知らせを落としていても前の音を閉じる。
+                for id in timbreByPitch[slot] {
+                    guard var previous = timbreNotes[id], previous.end == ETNoteTimbreEvent.openEnd,
+                          Self.newer(event.startFrameIndex, than: previous.start) else { continue }
+                    if previous.probabilities != nil { dirtyRanges.append((event.startFrameIndex, previous.end)) }
+                    previous.end = event.startFrameIndex
+                    timbreNotes[id] = previous
+                }
+                var note = TimbreNote(noteId: event.noteId, midi: event.midi, start: event.startFrameIndex,
+                                      end: event.endFrameIndex, probabilities: event.probabilities)
+                if note.probabilities != nil { dirtyRanges.append((note.start, note.end)) }
+                note.fade = 0
+                timbreNotes[event.noteId] = note
+                timbreByPitch[slot].append(event.noteId)
+                timbreByPitch[slot].sort { (timbreNotes[$0]?.start ?? 0) < (timbreNotes[$1]?.start ?? 0) }
+            }
+        }
+    }
+
+    private static func newer(_ candidate: UInt32, than current: UInt32) -> Bool {
+        let delta = candidate &- current
+        return delta != 0 && delta < 0x8000_0000
+    }
+
+    private static func covers(_ frame: UInt32, start: UInt32, end: UInt32) -> Bool {
+        let age = frame &- start
+        return age < 0x8000_0000 && (end == ETNoteTimbreEvent.openEnd || age < end &- start)
+    }
+
+    /// 塗り直す範囲にかかる列を描き直す。描き直したら true。
+    private func repaintDirty() -> Bool {
+        guard !dirtyRanges.isEmpty else { return false }
+        let ranges = dirtyRanges
+        dirtyRanges.removeAll()
+        var any = false
+        for column in 0..<Self.columns {
+            guard let frame = frames[column]?.index else { continue }
+            if ranges.contains(where: { Self.covers(frame, start: $0.start, end: $0.end) }) {
+                paint(column: column)
+                any = true
+            }
+        }
+        return any
+    }
+
+    /// 一番古い列より前に終わった音を捨てる。
+    private func pruneTimbre() {
+        guard count == Self.columns, let oldest = frames[head]?.index else { return }
+        for slot in 0..<Self.notes {
+            while let id = timbreByPitch[slot].first, let note = timbreNotes[id],
+                  note.end != ETNoteTimbreEvent.openEnd, oldest &- note.end < 0x8000_0000 {
+                timbreNotes.removeValue(forKey: id)
+                timbreByPitch[slot].removeFirst()
+            }
+        }
+    }
+
+    private func clearTimbre() {
+        timbreNotes.removeAll()
+        for slot in timbreByPitch.indices { timbreByPitch[slot].removeAll() }
+        dirtyRanges.removeAll()
+    }
+
+    /// その列でその鍵に鳴っていた音（上流 _timbreForColumn）。
+    private func timbre(column: Int, midi: Int) -> TimbreNote? {
+        guard let frame = frames[column]?.index else { return nil }
+        let slot = midi - Self.firstMidi
+        guard slot >= 0, slot < Self.notes else { return nil }
+        for id in timbreByPitch[slot].reversed() {
+            if let note = timbreNotes[id], Self.covers(frame, start: note.start, end: note.end) { return note }
+        }
+        return nil
+    }
+
+    /// 音の色（上流 _noteDisplayColor）。`base` は Normal と Note Colors のときの色。
+    private func displayColor(column: Int, midi: Int, base: (r: Double, g: Double, b: Double),
+                              applyHighlight: Bool = true) -> (r: Double, g: Double, b: Double) {
+        guard display.timbreEnabled else { return base }
+        let note = timbre(column: column, midi: midi)
+        let p = note?.probabilities
+        var color = base
+        if display.color.isInstrument {
+            color = p.map { ETNoteTimbre.color($0, threeClass: display.color == .instrument3) }
+                ?? ETNoteTimbre.unclassified
+        }
+        let highlighted = display.highlight != .none && applyHighlight
+        if highlighted {
+            let w = ETNoteTimbre.highlightProbability(p, target: display.highlight.rawValue)
+            let g = ETNoteTimbre.unclassified
+            color = (w * color.r + (1 - w) * g.r, w * color.g + (1 - w) * g.g, w * color.b + (1 - w) * g.b)
+        }
+        if let note, note.probabilities != nil, note.fade < ETNoteTimbre.fadeSteps {
+            let from = highlighted || display.color.isInstrument ? ETNoteTimbre.unclassified : base
+            let t = Double(note.fade) / Double(ETNoteTimbre.fadeSteps)
+            color = (from.r + (color.r - from.r) * t, from.g + (color.g - from.g) * t, from.b + (color.b - from.b) * t)
+        }
+        return color
+    }
+
+    /// 鍵盤を光らせる色。最新の列の音色。Highlight は Instrument のときだけ鍵に掛ける（上流と同じ）。
+    func keyColor(midi: Int) -> (r: Double, g: Double, b: Double) {
+        let base = ETNoteKeyboard.noteColors[((midi % 12) + 12) % 12]
+        guard count > 0 else { return base }
+        let column = (head - 1 + Self.columns) % Self.columns
+        return displayColor(column: column, midi: midi, base: base, applyHighlight: display.color.isInstrument)
+    }
+
+    /// 音の始まりの印（左から数えた列・音の高さ・色）。
+    func onsets(slots: Int) -> [(displayColumn: Int, midi: Int, pitch: Double, color: (r: Double, g: Double, b: Double))] {
+        let shown = min(count, slots)
+        guard shown > 0 else { return [] }
+        let start = (head - shown + Self.columns) % Self.columns
+        var byFrame: [UInt32: Int] = [:]
+        for display in 0..<shown {
+            let column = (start + display) % Self.columns
+            if let frame = frames[column]?.index, byFrame[frame] == nil { byFrame[frame] = display }
+        }
+        var out: [(Int, Int, Double, (r: Double, g: Double, b: Double))] = []
+        for note in timbreNotes.values {
+            guard let displayColumn = byFrame[note.start] else { continue }
+            let column = (start + displayColumn) % Self.columns
+            let slot = note.midi - Self.firstMidi
+            let pitch = display.resolution == .high
+                ? Double(note.midi) + Double(cents[slot * Self.columns + column]) / 100 : Double(note.midi)
+            let base = display.color == .rainbow ? ETNoteKeyboard.interpolatedColor(midi: pitch)
+                : ETNoteKeyboard.noteColors[((note.midi % 12) + 12) % 12]
+            out.append((displayColumn, note.midi, pitch, displayColor(column: column, midi: note.midi, base: base)))
+        }
+        return out
     }
 
     func push(_ snapshot: ETNoteSnapshot) {
@@ -1000,10 +1308,18 @@ final class ETNoteBand: ObservableObject {
         }
         times[column] = snapshot.time
         frames[column] = (snapshot.generation, snapshot.frameIndex)
+        if snapshot.pitchCents.count == Self.notes {
+            for note in 0..<Self.notes { cents[note * Self.columns + column] = snapshot.pitchCents[note] }
+        }
+        if activeGeneration != snapshot.generation {
+            activeGeneration = snapshot.generation
+            clearTimbre()
+        }
         paint(column: column)
 
         head = (head + 1) % Self.columns
         if count < Self.columns { count += 1 }
+        pruneTimbre()
         for fix in snapshot.revisions {
             revise(generation: snapshot.generation, index: snapshot.frameIndex &- fix.age,
                    confidence: fix.confidence)
@@ -1038,6 +1354,9 @@ final class ETNoteBand: ObservableObject {
         for i in times.indices { times[i] = .nan }
         for i in frames.indices { frames[i] = nil }
         for i in pixels.indices { pixels[i] = 0 }
+        for i in cents.indices { cents[i] = 0 }
+        activeGeneration = nil
+        clearTimbre()
         image = nil
         revision &+= 1
     }
@@ -1133,7 +1452,7 @@ final class ETNoteBand: ObservableObject {
     // MARK: 描く用の並びへ
 
     private func paint(column: Int) {
-        if display.volume {
+        if display.usesBars {
             clear(column: column)
             paintVolume(column: column)
         } else {
@@ -1166,9 +1485,11 @@ final class ETNoteBand: ObservableObject {
                     if v > value { value = v }
                 }
                 let top = (Self.notes - 1 - note) * rowScale
+                let color = noteColor(note: note).map {
+                    displayColor(column: column, midi: Self.firstMidi + note, base: $0)
+                }
                 for k in 0..<rowScale {
-                    write(row: top + k, column: column, value: value,
-                          color: noteColor(note: note))
+                    write(row: top + k, column: column, value: value, color: color)
                 }
             } else {
                 for division in 0..<Self.divisions {
@@ -1200,44 +1521,31 @@ final class ETNoteBand: ObservableObject {
                 }
             }
             guard value > 0 else { continue }
+            _ = best
             let level = Double(loudness[note * Self.columns + column]) / 255
-            let thickness = min(Self.divisions,
-                                max(1, Int((1 + Double(Self.divisions - 1) * level).rounded())))
-            // 1/60 では一番強い細分の位置、1/12 では行の真ん中に置く（上流 :881-885）。
-            // 2.12.0 から 1/60 は、隣の細分との放物線で山の頂点を細分の間へ寄せる（_peakOffset）。
+            // Volume が切なら一番細い帯（上流 _volumeBarShape の thickness）。
+            let thickness = display.volume
+                ? min(Self.divisions, max(1, Int((1 + Double(Self.divisions - 1) * level).rounded()))) : 1
+            // 1/12 は行の真ん中。High（2.14.0）は DSP が出した音程のずれ（セント）の位置。
             // 位置は細分の行の単位の小数で持ち、rowScale 倍した行へ写す。
             let rowTop = Double((Self.notes - 1 - note) * Self.divisions)
-            let centerRows: Double
-            if display.resolution == .high {
-                centerRows = rowTop + Double(Self.divisions - 1 - best) + 0.5
-                    - peakOffset(pitch: first + best, column: column)
-            } else {
-                centerRows = rowTop + Double(Self.divisions / 2) + 0.5
-            }
+            let pitch = display.resolution == .high
+                ? Double(Self.firstMidi + note) + Double(cents[note * Self.columns + column]) / 100
+                : Double(Self.firstMidi + note)
+            let centerRows = rowTop + Double(Self.divisions) / 2
+                - (pitch - Double(Self.firstMidi + note)) * Double(Self.divisions)
             let scaledThickness = thickness * rowScale
             let start = Int((centerRows * Double(rowScale) - Double(scaledThickness) / 2).rounded())
+            let base = display.color == .rainbow && display.resolution == .high
+                ? ETNoteKeyboard.interpolatedColor(midi: pitch)
+                : ETNoteKeyboard.noteColors[((Self.firstMidi + note) % 12 + 12) % 12]
+            let color = displayColor(column: column, midi: Self.firstMidi + note, base: base)
             // 細分の行も rowScale 倍に写す（paintConfidence と同じ理由）。
             for at in start..<(start + scaledThickness) {
                 guard at >= 0, at < rows else { continue }
-                write(row: at, column: column, value: value,
-                      color: display.resolution == .high
-                          ? fineColor(pitch: first + best)
-                          : noteColor(note: note))
+                write(row: at, column: column, value: value, color: color)
             }
         }
-    }
-
-    /// 細分の確からしさの山の頂点が、一番強い細分から細分何本ぶんずれているか（-0.5〜0.5、正は高い方）。
-    /// 上流 2.12.0 の _peakOffset（note_spectrogram.js:919-929）。隣り合う 3 本を放物線で補間する。
-    /// 山が上に凸でなければ（平ら・谷）0。両端の細分は隣が片側しか無いので 0。
-    private func peakOffset(pitch: Int, column: Int) -> Double {
-        guard pitch > 0, pitch < Self.pitches - 1 else { return 0 }
-        let below = Double(fine[(pitch - 1) * Self.columns + column])
-        let peak = Double(fine[pitch * Self.columns + column])
-        let above = Double(fine[(pitch + 1) * Self.columns + column])
-        let curvature = below - 2 * peak + above
-        guard curvature < 0 else { return 0 }
-        return min(max(0.5 * (below - above) / curvature, -0.5), 0.5)
     }
 
     /// **どちらの塗り分けでも色を持つ。**

@@ -54,8 +54,9 @@ final class Telemetry: ObservableObject {
     /// 上流のハブは枠ごとに購読者へ配るので落とさない。tap と種類ごとに持ち、描く側が drainFrames で取り出す。
     private var frameQueue: [UInt64: [ETFrame]] = [:]
     /// 溜める種類。Note Spectrogram（24）と Rhythm Analyzer（28）の枠（ETFrameType.noteSpectrogram / .rhythmAnalyzer）。
+    // 31 は Note Spectrogram の音色の知らせ（2.14.0）。1 音ずつの出来事なので落とせない。
     static let queuedTypes: Set<UInt16> = [ETFrameType.noteSpectrogram.rawValue,
-                                           ETFrameType.rhythmAnalyzer.rawValue]
+                                           ETFrameType.rhythmAnalyzer.rawValue, 31]
     /// tap と種類ごとの上限。30Hz なら 8 秒ぶん（Note Spectrogram は 50 fps なので 5 秒）。
     /// 描く側が止まっていた間に溜め続けない。
     static let queueLimit = 256

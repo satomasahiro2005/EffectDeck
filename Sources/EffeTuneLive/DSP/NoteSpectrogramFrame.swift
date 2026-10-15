@@ -170,3 +170,96 @@ struct ETNoteSnapshot {
         pitchCents = cents
     }
 }
+
+// MARK: - 音色（2.14.0）
+
+/// 音ごとの音色の知らせ（型 31・版 1・80 バイト）。上流 note_spectrogram.js の handleTimbreTelemetry。
+///      0  f32 sampleRate / 4 f32 timeSeconds / 8 f32 hopSeconds
+///     12  u32 generation（Note Spectrogram の枠と同じ世代のものだけ使う）
+///     16  u32 frameIndex / 20 u32 noteId（0 は無効）/ 24 u32 midi（21〜108）
+///     28  u32 event（1 = 始まり、2 = 判定、3 = 終わり）
+///     32  u32 startFrameIndex / 36 u32 endFrameIndex（0xffffffff はまだ鳴っている）
+///     40  f32 × 9 確からしさ（判定のときだけ。合計 1）/ 76 u32 0
+struct ETNoteTimbreEvent: Equatable {
+    enum Kind: UInt32 { case start = 1, result = 2, end = 3 }
+
+    let generation: UInt32
+    let frameIndex: UInt32
+    let noteId: UInt32
+    let midi: Int
+    let kind: Kind
+    let startFrameIndex: UInt32
+    let endFrameIndex: UInt32
+    /// 判定のときだけ。並びは ETNoteTimbre.classes。
+    let probabilities: [Float]?
+
+    static let frameType: UInt16 = 31
+    static let byteCount = 80
+    static let openEnd: UInt32 = 0xffff_ffff
+
+    init?(_ frame: ETFrame) {
+        guard frame.type == Self.frameType, frame.matches(version: 1),
+              frame.hasPayload(bytes: Self.byteCount) else { return nil }
+        let p = frame.payloadView
+        guard let rate = p.f32(at: 0), let time = p.f32(at: 4), let hop = p.f32(at: 8),
+              let generation = p.u32(at: 12), let frameIndex = p.u32(at: 16), let noteId = p.u32(at: 20),
+              let midi = p.u32(at: 24), let code = p.u32(at: 28), let start = p.u32(at: 32),
+              let end = p.u32(at: 36), let tail = p.u32(at: 76),
+              rate.isFinite, rate > 0, time.isFinite, time >= 0, hop.isFinite, hop > 0,
+              noteId != 0, midi >= 21, midi <= 108, let kind = Kind(rawValue: code), tail == 0,
+              frameIndex &- start < 0x8000_0000 else { return nil }
+        var probabilities: [Float]?
+        if kind == .result {
+            guard let values = p.floats(at: 40, count: 9),
+                  values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }),
+                  abs(values.reduce(0, +) - 1) <= 0.001 else { return nil }
+            probabilities = values
+        }
+        self.generation = generation
+        self.frameIndex = frameIndex
+        self.noteId = noteId
+        self.midi = Int(midi)
+        self.kind = kind
+        startFrameIndex = start
+        endFrameIndex = end
+        self.probabilities = probabilities
+    }
+}
+
+/// 音色の分類と色（上流 MULTI_F0_TIMBRE_*）。
+enum ETNoteTimbre {
+    static let classes = ["Bass", "Guitar", "Piano", "Strings", "Wind", "Synth", "Organ", "Other", "Vocal"]
+    static let colors: [(r: Double, g: Double, b: Double)] = [
+        (76, 120, 184), (201, 154, 59), (143, 114, 199), (76, 155, 115), (70, 158, 168),
+        (189, 111, 162), (166, 125, 96), (156, 156, 156), (214, 107, 94),
+    ]
+    /// まだ判定の無い音。
+    static let unclassified: (r: Double, g: Double, b: Double) = (116, 116, 116)
+    /// 判定が付いてから色へ移るまでの描き直しの回数。
+    static let fadeSteps = 3
+
+    /// Highlight の選択肢（値, 表示）。上流 MULTI_F0_HIGHLIGHTS。
+    static let highlights: [(value: String, label: String)] =
+        [("None", "None"), ("Vocal", "Vocal"), ("Bass", "Bass"), ("Other3", "Other (3)")]
+        + classes[1...6].map { ($0, $0) } + [("Other9", "Other (9)")]
+
+    /// 確からしさで混ぜた色（timbreColorMode = Probability）。3 分類では Bass と Vocal 以外を Other の色にする。
+    static func color(_ p: [Float], threeClass: Bool) -> (r: Double, g: Double, b: Double) {
+        var r = 0.0, g = 0.0, b = 0.0
+        for category in 0..<9 {
+            let c = colors[threeClass && category > 0 && category < 8 ? 7 : category]
+            let w = Double(p[category])
+            r += w * c.r; g += w * c.g; b += w * c.b
+        }
+        return (r, g, b)
+    }
+
+    /// その Highlight の確からしさ。Other3 は Bass と Vocal 以外の合計。
+    static func highlightProbability(_ p: [Float]?, target: String) -> Double {
+        guard let p else { return 0 }
+        if target == "Other3" { return Double(p[1..<8].reduce(0, +)) }
+        let name = target == "Other9" ? "Other" : target
+        guard let index = classes.firstIndex(of: name) else { return 0 }
+        return Double(p[index])
+    }
+}
