@@ -6,7 +6,7 @@
 //  CoreGraphics でピクセルの器へ直に描く。
 //
 //  計るもの:
-//      波形      10ms ごとのピーク。色は低・中・高域の量（赤・緑・青）。
+//      波形      10ms ごとのピーク。
 //      スペクトラム  4096 点の FFT（Hann）。20Hz–20kHz を対数で。落ちるときだけゆっくり。
 //      ステレオ    直近 1024 標本の L/R を 45° 回して点で（上が M、横が S）。下に相関。
 //      レベル     L/R のピーク（落ちは 24dB/秒、山は 1.5 秒残す）と、BS.1770 の
@@ -184,64 +184,52 @@ final class ETMiniMeters {
     }
 
     // MARK: - 描く
+    //
+    // **色は MiniMeters の既定のテーマ（_TEMPLATE）に合わせる。**
+    //   color 172,192,222（波形・スペクトラム・ステレオ）／bg 0,0,0／bgaccent 43,48,55（線と目盛り）／
+    //   text 255,255,255／loudness_main 255,255,255。赤はクリップしたときだけ。
+    // **枠は描かない。**区画は隣り合わせにそのまま切る。
 
-    private static let background = UIColor(red: 0.04, green: 0.045, blue: 0.055, alpha: 1).cgColor
-    private static let panel = UIColor(red: 0.075, green: 0.083, blue: 0.1, alpha: 1).cgColor
-    private static let grid = UIColor(white: 1, alpha: 0.07).cgColor
-    private static let label = UIColor(white: 1, alpha: 0.45)
-    private static let accent = UIColor(red: 0.35, green: 0.75, blue: 1, alpha: 1)
+    private static let main = UIColor(red: 172 / 255, green: 192 / 255, blue: 222 / 255, alpha: 1)
+    private static let bgAccent = UIColor(red: 43 / 255, green: 48 / 255, blue: 55 / 255, alpha: 1)
+    private static let text = UIColor.white
 
     /// `context` は上が 0 の向き（呼び手が反転してある）。
     func draw(in context: CGContext) {
         let w = CGFloat(Self.pixelWidth), h = CGFloat(Self.pixelHeight)
-        context.setFillColor(Self.background)
+        context.setFillColor(UIColor.black.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: w, height: h))
 
-        let gap: CGFloat = 8
-        let inner = h - 2 * gap
-        let stereoWidth = inner
-        let levelWidth: CGFloat = 200
-        let rest = w - 5 * gap - stereoWidth - levelWidth
-        let waveWidth = (rest * 0.5).rounded()
+        let stereoWidth = h
+        let levelWidth: CGFloat = 220
+        let rest = w - stereoWidth - levelWidth
+        let waveWidth = (rest * 0.52).rounded()
         let spectrumWidth = rest - waveWidth
-        var x = gap
-        let wave = CGRect(x: x, y: gap, width: waveWidth, height: inner); x += waveWidth + gap
-        let spectrum = CGRect(x: x, y: gap, width: spectrumWidth, height: inner); x += spectrumWidth + gap
-        let stereo = CGRect(x: x, y: gap, width: stereoWidth, height: inner); x += stereoWidth + gap
-        let levels = CGRect(x: x, y: gap, width: levelWidth, height: inner)
-
-        for rect in [wave, spectrum, stereo, levels] {
-            context.setFillColor(Self.panel)
-            context.addPath(CGPath(roundedRect: rect, cornerWidth: 10, cornerHeight: 10, transform: nil))
-            context.fillPath()
-        }
+        let wave = CGRect(x: 0, y: 0, width: waveWidth, height: h)
+        let spectrum = CGRect(x: wave.maxX, y: 0, width: spectrumWidth, height: h)
+        let stereo = CGRect(x: spectrum.maxX, y: 0, width: stereoWidth, height: h)
+        let levels = CGRect(x: stereo.maxX, y: 0, width: levelWidth, height: h)
 
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
-        drawWaveform(context, wave.insetBy(dx: 6, dy: 6))
-        drawSpectrum(context, spectrum.insetBy(dx: 6, dy: 6))
-        drawStereo(context, stereo.insetBy(dx: 10, dy: 8))
-        drawLevels(context, levels.insetBy(dx: 12, dy: 10))
+        drawWaveform(context, wave)
+        drawSpectrum(context, spectrum)
+        drawStereo(context, stereo)
+        drawLevels(context, levels.insetBy(dx: 16, dy: 14))
     }
 
     private func drawWaveform(_ context: CGContext, _ rect: CGRect) {
         context.saveGState()
         context.clip(to: rect)
         let center = rect.midY
-        context.setFillColor(Self.grid)
-        context.fill(CGRect(x: rect.minX, y: center, width: rect.width, height: 1))
+        context.setFillColor(Self.bgAccent.cgColor)
+        context.fill(CGRect(x: rect.minX, y: center - 0.5, width: rect.width, height: 1))
         let count = min(Int(rect.width / 2), Self.columnCount)
+        context.setFillColor(Self.main.cgColor)
         for k in 0..<count {
             let index = (columnHead - 1 - k + 2 * Self.columnCount) % Self.columnCount
-            let column = columns[index]
-            guard column.peak > 0.0005 else { continue }
-            let total = max(column.low + column.mid + column.high, 1e-12)
-            let r = CGFloat(sqrt(column.low / total)), g = CGFloat(sqrt(column.mid / total))
-            let b = CGFloat(sqrt(column.high / total))
-            let top = max(r, g, b)
-            context.setFillColor(red: 0.25 + 0.75 * r / top, green: 0.25 + 0.75 * g / top,
-                                 blue: 0.25 + 0.75 * b / top, alpha: 1)
-            let half = CGFloat(min(column.peak, 1)) * rect.height / 2
+            let half = CGFloat(min(columns[index].peak, 1)) * rect.height / 2
+            guard half >= 0.5 else { continue }
             context.fill(CGRect(x: rect.maxX - CGFloat(k + 1) * 2, y: center - half, width: 2, height: 2 * half))
         }
         context.restoreGState()
@@ -286,7 +274,8 @@ final class ETMiniMeters {
 
         context.saveGState()
         context.clip(to: rect)
-        context.setFillColor(Self.grid)
+        // 周波数の線（spectrum_analyzer_frequency_lines は既定で bgaccent に寄せる）。
+        context.setFillColor(Self.bgAccent.cgColor)
         for f in [100.0, 1000.0, 10000.0] {
             let gx = rect.minX + CGFloat(log(f / 20) / log(1000)) * rect.width
             context.fill(CGRect(x: gx, y: rect.minY, width: 1, height: rect.height))
@@ -295,107 +284,75 @@ final class ETMiniMeters {
             let t = CGFloat((min(max(db, -90), 0) + 90) / 90)
             return rect.maxY - t * rect.height
         }
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        for c in 0..<columns {
-            path.addLine(to: CGPoint(x: rect.minX + CGFloat(c) * 2 + 1, y: y(spectrumDB[c])))
-        }
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.closeSubpath()
-        context.addPath(path)
-        context.setFillColor(Self.accent.withAlphaComponent(0.28).cgColor)
-        context.fillPath()
         let line = CGMutablePath()
         for c in 0..<columns {
             let p = CGPoint(x: rect.minX + CGFloat(c) * 2 + 1, y: y(spectrumDB[c]))
             if c == 0 { line.move(to: p) } else { line.addLine(to: p) }
         }
         context.addPath(line)
-        context.setStrokeColor(Self.accent.cgColor)
+        context.setStrokeColor(Self.main.cgColor)
         context.setLineWidth(2)
+        context.setLineJoin(.round)
         context.strokePath()
         context.restoreGState()
-        write("20", at: CGPoint(x: rect.minX + 2, y: rect.minY + 2))
-        write("1k", at: CGPoint(x: rect.minX + rect.width * 2 / 3 + 3, y: rect.minY + 2))
     }
 
     private func drawStereo(_ context: CGContext, _ rect: CGRect) {
-        let barHeight: CGFloat = 8
-        let scopeRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width,
-                               height: rect.height - barHeight - 8)
-        let side = min(scopeRect.width, scopeRect.height)
-        let square = CGRect(x: scopeRect.midX - side / 2, y: scopeRect.minY, width: side, height: side)
         context.saveGState()
-        context.clip(to: square)
-        context.setStrokeColor(Self.grid)
+        context.clip(to: rect)
+        context.setStrokeColor(Self.bgAccent.cgColor)
         context.setLineWidth(1)
-        context.move(to: CGPoint(x: square.midX, y: square.minY))
-        context.addLine(to: CGPoint(x: square.midX, y: square.maxY))
-        context.move(to: CGPoint(x: square.minX, y: square.midY))
-        context.addLine(to: CGPoint(x: square.maxX, y: square.midY))
+        context.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        context.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
         context.strokePath()
-        context.setFillColor(Self.accent.withAlphaComponent(0.55).cgColor)
-        let radius = side / 2
+        context.setFillColor(Self.main.withAlphaComponent(0.6).cgColor)
+        let radius = rect.width / 2
         for i in 0..<Self.scopeCount {
             let l = CGFloat(scopeL[i]), r = CGFloat(scopeR[i])
-            let px = square.midX + (r - l) * 0.7071 * radius
-            let py = square.midY - (l + r) * 0.7071 * radius
+            let px = rect.midX + (r - l) * 0.7071 * radius
+            let py = rect.midY - (l + r) * 0.7071 * radius
             context.fill(CGRect(x: px - 1, y: py - 1, width: 2, height: 2))
         }
-        context.restoreGState()
-
-        let bar = CGRect(x: rect.minX, y: rect.maxY - barHeight, width: rect.width, height: barHeight)
-        context.setFillColor(Self.grid)
-        context.fill(bar)
+        // 相関は下端の細い線。中心から右が正、左が負。
         let c = CGFloat(max(-1, min(1, correlation)))
-        let mid = bar.midX
-        let end = mid + c * bar.width / 2
-        context.setFillColor((c < 0 ? UIColor.systemRed : UIColor.systemGreen).cgColor)
-        context.fill(CGRect(x: min(mid, end), y: bar.minY, width: abs(end - mid), height: bar.height))
-        context.setFillColor(UIColor(white: 1, alpha: 0.5).cgColor)
-        context.fill(CGRect(x: mid - 0.5, y: bar.minY - 2, width: 1, height: bar.height + 4))
+        let end = rect.midX + c * rect.width / 2
+        context.setFillColor(Self.main.cgColor)
+        context.fill(CGRect(x: min(rect.midX, end), y: rect.maxY - 3, width: abs(end - rect.midX), height: 3))
+        context.restoreGState()
     }
 
     private func drawLevels(_ context: CGContext, _ rect: CGRect) {
-        let barWidth: CGFloat = 18
-        let meter = CGRect(x: rect.minX, y: rect.minY, width: 2 * barWidth + 6, height: rect.height)
+        let barWidth: CGFloat = 10
+        let meter = CGRect(x: rect.minX, y: rect.minY, width: 2 * barWidth + 4, height: rect.height)
         func y(_ db: Float) -> CGFloat {
             let t = CGFloat((min(max(db, -60), 0) + 60) / 60)
             return meter.maxY - t * meter.height
         }
         for ch in 0..<2 {
-            let bx = meter.minX + CGFloat(ch) * (barWidth + 6)
-            context.setFillColor(Self.grid)
+            let bx = meter.minX + CGFloat(ch) * (barWidth + 4)
+            context.setFillColor(Self.bgAccent.cgColor)
             context.fill(CGRect(x: bx, y: meter.minY, width: barWidth, height: meter.height))
             let top = y(peakDB[ch])
-            // 緑 → 黄（-12）→ 赤（-3）。
-            for (from, to, color) in [(Float(-60), Float(-12), UIColor.systemGreen),
-                                      (-12, -3, UIColor.systemYellow), (-3, 0, UIColor.systemRed)] {
-                let lo = y(from), hi = max(y(to), top)
-                guard hi < lo else { continue }
-                context.setFillColor(color.cgColor)
-                context.fill(CGRect(x: bx, y: hi, width: barWidth, height: lo - hi))
-            }
-            context.setFillColor(UIColor.white.cgColor)
+            context.setFillColor(Self.text.cgColor)
+            context.fill(CGRect(x: bx, y: top, width: barWidth, height: meter.maxY - top))
+            let clipped = holdDB[ch] >= -0.1
+            context.setFillColor((clipped ? UIColor(red: 1, green: 0, blue: 0, alpha: 1) : Self.text).cgColor)
             context.fill(CGRect(x: bx, y: y(holdDB[ch]) - 1, width: barWidth, height: 2))
         }
-        let textX = meter.maxX + 14
-        let big = UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .semibold)
-        write(Self.lufsText(momentary), at: CGPoint(x: textX, y: rect.minY), font: big, color: .white)
-        write("M LUFS", at: CGPoint(x: textX, y: rect.minY + 42))
-        write(Self.lufsText(shortTerm), at: CGPoint(x: textX, y: rect.minY + 90),
-              font: UIFont.monospacedDigitSystemFont(ofSize: 26, weight: .medium), color: UIColor(white: 1, alpha: 0.8))
-        write("S LUFS", at: CGPoint(x: textX, y: rect.minY + 124))
-        write(String(format: "%.1f dB", max(holdDB[0], holdDB[1])), at: CGPoint(x: textX, y: rect.maxY - 22))
+        let textX = meter.maxX + 18
+        write(Self.lufsText(momentary), at: CGPoint(x: textX, y: rect.minY - 6),
+              font: .monospacedDigitSystemFont(ofSize: 52, weight: .light), color: Self.text)
+        write(Self.lufsText(shortTerm), at: CGPoint(x: textX, y: rect.minY + 62),
+              font: .monospacedDigitSystemFont(ofSize: 30, weight: .light), color: Self.main)
+        write("LUFS", at: CGPoint(x: textX, y: rect.maxY - 20),
+              font: .systemFont(ofSize: 15, weight: .regular), color: Self.main)
     }
 
     private static func lufsText(_ value: Double) -> String {
         value.isFinite && value > -70 ? String(format: "%.1f", value) : "—"
     }
 
-    private func write(_ text: String, at point: CGPoint,
-                       font: UIFont = .systemFont(ofSize: 16, weight: .medium),
-                       color: UIColor = ETMiniMeters.label) {
+    private func write(_ text: String, at point: CGPoint, font: UIFont, color: UIColor) {
         (text as NSString).draw(at: point, withAttributes: [.font: font, .foregroundColor: color])
     }
 }
