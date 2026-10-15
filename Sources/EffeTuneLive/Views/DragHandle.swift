@@ -33,8 +33,8 @@ struct ETDragHandle: UIViewRepresentable {
     /// 長押しで掴むか。**2列の右では掴まない。**並べ替えは左の一覧（ChainMinimap）でやる。
     /// 払って消すほうはどちらでも残す。
     var reorders = true
-    /// 掴んだ。
-    let began: () -> Void
+    /// 掴んだ。渡すのは掴んだ点の高さ（自分の面の上端から）。
+    let began: (CGFloat) -> Void
     /// 指が動いた。渡すのは掴んだ時点からの移動量。**縦だけでなく横も渡す。**
     /// 並べ替えの判定は縦しか見ないが、掴んだものは指について両方向へ動く
     /// （Shortcuts も同じ。指から離れた絵は掴んでいる感じがしない）。
@@ -186,7 +186,7 @@ struct ETDragHandle: UIViewRepresentable {
                 mine = true
                 origin = Self.finger(g, in: window)
                 holdScroll(from: anchor)
-                parent.began()
+                parent.began(p.y)
             case .changed:
                 guard mine, let window = anchor.window else { return }
                 let now = Self.finger(g, in: window)

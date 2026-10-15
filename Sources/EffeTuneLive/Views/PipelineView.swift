@@ -203,6 +203,14 @@ struct PipelineView: View {
     @State private var anchorRect: CGRect = .zero
     /// 指の縦の移動量。
     @State private var dragShift: CGSize = .zero
+    /// 掴んでいるあいだ名前の行だけに畳んでいる段。**開閉の覚え（dsp.expanded）は書かない。**
+    ///
+    /// 開いたカードは画面の高さほどあり、掴んだまま隣を越えるには長く運ぶ必要があった。
+    /// 離したら元の開き方に戻す。Section は畳むと配下の行が消えるので畳まない。
+    @State private var dragFolded: UUID?
+    /// 畳んだ直後に、畳んだ札を指の下へ寄せるための、掴んだ点の高さ（chainSpace）。
+    /// 畳んだ行が測り直されたら使って捨てる（measured）。
+    @State private var foldGrabY: CGFloat?
     /// 行の高さの合計（行の間を含む）。**変わったときだけ書く。**
     ///
     /// 行ごとの矩形そのものは観測しない箱（geometry）に入れてある。矩形は送るたびに
@@ -618,6 +626,8 @@ struct PipelineView: View {
             dragging = nil
             dragExternalSnapshot = nil
             dragShift = .zero
+            dragFolded = nil
+            foldGrabY = nil
         }
         if swiping != nil {
             swipeX = 0
@@ -660,6 +670,15 @@ struct PipelineView: View {
     /// 行が測れた。並べ替えの判定と最後の帯の高さ、足したカードの確かめに使う。
     private func measured(_ id: UUID, _ rect: CGRect) {
         geometry.record(id, rect)
+        // 掴んで畳んだ行が縮んだ。札も同じ高さにして、掴んだ点を中心に置く。
+        // 入れ替えで動いただけ（高さが同じ）では基準に触れない（swap の注記）。
+        if id == dragFolded, let grabY = foldGrabY, rect.height != anchorRect.height {
+            foldGrabY = nil
+            withAnimation(.snappy(duration: 0.22)) {
+                anchorRect = CGRect(x: rect.minX, y: grabY - rect.height / 2,
+                                    width: rect.width, height: rect.height)
+            }
+        }
         let height = geometry.contentHeight
         if rowsHeight != height { rowsHeight = height }
         if geometry.pendingReveal == id {
@@ -975,8 +994,9 @@ struct PipelineView: View {
                         node: row.node,
                         dsp: dsp,
                         // 2列では図だけにしたもの以外を開く。iPhoneの開閉の覚えは読まない。
-                        isExpanded: isOpen(row.node.id),
-                        isCollapsedFully: !split && dsp.collapsedFully.contains(row.node.id),
+                        isExpanded: isOpen(row.node.id) && dragFolded != row.node.id,
+                        isCollapsedFully: dragFolded == row.node.id
+                            || (!split && dsp.collapsedFully.contains(row.node.id)),
                         toggleExpanded: split ? { toggleGraphOnly(row.node) } : { cycle(row.node) },
                         // 隣は鎖の隣ではなく**画面の隣**。畳んだ Section の配下と
                         // 入れ替わって行が消えないように、ドラッグと同じ道を通す。
@@ -1028,7 +1048,7 @@ struct PipelineView: View {
                         .overlay {
                             ETDragHandle(
                                 reorders: !split,
-                                began: { beginDrag(row) },
+                                began: { y in beginDrag(row, grabY: y) },
                                 moved: { d in
                                     // 並べ方を切り替えた後に、古い行の認識器から届いたものは捨てる。
                                     guard dragging == row.node.id else { return }
@@ -1179,8 +1199,9 @@ struct PipelineView: View {
                         // controller as the real card. Doing so reparents the
                         // controller into the overlay and leaves the row blank
                         // after drop until it is collapsed and reopened.
-                        isExpanded: isOpen(row.node.id),
-                        isCollapsedFully: !split && dsp.collapsedFully.contains(row.node.id),
+                        isExpanded: isOpen(row.node.id) && dragFolded != row.node.id,
+                        isCollapsedFully: dragFolded == row.node.id
+                            || (!split && dsp.collapsedFully.contains(row.node.id)),
                         toggleExpanded: {}, moveUp: {}, moveDown: {},
                         canMoveUp: false, canMoveDown: false,
                         externalSnapshot: dragExternalSnapshot,
@@ -1369,7 +1390,7 @@ struct PipelineView: View {
     // MARK: - 並べ替え（矩形の重なりで決める）
 
     /// 掴み始め。掴んだ時点の矩形を確保する。
-    private func beginDrag(_ row: Row) {
+    private func beginDrag(_ row: Row, grabY: CGFloat) {
         guard dragging != row.node.id else { return }
         closeSwipe()
         if row.node.externalID?.hasPrefix("jsfx:") == true {
@@ -1384,6 +1405,11 @@ struct PipelineView: View {
         dragging = row.node.id
         anchorRect = geometry[row.node.id] ?? .zero
         dragShift = .zero
+        // 名前の行だけに畳む。札の大きさは畳んだ行が測れたときに合わせる（measured）。
+        if !row.node.isSection && !usesSplit {
+            foldGrabY = anchorRect.minY + grabY
+            withAnimation(.snappy(duration: 0.22)) { dragFolded = row.node.id }
+        }
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
 
@@ -1405,6 +1431,7 @@ struct PipelineView: View {
     /// 時間で必ず畳む。
     private func endDrag() {
         guard let id = dragging else { return }
+        foldGrabY = nil
         let slot = geometry[id] ?? anchorRect
         withAnimation(.snappy(duration: Self.returnDuration)) {
             anchorRect = slot
@@ -1416,6 +1443,8 @@ struct PipelineView: View {
             if dragging == id {
                 dragging = nil
                 dragExternalSnapshot = nil
+                // 戻りきってから元の開き方に戻す。
+                withAnimation(.snappy(duration: 0.22)) { dragFolded = nil }
             }
         }
     }
