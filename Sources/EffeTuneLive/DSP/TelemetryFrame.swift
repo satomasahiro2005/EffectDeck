@@ -33,6 +33,8 @@ enum ETFrameType: UInt16 {
     case analogMeter        = 27
     case rhythmAnalyzer     = 28
     case tonalBalance       = 29
+    /// SFZ Note Player の鳴っている声（2.14.0、版 1・1028 バイト）。SFZVoiceGraph.swift。
+    case sfzVoices          = 30
 }
 
 struct ETFrame {

@@ -27,10 +27,7 @@ final class Upstream213Tests: XCTestCase {
 
     // MARK: カタログ
 
-    func testUpstreamVersionIs0_13_0() {
-        XCTAssertEqual(ETUpstreamVersion, "0.13.0")
-        XCTAssertEqual(ETUpstreamAppVersion, "2.13.0", "package.json の版。公式の PC との食い違いの表示に使う")
-    }
+    // 版は Upstream214Tests が見る。
 
     func testNewEffectsAreInTheCatalog() throws {
         XCTAssertEqual(ETCatalog.count, 112)
@@ -58,16 +55,15 @@ final class Upstream213Tests: XCTestCase {
         let sfz = try spec("SFZNotePlayerPlugin")
         XCTAssertEqual(sfz.name, "SFZ Note Player")
         XCTAssertEqual(sfz.category, "others")
-        XCTAssertEqual(sfz.paramsHash, 0x0f17627c)
-        XCTAssertEqual(sfz.floatCount, 16)
-        // 並びと名前は createUI の表（sfz_note_player.js:522-539）。
-        XCTAssertEqual(sfz.params.map(\.key),
-                       ["hi", "md", "lo", "th", "rd", "nh", "vf", "vc", "pl", "dm", "wm", "os", "og", "tm",
+        // 2.14.0 で ss（Sample Shift）と試し弾きの pm / pv が増えた（Upstream214Tests）。
+        // 並びと名前は createUI の表。保存しない pm / pv を除くと 2.13.0 の並びに ss が入っただけ。
+        XCTAssertEqual(sfz.params.filter { !$0.runtimeOnly }.map(\.key),
+                       ["hi", "md", "lo", "th", "rd", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm",
                         "mn", "mx"])
-        XCTAssertEqual(sfz.params.map(\.label),
+        XCTAssertEqual(sfz.params.filter { !$0.runtimeOnly }.map(\.label),
                        ["Highest", "Middle", "Lowest", "Threshold", "Retrigger Drop", "Note Hold",
                         "Velocity 1 Level", "Velocity 127 Level", "Max Voices", "Dry", "Wet", "Octave",
-                        "Output Gain", "Timing", "Lowest Note", "Highest Note"])
+                        "Sample Shift", "Output Gain", "Timing", "Lowest Note", "Highest Note"])
         if case .number(let lo, let hi, let step, let unit, _) = try param(sfz, "rd").kind {
             XCTAssertEqual([lo, hi, step], [1, 96, 1])
             XCTAssertEqual(unit, "dB")
@@ -83,15 +79,15 @@ final class Upstream213Tests: XCTestCase {
 
     func testNoteSpectrogramLostRegularNoteLimit() throws {
         let s = try spec("NoteSpectrogramPlugin")
-        XCTAssertEqual(s.paramsHash, 0x9d70750b)
-        XCTAssertEqual(s.floatCount, 2)
-        XCTAssertEqual(s.params.map(\.key), ["mn", "mx"])
+        // 2.14.0 で保存しない te（Timbre Enabled）が増えた。保存する鍵は mn / mx のまま。
+        XCTAssertEqual(s.floatCount, 3)
+        XCTAssertEqual(s.params.filter { !$0.runtimeOnly }.map(\.key), ["mn", "mx"])
         // 2.12.0 までの鎖は nc を持つ。読めて、ほかの値は残る。
         let loaded = PipelineStore.parse([["nm": "Note Spectrogram", "nc": 4, "mn": 40, "mx": 80]],
                                          catalog: ETCatalog)
         let item = try XCTUnwrap(loaded.first)
         XCTAssertEqual(item.spec.type, s.type)
-        XCTAssertEqual(item.values, [40, 80])
+        XCTAssertEqual(Array(item.values.prefix(2)), [40, 80])
         XCTAssertNil(PipelineStore.shortForm(loaded)[0]["nc"])
     }
 
@@ -308,8 +304,9 @@ final class Upstream213Tests: XCTestCase {
                        payload: Array(p.prefix(bytes)))
     }
 
+    /// 版 5（2.13.0）の枠も読める（PC の 2.13.0 から写したもの）。版 6 は Upstream214Tests。
     func testNoteSpectrogramFrameVersion5() throws {
-        XCTAssertEqual(ETNoteFrameLayout.payloadBytes, 8840)
+        XCTAssertEqual(ETNoteFrameLayout.legacyPayloadBytes, 8840)
         XCTAssertEqual(ETNoteFrameLayout.levelOffset, 1792)
         XCTAssertEqual(ETNoteFrameLayout.revisedOffset, 3552)
         XCTAssertEqual(ETNoteFrameLayout.intermediateOffset, 5312)
@@ -344,7 +341,8 @@ final class Upstream213Tests: XCTestCase {
 
     func testFrameVersions() {
         XCTAssertEqual(ETNoteFrameLayout.frameType, 24)
-        XCTAssertEqual(ETNoteFrameLayout.version, 5)
+        XCTAssertEqual(ETNoteFrameLayout.version, 6)
+        XCTAssertEqual(ETNoteFrameLayout.legacyVersion, 5)
         XCTAssertEqual(ETFrameType.rhythmAnalyzer.rawValue, 28)
         XCTAssertEqual(ETRhythm.version, 4)
         XCTAssertEqual(ETRhythm.payloadBytes, 1496)

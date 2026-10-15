@@ -14,6 +14,11 @@ struct ETSFZLibraryEntry: Equatable, Identifiable {
     var id: String
     var name: String
     var regionCount: Int
+    /// 入れ物の大きさ・入っているファイルの数・取り込んだ時刻（ISO 8601）。2.14.0 の上流の一覧と同じ。
+    /// 2.13.0 で取り込んだものには無い。
+    var size: Int? = nil
+    var fileCount: Int? = nil
+    var importedAt: String? = nil
 }
 
 /// 読み込んで、カーネルへ送るだけになったバンク。
@@ -69,7 +74,10 @@ final class ETSFZLibraryFiles: @unchecked Sendable {
                       let count = (item["regionCount"] as? NSNumber)?.intValue, count >= 1 else {
                     throw ETSFZError(code: .storage, message: "Invalid SFZ library index.")
                 }
-                return ETSFZLibraryEntry(id: id, name: name, regionCount: count)
+                return ETSFZLibraryEntry(id: id, name: name, regionCount: count,
+                                         size: (item["size"] as? NSNumber)?.intValue,
+                                         fileCount: (item["fileCount"] as? NSNumber)?.intValue,
+                                         importedAt: item["importedAt"] as? String)
             }
         } catch let error as ETSFZError {
             throw error
@@ -79,8 +87,13 @@ final class ETSFZLibraryFiles: @unchecked Sendable {
     }
 
     func writeIndex(_ entries: [ETSFZLibraryEntry]) throws {
-        let list = entries.map {
-            "{\"id\":\(ETSFZBank.jsonString($0.id)),\"name\":\(ETSFZBank.jsonString($0.name)),\"regionCount\":\($0.regionCount)}"
+        let list = entries.map { entry -> String in
+            var fields = ["\"id\":\(ETSFZBank.jsonString(entry.id))", "\"name\":\(ETSFZBank.jsonString(entry.name))",
+                          "\"regionCount\":\(entry.regionCount)"]
+            if let size = entry.size { fields.append("\"size\":\(size)") }
+            if let count = entry.fileCount { fields.append("\"fileCount\":\(count)") }
+            if let time = entry.importedAt { fields.append("\"importedAt\":\(ETSFZBank.jsonString(time))") }
+            return "{" + fields.joined(separator: ",") + "}"
         }
         let json = "{\"version\":1,\"entries\":[\(list.joined(separator: ","))]}"
         do {
@@ -195,6 +208,8 @@ enum ETSFZService {
         var regionCount: Int
         var bank: Data
         var prepared: ETSFZPrepared
+        /// 入れ物に入れたファイルの数（一覧の Files）。
+        var fileCount: Int = 0
     }
 
     /// 選んだフォルダと SFZ から、バンクを作って読み込む（importFolderFiles）。
@@ -277,6 +292,7 @@ enum ETSFZService {
                                           onDiagnostic: onDiagnostic)
         let name = String(selectedPath.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
         prepared.name = name
-        return ImportResult(id: id, name: name, regionCount: prepared.regionCount, bank: bank, prepared: prepared)
+        return ImportResult(id: id, name: name, regionCount: prepared.regionCount, bank: bank, prepared: prepared,
+                            fileCount: stored.count)
     }
 }

@@ -58,7 +58,7 @@ let ETCatalog: [ETEffect] = [
       params: [
         ETParam(name: "minimumMidi", key: "mn", label: "Lowest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 28.0, offset: 0, count: 1),
         ETParam(name: "maximumMidi", key: "mx", label: "Highest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 91.0, offset: 1, count: 1),
-        ETParam(name: "timbreEnabled", key: "te", label: "Timbre Enabled", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1)
+        ETParam(name: "timbreEnabled", key: "te", label: "Timbre Enabled", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1, runtimeOnly: true)
       ]),
     ETEffect(
       type: "OscilloscopePlugin",

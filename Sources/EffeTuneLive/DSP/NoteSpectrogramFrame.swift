@@ -5,10 +5,11 @@
 //
 //  上流は plugins/analyzer/note_spectrogram.js の parseTelemetryFrame（:342-412）。
 //
-//  テレメトリ: frameType 24、formatVersion 5（2.13.0。2.12.0 までは 3、3548 バイト）。
+//  テレメトリ: frameType 24、formatVersion 6（2.14.0。9192 バイト。2.13.0 の 5 は 8840 バイトで、
+//  末尾の音程のずれが無い。PC の 2.13.0 から写した枠も読めるように 5 も受ける）。
 //  dsp/plugins/analyzer/note_spectrogram/spectral_analysis.h の kRevisionAgeOffset 以下。
 //
-//  ペイロードの並び（8840 バイトちょうど）:
+//  ペイロードの並び（版 6 は 9192 バイトちょうど）:
 //      0     f32 sampleRate
 //      4     f32 timeSeconds
 //      8     u16 pitchCount     440
@@ -23,6 +24,7 @@
 //      3552  f32 × 440          8 枠前の確からしさの直し（age が 0 なら無い）
 //      5312  u32 age + f32 × 440 at 5316   2 枠前の直し（age 0 か 2）
 //      7076  u32 age + f32 × 440 at 7080   4 枠前の直し（age 0 か 4）
+//      8840  f32 × 88           鍵ごとの音程のずれ（セント、版 6）
 //  直しは frameIndex - age の枠の確からしさを置き換える（上流 _applyFrameRevision）。dB は直さない。
 
 import Foundation
@@ -37,13 +39,17 @@ enum ETNoteFrameLayout {
     static let firstMidi = 21
 
     static let frameType: UInt16 = 24
-    static let version: UInt16 = 5
+    static let version: UInt16 = 6
+    static let legacyVersion: UInt16 = 5
     static let confidenceOffset = 32
     static let levelOffset = confidenceOffset + pitches * 4
     static let revisedOffset = levelOffset + pitches * 4
     static let intermediateOffset = revisedOffset + pitches * 4
     static let revisionBytes = 4 + pitches * 4
-    static let payloadBytes = intermediateOffset + 2 * revisionBytes
+    /// 版 5 の長さ（8840）。音程のずれはこの後ろ。
+    static let legacyPayloadBytes = intermediateOffset + 2 * revisionBytes
+    static let centsOffset = legacyPayloadBytes
+    static let payloadBytes = centsOffset + notes * 4
 
     /// 直しの面。(age, age の位置, 確からしさの位置)。並びは上流の MULTI_F0_REVISION_PLANES（:20-24）。
     static let revisionPlanes: [(age: UInt32, ageOffset: Int, levelsOffset: Int)] = [
@@ -95,11 +101,16 @@ struct ETNoteSnapshot {
     let level: [Float]
     /// age 2・4・8 の直しのうち、この枠が運んでいるもの。
     let revisions: [ETNoteRevision]
+    /// 鍵ごとの音程のずれ（セント、88 個）。版 5 の枠では全部 0。
+    let pitchCents: [Float]
 
     init?(_ frame: ETFrame?) {
-        guard let frame = frame, frame.type == ETNoteFrameLayout.frameType,
-              frame.matches(version: ETNoteFrameLayout.version),
-              frame.hasPayload(bytes: ETNoteFrameLayout.payloadBytes) else { return nil }
+        guard let frame = frame, frame.type == ETNoteFrameLayout.frameType else { return nil }
+        let current = frame.matches(version: ETNoteFrameLayout.version)
+            && frame.hasPayload(bytes: ETNoteFrameLayout.payloadBytes)
+        let legacy = frame.matches(version: ETNoteFrameLayout.legacyVersion)
+            && frame.hasPayload(bytes: ETNoteFrameLayout.legacyPayloadBytes)
+        guard current || legacy else { return nil }
 
         let payload = frame.payloadView
         guard let rate = payload.f32(at: 0),
@@ -141,6 +152,12 @@ struct ETNoteSnapshot {
                   values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else { return nil }
             revisions.append(ETNoteRevision(age: age, confidence: values))
         }
+        var cents = [Float](repeating: 0, count: ETNoteFrameLayout.notes)
+        if current {
+            guard let values = payload.floats(at: ETNoteFrameLayout.centsOffset, count: ETNoteFrameLayout.notes),
+                  values.allSatisfy(\.isFinite) else { return nil }
+            cents = values
+        }
 
         sampleRate = Double(rate)
         time = Double(seconds)
@@ -150,5 +167,6 @@ struct ETNoteSnapshot {
         confidence = fineConfidence
         level = fineLevel
         self.revisions = revisions
+        pitchCents = cents
     }
 }

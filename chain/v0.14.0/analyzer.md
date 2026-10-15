@@ -45,7 +45,6 @@ Multi-pitch piano roll.
 |---|---|---|---|---|
 | `mn` | Lowest Note | scalar | `21` to `108` | `28` |
 | `mx` | Highest Note | scalar | `21` to `108` | `91` |
-| `te` | Timbre Enabled | scalar | `true` or `false` | `false` |
 
 ## Oscilloscope
 

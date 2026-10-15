@@ -153,6 +153,8 @@ final class SFZLoader: ObservableObject {
     @Published private(set) var states: [UUID: SFZNodeState] = [:]
     /// 取り込みで出た知らせ（loop 点の補正・飛ばした領域など）。カードが一度だけ出して空にする。
     @Published var notice: String?
+    /// SFZ Library の取り込みの進み（done / total）。走っていなければ nil。
+    @Published private(set) var libraryImport: (done: Int, total: Int)?
     /// 段ごとの、いま走っている読み込みの番号。古い読み込みの結果は捨てる。
     private var generation: [UUID: Int] = [:]
     private var counter = 0
@@ -302,6 +304,63 @@ final class SFZLoader: ObservableObject {
         return out
     }
 
+    /// 選んだフォルダの SFZ を全部、置き場に入れる（SFZ Library の取り込み。段には入れない）。
+    /// 上流の browser.js の importFiles と同じく 1 つずつ順に取り込み、失敗したものは数えて先へ進む。
+    /// 戻りは結果の 1 文（上流の irLibrary.status.importResult に寄せた形）。
+    func importToLibrary(folder: URL) async -> String {
+        let limit = maxBytes
+        let library = SFZLibrary.shared.files
+        let scoped = folder.startAccessingSecurityScopedResource()
+        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        let files: [ETSFZFolderFile]
+        let paths: [String]
+        do {
+            files = try await Task.detached(priority: .userInitiated) { try SFZLoader.enumerate(folder: folder) }.value
+            paths = try ETSFZBank.folderSFZPaths(files.map(\.path))
+        } catch {
+            return Self.errorMessage((error as? ETSFZError)?.code ?? .prepare)
+        }
+        guard !paths.isEmpty else { return Self.errorMessage(.noRegions) }
+        libraryImport = (0, paths.count)
+        defer { libraryImport = nil }
+        var imported = 0, failed = 0, tooLarge = 0
+        for (number, path) in paths.enumerated() {
+            let result: Result<ETSFZService.ImportResult, Error> = await Task.detached(priority: .userInitiated) {
+                Result {
+                    let item = try ETSFZService.importFolder(
+                        files: files, selectedPath: path, maxBytes: limit,
+                        decode: { try ETSFZAudio.decode($0, ext: $1, budget: $2) },
+                        inspect: { ETSFZAudio.inspect($0) })
+                    try library.writeBank(item.id, item.bank)
+                    return item
+                }
+            }.value
+            switch result {
+            case .success(let item):
+                do {
+                    try SFZLibrary.shared.add(ETSFZLibraryEntry(
+                        id: item.id, name: item.name, regionCount: item.regionCount,
+                        size: item.bank.count, fileCount: item.fileCount,
+                        importedAt: Self.timestamp.string(from: Date())))
+                    imported += 1
+                } catch {
+                    failed += 1
+                }
+            case .failure(let error):
+                log.error("SFZ Library 取り込み失敗 \(path, privacy: .public) \(String(describing: error), privacy: .public)")
+                failed += 1
+                if (error as? ETSFZError)?.code == .tooLarge { tooLarge += 1 }
+            }
+            libraryImport = (number + 1, paths.count)
+        }
+        var parts: [String] = []
+        if imported > 0 { parts.append(imported == 1 ? "1 imported" : "\(imported) imported") }
+        if failed > 0 { parts.append("\(failed) could not be imported") }
+        var text = parts.joined(separator: ", ") + "."
+        if tooLarge > 0 { text += " " + Self.errorMessage(.tooLarge) }
+        return text
+    }
+
     /// 取り込んで置き場に入れ、段に送る。結果は states と notice に出る。
     func importFolder(_ files: [ETSFZFolderFile], selectedPath: String, into nodeID: UUID, dsp: EffeTuneDSP,
                       keepAccessTo folder: URL) {
@@ -336,8 +395,10 @@ final class SFZLoader: ObservableObject {
             set(.failed(code), for: nodeID)
         case .success(let imported):
             do {
-                try SFZLibrary.shared.add(ETSFZLibraryEntry(id: imported.id, name: imported.name,
-                                                            regionCount: imported.regionCount))
+                try SFZLibrary.shared.add(ETSFZLibraryEntry(
+                    id: imported.id, name: imported.name, regionCount: imported.regionCount,
+                    size: imported.bank.count, fileCount: imported.fileCount,
+                    importedAt: Self.timestamp.string(from: Date())))
             } catch {
                 set(.failed(.storage), for: nodeID)
                 return
@@ -356,6 +417,13 @@ final class SFZLoader: ObservableObject {
         _ = nextGeneration(nodeID)
         set(.idle, for: nodeID)
     }
+
+    /// 一覧の取り込んだ時刻。上流は new Date().toISOString()（ミリ秒まで・UTC）。
+    private static let timestamp: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// 置き場にあるバンクを選んだ（選択欄から）。
     func choose(bankID: String, for nodeID: UUID, dsp: EffeTuneDSP) {

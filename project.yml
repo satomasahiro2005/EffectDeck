@@ -353,6 +353,7 @@ targets:
       # Foundation だけ（SFZTests）。見本は上流の js/sfz/*.js が作ったもの（Tools/golden/sfz_golden.mjs）。
       - path: Sources/EffeTuneLive/DSP/SFZParser.swift
       - path: Sources/EffeTuneLive/DSP/SFZSource.swift
+      - path: Sources/EffeTuneLive/DSP/SFZVoiceFrame.swift
       - path: Sources/EffeTuneLive/DSP/SFZBank.swift
       - path: Sources/EffeTuneLive/DSP/SFZAsset.swift
       - path: Sources/EffeTuneLive/DSP/SFZLibraryFiles.swift

@@ -142,6 +142,9 @@ RUNTIME_ONLY = {
     ("TonalBalanceEQPlugin", "measurementPaused"),
     ("AdaptivePredictionEffectPlugin", "resetToken"),
     ("SFZNotePlayerPlugin", "previewMidi"),
+    # Note Spectrogram（2.14.0）の te は保存しない。上流は Color が Instrument (3)/(9) か Highlight が None 以外の
+    # ときに立てて worklet へだけ渡す（note_spectrogram.js の getWorkletPluginData / noteEventsEnabled）。
+    ("NoteSpectrogramPlugin", "timbreEnabled"),
     ("SFZNotePlayerPlugin", "previewVelocity"),
 }
 

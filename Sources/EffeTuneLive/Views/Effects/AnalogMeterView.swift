@@ -42,6 +42,8 @@ struct AnalogMeterView: View {
     @State private var needle: Double = 0
     @State private var target: Double = -23
     @State private var loudnessScale: Double = 0
+    /// Custom の目盛り（dc、2.14.0）。
+    @State private var dial: Double = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -57,33 +59,44 @@ struct AnalogMeterView: View {
         .etSaved($needle, key: "ln", index: index, dsp: dsp)
         .etSaved($target, key: "tg", index: index, dsp: dsp)
         .etSaved($loudnessScale, key: "ls", index: index, dsp: dsp)
+        .etSaved($dial, key: "dc", index: index, dsp: dsp)
     }
 
     // MARK: 行
 
-    /// 上流と同じ並び（analog_meter.js:432-451）。効かない行は出さない。
+    /// 上流と同じ並び（analog_meter.js の createUI）。出さない行・薄くする行は ETAnalogMeter.isVisible / isActive。
     @ViewBuilder private var rows: some View {
         let s = settings
         if let mode = param("md") {
             ParameterRow(param: mode, nodeIndex: index, values: node.values, dsp: dsp)
         }
+        dspRow("de", s)
         dspRow("it", s)
         dspRow("at", s)
         dspRow("rt", s)
-        if ETAnalogMeter.isActive("rl", settings: s) {
+        dspRow("nr", s)
+        dspRow("os", s)
+        if ETAnalogMeter.isVisible("dc", settings: s) {
+            ETDisplayChoiceRow(title: "Dial",
+                               options: ETAnalogMeter.dials.enumerated().map { (value: $0.offset, label: $0.element) },
+                               selection: choice($dial))
+        }
+        if ETAnalogMeter.isVisible("rl", settings: s) {
             ETDisplayNumberRow(title: "Reference", unit: "dBFS", value: $reference,
                                range: -30...0, step: 1, isInteger: true)
+                .modifier(ETAnalogMeterRowGate(active: ETAnalogMeter.isActive("rl", settings: s)))
         }
-        if ETAnalogMeter.isActive("rg", settings: s) {
+        if ETAnalogMeter.isVisible("rg", settings: s) {
             ETDisplayNumberRow(title: "Range", unit: "dB", value: $range,
                                range: 20...60, step: 1, isInteger: true)
+                .modifier(ETAnalogMeterRowGate(active: ETAnalogMeter.isActive("rg", settings: s)))
         }
         if ETAnalogMeter.isActive("sc", settings: s) {
             ETDisplayChoiceRow(title: "PPM Scale",
                                options: ETAnalogMeter.ppmScales.enumerated().map { (value: $0.offset, label: $0.element) },
                                selection: choice($ppmScale))
         }
-        if ETAnalogMeter.isActive("ph", settings: s) {
+        if ETAnalogMeter.isVisible("ph", settings: s) {
             ETDisplayNumberRow(title: "Peak Hold", unit: "s", value: $peakHold,
                                range: 0...10, step: 0.1, trimsZeros: true)
         }
@@ -105,8 +118,9 @@ struct AnalogMeterView: View {
 
     @ViewBuilder
     private func dspRow(_ key: String, _ settings: ETAnalogMeter.Settings) -> some View {
-        if ETAnalogMeter.isActive(key, settings: settings), let p = param(key) {
+        if ETAnalogMeter.isVisible(key, settings: settings), let p = param(key) {
             ParameterRow(param: p, nodeIndex: index, values: node.values, dsp: dsp, trimsZeros: true)
+                .modifier(ETAnalogMeterRowGate(active: ETAnalogMeter.isActive(key, settings: settings)))
         }
     }
 
@@ -142,7 +156,21 @@ struct AnalogMeterView: View {
         s.ppmScale = ETAnalogMeter.ppmScales.indices.contains(sc) ? sc : 0
         s.needle = Self.integer(needle) == 1 ? 1 : 0
         s.loudnessScale = Self.integer(loudnessScale) == 1 ? 1 : 0
+        if let p = param("de"), node.values.indices.contains(p.offset) {
+            let d = Self.integer(Double(node.values[p.offset]))
+            s.detector = ETAnalogMeter.detectors.indices.contains(d) ? d : 0
+        }
+        let dc = Self.integer(dial)
+        s.dial = ETAnalogMeter.dials.indices.contains(dc) ? dc : 0
         return s
+    }
+}
+
+/// Custom で、検波や目盛りの選び方のせいで効かない行（上流は parameter-disabled で薄くして触れなくする）。
+private struct ETAnalogMeterRowGate: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        content.disabled(!active).opacity(active ? 1 : 0.4)
     }
 }
 
@@ -291,6 +319,8 @@ private struct AnalogMeterFigure: View {
         }
         .onChange(of: current?.sequence) { _, _ in advance() }
         .onChange(of: settings.mode) { _, _ in holds = [] }
+        // 検波を替えたら前の読みを捨てる（上流の setParameters の clearReading）。
+        .onChange(of: settings.detector) { _, _ in holds = [] }
     }
 
     /// 新しい枠が来たときだけ、保持を進める。

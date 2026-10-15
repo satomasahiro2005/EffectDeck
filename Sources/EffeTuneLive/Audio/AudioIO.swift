@@ -750,7 +750,8 @@ final class AudioIO: ObservableObject {
         guard let render else { return }
         render.gate.idleSeconds = PowerGate.idleSeconds(
             mode: Preferences.shared.powerMode, externalTail: ETPipeline_ExternalTailTime(),
-            mustProcess: ETChainEditing.chainMustProcess(EffeTuneDSP.shared.nodes))
+            mustProcess: ETChainEditing.chainMustProcess(EffeTuneDSP.shared.nodes)
+                || EffeTuneDSP.shared.sfzPreviewing)
     }
 
     /// 描画用の値だけを速く取る。図が滑らかに動くのはこちらの速さで決まる。

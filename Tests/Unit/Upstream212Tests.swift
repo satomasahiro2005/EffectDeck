@@ -27,9 +27,10 @@ final class Upstream212Tests: XCTestCase {
         let analog = try spec("AnalogMeterPlugin")
         XCTAssertEqual(analog.name, "Analog Meter")
         XCTAssertEqual(analog.category, "analyzer")
-        XCTAssertEqual(analog.floatCount, 4)
-        XCTAssertEqual(analog.params.map(\.key), ["md", "it", "at", "rt"])
-        XCTAssertEqual(analog.defaults, [0, 0.3, 5, 1.5])
+        // 2.14.0 で Custom の de / nr / os が増えた（Upstream214Tests）。2.12.0 の 4 つは頭のまま。
+        XCTAssertEqual(analog.floatCount, 7)
+        XCTAssertEqual(analog.params.map(\.key), ["md", "de", "it", "at", "rt", "nr", "os"])
+        XCTAssertEqual(Array(analog.defaults.prefix(4)), [0, 0.3, 5, 1.5])
         if case .enumeration(let modes) = try param(analog, "md").kind {
             XCTAssertEqual(modes, ETAnalogMeter.modes)
         } else { XCTFail("md は選択") }
@@ -84,8 +85,9 @@ final class Upstream212Tests: XCTestCase {
     // MARK: 表示だけの設定
 
     func testDisplayTablesForTheNewAnalyzers() {
+        // dc（Custom の Dial）は 2.14.0。
         XCTAssertEqual(Set(ETDisplayParam.table(for: "AnalogMeterPlugin").keys),
-                       ["rl", "rg", "sc", "ph", "ln", "tg", "ls"])
+                       ["rl", "rg", "sc", "ph", "ln", "tg", "ls", "dc"])
         XCTAssertEqual(Set(ETDisplayParam.table(for: "RhythmAnalyzerPlugin").keys),
                        ["sp", "vt", "vm", "ve", "vl"])
         for key in ["rl", "rg", "sc", "ph", "ln", "tg", "ls"] {
@@ -109,7 +111,8 @@ final class Upstream212Tests: XCTestCase {
     func testAnalogMeterPresetsKeepTheirDisplaySettingsThroughAChain() throws {
         let s = try spec("AnalogMeterPlugin")
         let presets = ETEffectPresetList.filter { $0.effect == "Analog Meter" }
-        XCTAssertEqual(presets.count, 17)
+        // 2.14.0 で Custom の 3 件が増えて 20 件。
+        XCTAssertEqual(presets.count, 20)
         for preset in presets {
             var stage = preset.params
             stage["nm"] = "Analog Meter"
@@ -117,7 +120,7 @@ final class Upstream212Tests: XCTestCase {
             let item = try XCTUnwrap(loaded.first, preset.presetId)
             XCTAssertEqual(item.spec.type, s.type)
             XCTAssertEqual(item.display, ETDisplayParam.read(preset.params, type: s.type), preset.presetId)
-            XCTAssertEqual(item.display.count, 7, "\(preset.presetId): rl rg sc ph ln tg ls が全部入る")
+            XCTAssertEqual(item.display.count, 8, "\(preset.presetId): rl rg sc ph ln tg ls dc が全部入る")
             // 書き戻しても同じ値の数で出る（JSON を通す）。
             let written = PipelineStore.shortForm(loaded)
             let data = try JSONSerialization.data(withJSONObject: written)
@@ -154,7 +157,7 @@ final class Upstream212Tests: XCTestCase {
                            preset.presetId)
             seen.insert(preset.presetId)
         }
-        XCTAssertEqual(seen.count, 17)
+        XCTAssertEqual(seen.count, 20)
         // 表示の設定を渡さないと、触っていない（既定）と読む。Hot VU が既定と同じ。
         XCTAssertEqual(EffectPresetApply.matchingPresetId(for: s, current: s.defaults), "hot-vu")
         // Reference を動かせば一致しない。

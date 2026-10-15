@@ -39,6 +39,8 @@ enum ETSliderScale {
     private static let logKeys: Set<String> = [
         // delay/delay.js:318,323
         "DelayPlugin.hd", "DelayPlugin.ld",
+        // analyzer/analog_meter.js（2.14.0）の Needle Response。createParameterControl の logarithmic = true
+        "AnalogMeterPlugin.nr",
         // dynamics/compressor.js:797、expander.js:754（どちらも Ratio）
         "CompressorPlugin.rt", "ExpanderPlugin.rt",
         // eq/band_pass_filter.js:340,352

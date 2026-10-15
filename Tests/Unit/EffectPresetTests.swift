@@ -49,7 +49,8 @@ final class EffectPresetTests: XCTestCase {
         }
         // 数が変わったら、上流を進めたということ。意図した変更か確かめる。
         XCTAssertEqual(names.count, 30)
-        XCTAssertEqual(ETEffectPresetList.count, 167)
+        // 167 → 170 は EffeTune 2.14.0 の Analog Meter の Custom の 3 件（Bouncy VU・Slow RMS・Fast Peak）。
+        XCTAssertEqual(ETEffectPresetList.count, 170)
     }
 
     /// 131 件の params が全部読めて、鍵が catalog に届いていること。
@@ -116,7 +117,9 @@ final class EffectPresetTests: XCTestCase {
         // 効果が 3 本増えたぶん（Pitch Meter / Spatial Mapper / TV Audio Simulator）。
         // 449 → 466 は EffeTune 2.12.0 の Analog Meter の 17 件（Mode の文字）。
         // 466 → 471 は EffeTune 2.13.0 の Cassette Artifacts の 5 件（Mode の文字 "All"）。
-        XCTAssertEqual(checked, 471, "数えた文字列の数が変わった")
+        // 471 → 494 は EffeTune 2.14.0 の Analog Meter。20 件全部に Detector（de）の文字が入り、Custom の 3 件は
+        // Mode も Custom。
+        XCTAssertEqual(checked, 494, "数えた文字列の数が変わった")
     }
 
     // MARK: - 適用
