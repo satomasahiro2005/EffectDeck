@@ -347,7 +347,8 @@ async function runImport(name, folder, selected, maxBytes) {
         const entry = await service.importFolderFiles(files, selected, { decode: async bytes => decodeWav(bytes) });
         const bank = written.get(`${entry.id}.sfzbank`);
         const prepared = service.prepared.value;
-        record.expected = { entry, bank: b64(bank), payload: b64(new Uint8Array(prepared.descriptor.payload)),
+        // importedAt は取り込んだ時刻なので、作るたびに変わらないよう決まった値にする（CI の generated が比べる）。
+        record.expected = { entry: { ...entry, importedAt: '2026-01-01T00:00:00.000Z' }, bank: b64(bank), payload: b64(new Uint8Array(prepared.descriptor.payload)),
             warnings: prepared.warnings ?? [], footprintBytes: prepared.descriptor.footprintBytes };
     } catch (error) {
         record.expected = { error: error.code, message: error.message };
