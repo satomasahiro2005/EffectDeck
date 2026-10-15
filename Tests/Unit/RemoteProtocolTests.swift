@@ -872,4 +872,17 @@ final class RemoteProtocolTests: XCTestCase {
         hb.heard(at: t0 + 3)   // 遅れて届いた古い pong
         XCTAssertEqual(hb.lastHeard, t0 + 10)
     }
+
+    // MARK: - listIRs の items（2.14.0 の irSelection。2 本組も入る）
+
+    func testRemoteIRItemReadsListIRsItems() throws {
+        let item = try XCTUnwrap(ETRemoteIRItem(["id": "a1b2", "name": "Hall", "channels": 2,
+                                                 "sampleRate": 48000, "frames": 96000]))
+        XCTAssertEqual(item.id, "a1b2")
+        XCTAssertEqual(item.detail, "2 ch · 48000 Hz · 2.00 s")
+        let pair = try XCTUnwrap(ETRemoteIRItem(["id": "p1", "name": "Pair", "topology": "true-stereo"]))
+        XCTAssertEqual(pair.detail, "true-stereo")
+        XCTAssertNil(ETRemoteIRItem(["name": "No id"]))
+        XCTAssertNil(ETRemoteIRItem(["id": "", "name": "Empty"]))
+    }
 }

@@ -43,6 +43,7 @@ struct AutoLevelerView: View {
             // Telemetry を観るのは中の図だけ。ここで観ると 30Hz で
             // パラメータの行まで作り直される。
             AutoLevelerHistoryGraph(tapId: node.tapId)
+                .etLocalAudioOnly()
 
             ForEach(node.spec.params) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)

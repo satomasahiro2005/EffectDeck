@@ -245,7 +245,7 @@ private struct FiveBandFIRPEQPanel: View {
             graph
             // 畳んでいるあいだは図だけにする。ただし失敗は隠さない。
             if !graphOnly || designer.status.isFailure {
-                statusCard
+                statusCard.etLocalAudioOnly()
             }
             if !graphOnly {
                 globalRows

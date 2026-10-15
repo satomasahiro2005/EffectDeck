@@ -51,10 +51,12 @@ struct SFZNotePlayerView: View {
 
     var body: some View {
         if graphOnly {
-            graph(canPreview: false)
+            graph(canPreview: false).etLocalAudioOnly()
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                bankRow
+                // バンクは手元の SFZ Library、声の図は手元の音。PC の鎖を編集しているあいだは
+                // 出さない（上流 2.14.0。バンクは PC で選ぶ）。
+                bankRow.etLocalAudioOnly()
                 if let line = errorLine {
                     Text(line)
                         .font(.system(size: 11))
@@ -75,6 +77,7 @@ struct SFZNotePlayerView: View {
                     }
                 }
                 graph(canPreview: ready && node.enabled && !dsp.bypass && !remote.isRemote)
+                    .etLocalAudioOnly()
             }
             .alert("SFZ Note Player", isPresented: Binding(
                 get: { loader.notice != nil },

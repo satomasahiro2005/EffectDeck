@@ -754,6 +754,9 @@ final class AudioIO: ObservableObject {
                 || EffeTuneDSP.shared.sfzPreviewing)
     }
 
+    /// PC の鎖を編集しているあいだ、手元の測定を止めている（pollTelemetry）。
+    private var telemetryHeldForRemote = false
+
     /// 描画用の値だけを速く取る。図が滑らかに動くのはこちらの速さで決まる。
     /// DSP は 30Hz で吐いているので、それに合わせる。
     /// 重い問い合わせ（ルートやセッション）はここでやらない。
@@ -762,6 +765,21 @@ final class AudioIO: ObservableObject {
     /// body を 33ms ごとに作り直し、開いた Menu が提示を終えられなくなる。
     /// 図は Telemetry を直接読んでいるので、ここは poll だけでよい。
     func pollTelemetry() {
+        // **PC の鎖を編集しているあいだは手元の測定を汲まない。**鳴っているのは PC で、手元の測定は
+        // 編集している鎖の音ではない（上流の remote の画面も測定の線・メーター・読みを外す）。
+        // 入ったときに溜めた枠を捨て、DSP にも書かせない。図とメーターは「枠が無い」形になる。
+        if RemoteMirror.shared.isRemote {
+            if !telemetryHeldForRemote {
+                telemetryHeldForRemote = true
+                EffeTuneDSP.shared.setTelemetryRate(0)
+                Telemetry.shared.clear()
+            }
+            return
+        }
+        if telemetryHeldForRemote {
+            telemetryHeldForRemote = false
+            EffeTuneDSP.shared.setTelemetryRate(EffeTuneDSP.telemetryHz)
+        }
         let session = AVAudioSession.sharedInstance()
         let delay = ETAudioSessionRules.displayDelay(
             sync: Preferences.shared.syncVisualsToAudio,

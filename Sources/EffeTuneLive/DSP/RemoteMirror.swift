@@ -50,6 +50,8 @@
 //    bypass      全体のバイパス
 //    listPresets / getPreset / savePreset   PC のプリセットの写し（presetsChanged でも）と、PC への足し込み
 //    listIRs / getIR / putIR               同じく IR（irsChanged でも）。512 KiB ずつ base64 で
+//    selectIR    PC の IR Library から IR Reverb の段に入れる（2.14.0 の irSelection。2 本組の IR も選べる）。
+//                段は sync1 の state の ids（PC の段の id）と epoch・slot で指す
 //
 //  **返事は seq で待つ**（request）。データの返事（presets・preset・state）は ack の後に同じ seq で来る。
 //  getIR だけは塊（irChunk）が先で ack が最後。
@@ -219,6 +221,10 @@ final class RemoteMirror: ObservableObject {
     func hostLacks(_ effect: String) -> Bool { isRemote && host?.lacks(effect) == true }
     /// 前にいるか（.background でない）。
     private var appActive = true
+    /// 最後に入れた state の sync1 の控え（epoch・slot・段の id）。selectIR が段を指すのに使う。
+    private var pcEpoch: String?
+    private var pcSlot: String?
+    private var pcIds: [String] = []
 
     private static let lastHostKey = "remote.lastHost"
     private static let stashKey = "remote.stash"
@@ -448,6 +454,9 @@ final class RemoteMirror: ObservableObject {
         progress = nil
         // 接続ごと消えたので PC へは送らない（送れない）。
         host = nil
+        pcEpoch = nil
+        pcSlot = nil
+        pcIds = []
         // 待っている request を全部終わらせる（nil で返る）。
         let pending = waiters
         waiters.removeAll()
@@ -654,6 +663,9 @@ final class RemoteMirror: ObservableObject {
         if let bypass = state["masterBypass"] as? Bool, dsp.bypass != bypass {
             dsp.bypass = bypass
         }
+        pcEpoch = state["epoch"] as? String
+        pcSlot = state["slot"] as? String
+        pcIds = (state["ids"] as? [Any])?.compactMap { $0 as? String } ?? []
         applyingRemote = false
         // いま入れた鎖は PC と同じなので、送ったことにして控えを合わせる。
         let projected = ETRemoteProjection.project(dsp.chain, host: host)
@@ -854,6 +866,31 @@ final class RemoteMirror: ObservableObject {
             return
         }
         follow(object)
+    }
+
+    // MARK: - PC の IR Library から選ぶ（selectIR）
+
+    /// PC の IR Library から選べるか（PC が irSelection を持ち、編集している）。
+    var canSelectPCIR: Bool { isRemote && host?.supports("irSelection") == true }
+
+    /// PC の IR Library（2 本組も含む）。取れなければ nil。
+    func pcIRs() async -> [ETRemoteIRItem]? {
+        guard canSelectPCIR,
+              let reply = await request(["op": "listIRs", "includePairs": true], reply: "irs", timeout: 10),
+              let items = reply["items"] as? [[String: Any]] else { return nil }
+        return items.compactMap(ETRemoteIRItem.init)
+    }
+
+    /// 手元の番号 index の IR Reverb に、PC の IR を入れる。PC が入れ終えた state で手元も追う。
+    func selectPCIR(at index: Int, irId: String) async -> Bool {
+        guard canSelectPCIR, let epoch = pcEpoch, let slot = pcSlot,
+              sentMap.indices.contains(index), let remote = sentMap[index], pcIds.indices.contains(remote)
+        else { return false }
+        // 手元の変更が先に着くように。積んであるつまみを先に流す。
+        flushParams()
+        let reply = await request(["op": "selectIR", "epoch": epoch, "slot": slot,
+                                   "id": pcIds[remote], "ir": irId], reply: "ack", timeout: 20)
+        return reply != nil
     }
 
     // MARK: - 前と背景

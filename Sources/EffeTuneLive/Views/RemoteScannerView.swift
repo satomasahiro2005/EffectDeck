@@ -364,6 +364,22 @@ extension EnvironmentValues {
     /// 真のあいだ、測った音を描く図（GraphCanvas・Pitch Meter）を沈めて押せなくする。
     /// 立てるのは ETRemoteMeasurementDim だけ。
     @Entry var etMeasurementDimmed: Bool = false
+    /// 偽のあいだ（PC の鎖を編集している）、手元の音から作る表示を出さない（上流 2.14.0 の
+    /// local-audio-only / hasLocalAudio === false）。PC は音の値を送らないので、出せば手元の音の値になる。
+    @Entry var etLocalAudio: Bool = true
+}
+
+/// 手元の音から作る表示（計った値・状態の行・測る操作）に掛ける。PC の鎖を編集しているあいだは出さない。
+private struct ETLocalAudioOnly: ViewModifier {
+    @Environment(\.etLocalAudio) private var localAudio
+
+    func body(content: Content) -> some View {
+        if localAudio { content }
+    }
+}
+
+extension View {
+    func etLocalAudioOnly() -> some View { modifier(ETLocalAudioOnly()) }
 }
 
 extension View {
@@ -409,7 +425,9 @@ struct ETRemoteMeasurementDim: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.environment(\.etMeasurementDimmed, applies && mirror.isRemote)
+        content
+            .environment(\.etMeasurementDimmed, applies && mirror.isRemote)
+            .environment(\.etLocalAudio, !mirror.isRemote)
     }
 }
 

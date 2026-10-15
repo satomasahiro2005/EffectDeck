@@ -100,7 +100,7 @@ private struct FIRCrossoverBody: View {
             if maximumBandCount == 0 {
                 busError
             } else {
-                progress
+                progress.etLocalAudioOnly()
             }
             latencyRow
             bandCountRow

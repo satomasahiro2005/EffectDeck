@@ -277,6 +277,7 @@ struct SWRadioSimulatorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             SWRadioHUD(tapId: node.tapId, isAM: mode == "AM", isEnabled: node.enabled)
+                .etLocalAudioOnly()
             if !graphOnly {
                 tabStrip
                 Divider()

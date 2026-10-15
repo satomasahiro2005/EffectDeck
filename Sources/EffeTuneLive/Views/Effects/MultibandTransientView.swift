@@ -56,6 +56,7 @@ struct MultibandTransientView: View {
         // このカードごと作り直される。
         return VStack(alignment: .leading, spacing: 12) {
             MultibandTransientGraph(tapId: node.tapId, selected: selected)
+                .etLocalAudioOnly()
 
             if !graphOnly {
                 label("CROSSOVER")

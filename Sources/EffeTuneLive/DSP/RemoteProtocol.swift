@@ -456,6 +456,41 @@ enum ETRemoteFollow {
 }
 
 /// PC のアナライザの測定値（remote-v1 の telemetry）。**枠は両側で 1 バイトも違わない**ので、
+/// PC の IR Library の 1 本（listIRs の items、includePairs）。2 本組（topology あり）も入る。
+struct ETRemoteIRItem: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let channels: Int?
+    let sampleRate: Double?
+    let frames: Int?
+    /// 2 本組の形（"true-stereo" など）。1 本のものは nil。
+    let topology: String?
+    let importedAt: String?
+
+    init?(_ item: [String: Any]) {
+        guard let id = item["id"] as? String, !id.isEmpty, let name = item["name"] as? String else { return nil }
+        self.id = id
+        self.name = name
+        channels = (item["channels"] as? NSNumber)?.intValue
+        sampleRate = (item["sampleRate"] as? NSNumber)?.doubleValue
+        frames = (item["frames"] as? NSNumber)?.intValue
+        topology = item["topology"] as? String
+        importedAt = item["importedAt"] as? String
+    }
+
+    /// 行の小さい字。チャンネル · レート · 長さ。
+    var detail: String {
+        var parts: [String] = []
+        if let channels { parts.append("\(channels) ch") }
+        if let sampleRate, sampleRate > 0 {
+            parts.append("\(Int(sampleRate)) Hz")
+            if let frames { parts.append(String(format: "%.2f s", Double(frames) / sampleRate)) }
+        }
+        if let topology, !topology.isEmpty { parts.append(topology) }
+        return parts.joined(separator: " · ")
+    }
+}
+
 /// つないだ PC の EffeTune（hello の返事の state）。版の見せ方と、PC が持つ機能の判定。
 ///
 /// **何ができるかは features で決める。版の数字は比べない**（表示だけに使う）。
