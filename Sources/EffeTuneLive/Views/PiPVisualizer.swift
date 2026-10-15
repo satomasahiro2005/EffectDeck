@@ -58,8 +58,17 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var resumePoint: Int32?
     private var foreground: NSObjectProtocol?
 
+    private var probes: [NSObjectProtocol] = []
+
     private override init() {
         super.init()
+        for name in [AVAudioSession.interruptionNotification, AVAudioSession.silenceSecondaryAudioHintNotification,
+                     UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification] {
+            probes.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                let text = "\(note.name.rawValue) \(note.userInfo ?? [:])"
+                MainActor.assumeIsolated { ETPiPVisualizer.shared.probe(text) }
+            })
+        }
         foreground = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { ETPiPVisualizer.shared.becameActive() }
@@ -167,8 +176,22 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     /// PiP が止まった。自分で閉じたのでなければ、出していた所を控えて前に来たら出し直す。
+    /// 調べる用。✕ と奪われたのを分ける手がかりを 1 行に出す。
+    fileprivate func probe(_ label: String) {
+        let session = AVAudioSession.sharedInstance()
+        let c = controller
+        log.info("PiP 手がかり \(label, privacy: .public) t=\(CACurrentMediaTime(), privacy: .public) possible=\(c?.isPictureInPicturePossible == true, privacy: .public) active=\(c?.isPictureInPictureActive == true, privacy: .public) suspended=\(c?.isPictureInPictureSuspended == true, privacy: .public) other=\(session.isOtherAudioPlaying, privacy: .public) silence=\(session.secondaryAudioShouldBeSilencedHint, privacy: .public) state=\(UIApplication.shared.applicationState.rawValue, privacy: .public)")
+    }
+
     fileprivate func didStop() {
         starting = false
+        probe("didStop")
+        for delay in [0.3, 1.0, 3.0] {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(delay))
+                ETPiPVisualizer.shared.probe("after \(delay)s")
+            }
+        }
         let now = CACurrentMediaTime()
         let state = UIApplication.shared.applicationState
         let closedByUser = stopIsIntended || now - pausedAt < 1.5
@@ -311,6 +334,11 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 // MARK: - PiP の知らせ
 
 extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
+    nonisolated func pictureInPictureControllerWillStopPictureInPicture(
+        _ pictureInPictureController: AVPictureInPictureController) {
+        Task { @MainActor in ETPiPVisualizer.shared.probe("willStop") }
+    }
+
     nonisolated func pictureInPictureControllerWillStartPictureInPicture(
         _ pictureInPictureController: AVPictureInPictureController) {
         Task { @MainActor in
@@ -352,6 +380,7 @@ extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
 extension ETPiPVisualizer: AVPictureInPictureSampleBufferPlaybackDelegate {
     nonisolated func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
+        Task { @MainActor in ETPiPVisualizer.shared.probe("setPlaying \(playing)") }
         // ✕ で閉じると止まる前にこれが来る（奪われたときは来ない）。
         guard !playing else { return }
         Task { @MainActor in ETPiPVisualizer.shared.playbackPaused() }
