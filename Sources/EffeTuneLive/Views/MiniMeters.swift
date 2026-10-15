@@ -1,5 +1,6 @@
 //  MiniMeters.swift
-//  PiP に出す横長の帯（MiniMeters の形）。左から スペクトログラム・波形・スペアナ・ステレオ・レベル。
+//  PiP に出す帯（MiniMeters の形）。スペクトログラム・波形・スペアナ・ステレオ・レベル。
+//  iPhone は横長の 1 段、iPad は 16:9 の 2 段（Layout）。
 //
 //  **見た目は MiniMeters の既定に寄せる。**minimeters.app の宣伝動画と画像、テーマのひな形
 //  （_TEMPLATE）から拾った:
@@ -21,16 +22,39 @@ import QuartzCore
 @MainActor
 final class ETMiniMeters {
 
-    /// 器の大きさ（ピクセル）。PiP の窓はこの縦横比で開く。
-    static let pixelWidth = 1280
-    static let pixelHeight = 256
+    /// 器の大きさ（ピクセル）と区画の置き場。PiP の窓は器の縦横比で開く。
+    struct Layout {
+        let width: Int
+        let height: Int
+        let spectrogram: CGRect
+        let waveform: CGRect
+        let spectrum: CGRect
+        let stereo: CGRect
+        let level: CGRect
 
-    // 区画の幅（ピクセル）。足して pixelWidth。
-    private static let spectrogramWidth = 300
-    private static let waveformWidth = 400
-    private static let spectrumWidth = 300
-    private static let stereoWidth = 216
-    private static let levelWidth = 64
+        /// iPhone。横長の 1 段（5:1）。左から スペクトログラム・波形・スペアナ・ステレオ・レベル。
+        static let strip = Layout(
+            width: 1280, height: 256,
+            spectrogram: CGRect(x: 0, y: 0, width: 300, height: 256),
+            waveform: CGRect(x: 300, y: 0, width: 400, height: 256),
+            spectrum: CGRect(x: 700, y: 0, width: 300, height: 256),
+            stereo: CGRect(x: 1000, y: 0, width: 216, height: 256),
+            level: CGRect(x: 1216, y: 0, width: 64, height: 256))
+
+        /// iPad。16:9 の 2 段。5:1 の帯は窓を広げても幅で頭打ちになり低いままなので、
+        /// 動画と同じ形にして大きくできるようにする。上に スペクトログラム・波形、下に スペアナ・ステレオ・レベル。
+        static let large = Layout(
+            width: 1280, height: 720,
+            spectrogram: CGRect(x: 0, y: 0, width: 640, height: 360),
+            waveform: CGRect(x: 640, y: 0, width: 640, height: 360),
+            spectrum: CGRect(x: 0, y: 360, width: 800, height: 360),
+            stereo: CGRect(x: 800, y: 360, width: 360, height: 360),
+            level: CGRect(x: 1160, y: 360, width: 120, height: 360))
+    }
+
+    let layout: Layout
+    private let spectrogramWidth: Int
+    private let spectrogramHeight: Int
 
     private var sampleRate: Double = 48000
     private var cursor: UInt64 = 0
@@ -59,11 +83,11 @@ final class ETMiniMeters {
     private let fftSetup: FFTSetup? = vDSP_create_fftsetup(vDSP_Length(fftLog2), FFTRadix(kFFTRadix2))
     private var window = [Float](repeating: 0, count: fftSize)
     /// 区画ぶんのピクセル（RGBA、上が 0）。1 回描くごとに左へ送り、右端に新しい列を足す。
-    private var spectrogram = [UInt32](repeating: 0xFF000000, count: spectrogramWidth * pixelHeight)
+    private var spectrogram: [UInt32]
     /// 1 回で足す列の幅。30 回/秒で 300 ピクセルなら 5 秒。
     private static let spectrogramStep = 2
     /// スペアナの 2 ピクセルごとの値（dB、傾き込み）。上がるときはすぐ、落ちるときはゆっくり。
-    private var spectrumDB = [Float](repeating: -120, count: spectrumWidth / 2)
+    private var spectrumDB: [Float]
 
     // MARK: ステレオ
 
@@ -87,7 +111,12 @@ final class ETMiniMeters {
     private var blocks: [Double] = []
     private var momentary: Double = -.infinity
 
-    init() {
+    init(layout: Layout = .strip) {
+        self.layout = layout
+        spectrogramWidth = Int(layout.spectrogram.width)
+        spectrogramHeight = Int(layout.spectrogram.height)
+        spectrogram = [UInt32](repeating: 0xFF000000, count: spectrogramWidth * spectrogramHeight)
+        spectrumDB = [Float](repeating: -120, count: Int(layout.spectrum.width) / 2)
         vDSP_hann_window(&window, vDSP_Length(Self.fftSize), Int32(vDSP_HANN_NORM))
         configure(rate: 48000)
     }
@@ -215,7 +244,7 @@ final class ETMiniMeters {
             }
         }
         let scale = 1 / Float(n * n)
-        let width = Self.spectrogramWidth, height = Self.pixelHeight, step = Self.spectrogramStep
+        let width = spectrogramWidth, height = spectrogramHeight, step = Self.spectrogramStep
         // 左へ送る。
         spectrogram.withUnsafeMutableBufferPointer { px in
             for y in 0..<height {
@@ -287,29 +316,17 @@ final class ETMiniMeters {
 
     /// `context` は上が 0 の向き（呼び手が反転してある）。器は BGRA（premultipliedFirst・little endian）。
     func draw(in context: CGContext) {
-        let h = CGFloat(Self.pixelHeight)
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: CGFloat(Self.pixelWidth), height: h))
-        var x: CGFloat = 0
-        let spectrogramRect = CGRect(x: x, y: 0, width: CGFloat(Self.spectrogramWidth), height: h)
-        x += spectrogramRect.width
-        let waveRect = CGRect(x: x, y: 0, width: CGFloat(Self.waveformWidth), height: h)
-        x += waveRect.width
-        let spectrumRect = CGRect(x: x, y: 0, width: CGFloat(Self.spectrumWidth), height: h)
-        x += spectrumRect.width
-        let stereoRect = CGRect(x: x, y: 0, width: CGFloat(Self.stereoWidth), height: h)
-        x += stereoRect.width
-        let levelRect = CGRect(x: x, y: 0, width: CGFloat(Self.levelWidth), height: h)
-
-        drawSpectrogram(context, spectrogramRect)
-        drawWaveform(context, waveRect)
-        drawSpectrum(context, spectrumRect)
-        drawStereo(context, stereoRect)
-        drawLevels(context, levelRect)
+        context.fill(CGRect(x: 0, y: 0, width: CGFloat(layout.width), height: CGFloat(layout.height)))
+        drawSpectrogram(context, layout.spectrogram)
+        drawWaveform(context, layout.waveform)
+        drawSpectrum(context, layout.spectrum)
+        drawStereo(context, layout.stereo)
+        drawLevels(context, layout.level)
     }
 
     private func drawSpectrogram(_ context: CGContext, _ rect: CGRect) {
-        let width = Self.spectrogramWidth, height = Self.pixelHeight
+        let width = spectrogramWidth, height = spectrogramHeight
         let image: CGImage? = spectrogram.withUnsafeBytes { bytes in
             guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
             return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
@@ -421,7 +438,9 @@ final class ETMiniMeters {
 
     private func drawLevels(_ context: CGContext, _ rect: CGRect) {
         // L・R のピーク（細い 2 本）と LUFS（太い 1 本）。MiniMeters の Peak/LUFS と同じ並び。
-        let thin: CGFloat = 10, wide: CGFloat = 16, gap: CGFloat = 3, apart: CGFloat = 8
+        // 幅は 64 ピクセルの区画のときの大きさ。区画が広ければ同じ割合で太くする。
+        let k = max(1, rect.width / 64)
+        let thin = 10 * k, wide = 16 * k, gap = 3 * k, apart = 8 * k
         let total = 2 * thin + gap + apart + wide
         var x = rect.midX - total / 2
         func y(_ db: Double) -> CGFloat {

@@ -10,6 +10,15 @@
 //  図のテレメトリ（ETDisplayPump）には頼らない。
 //
 //  レイヤーは窓のいちばん奥に 2pt で置く。PiP の元は窓に入っていないと始まらない。
+//
+//  **押す前に用意しておく（prepare）。**押してから作ると、isPictureInPicturePossible が立つのは
+//  後になり、そこで始めても押した操作の外なので出ない（初回は 2 回押さないと出なかった）。
+//  起きたとき・前に来たときに窓とレイヤーと 1 枚目を用意し、押したらその場で始める。しまっても用意は残す。
+//
+//  **他のアプリに奪われたら、戻ったときに出し直す。**PiP は 1 つしか出ない。YouTube などが PiP を
+//  始めるとこちらは止められる。自分で閉じた（✕・アプリに戻すボタン・メニュー）のでなければ、
+//  このアプリが前に来たときにもう一度出す。✕ と奪われたのは、止まる前に setPlaying(false) が来るかで分ける
+//  （✕ は再生を止める扱いになる。奪われたときは来ない、と見ている。didStop のログで確かめる）。
 
 import AVKit
 import CoreMedia
@@ -36,25 +45,34 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var meters: ETMiniMeters?
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
+    /// 器の形。iPad は 16:9 の 2 段（PiP の窓を大きくできる）、iPhone は横長の 1 段。
+    private let layout: ETMiniMeters.Layout =
+        UIDevice.current.userInterfaceIdiom == .pad ? .large : .strip
+    /// 止める理由が分かっているとき真（メニューで止めた・アプリに戻すボタン）。
+    private var stopIsIntended = false
+    /// ✕ で閉じると、止まる前に一時停止が来る。その時刻。
+    private var pausedAt: CFTimeInterval = 0
+    /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
+    private var activeAt: CFTimeInterval = 0
+    /// 奪われたときに出していた所。前に来たら出し直す。
+    private var resumePoint: Int32?
+    private var foreground: NSObjectProtocol?
 
-    private override init() { super.init() }
+    private override init() {
+        super.init()
+        foreground = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { ETPiPVisualizer.shared.becameActive() }
+        }
+    }
 
     // MARK: - 出す・しまう
 
-    func start(point newPoint: Int32) {
-        guard AVPictureInPictureController.isPictureInPictureSupported() else {
-            log.error("PiP が使えない端末")
-            return
-        }
-        ETMeterTap_SetPoint(newPoint)
-        if point != nil, controller?.isPictureInPictureActive == true {
-            // 出ている窓のまま、測る所だけ替える。
-            point = newPoint
-            meters?.reset()
-            return
-        }
-        point = newPoint
+    /// 窓・レイヤー・PiP の係と 1 枚目を用意する。何度呼んでもよい。
+    func prepare() {
+        guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
         attachHost()
+        guard host.superview != nil else { return }
         if controller == nil {
             let source = AVPictureInPictureController.ContentSource(
                 sampleBufferDisplayLayer: host.displayLayer, playbackDelegate: self)
@@ -67,17 +85,42 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
                 Task { @MainActor in ETPiPVisualizer.shared.startIfPossible() }
             }
         }
-        let made = ETMiniMeters()
+        if meters == nil {
+            // 1 枚目（何も鳴っていない帯）。入らないと isPictureInPicturePossible が立たない。
+            enqueue(ETMiniMeters(layout: layout))
+        }
+    }
+
+    func start(point newPoint: Int32) {
+        guard AVPictureInPictureController.isPictureInPictureSupported() else {
+            log.error("PiP が使えない端末")
+            return
+        }
+        resumePoint = nil
+        stopIsIntended = false
+        ETMeterTap_SetPoint(newPoint)
+        if point != nil, controller?.isPictureInPictureActive == true {
+            // 出ている窓のまま、測る所だけ替える。
+            point = newPoint
+            meters?.reset()
+            return
+        }
+        point = newPoint
+        prepare()
+        let made = ETMiniMeters(layout: layout)
         made.reset()
         meters = made
-        wantsStart = true
         startTimer()
-        // 1 枚目はすぐ入れる。入らないと isPictureInPicturePossible が立たない。
         tick()
+        wantsStart = true
+        log.info("PiP を始める possible=\(self.controller?.isPictureInPicturePossible == true, privacy: .public)")
+        // 用意ができていれば押したその場で始める。まだなら立った所で（startIfPossible）。
         startIfPossible()
     }
 
     func stop() {
+        resumePoint = nil
+        stopIsIntended = true
         if controller?.isPictureInPictureActive == true {
             controller?.stopPictureInPicture()
         } else {
@@ -92,6 +135,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         controller.startPictureInPicture()
     }
 
+    /// 止まった後。窓・レイヤー・PiP の係と最後の絵は残す（次に押したらすぐ始められるように）。
     fileprivate func teardown() {
         wantsStart = false
         timer?.cancel()
@@ -99,8 +143,46 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         meters = nil
         point = nil
         ETMeterTap_SetPoint(Int32(ET_METER_TAP_OFF))
-        host.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: true, completionHandler: nil)
-        host.removeFromSuperview()
+    }
+
+    /// PiP が止まった。自分で閉じたのでなければ、出していた所を控えて前に来たら出し直す。
+    fileprivate func didStop() {
+        let now = CACurrentMediaTime()
+        let state = UIApplication.shared.applicationState
+        let closedByUser = stopIsIntended || now - pausedAt < 1.5
+        // 前にいて、前に来てから時間が経っている → このアプリの中で ✕ を押した。
+        let closedInApp = state == .active && now - activeAt > 2
+        log.info("PiP が止まった intended=\(self.stopIsIntended, privacy: .public) paused=\(now - self.pausedAt, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
+        let was = point
+        stopIsIntended = false
+        teardown()
+        guard !closedByUser, !closedInApp, let was else { return }
+        resumePoint = was
+        // 前に来た直後に奪われた（離れたアプリが PiP を始めた）なら、今出し直す。
+        if state == .active { resume() }
+    }
+
+    private func becameActive() {
+        activeAt = CACurrentMediaTime()
+        // 起きたときと戻ったときに用意する。押したその場で始められるように。
+        prepare()
+        if resumePoint != nil { resume() }
+    }
+
+    private func resume() {
+        guard let again = resumePoint else { return }
+        resumePoint = nil
+        log.info("奪われた PiP を出し直す")
+        // 前に来た回のうちはまだ始められないことがあるので、1 回遅らせる。
+        Task { @MainActor in ETPiPVisualizer.shared.start(point: again) }
+    }
+
+    fileprivate func playbackPaused() {
+        pausedAt = CACurrentMediaTime()
+    }
+
+    fileprivate func restoring() {
+        stopIsIntended = true
     }
 
     private func attachHost() {
@@ -127,6 +209,10 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private func tick() {
         guard let meters else { return }
         meters.pull(rate: AudioIO.shared.sampleRate)
+        enqueue(meters)
+    }
+
+    private func enqueue(_ meters: ETMiniMeters) {
         guard let buffer = pixelBuffer(meters), let format,
               let sample = sampleBuffer(buffer, format: format) else { return }
         let output = host.displayLayer.sampleBufferRenderer
@@ -138,7 +224,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     private func pixelBuffer(_ meters: ETMiniMeters) -> CVPixelBuffer? {
-        let width = ETMiniMeters.pixelWidth, height = ETMiniMeters.pixelHeight
+        let width = layout.width, height = layout.height
         if pool == nil {
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -204,7 +290,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
     nonisolated func pictureInPictureControllerDidStopPictureInPicture(
         _ pictureInPictureController: AVPictureInPictureController) {
-        Task { @MainActor in ETPiPVisualizer.shared.teardown() }
+        Task { @MainActor in ETPiPVisualizer.shared.didStop() }
     }
 
     nonisolated func pictureInPictureController(
@@ -220,13 +306,19 @@ extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
     nonisolated func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController,
         restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        // アプリに戻すボタン。自分で閉じたのと同じ扱い（戻ってきても出し直さない）。
+        Task { @MainActor in ETPiPVisualizer.shared.restoring() }
         completionHandler(true)
     }
 }
 
 extension ETPiPVisualizer: AVPictureInPictureSampleBufferPlaybackDelegate {
     nonisolated func pictureInPictureController(
-        _ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {}
+        _ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
+        // ✕ で閉じると止まる前にこれが来る（奪われたときは来ない）。
+        guard !playing else { return }
+        Task { @MainActor in ETPiPVisualizer.shared.playbackPaused() }
+    }
 
     /// 終わりの無い生の流れ。
     nonisolated func pictureInPictureControllerTimeRangeForPlayback(
