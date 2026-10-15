@@ -19,10 +19,10 @@ index 7c98d98..cebdb75 100644
    effetune::Engine *target = findEngine(engine);
    return target == nullptr ? ET_ERR_ARGS : target->refreshPipelineLatency();
 diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
-index 479df59..97bdf6c 100644
+index c8eb50b..c919159 100644
 --- a/dsp/core/engine.cpp
 +++ b/dsp/core/engine.cpp
-@@ -741,20 +741,22 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -824,20 +824,22 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
      const std::uint8_t *record = descriptor + kDescriptorHeaderBytes + index * kDescriptorNodeBytes;
      PipelineNode node{};
      node.instance = readU32(record);
@@ -49,7 +49,7 @@ index 479df59..97bdf6c 100644
          return ET_ERR_DESC;
        }
      }
-@@ -767,7 +769,7 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -850,7 +852,7 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
    snapshot.node_count_ = node_count;
    snapshot.channel_count_ = max_channels_;
    for (std::uint32_t index = 0u; index < node_count; ++index) {
@@ -58,7 +58,7 @@ index 479df59..97bdf6c 100644
    }
    PipelineLatencyUpdate update;
    const et_status status = preparePipelineLatencyUpdate(snapshot, update);
-@@ -790,6 +792,12 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -873,6 +875,12 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
    return ET_OK;
  }
  
@@ -71,7 +71,7 @@ index 479df59..97bdf6c 100644
  et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapshot) const noexcept {
    snapshot = {};
    if (!pipeline_configured_) {
-@@ -801,7 +809,9 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
+@@ -884,7 +892,9 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
    snapshot.node_count_ = pipeline_count_;
    snapshot.channel_count_ = max_channels_;
    for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
@@ -82,7 +82,7 @@ index 479df59..97bdf6c 100644
    }
    return ET_OK;
  }
-@@ -951,7 +961,10 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
+@@ -1034,7 +1044,10 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
      return ET_ERR_STATE;
    }
    for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
@@ -94,7 +94,7 @@ index 479df59..97bdf6c 100644
        return ET_ERR_STATE;
      }
    }
-@@ -1017,8 +1030,10 @@ et_status Engine::reservePipelineLatency() noexcept {
+@@ -1100,8 +1113,10 @@ et_status Engine::reservePipelineLatency() noexcept {
      const auto &node = pipeline_[index];
      if (!node.enabled || !node.sectionGate)
        continue;
@@ -106,7 +106,7 @@ index 479df59..97bdf6c 100644
      if (range.minimum > current || range.maximum < current ||
          range.maximum - range.minimum > std::numeric_limits<std::uint32_t>::max() - variation) {
        return ET_ERR_DESC;
-@@ -1106,7 +1121,8 @@ bool Engine::pipelineTapLatency(et_instance instance, PipelineTapLatency &latenc
+@@ -1189,7 +1204,8 @@ bool Engine::pipelineTapLatency(et_instance instance, PipelineTapLatency &latenc
    if (!pipeline_configured_)
      return false;
    for (std::uint32_t i = 0; i < pipeline_count_; ++i) {
@@ -116,7 +116,7 @@ index 479df59..97bdf6c 100644
        latency = pipeline_tap_latency_[i];
        return true;
      }
-@@ -1146,8 +1162,8 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+@@ -1229,8 +1245,8 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
      if (node.enabled == 0u || node.sectionGate == 0u) {
        continue;
      }
@@ -127,7 +127,7 @@ index 479df59..97bdf6c 100644
        return ET_ERR_DESC;
      }
      float *input = arena_.bus(node.inputBus);
-@@ -1167,7 +1183,29 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+@@ -1250,7 +1266,29 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
        }
      };
  
@@ -159,10 +159,10 @@ index 479df59..97bdf6c 100644
          align_input(input, 0u, channel_count);
          processSlot(*slot, input, channel_count, frame_count, info, node.instance);
 diff --git a/dsp/core/engine.h b/dsp/core/engine.h
-index 736f569..f9fa99e 100644
+index 097c6f8..6189ec2 100644
 --- a/dsp/core/engine.h
 +++ b/dsp/core/engine.h
-@@ -85,6 +85,7 @@ public:
+@@ -101,6 +101,7 @@ public:
  
    et_status configurePipeline(const std::uint8_t *descriptor,
                                std::uint32_t descriptor_bytes) noexcept;
@@ -170,7 +170,7 @@ index 736f569..f9fa99e 100644
    class PipelineLatencySnapshot;
    class PipelineLatencyUpdate;
    // Capture/apply run on the engine's owning thread between process calls. Preparation
-@@ -168,6 +169,8 @@ private:
+@@ -185,6 +186,8 @@ private:
  
    struct PipelineNode {
      et_instance instance = 0;
@@ -179,7 +179,7 @@ index 736f569..f9fa99e 100644
      std::uint8_t enabled = 0;
      std::uint8_t inputBus = 0;
      std::uint8_t outputBus = 0;
-@@ -244,6 +247,8 @@ private:
+@@ -263,6 +266,8 @@ private:
    bool pipeline_configured_ = false;
    bool pipeline_latency_reserved_ = false;
    bool pipeline_delay_history_dirty_ = false;
@@ -187,7 +187,7 @@ index 736f569..f9fa99e 100644
 +  void *pipeline_external_context_ = nullptr;
  };
  
- // Fixed-size value for caller-owned, synchronized transfer to the preparation thread.
+ // Fixed-size value for a synchronized handoff; contains no live kernel pointer.
 diff --git a/dsp/include/effetune/abi.h b/dsp/include/effetune/abi.h
 index d66d947..c99af46 100644
 --- a/dsp/include/effetune/abi.h

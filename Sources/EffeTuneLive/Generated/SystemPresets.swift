@@ -134,4 +134,11 @@ let ETSystemPresets: [ETSystemPreset] = [
       json: #"""
       {"pipeline":[{"name":"Spectrogram","enabled":true,"parameters":{"dr":-96,"pt":12}},{"name":"Spectrum Analyzer","enabled":true,"parameters":{"dr":-96,"pt":12}},{"name":"Stereo Meter","enabled":true,"parameters":{"wt":0.1}},{"name":"Oscilloscope","enabled":true,"parameters":{"dt":0.01,"tm":"Auto","tl":0,"te":"Rising","ho":0.0001,"dl":0,"vo":0}},{"name":"Level Meter","enabled":true,"parameters":{}}]}
       """#),
+    ETSystemPreset(
+      category: "Visualize",
+      name: "Instrument Colors",
+      effectCount: 1,
+      json: #"""
+      {"pipeline":[{"name":"Note Spectrogram","enabled":true,"parameters":{"cl":"Instrument3","hl":"None","pr":"Semitone","ly":"Horizontal","vl":true,"ts":2,"mn":28,"mx":91}}]}
+      """#),
 ]
