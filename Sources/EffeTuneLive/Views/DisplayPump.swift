@@ -52,7 +52,8 @@ final class ETDisplayPump: NSObject {
         link = nil
         body = nil
         // 出す側を止める。0 は engine.cpp:552 で「書かない」に落ちる。
-        EffeTuneDSP.shared.setTelemetryRate(0)
+        // PiP に図を出しているあいだは止めない。背景でもあちらが汲む（PiPVisualizer.swift）。
+        if !ETPiPVisualizer.shared.isActive { EffeTuneDSP.shared.setTelemetryRate(0) }
     }
 
     @objc private func fire() {
