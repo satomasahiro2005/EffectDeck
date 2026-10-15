@@ -51,9 +51,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var meters: ETMiniMeters?
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
-    /// 器の形。iPad は 16:9 の 2 段（PiP の窓を大きくできる）、iPhone は横長の 1 段。
-    private let layout: ETMiniMeters.Layout =
-        UIDevice.current.userInterfaceIdiom == .pad ? .large : .strip
+    /// 器の形。iPad も iPhone と同じ横長の 1 段（本人「ipadでもiphoneと揃えてくれ」）。
+    private let layout: ETMiniMeters.Layout = .strip
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
     private var activeAt: CFTimeInterval = 0
     /// アプリに戻すボタンを押した時刻。そのまま前に来るので、直後は出し直さない。

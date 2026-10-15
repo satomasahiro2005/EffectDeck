@@ -1,6 +1,6 @@
 //  MiniMeters.swift
 //  PiP に出す帯（MiniMeters の形）。スペクトログラム・波形・スペアナ・ステレオ・レベル。
-//  iPhone は横長の 1 段、iPad は 16:9 の 2 段（Layout）。
+//  横長の 1 段（Layout.strip）。
 //
 //  **見た目は MiniMeters の既定に寄せる。**minimeters.app の宣伝動画と画像、テーマのひな形
 //  （_TEMPLATE）から拾った:
@@ -41,15 +41,6 @@ final class ETMiniMeters {
             stereo: CGRect(x: 1000, y: 0, width: 216, height: 256),
             level: CGRect(x: 1216, y: 0, width: 64, height: 256))
 
-        /// iPad。16:9 の 2 段。5:1 の帯は窓を広げても幅で頭打ちになり低いままなので、
-        /// 動画と同じ形にして大きくできるようにする。上に スペクトログラム・波形、下に スペアナ・ステレオ・レベル。
-        static let large = Layout(
-            width: 1280, height: 720,
-            spectrogram: CGRect(x: 0, y: 0, width: 640, height: 360),
-            waveform: CGRect(x: 640, y: 0, width: 640, height: 360),
-            spectrum: CGRect(x: 0, y: 360, width: 800, height: 360),
-            stereo: CGRect(x: 800, y: 360, width: 360, height: 360),
-            level: CGRect(x: 1160, y: 360, width: 120, height: 360))
     }
 
     let layout: Layout
