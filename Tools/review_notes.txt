@@ -4,46 +4,27 @@ Guideline 5 (China): ChatGPT and OpenAI are no longer mentioned in the metadata
 or screenshots. On the China mainland storefront (StoreKit countryCode CHN)
 the app hides both ChatGPT entries described below.
 
-Remote Control (optional)
-EffectDeck can also edit the effect chain of EffeTune, the free desktop app
-whose effects EffectDeck uses (https://github.com/Frieve-A/effetune, 2.14 or
-later), running on a computer on the same Wi-Fi network.
-- On the computer: EffeTune > Settings > Remote Control > Allow remote control
-  shows a QR code.
-- In EffectDeck: Settings (top right ...) > Remote > Scan QR Code.
-- The camera is used only to read that QR code. The local network is used only
-  to connect to the computer address inside it (plain WebSocket on port
-  47300-47309). Nothing is sent to any other server, and nothing is recorded.
-- Without a computer running EffeTune this feature cannot be exercised; the rest
-  of the app works the same without it.
+Remote Control (optional): edits the chain of EffeTune, the free desktop app
+(github.com/Frieve-A/effetune, 2.14+), on a computer on the same network.
+EffeTune > Settings > Remote Control > Allow remote control shows a QR code;
+EffectDeck > Settings > Remote > Scan QR Code reads it. The camera only reads
+that code; the local network only reaches the address in it (WebSocket, port
+47300-47309). Nothing goes to other servers. Without EffeTune on a computer it
+cannot be exercised; the rest of the app does not need it.
 
-SFZ Note Player
-SFZ instruments are folders of text definitions and audio samples. The user
-picks a folder in Files (SFZ Library > Import Folder...). The files are copied
-into the app and played as samples. They are data, not code.
+SFZ Note Player: SFZ instruments are folders of text and audio samples the user
+picks in Files. They are copied into the app and played. Data, not code.
 
-What it is
-EffectDeck can host JSFX, the single-file audio effect script format used by
-REAPER. A JSFX script is a plain text file that the user brings
-into the app. It becomes an effect in the user's audio chain, with its own
-sliders and, if it draws, a canvas inside the app.
+JSFX scripts
+EffectDeck can host JSFX, the single-file text effect format used by REAPER.
+A script the user brings in becomes an effect in the chain, with its own
+sliders and, if it draws, a canvas.
 
-Where scripts come from
-Only from the user, through:
-- Available Effects > Plugins > Import JSFX > From Files
-- Available Effects > Plugins > Import JSFX > From Link (a URL the user types or
-  pastes)
-- Available Effects > Plugins > Import JSFX > From Clipboard (script text the
-  user copied)
-- Open in from another app, or the EffectDeck share-sheet extension (a file, a
-  link or selected text)
-- A share link (https://effectdeck.nemut.ai/j#...) that the user taps. The
-  script is carried inside the link itself.
-Scripts that arrive through Open in, the share-sheet extension or a share link
-are only added to the Plugins list. They are not added to the chain and do not
-run until the user adds them. A chain link (https://effectdeck.nemut.ai/?p=...)
-carries no script source; it can only use scripts already imported on the
-device.
+Where scripts come from: only the user, through Plugins > Import JSFX (From
+Files, From Link, From Clipboard), Open in / the share-sheet extension, or a
+share link (https://effectdeck.nemut.ai/j#...) that carries the script itself.
+Those only join the Plugins list and do not run until the user adds them. A
+chain link (https://effectdeck.nemut.ai/?p=...) carries no script source.
 Write JSFX with ChatGPT (Plugins) and Build with ChatGPT... (Effects) only
 open a chatgpt.com link (the ChatGPT app if installed, otherwise the
 browser) that carries a short request. The app sends nothing else to ChatGPT.
@@ -51,9 +32,8 @@ The user imports a returned script with From Files or From Clipboard. A returned
 chain goes in with Presets > Import from clipboard, which reads the clipboard
 only when tapped and builds a chain from the app's built-in effects and scripts
 already imported; it never imports script code.
-The app does not offer a catalog, store or directory of scripts, and it does not
-download scripts on its own. A link is fetched only when the user taps Import
-(From Link) or Add (in the share-sheet extension).
+There is no catalog or store of scripts; a link is fetched only when the user
+taps Import (From Link) or Add (share-sheet extension).
 The App Store build ships no scripts, so no JSFX appears in the list until the
 user imports one.
 
