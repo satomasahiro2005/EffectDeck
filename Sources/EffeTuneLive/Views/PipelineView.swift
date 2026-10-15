@@ -201,8 +201,17 @@ struct PipelineView: View {
     @State private var dragExternalSnapshot: UIImage?
     /// **掴んだ時点の矩形。**入れ替えても動かさない。
     @State private var anchorRect: CGRect = .zero
-    /// 指の縦の移動量。
-    @State private var dragShift: CGSize = .zero
+    /// 指の移動量の入れ物。**この画面は観測しない。**
+    ///
+    /// @State に置いていたときは、指が動くたびにこの画面の body が丸ごと走り直し、
+    /// 全部の行を組み直していた（掴んでいる間が重かった）。動くのは掴んだ札だけなので、
+    /// 札の位置を決める ETDragFloat だけが観測する。
+    @State private var dragOffset = ETDragOffset()
+    /// 指の移動量。読み書きは dragOffset へ。
+    private var dragShift: CGSize {
+        get { dragOffset.shift }
+        nonmutating set { dragOffset.shift = newValue }
+    }
     /// 掴んでいるあいだ名前の行だけに畳んでいる段。**開閉の覚え（dsp.expanded）は書かない。**
     ///
     /// 開いたカードは画面の高さほどあり、掴んだまま隣を越えるには長く運ぶ必要があった。
@@ -1215,8 +1224,7 @@ struct PipelineView: View {
                 .padding(.top, row.block.roundsTop ? 5 : 2.5)
                 .padding(.bottom, row.block.roundsBottom ? 5 : 2.5)
                 .frame(width: anchorRect.width, height: anchorRect.height)
-                .offset(x: anchorRect.minX + dragShift.width,
-                        y: anchorRect.minY + dragShift.height)
+                .modifier(ETDragFloat(offset: dragOffset, origin: anchorRect.origin))
                 .allowsHitTesting(false)
             }
         }
@@ -2506,5 +2514,21 @@ private struct ETDetailColumn: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// 掴んでいる指の移動量。PipelineView は観測しない（dragOffset の注記）。
+@MainActor
+final class ETDragOffset: ObservableObject {
+    @Published var shift: CGSize = .zero
+}
+
+/// 掴んだ札を指の位置へ置く。指が動いて走り直すのはここだけで、札の中身は組み直さない。
+private struct ETDragFloat: ViewModifier {
+    @ObservedObject var offset: ETDragOffset
+    let origin: CGPoint
+
+    func body(content: Content) -> some View {
+        content.offset(x: origin.x + offset.shift.width, y: origin.y + offset.shift.height)
     }
 }
