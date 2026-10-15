@@ -45,24 +45,36 @@ The dial picks the scale (VU, PPM DIN, PPM BBC, the RMS dB scale, dBFS or dBTP).
 
 Display Time 1..10000 ms on a logarithmic slider. Version 3 envelope frames: triggered windows in 4096
 buckets, and free-run windows that roll (the newest bucket at the right). Drawn as a min/max band per
-pixel. Ticks and the axis name switch to seconds at 1 s and above. Not done: upstream's render clock
-that scrolls smoothly between frames; here the band moves when a frame arrives.
+pixel. Ticks and the axis name switch to seconds at 1 s and above. The rolling band scrolls on a clock
+between frames (upstream `acceptScopeSnapshot` / `scopeDisplayEnd`): the right edge trails the newest
+sample by 1/30 s and the rate is corrected by at most 5 %.
 
 ## Note Spectrogram
 
 Frames are version 6 (9192 bytes, 88 pitch offsets in cents at 8840). Version 5 frames are still read.
-**Not done:** the instrument colours (Instrument (3) / (9)), Highlight, the timbre events (frame type 31),
-the legend and the onset marks. `te` stays 0, so the kernel does not run the timbre analysis.
-A chain or preset that carries `cl: Instrument3` or `hl` keeps the value.
+Instrument (3) / (9) colours from the timbre events (frame type 31), Highlight (`hl`), the legend and
+the onset marks (`os`). The runtime-only `te` is set while a timbre colour, a highlight or onsets is on,
+so the kernel runs the timbre analysis only then. High resolution draws each key as a bar placed by its
+cents offset.
 
-## Not reviewed yet
+## Remote
 
-Smaller upstream UI changes: 5 Band Dynamic EQ, Room EQ, IR Reverb, Phase Select EQ, Tube Simulator,
-Crosstalk Cancellation, `plugin-base.js`, `graph-point-interaction.js`. The remote `describeEffects` op and
-the MCP server are PC-side and do not apply.
+Mirror Analyzers is removed (official EffeTune sends no telemetry). While a PC chain is edited, local
+telemetry is held and the displays upstream marks `local-audio-only` are hidden through `etLocalAudio`:
+measurements and status lines (Room EQ, Crosstalk Cancellation, FIR designers, IR Reverb), gain readouts
+(Compressor, Expander, Gate, multiband), live graphs (Auto Leveler, Multiband Transient, Power Amp Sag,
+SW Radio HUD, the 5 Band Dynamic EQ sum), Reset buttons, the Tube Simulator measured values and the SFZ
+bank row and voice graph. Analyzers stay dimmed. IR Reverb picks from the PC's IR Library (`selectIR`,
+feature `irSelection`), addressing the stage by the sync1 `epoch`, `slot` and `ids`.
+
+## Not applied
+
+Phase Select EQ shortened its field labels for a grid; EffectDeck groups the fields under Frequency, Phase
+and Balance and keeps its short labels. `MobileBandSelector` is a web layout; the cards already use band
+tabs. The remote `describeEffects` op, `edit` operations and the MCP server are PC-side.
 
 ## Verification
 
-- Linux Logic bundle (WSL, Swift 6.4): 1046 tests, 0 failures, 1 skipped.
-- Python tools: 251 OK (9 skipped). `check_repo.py` ok. Privacy manifest ok.
-- Mac: Release build succeeded, installed on iPhone 16.
+- Linux Logic bundle (WSL, Swift 6.4): 1041 tests, 0 failures, 1 skipped.
+- Python tools: OK (9 skipped). `check_repo.py` ok.
+- Mac: Release build, installed on iPhone 16.
