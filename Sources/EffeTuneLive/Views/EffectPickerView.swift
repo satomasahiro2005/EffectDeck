@@ -1057,12 +1057,9 @@ struct EffectPickerView: View {
     /// `newEffects.isEmpty` を見る）。上流が新しいものを足したときに、
     /// その型をここへ並べる。**一度足したら、次の版で必ず外すこと。**
     /// いつまでも「New」と出ていると意味を失う。
-    /// いまは dsp 0.13.0（EffeTune 2.13.0）で足された Adaptive Prediction と SFZ Note Player。
-    /// dsp 0.12.0 の 3 つ（Analog Meter / Rhythm Analyzer / Tonal Balance EQ）は 2026.10.08 で外した。
-    static let newTypes: [String] = [
-        "AdaptivePredictionEffectPlugin",
-        "SFZNotePlayerPlugin",
-    ]
+    /// **いまは空（節を出さない）。**本人 10-16「new effectあんまり出さなくていい」「邪魔な気がする」。
+    /// dsp 0.13.0 の Adaptive Prediction と SFZ Note Player を外した（dsp 0.14.0 は効果を足していない）。
+    static let newTypes: [String] = []
     static let newKey = "__new"
 
     private var newEffects: [ETEffect] {
