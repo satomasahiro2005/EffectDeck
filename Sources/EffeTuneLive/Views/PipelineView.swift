@@ -1959,6 +1959,8 @@ private struct PipelineToolbar: ToolbarContent {
     /// 立てると親が確認を出す。ここで出せないのは ToolbarContent が View でないから。
     @Binding var confirmingReset: Bool
     @ObservedObject var dsp: EffeTuneDSP
+    /// Mini Meters のトグルの印。
+    @ObservedObject var pip = ETPiPVisualizer.shared
     let io: AudioIO
     /// 拡張が繋がっているか。繋がっていないあいだマスターを沈める。
     let hasPeer: Bool
@@ -2114,12 +2116,16 @@ private struct PipelineToolbar: ToolbarContent {
                 Button("Settings", systemImage: "gearshape") { present(.settings) }
                 Button("Routing", systemImage: "arrow.triangle.branch") { present(.routing) }
                 // 試作: 鎖の入口か出口の音を、横長のメーターにして PiP の窓に出す（PiPVisualizer.swift）。
-                Menu {
-                    Button("Chain Input") { ETPiPVisualizer.shared.start(point: Int32(ET_METER_TAP_INPUT)) }
-                    Button("Chain Output") { ETPiPVisualizer.shared.start(point: Int32(ET_METER_TAP_OUTPUT)) }
+                // トグル。入れているあいだは、外で消えても戻ったら出し直す。
+                Picker(selection: Binding(get: { pip.selected ?? Int32(ET_METER_TAP_OFF) },
+                                          set: { pip.select($0 == Int32(ET_METER_TAP_OFF) ? nil : $0) })) {
+                    Text("Off").tag(Int32(ET_METER_TAP_OFF))
+                    Text("Chain Input").tag(Int32(ET_METER_TAP_INPUT))
+                    Text("Chain Output").tag(Int32(ET_METER_TAP_OUTPUT))
                 } label: {
                     Label("Mini Meters", systemImage: "pip.enter")
                 }
+                .pickerStyle(.menu)
                 // 押したその場で始められるよう、メニューを開いたら PiP の用意をする（PiPVisualizer.swift の頭）。
                 .onAppear { ETPiPVisualizer.shared.prepare() }
                 // **出力補正と Build with ChatGPT… はここに置かない。**持ち主のシートに置く

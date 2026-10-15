@@ -15,14 +15,13 @@
 //  後になり、そこで始めても押した操作の外なので出ない（初回は 2 回押さないと出なかった）。
 //  起きたとき・前に来たときに窓とレイヤーと 1 枚目を用意し、押したらその場で始める。しまっても用意は残す。
 //
-//  **他のアプリに奪われたら、戻ったときに出し直す。**PiP は 1 つしか出ない。YouTube などが PiP を
-//  始めるとこちらは止められる。奪われたのなら、このアプリが前に来たときにもう一度出す。
-//  **✕ と奪われたのは、止まったときに他のアプリが鳴っているかで分ける。**実機のログ（10-16）では
-//  届く知らせ（setPlaying(false) → willStop → didStop、0.8 秒）も、止まった後の possible も同じで、
-//  違ったのは isOtherAudioPlaying と secondaryAudioShouldBeSilencedHint だけだった（奪われると真）。
-//  PiP を奪うアプリは動画を再生しているので必ず鳴っている。鳴っていなければ ✕。
-//  ただし音楽を流しながら外で ✕ を押したのは、奪われたのと見分けられず出し直す。
-//  出し直さないのは、メニューで止めた・アプリに戻すボタン・このアプリの中で ✕ を押したときも同じ。
+//  **入り切りはメニューのトグル（selected）。**入っているあいだに PiP が外で止まったら、このアプリが
+//  前に来たときにもう一度出す。YouTube などが PiP を始めるとこちらは止められるため（PiP は 1 つだけ）。
+//  外で ✕ を押したのと奪われたのは見分けられない。実機のログ（10-16）では届く知らせ
+//  （setPlaying(false) → willStop → didStop、0.8 秒）も止まった後の possible も同じで、他のアプリが
+//  鳴っているかで分けても、音楽を流しながらの ✕ は奪われたのと同じになった（本人「自分でバツしてもなる」）。
+//  なので止める操作をはっきりさせた（本人「mini metersはトグルにするか」）。切るのはメニューの Off と、
+//  このアプリの中で ✕ を押したとき・アプリに戻すボタン。
 
 import AVKit
 import CoreMedia
@@ -36,6 +35,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     /// 測っている所（ET_METER_TAP_INPUT / ET_METER_TAP_OUTPUT）。nil なら出していない。
     @Published private(set) var point: Int32?
+    /// メニューのトグル。入っている所。nil なら切ってある。外で止まっても、これが残っていれば出し直す。
+    @Published private(set) var selected: Int32?
 
     private static let framesPerSecond = 30
 
@@ -52,12 +53,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     /// 器の形。iPad は 16:9 の 2 段（PiP の窓を大きくできる）、iPhone は横長の 1 段。
     private let layout: ETMiniMeters.Layout =
         UIDevice.current.userInterfaceIdiom == .pad ? .large : .strip
-    /// 止める理由が分かっているとき真（メニューで止めた・アプリに戻すボタン）。
-    private var stopIsIntended = false
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
     private var activeAt: CFTimeInterval = 0
-    /// 奪われたときに出していた所。前に来たら出し直す。
-    private var resumePoint: Int32?
     private var foreground: NSObjectProtocol?
 
     private override init() {
@@ -93,13 +90,17 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         }
     }
 
-    func start(point newPoint: Int32) {
+    /// メニューのトグル。nil で切る。
+    func select(_ newPoint: Int32?) {
+        selected = newPoint
+        if let newPoint { start(point: newPoint) } else { stop() }
+    }
+
+    private func start(point newPoint: Int32) {
         guard AVPictureInPictureController.isPictureInPictureSupported() else {
             log.error("PiP が使えない端末")
             return
         }
-        resumePoint = nil
-        stopIsIntended = false
         ETMeterTap_SetPoint(newPoint)
         if point != nil, controller?.isPictureInPictureActive == true {
             // 出ている窓のまま、測る所だけ替える。
@@ -120,9 +121,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         startIfPossible()
     }
 
-    func stop() {
-        resumePoint = nil
-        stopIsIntended = true
+    private func stop() {
         if controller?.isPictureInPictureActive == true {
             controller?.stopPictureInPicture()
         } else {
@@ -168,24 +167,17 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         ETMeterTap_SetPoint(Int32(ET_METER_TAP_OFF))
     }
 
-    /// PiP が止まった。自分で閉じたのでなければ、出していた所を控えて前に来たら出し直す。
+    /// PiP が止まった。トグルが入ったままなら、前に来たときに出し直す。
     fileprivate func didStop() {
         starting = false
         let now = CACurrentMediaTime()
         let state = UIApplication.shared.applicationState
-        let closedByUser = stopIsIntended
-        // 他のアプリが鳴っていなければ、奪われたのではない（外で ✕ を押した）。
-        let session = AVAudioSession.sharedInstance()
-        let otherPlaying = session.isOtherAudioPlaying || session.secondaryAudioShouldBeSilencedHint
-        // 前にいて、前に来てから時間が経っている → このアプリの中で ✕ を押した。
+        // 前にいて、前に来てから時間が経っている → このアプリの中で ✕ を押した。切る。
+        // 前に来た直後なら、離れたアプリの PiP に奪われた（✕ を押す間は無い）。
         let closedInApp = state == .active && now - activeAt > 2
-        log.info("PiP が止まった intended=\(self.stopIsIntended, privacy: .public) other=\(otherPlaying, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
-        let was = point
-        stopIsIntended = false
+        log.info("PiP が止まった selected=\(self.selected != nil, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
         teardown()
-        guard !closedByUser, !closedInApp, otherPlaying, let was else { return }
-        resumePoint = was
-        // 前に来た直後に奪われた（離れたアプリが PiP を始めた）なら、今出し直す。
+        if closedInApp { selected = nil }
         if state == .active { resume() }
     }
 
@@ -193,19 +185,24 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         activeAt = CACurrentMediaTime()
         // 起きたときと戻ったときに用意する。押したその場で始められるように。
         prepare()
-        if resumePoint != nil { resume() }
+        resume()
     }
 
+    /// トグルが入っていて出ていなければ出し直す。
     private func resume() {
-        guard let again = resumePoint else { return }
-        resumePoint = nil
-        log.info("奪われた PiP を出し直す")
+        guard let again = selected, point == nil else { return }
+        log.info("PiP を出し直す")
         // 前に来た回のうちはまだ始められないことがあるので、1 回遅らせる。
-        Task { @MainActor in ETPiPVisualizer.shared.start(point: again) }
+        Task { @MainActor in
+            let pip = ETPiPVisualizer.shared
+            guard pip.selected == again, pip.point == nil else { return }
+            pip.start(point: again)
+        }
     }
 
+    /// アプリに戻すボタン。このアプリへ戻ってくるので、出し直さないよう切る。
     fileprivate func restoring() {
-        stopIsIntended = true
+        selected = nil
     }
 
     private func attachHost() {
