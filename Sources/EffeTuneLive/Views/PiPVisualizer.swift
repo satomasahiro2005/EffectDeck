@@ -20,8 +20,9 @@
 //  外で ✕ を押したのと奪われたのは見分けられない。実機のログ（10-16）では届く知らせ
 //  （setPlaying(false) → willStop → didStop、0.8 秒）も止まった後の possible も同じで、他のアプリが
 //  鳴っているかで分けても、音楽を流しながらの ✕ は奪われたのと同じになった（本人「自分でバツしてもなる」）。
-//  なので止める操作をはっきりさせた（本人「mini metersはトグルにするか」）。切るのはメニューの Off と、
-//  このアプリの中で ✕ を押したとき・アプリに戻すボタン。
+//  なので止める操作をはっきりさせた（本人「mini metersはトグルにするか」）。**切るのはメニューの Off だけ。**
+//  このアプリの中で ✕ を押したときとアプリに戻すボタンでも切らない（本人「オフにしないで勝手に」）。
+//  その 2 つはすぐには出し直さず、次にこのアプリが前に来たときに出す（押した直後にまた出ると押した意味が無い）。
 
 import AVKit
 import CoreMedia
@@ -55,6 +56,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         UIDevice.current.userInterfaceIdiom == .pad ? .large : .strip
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
     private var activeAt: CFTimeInterval = 0
+    /// アプリに戻すボタンを押した時刻。そのまま前に来るので、直後は出し直さない。
+    private var restoredAt: CFTimeInterval = 0
     private var foreground: NSObjectProtocol?
 
     private override init() {
@@ -177,8 +180,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         let closedInApp = state == .active && now - activeAt > 2
         log.info("PiP が止まった selected=\(self.selected != nil, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
         teardown()
-        if closedInApp { selected = nil }
-        if state == .active { resume() }
+        // 中で ✕ を押したのなら、次に前に来るまで出し直さない。
+        if state == .active && !closedInApp { resume() }
     }
 
     private func becameActive() {
@@ -190,7 +193,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     /// トグルが入っていて出ていなければ出し直す。
     private func resume() {
-        guard let again = selected, point == nil else { return }
+        guard let again = selected, point == nil,
+              CACurrentMediaTime() - restoredAt > 3 else { return }
         log.info("PiP を出し直す")
         // 前に来た回のうちはまだ始められないことがあるので、1 回遅らせる。
         Task { @MainActor in
@@ -200,9 +204,9 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         }
     }
 
-    /// アプリに戻すボタン。このアプリへ戻ってくるので、出し直さないよう切る。
+    /// アプリに戻すボタン。トグルは切らない。このアプリへ戻ってくる直後だけ出し直さない。
     fileprivate func restoring() {
-        selected = nil
+        restoredAt = CACurrentMediaTime()
     }
 
     private func attachHost() {
