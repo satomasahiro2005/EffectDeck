@@ -5,7 +5,7 @@ This beta includes all work in progress, including features not yet in the App S
 
 New
 
-- Floating Meters: the … menu → Floating Meters shows spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in Picture in Picture. It stays on until you choose Off. If another app takes over Picture in Picture, it comes back when you return to EffectDeck. Please check that it starts with one tap and keeps moving over other apps.
+- Floating Meters: the … menu → Floating Meters shows spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in Picture in Picture. If another app takes over Picture in Picture, it comes back when you return to EffectDeck. Please check that it starts with one tap and keeps moving over other apps.
 - EffeTune 2.14.0 (DSP 0.14.0): Analog Meter Custom mode, Oscilloscope up to 10 seconds (scrolls smoothly with Trigger Mode Off), Note Spectrogram instrument colours, Highlight and onsets, and the SFZ Library and voice display for SFZ Note Player.
 - Remote Control works with EffeTune 2.14 on your computer. While editing the computer's chain, IR Reverb chooses from the computer's IR Library, and values measured from local audio are hidden.
 - Settings → About → Reset All Data erases everything, including the iCloud copy.
@@ -23,7 +23,7 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 
 【新機能】
 
-・Floating Meters：…メニュー → Floating Metersで、チェーンの入口または出口の音のスペクトログラム・波形・スペクトラム・ステレオ・レベルをピクチャ・イン・ピクチャで表示します。Offを選ぶまで表示し続け、ほかのアプリにピクチャ・イン・ピクチャを取られても、EffectDeckに戻ると再び表示します。1回のタップで表示されるか、ほかのアプリの上で動き続けるかをご確認ください。
+・Floating Meters：…メニュー → Floating Metersで、チェーンの入口または出口の音のスペクトログラム・波形・スペクトラム・ステレオ・レベルをピクチャ・イン・ピクチャで表示します。ほかのアプリにピクチャ・イン・ピクチャを取られても、EffectDeckに戻ると再び表示します。1回のタップで表示されるか、ほかのアプリの上で動き続けるかをご確認ください。
 ・EffeTune 2.14.0（DSP 0.14.0）に対応しました。Analog MeterのCustomモード、最大10秒のOscilloscope（Trigger ModeがOffなら滑らかに流れます）、Note Spectrogramの楽器の色・Highlight・音の始まりの印、SFZ Note PlayerのSFZ Libraryと声の表示が加わりました。
 ・Remote Controlは、パソコンのEffeTune 2.14で使えます。パソコンのチェーンを編集している間、IR Reverbはパソコンのライブラリから選び、手元の音から測る表示は隠します。
 ・Settings → About → Reset All Dataで、iCloudの控えも含めてすべて消去できます。
