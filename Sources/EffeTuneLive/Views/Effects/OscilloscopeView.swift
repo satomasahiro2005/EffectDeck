@@ -41,6 +41,16 @@
 //      上端 = (1 - vo) * gridMax、下端 = (-1 - vo) * gridMax
 //  displayLevel を下げるほど範囲が狭まる（縦に拡大する）。
 //
+//  **長い窓（2.14.0）。**Display Time は 10 秒まで。標本が 65536 を超える窓は版 3 の envelope で来る:
+//      0..15 は同じ頭（encoding 2）、16 u32 bucketSamples、20 u32 + 24 u32 endSample（64 bit）、
+//      28 + b*8 に f32 minimum / f32 maximum。長さは 28 + bucketCount*8 ちょうど。
+//  Trigger Mode が Off（free run）で 2048 標本を超える窓は「流れる」形（flags bit1）。桶は endSample で
+//  終わる直近 bucketCount 個で、右端が最新。トリガの窓は 4096 の桶に畳んである（bucketSamples と endSample は 0）。
+//  どちらも 1 ピクセルの縦の帯に最小と最大を塗る（oscilloscope.js の paintEnvelopeColumns）。
+//  流れる形は、届いた枠のあいだも時計で滑らかに送る（acceptScopeSnapshot / scopeDisplayEnd）。
+//  届くたびに右端を飛ばすと、届く間隔のむらがそのまま絵のがたつきになる。右端は届いた末尾より
+//  1/30 秒ぶん遅らせ、そこから時計（標本化周波数ぶん/秒）で進める。時計のずれは 1 秒かけて直す。
+//
 //  目盛りの刻みは web 版と同じ nice number の取り方（同 861-882）。
 //  iPhone の幅なので、web 版の狭いとき（isNarrow）の 8 本に合わせてある。
 
@@ -62,9 +72,9 @@ struct OscilloscopeView: View {
             ForEach(node.spec.params) { param in
                 switch param.name {
                 case "displayTime":
-                    // 上流は 1-100ms、刻み 1、小数なし（oscilloscope.js:214-215）。
+                    // 上流は 1〜10000 ms（2.14.0）、刻み 1、小数なし、対数のつまみ。
                     ETScopeMillisecondRow(param: param, nodeIndex: index, values: node.values,
-                                          step: 1, decimals: 0, dsp: dsp)
+                                          step: 1, decimals: 0, logarithmic: true, dsp: dsp)
                 case "holdoff":
                     // 上流は 0.1-10ms、刻み 0.1、小数 1 桁（oscilloscope.js:320-321）。
                     ETScopeMillisecondRow(param: param, nodeIndex: index, values: node.values,
@@ -85,9 +95,9 @@ struct OscilloscopeView: View {
         return v.isFinite ? v : fallback
     }
 
-    /// 掃引の長さ。kernel.cpp:108-113 と同じ丸め方。
+    /// 掃引の長さ。カーネルと同じ丸め方（2.14.0 で上限 10 秒）。
     private var displayTimeMilliseconds: Double {
-        Double(min(0.1, max(0.001, value("displayTime", 0.01)))) * 1000
+        Double(min(10, max(0.001, value("displayTime", 0.01)))) * 1000
     }
 
     private var displayLevel: Double {
@@ -115,6 +125,10 @@ private struct OscilloscopeGraph: View {
     @ETTelemetryFeed private var telemetry
 
     @State private var probe: ETScopeProbe?
+    /// 読めた最新の枠。枠が来たときだけ読み直す（流れる形は 60 回/秒描くので、描くたびに解かない）。
+    @State private var trace: ETScopeTrace?
+    /// 流れる形の時計（上流 scopeScroll）。右端の標本の番号・その時刻・進む速さ（標本/秒）・受けた時刻。
+    @State private var scroll: (sample: Double, time: Double, rate: Double, receivedAt: Double)?
 
     /// 縦の目盛りの本数。oscilloscope.js:861 の isNarrow 側。
     private static let amplitudeTickCount = 8
@@ -136,8 +150,8 @@ private struct OscilloscopeGraph: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 canvas
-                // 左右の余白ぶんだけ寄せると、図の枠の真ん中に来る。
-                Text("Time (ms)")
+                // 左右の余白ぶんだけ寄せると、図の枠の真ん中に来る。1 秒以上は秒で数える。
+                Text(displayTime >= 1000 ? "Time (s)" : "Time (ms)")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .padding(.leading, Self.insets.leading)
@@ -147,9 +161,61 @@ private struct OscilloscopeGraph: View {
         }
     }
 
+    @ViewBuilder
     private var canvas: some View {
-        let trace = reading
+        let sequence = telemetry.frame(tap: tapId, type: .scopeSnapshot)?.sequence
+        Group {
+            if trace?.envelope?.rolling == true {
+                TimelineView(.animation) { timeline in
+                    graph(now: timeline.date.timeIntervalSinceReferenceDate)
+                }
+            } else {
+                graph(now: Date().timeIntervalSinceReferenceDate)
+            }
+        }
+        .onAppear { accept(reading) }
+        .onChange(of: sequence) { _, _ in accept(reading) }
+    }
+
+    /// 枠を入れる（上流 acceptScopeSnapshot）。流れる形は時計を合わせる。
+    private func accept(_ next: ETScopeTrace?) {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard let next else { return }
+        if let envelope = next.envelope, envelope.rolling {
+            let end = Double(envelope.endSample)
+            let previous = trace?.envelope
+            let compatible = previous?.rolling == true && trace?.sampleRate == next.sampleRate
+                && trace?.sampleCount == next.sampleCount && envelope.endSample >= (previous?.endSample ?? 0)
+            if !compatible || scroll == nil
+                || (envelope.endSample > (previous?.endSample ?? 0) && now - (scroll?.receivedAt ?? 0) > 0.25) {
+                // 届く間隔のむらで止まらないよう、2 回ぶん（1/30 秒）遅らせて始める。
+                scroll = (max(0, end - next.sampleRate / 30), now, next.sampleRate, now)
+            } else if envelope.endSample > (previous?.endSample ?? 0), let current = scroll {
+                let sample = displayEnd(now: now, envelope: previous ?? envelope, scroll: current)
+                let error = end - next.sampleRate / 30 - sample
+                // 1 回の着き方に振り回されないよう、ずれは 1 秒かけて直す（速さを ±5% まで変える）。
+                let correction = max(-next.sampleRate * 0.05, min(next.sampleRate * 0.05, error))
+                scroll = (sample, now, next.sampleRate + correction, now)
+            }
+        } else {
+            scroll = nil
+        }
+        trace = next
+    }
+
+    /// 流れる形のいまの右端（上流 scopeDisplayEnd）。届いた末尾は越えない。
+    private func displayEnd(now: Double, envelope: ETScopeEnvelope,
+                            scroll: (sample: Double, time: Double, rate: Double, receivedAt: Double)) -> Double {
+        min(Double(envelope.endSample), scroll.sample + max(0, now - scroll.time) * scroll.rate)
+    }
+
+    private func graph(now: Double) -> some View {
+        let trace = self.trace
         let span = trace?.spanMilliseconds ?? displayTime
+        let end: Double? = {
+            guard let envelope = trace?.envelope, envelope.rolling, let scroll else { return nil }
+            return displayEnd(now: now, envelope: envelope, scroll: scroll)
+        }()
         let scale = ETScopeScale(displayLevel: displayLevel, verticalOffset: verticalOffset)
 
         return GraphCanvas(
@@ -161,7 +227,12 @@ private struct OscilloscopeGraph: View {
             caption: caption(trace),
             clipsContent: true,
             draw: { context, plot in
-                guard let trace = trace, trace.values.count > 1 else { return }
+                guard let trace = trace else { return }
+                if let envelope = trace.envelope {
+                    Self.drawEnvelope(&context, plot, trace: trace, envelope: envelope, end: end)
+                    return
+                }
+                guard trace.values.count > 1 else { return }
                 var path = Path()
                 for i in trace.values.indices {
                     let point = CGPoint(x: plot.x(trace.milliseconds(at: i)),
@@ -188,7 +259,7 @@ private struct OscilloscopeGraph: View {
                         DragGesture(minimumDistance: 0)
                             .onChanged { touch in
                                 let ms = plot.xAxis.clamp(plot.xValue(at: touch.location.x))
-                                probe = trace?.probe(atMilliseconds: ms)
+                                probe = trace?.probe(atMilliseconds: ms, span: span, end: end)
                             }
                             .onEnded { _ in probe = nil })
             })
@@ -206,8 +277,33 @@ private struct OscilloscopeGraph: View {
         guard let trace = trace else { return "Waiting for trigger" }
         var text = trace.triggered ? "Triggered" : "Free run"
         text += " · " + String(format: "%.2f ms", trace.spanMilliseconds)
-        text += trace.encoding == 0 ? " · raw" : " · M4"
+        text += trace.encoding == 0 ? " · raw" : (trace.encoding == 1 ? " · M4" : " · envelope")
         return text
+    }
+
+    /// 最小と最大の帯を 1 ピクセルずつ塗る。隣の帯とは細くても繋ぐ（paintEnvelopeColumns）。
+    private static func drawEnvelope(_ context: inout GraphicsContext, _ plot: ETPlot,
+                                     trace: ETScopeTrace, envelope: ETScopeEnvelope, end displayEnd: Double?) {
+        let width = max(1, Int(plot.rect.width.rounded(.up)))
+        let samplesPerPixel = Double(trace.sampleCount) / Double(width)
+        // 流れる形は右端が時計の位置（無ければ endSample）。トリガの窓は 0 から。
+        let origin = envelope.rolling
+            ? (displayEnd ?? Double(envelope.endSample)) - Double(trace.sampleCount) : 0
+        var path = Path()
+        var previous: (top: CGFloat, bottom: CGFloat)?
+        for x in 0..<width {
+            let start = origin + Double(x) * samplesPerPixel
+            let end = min(start + samplesPerPixel, Double(envelope.endSample))
+            guard let range = envelope.range(from: start, to: end) else { previous = nil; continue }
+            let top = plot.y(Double(range.maximum))
+            let bottom = plot.y(Double(range.minimum))
+            let joinedTop = previous.map { min(top, $0.bottom) } ?? top
+            let joinedBottom = previous.map { max(bottom, $0.top) } ?? bottom
+            path.addRect(CGRect(x: plot.rect.minX + CGFloat(x), y: joinedTop - 0.5,
+                                width: 1, height: max(1, joinedBottom - joinedTop + 1)))
+            previous = (top, bottom)
+        }
+        context.fill(path, with: ETGraphShading.curve)
     }
 
     // MARK: 横の目盛り
@@ -225,7 +321,9 @@ private struct OscilloscopeGraph: View {
             let fraction = Double(i) / Double(timeDivisions)
             let inner = i != 0 && i != timeDivisions
             return ETAxisTick(span * fraction,
-                              inner ? String(format: "%.2f ms", displayTime * fraction) : nil)
+                              inner ? (displayTime >= 1000
+                                        ? String(format: "%.2f s", displayTime / 1000 * fraction)
+                                        : String(format: "%.2f ms", displayTime * fraction)) : nil)
         }
         return ETAxis(scale: .linear, lower: 0, upper: span, ticks: ticks)
     }
@@ -253,6 +351,8 @@ struct ETScopeMillisecondRow: View {
     let step: Double
     /// 数値欄の小数桁。上流 toFixed と同じ。
     let decimals: Int
+    /// 対数のつまみ（2.14.0 の Display Time。1〜10000 ms を createParameterControl の logarithmic で）。
+    var logarithmic = false
 
     @ObservedObject var dsp: EffeTuneDSP
     @Environment(\.etGraphOnly) private var graphOnly
@@ -296,7 +396,16 @@ struct ETScopeMillisecondRow: View {
                 valueField
             }
             let b = bounds
-            if b.hi > b.lo {
+            if b.hi > b.lo && logarithmic && b.lo > 0 {
+                // 位置 0〜100 = log(値 / 下限) / log(上限 / 下限)。値は刻みに丸める。
+                Slider(value: Binding(
+                    get: { 100 * log(min(max(milliseconds, b.lo), b.hi) / b.lo) / log(b.hi / b.lo) },
+                    set: { position in
+                        let value = b.lo * pow(b.hi / b.lo, position / 100)
+                        set(step > 0 ? (value / step).rounded() * step : value)
+                    }),
+                       in: 0...100)
+            } else if b.hi > b.lo {
                 Slider(value: Binding(get: { min(max(milliseconds, b.lo), b.hi) },
                                       set: { set($0) }),
                        in: b.lo...b.hi, step: step)
@@ -408,15 +517,47 @@ struct ETScopeProbe {
     let amplitude: Double
 }
 
+/// 版 3 の envelope（2.14.0）。桶ごとの最小と最大。
+struct ETScopeEnvelope {
+    /// free run の流れる形。桶は endSample で終わる直近のもの。
+    let rolling: Bool
+    /// 桶 1 つの標本数。トリガの窓は sampleCount / 桶の数（割り切れないこともある）。
+    let bucketSamples: Double
+    /// 最後の標本の次の番号。トリガの窓は sampleCount。
+    let endSample: UInt64
+    /// 最初の桶の通し番号（流れる形）。トリガの窓は 0。
+    let firstBucket: Int64
+    let minimums: [Float]
+    let maximums: [Float]
+
+    /// 標本の範囲 [from, to) にかかる桶の最小と最大。範囲が桶の外なら nil。
+    func range(from start: Double, to end: Double) -> (minimum: Float, maximum: Float)? {
+        let firstSample = Double(firstBucket) * bucketSamples
+        guard end > firstSample, start < Double(endSample), end > start else { return nil }
+        let count = minimums.count
+        let first = max(0, Int((start / bucketSamples).rounded(.down)) - Int(firstBucket))
+        let last = min(count - 1, Int((end / bucketSamples).rounded(.up)) - Int(firstBucket) - 1)
+        guard first <= last else { return nil }
+        var low = Float.greatestFiniteMagnitude, high = -Float.greatestFiniteMagnitude
+        for bucket in first...last {
+            low = min(low, minimums[bucket])
+            high = max(high, maximums[bucket])
+        }
+        return (low, high)
+    }
+}
+
 struct ETScopeTrace {
 
     let sampleRate: Double
     let sampleCount: Int
     let triggered: Bool
     let encoding: UInt8
-    /// 描く点。元の標本の番号（M4 では飛び飛びになる）。
+    /// 描く点。元の標本の番号（M4 では飛び飛びになる）。envelope のときは空。
     let indices: [UInt32]
     let values: [Float]
+    /// 版 3 の長い窓。あるときは点ではなくこちらを描く。
+    let envelope: ETScopeEnvelope?
 
     var spanMilliseconds: Double {
         Double(sampleCount) / sampleRate * 1000
@@ -427,7 +568,17 @@ struct ETScopeTrace {
     }
 
     /// 触った時刻に一番近い点。番号は増える一方なので、離れ始めたら打ち切ってよい。
-    func probe(atMilliseconds ms: Double) -> ETScopeProbe? {
+    /// envelope は触った 1 ピクセルの桶の最大を読む。
+    func probe(atMilliseconds ms: Double, span: Double, end displayEnd: Double? = nil) -> ETScopeProbe? {
+        if let envelope {
+            let origin = envelope.rolling
+                ? (displayEnd ?? Double(envelope.endSample)) - Double(sampleCount) : 0
+            let sample = origin + ms / 1000 * sampleRate
+            let width = Double(sampleCount) / 400
+            guard let range = envelope.range(from: sample, to: sample + max(1, width)) else { return nil }
+            return ETScopeProbe(milliseconds: ms, amplitude: Double(abs(range.maximum) >= abs(range.minimum)
+                                                                    ? range.maximum : range.minimum))
+        }
         guard !values.isEmpty else { return nil }
         var best = 0
         var bestDistance = Double.greatestFiniteMagnitude
@@ -445,7 +596,13 @@ struct ETScopeTrace {
     }
 
     init?(_ frame: ETFrame?) {
-        guard let frame = frame, frame.matches(version: 2), frame.hasPayload(atLeast: 20) else { return nil }
+        guard let frame = frame else { return nil }
+        if frame.matches(version: 3) {
+            guard let parsed = Self.envelope(frame) else { return nil }
+            self = parsed
+            return
+        }
+        guard frame.matches(version: 2), frame.hasPayload(atLeast: 20) else { return nil }
 
         let payload = frame.payloadView
         guard let rate = payload.f32(at: 0),
@@ -481,6 +638,60 @@ struct ETScopeTrace {
         sampleCount = count
         triggered = flags & 1 != 0
         self.encoding = encoding
+        envelope = nil
+    }
+
+    private init(sampleRate: Double, sampleCount: Int, triggered: Bool, envelope: ETScopeEnvelope) {
+        self.sampleRate = sampleRate
+        self.sampleCount = sampleCount
+        self.triggered = triggered
+        encoding = 2
+        indices = []
+        values = []
+        self.envelope = envelope
+    }
+
+    /// 版 3（parseDspScopeTelemetryFrame の formatVersion 3 の門と同じ）。
+    private static func envelope(_ frame: ETFrame) -> ETScopeTrace? {
+        let payload = frame.payloadView
+        guard frame.hasPayload(atLeast: 28),
+              let rate = payload.f32(at: 0), let rawCount = payload.u32(at: 4),
+              let triggerOffset = payload.u32(at: 8), let bucketCount = payload.u16(at: 12),
+              let encoding = payload.u8(at: 14), let flags = payload.u8(at: 15),
+              let bucketSamples = payload.u32(at: 16),
+              let endLow = payload.u32(at: 20), let endHigh = payload.u32(at: 24) else { return nil }
+        let count = Int(rawCount), buckets = Int(bucketCount)
+        guard encoding == 2, rate.isFinite, rate > 0, count > 2048,
+              Double(count) <= (Double(rate) * 10).rounded(.up),
+              triggerOffset < rawCount, buckets >= 1, buckets <= 8188,
+              flags & ~UInt8(3) == 0, payload.count == 28 + buckets * 8 else { return nil }
+        let endSample = UInt64(endLow) | UInt64(endHigh) << 32
+        let rolling = flags & 2 != 0
+        if rolling {
+            let expected = (count + 4095) / 4096
+            guard Int(bucketSamples) == expected, endSample >= 1, endSample < (1 << 53),
+                  UInt64(buckets) <= (endSample + UInt64(bucketSamples) - 1) / UInt64(bucketSamples),
+                  flags & 1 == 0 else { return nil }
+        } else {
+            guard bucketSamples == 0, endSample == 0, buckets == 4096 else { return nil }
+        }
+        var minimums = [Float](), maximums = [Float]()
+        minimums.reserveCapacity(buckets)
+        maximums.reserveCapacity(buckets)
+        for bucket in 0..<buckets {
+            guard let low = payload.f32(at: 28 + bucket * 8), let high = payload.f32(at: 32 + bucket * 8),
+                  low.isFinite, high.isFinite, low <= high else { return nil }
+            minimums.append(low)
+            maximums.append(high)
+        }
+        let first = rolling ? Int64((endSample - 1) / UInt64(bucketSamples)) - Int64(buckets) + 1 : 0
+        let envelope = ETScopeEnvelope(
+            rolling: rolling,
+            bucketSamples: rolling ? Double(bucketSamples) : Double(count) / Double(buckets),
+            endSample: rolling ? endSample : UInt64(count),
+            firstBucket: first, minimums: minimums, maximums: maximums)
+        return ETScopeTrace(sampleRate: Double(rate), sampleCount: count, triggered: flags & 1 != 0,
+                            envelope: envelope)
     }
 
     /// 512 の桶を点の列へ戻す。first → （min と max を標本の番号の順に）→ last。

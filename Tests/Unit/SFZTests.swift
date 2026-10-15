@@ -129,6 +129,7 @@ final class SFZTests: XCTestCase {
             XCTAssertEqual(result.diagnostics.excludedOpcodes, strings(diag["excludedOpcodes"]), "\(name) excluded")
             XCTAssertEqual(result.diagnostics.missingSamples, strings(diag["missingSamples"]), "\(name) missing")
             XCTAssertEqual(result.diagnostics.invalidRegions, strings(diag["invalidRegions"]), "\(name) invalid")
+            XCTAssertEqual(result.diagnostics.adjustedEnvelopes, strings(diag["adjustedEnvelopes"]), "\(name) envelopes")
             let warnings = (expected["warnings"] as! [[String: Any]]).map {
                 ETSFZWarning(code: $0["code"] as! String, count: ($0["count"] as! NSNumber).intValue)
             }
@@ -354,6 +355,7 @@ final class SFZTests: XCTestCase {
             XCTAssertEqual(result.id, entry["id"] as? String, "\(name) 鍵（PC の EffeTune と同じになること）")
             XCTAssertEqual(result.name, entry["name"] as? String, name)
             XCTAssertEqual(result.regionCount, (entry["regionCount"] as! NSNumber).intValue, name)
+            XCTAssertEqual(result.bank.count, (entry["size"] as! NSNumber).intValue, "\(name) 入れ物の大きさ")
             XCTAssertEqual(result.bank, Data(base64Encoded: expected["bank"] as! String), "\(name) 入れ物")
             XCTAssertEqual(Data(result.prepared.asset.payload), Data(base64Encoded: expected["payload"] as! String),
                            "\(name) 資産")

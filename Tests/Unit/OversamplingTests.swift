@@ -43,9 +43,10 @@ final class OversamplingTests: XCTestCase {
     /// **os を数で持つものは全部表に載っている。**
     /// 載っていないと 1〜8（16）のスライダーになり、3/5/6/7 を選べてしまう。
     /// Tube Simulator の os は Output Circuit の enum なので対象外。
-    /// SFZ Note Player（2.13.0）の os は Octave Shift（-2〜2）で、オーバーサンプリングでない。
+    /// SFZ Note Player（2.13.0）の os は Octave Shift（-2〜2）、Analog Meter（2.14.0）の os は Overshoot（%）で、
+    /// どちらもオーバーサンプリングでない。
     func testEveryNumericOversamplingIsInTheTable() {
-        for s in ETCatalog where s.type != "SFZNotePlayerPlugin" {
+        for s in ETCatalog where s.type != "SFZNotePlayerPlugin" && s.type != "AnalogMeterPlugin" {
             for p in s.params where p.key == "os" {
                 guard case .number = p.kind else { continue }
                 XCTAssertNotNil(ETAllowedValues.upstream(type: s.type, key: "os"),

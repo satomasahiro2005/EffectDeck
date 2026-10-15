@@ -55,8 +55,10 @@ struct RoomEQView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !graphOnly { measurement }
-            notice
+            // 測定・状態の行・応答の図は手元で測って設計したもの。PC の鎖を編集しているあいだは
+            // 出さない（上流 2.14.0 の local-audio-only）。
+            if !graphOnly { measurement.etLocalAudioOnly() }
+            notice.etLocalAudioOnly()
             if !graphOnly {
                 settings
 
@@ -67,7 +69,7 @@ struct RoomEQView: View {
                     }
                 }
             }
-            responseGraph
+            responseGraph.etLocalAudioOnly()
         }
         .etRemembers($responseView, key: "roomEQ.graph", node: node.id)
         .etRemembers($previewChannel, key: "roomEQ.previewChannel", node: node.id)
@@ -324,9 +326,9 @@ struct RoomEQView: View {
     /// チャンネルの名前は段の Ch の先頭から数える（room_eq.js:1318-1331 の _channelStartIndex）。
     private func previewChannelRow(count: Int, selected: Int) -> some View {
         HStack {
-            Text("Preview Channel").font(.system(size: 14))
+            Text("Graph Preview Ch").font(.system(size: 14))
             Spacer(minLength: 8)
-            Picker("Preview Channel", selection: Binding(get: { selected },
+            Picker("Graph Preview Ch", selection: Binding(get: { selected },
                                                          set: { previewChannel = $0 })) {
                 ForEach(0..<count, id: \.self) { i in
                     Text("Ch \(channelStart + i)").tag(i)

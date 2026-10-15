@@ -5,10 +5,11 @@
 //
 //  上流は plugins/analyzer/note_spectrogram.js の parseTelemetryFrame（:342-412）。
 //
-//  テレメトリ: frameType 24、formatVersion 5（2.13.0。2.12.0 までは 3、3548 バイト）。
+//  テレメトリ: frameType 24、formatVersion 6（2.14.0。9192 バイト。2.13.0 の 5 は 8840 バイトで、
+//  末尾の音程のずれが無い。PC の 2.13.0 から写した枠も読めるように 5 も受ける）。
 //  dsp/plugins/analyzer/note_spectrogram/spectral_analysis.h の kRevisionAgeOffset 以下。
 //
-//  ペイロードの並び（8840 バイトちょうど）:
+//  ペイロードの並び（版 6 は 9192 バイトちょうど）:
 //      0     f32 sampleRate
 //      4     f32 timeSeconds
 //      8     u16 pitchCount     440
@@ -23,6 +24,7 @@
 //      3552  f32 × 440          8 枠前の確からしさの直し（age が 0 なら無い）
 //      5312  u32 age + f32 × 440 at 5316   2 枠前の直し（age 0 か 2）
 //      7076  u32 age + f32 × 440 at 7080   4 枠前の直し（age 0 か 4）
+//      8840  f32 × 88           鍵ごとの音程のずれ（セント、版 6）
 //  直しは frameIndex - age の枠の確からしさを置き換える（上流 _applyFrameRevision）。dB は直さない。
 
 import Foundation
@@ -37,13 +39,17 @@ enum ETNoteFrameLayout {
     static let firstMidi = 21
 
     static let frameType: UInt16 = 24
-    static let version: UInt16 = 5
+    static let version: UInt16 = 6
+    static let legacyVersion: UInt16 = 5
     static let confidenceOffset = 32
     static let levelOffset = confidenceOffset + pitches * 4
     static let revisedOffset = levelOffset + pitches * 4
     static let intermediateOffset = revisedOffset + pitches * 4
     static let revisionBytes = 4 + pitches * 4
-    static let payloadBytes = intermediateOffset + 2 * revisionBytes
+    /// 版 5 の長さ（8840）。音程のずれはこの後ろ。
+    static let legacyPayloadBytes = intermediateOffset + 2 * revisionBytes
+    static let centsOffset = legacyPayloadBytes
+    static let payloadBytes = centsOffset + notes * 4
 
     /// 直しの面。(age, age の位置, 確からしさの位置)。並びは上流の MULTI_F0_REVISION_PLANES（:20-24）。
     static let revisionPlanes: [(age: UInt32, ageOffset: Int, levelsOffset: Int)] = [
@@ -95,11 +101,16 @@ struct ETNoteSnapshot {
     let level: [Float]
     /// age 2・4・8 の直しのうち、この枠が運んでいるもの。
     let revisions: [ETNoteRevision]
+    /// 鍵ごとの音程のずれ（セント、88 個）。版 5 の枠では全部 0。
+    let pitchCents: [Float]
 
     init?(_ frame: ETFrame?) {
-        guard let frame = frame, frame.type == ETNoteFrameLayout.frameType,
-              frame.matches(version: ETNoteFrameLayout.version),
-              frame.hasPayload(bytes: ETNoteFrameLayout.payloadBytes) else { return nil }
+        guard let frame = frame, frame.type == ETNoteFrameLayout.frameType else { return nil }
+        let current = frame.matches(version: ETNoteFrameLayout.version)
+            && frame.hasPayload(bytes: ETNoteFrameLayout.payloadBytes)
+        let legacy = frame.matches(version: ETNoteFrameLayout.legacyVersion)
+            && frame.hasPayload(bytes: ETNoteFrameLayout.legacyPayloadBytes)
+        guard current || legacy else { return nil }
 
         let payload = frame.payloadView
         guard let rate = payload.f32(at: 0),
@@ -141,6 +152,12 @@ struct ETNoteSnapshot {
                   values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else { return nil }
             revisions.append(ETNoteRevision(age: age, confidence: values))
         }
+        var cents = [Float](repeating: 0, count: ETNoteFrameLayout.notes)
+        if current {
+            guard let values = payload.floats(at: ETNoteFrameLayout.centsOffset, count: ETNoteFrameLayout.notes),
+                  values.allSatisfy(\.isFinite) else { return nil }
+            cents = values
+        }
 
         sampleRate = Double(rate)
         time = Double(seconds)
@@ -150,5 +167,99 @@ struct ETNoteSnapshot {
         confidence = fineConfidence
         level = fineLevel
         self.revisions = revisions
+        pitchCents = cents
+    }
+}
+
+// MARK: - 音色（2.14.0）
+
+/// 音ごとの音色の知らせ（型 31・版 1・80 バイト）。上流 note_spectrogram.js の handleTimbreTelemetry。
+///      0  f32 sampleRate / 4 f32 timeSeconds / 8 f32 hopSeconds
+///     12  u32 generation（Note Spectrogram の枠と同じ世代のものだけ使う）
+///     16  u32 frameIndex / 20 u32 noteId（0 は無効）/ 24 u32 midi（21〜108）
+///     28  u32 event（1 = 始まり、2 = 判定、3 = 終わり）
+///     32  u32 startFrameIndex / 36 u32 endFrameIndex（0xffffffff はまだ鳴っている）
+///     40  f32 × 9 確からしさ（判定のときだけ。合計 1）/ 76 u32 0
+struct ETNoteTimbreEvent: Equatable {
+    enum Kind: UInt32 { case start = 1, result = 2, end = 3 }
+
+    let generation: UInt32
+    let frameIndex: UInt32
+    let noteId: UInt32
+    let midi: Int
+    let kind: Kind
+    let startFrameIndex: UInt32
+    let endFrameIndex: UInt32
+    /// 判定のときだけ。並びは ETNoteTimbre.classes。
+    let probabilities: [Float]?
+
+    static let frameType: UInt16 = 31
+    static let byteCount = 80
+    static let openEnd: UInt32 = 0xffff_ffff
+
+    init?(_ frame: ETFrame) {
+        guard frame.type == Self.frameType, frame.matches(version: 1),
+              frame.hasPayload(bytes: Self.byteCount) else { return nil }
+        let p = frame.payloadView
+        guard let rate = p.f32(at: 0), let time = p.f32(at: 4), let hop = p.f32(at: 8),
+              let generation = p.u32(at: 12), let frameIndex = p.u32(at: 16), let noteId = p.u32(at: 20),
+              let midi = p.u32(at: 24), let code = p.u32(at: 28), let start = p.u32(at: 32),
+              let end = p.u32(at: 36), let tail = p.u32(at: 76),
+              rate.isFinite, rate > 0, time.isFinite, time >= 0, hop.isFinite, hop > 0,
+              noteId != 0, midi >= 21, midi <= 108, let kind = Kind(rawValue: code), tail == 0,
+              frameIndex &- start < 0x8000_0000 else { return nil }
+        var probabilities: [Float]?
+        if kind == .result {
+            guard let values = p.floats(at: 40, count: 9),
+                  values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }),
+                  abs(values.reduce(0, +) - 1) <= 0.001 else { return nil }
+            probabilities = values
+        }
+        self.generation = generation
+        self.frameIndex = frameIndex
+        self.noteId = noteId
+        self.midi = Int(midi)
+        self.kind = kind
+        startFrameIndex = start
+        endFrameIndex = end
+        self.probabilities = probabilities
+    }
+}
+
+/// 音色の分類と色（上流 MULTI_F0_TIMBRE_*）。
+enum ETNoteTimbre {
+    static let classes = ["Bass", "Guitar", "Piano", "Strings", "Wind", "Synth", "Organ", "Other", "Vocal"]
+    static let colors: [(r: Double, g: Double, b: Double)] = [
+        (76, 120, 184), (201, 154, 59), (143, 114, 199), (76, 155, 115), (70, 158, 168),
+        (189, 111, 162), (166, 125, 96), (156, 156, 156), (214, 107, 94),
+    ]
+    /// まだ判定の無い音。
+    static let unclassified: (r: Double, g: Double, b: Double) = (116, 116, 116)
+    /// 判定が付いてから色へ移るまでの描き直しの回数。
+    static let fadeSteps = 3
+
+    /// Highlight の選択肢（値, 表示）。上流 MULTI_F0_HIGHLIGHTS。
+    static let highlights: [(value: String, label: String)] =
+        [("None", "None"), ("Vocal", "Vocal"), ("Bass", "Bass"), ("Other3", "Other (3)")]
+        + classes[1...6].map { ($0, $0) } + [("Other9", "Other (9)")]
+
+    /// 確からしさで混ぜた色（timbreColorMode = Probability）。3 分類では Bass と Vocal 以外を Other の色にする。
+    static func color(_ p: [Float], threeClass: Bool) -> (r: Double, g: Double, b: Double) {
+        var r = 0.0, g = 0.0, b = 0.0
+        for category in 0..<9 {
+            let c = colors[threeClass && category > 0 && category < 8 ? 7 : category]
+            let w = Double(p[category])
+            r += w * c.r; g += w * c.g; b += w * c.b
+        }
+        return (r, g, b)
+    }
+
+    /// その Highlight の確からしさ。Other3 は Bass と Vocal 以外の合計。
+    static func highlightProbability(_ p: [Float]?, target: String) -> Double {
+        guard let p else { return 0 }
+        if target == "Other3" { return Double(p[1..<8].reduce(0, +)) }
+        let name = target == "Other9" ? "Other" : target
+        guard let index = classes.firstIndex(of: name) else { return 0 }
+        return Double(p[index])
     }
 }

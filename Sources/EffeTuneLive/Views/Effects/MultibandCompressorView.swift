@@ -95,6 +95,7 @@ struct MultibandCompressorView: View {
                 caption: "Band \(selected + 1)  in / out")
 
             MultibandCompressorGainReduction(tapId: node.tapId, selected: selected)
+                .etLocalAudioOnly()
 
             if !graphOnly {
                 parameters(selected: selected)

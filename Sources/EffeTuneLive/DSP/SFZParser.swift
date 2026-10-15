@@ -209,9 +209,12 @@ struct ETSFZDiagnostics: Equatable {
     var excludedOpcodes: [String] = []
     var missingSamples: [String] = []
     var invalidRegions: [String] = []
+    /// 0〜100 秒に収めたエンベロープの時間（`道: 鍵=値`、2.14.0）。
+    var adjustedEnvelopes: [String] = []
 
     var isEmpty: Bool {
         ignoredOpcodes.isEmpty && excludedOpcodes.isEmpty && missingSamples.isEmpty && invalidRegions.isEmpty
+            && adjustedEnvelopes.isEmpty
     }
 }
 
@@ -269,6 +272,10 @@ enum ETSFZParser {
     private static let integerKeys: Set<String> = [
         "lokey", "hikey", "lovel", "hivel", "seq_length", "seq_position",
         "pitch_keycenter", "transpose", "offset", "end", "loop_start", "loop_end",
+    ]
+    private static let envelopeTimes: Set<String> = ["ampeg_attack", "ampeg_hold", "ampeg_decay", "ampeg_release"]
+    private static let envelopeDefaults: [String: Double] = [
+        "ampeg_attack": 0, "ampeg_hold": 0, "ampeg_decay": 0, "ampeg_release": 0.001,
     ]
 
     // MARK: 道
@@ -338,17 +345,23 @@ enum ETSFZParser {
     private static func conditionalOpcode(_ key: String, _ value: String) -> Bool {
         if key == "trigger" { return value != "attack" }
         return ETSFZ.matches(key, "^(?:on_)?(?:lo|hi)(?:cc|hdcc|realcc|oncc|bend|chanaft|polyaft|prog|chan|timer|bpm)")
-            || key.hasPrefix("sw_") || key == "sustain_sw" || key == "sostenuto_sw"
+            || key.hasPrefix("sw_")
     }
 
     // MARK: 領域
 
-    private static func normalizeRegion(_ raw: ETSFZScope, samplePath: String, seqGroup: Int) throws -> ETSFZRegion {
+    private static func normalizeRegion(_ raw: ETSFZScope, samplePath: String, seqGroup: Int,
+                                        adjustedEnvelopes: inout Set<String>) throws -> ETSFZRegion {
         var region = ETSFZRegion(sample: samplePath, seqGroup: seqGroup)
         for (key, value) in raw.entries {
             guard supported.contains(key), key != "sample" else { continue }
-            let number: Double = key == "loop_mode" ? (loopModes[value] ?? .nan)
+            var number: Double = key == "loop_mode" ? (loopModes[value] ?? .nan)
                 : (noteKeys.contains(key) ? ETSFZ.midi(value) : ETSFZ.jsNumber(value))
+            // 2.14.0: エンベロープの時間は領域ごと落とさず、0〜100 秒に収めて知らせる（読めない値は既定）。
+            if envelopeTimes.contains(key) && (!number.isFinite || number < 0 || number > 100) {
+                adjustedEnvelopes.insert("\(samplePath): \(key)=\(value)")
+                number = number.isFinite ? (number < 0 ? 0 : 100) : envelopeDefaults[key]!
+            }
             guard number.isFinite else { throw ETSFZError.prepare("Invalid SFZ opcode \(key).") }
             if key == "key" {
                 region.lokey = number
@@ -384,19 +397,21 @@ enum ETSFZParser {
 
     /// 選んだ SFZ を読む。`readText` は道から本文（無ければ nil）、`hasSample` は道の音の有無。
     /// 上流は async。こちらは同じ順序の同期（読み込みは呼び手が別のスレッドで走らせる）。
+    /// `defines` は bank.xml の `<Define>`（ETSFZSource.bankDefines）。SFZ の `#define` より先に入る。
     static func parse(selectedPath inputPath: String,
                       readText: (String) throws -> String?,
                       hasSample: ((String) -> Bool)? = nil,
                       maxBytes: Int = ETSFZ.defaultMaxBytes,
+                      defines sourceDefines: [String: String] = [:],
                       onDiagnostic: ((ETSFZDiagnostics) -> Void)? = nil) throws -> ETSFZParseResult {
         precondition(ETSFZ.isValidMaxBytes(maxBytes), "Invalid SFZ size limit.")
         let selectedPath = try normalizePath(inputPath)
         let directory = selectedPath.contains("/")
             ? String(selectedPath[..<selectedPath.lastIndex(of: "/")!]) : ""
         var dependencies = Set<String>()
-        var defines: [String: String] = [:]
+        var defines = sourceDefines
         var ignoredOpcodes = Set<String>(), excludedOpcodes = Set<String>()
-        var missingSamples = Set<String>(), invalidRegions = Set<String>()
+        var missingSamples = Set<String>(), invalidRegions = Set<String>(), adjustedEnvelopes = Set<String>()
         var includeVisits = 0
         var sourceChars = 0
         var expandedChars = 0
@@ -528,7 +543,6 @@ enum ETSFZParser {
 
         var regions: [ETSFZRegion] = []
         var invalidRegionCount = 0
-        var unsupportedRegionCount = 0
         // control ヘッダは、位置によらず楽器の最初の状態を決める。
         for item in pending {
             let raw = item.raw
@@ -538,6 +552,16 @@ enum ETSFZParser {
                     if ["sw_default", "sw_lokey", "sw_hikey", "sw_label"].contains(key) { continue }
                     if key == "sw_last" {
                         if initialSwitch == nil || ETSFZ.midi(value) != initialSwitch! { excluded.append(key) }
+                        continue
+                    }
+                    if key == "sw_lolast" || key == "sw_hilast" {
+                        let bound = ETSFZ.midi(value)
+                        guard bound == bound.rounded(.towardZero), bound >= 0, bound <= 127 else {
+                            throw ETSFZError.prepare("Invalid SFZ opcode \(key).")
+                        }
+                        if initialSwitch == nil || (key == "sw_lolast" ? initialSwitch! < bound : initialSwitch! > bound) {
+                            excluded.append(key)
+                        }
                         continue
                     }
                     if let cc = ETSFZ.captures(key, "^(lo|hi)cc([0-9]{1,3})$"), ETSFZ.jsNumber(cc[2]) < 128 {
@@ -553,18 +577,21 @@ enum ETSFZParser {
                 }
                 if !excluded.isEmpty {
                     for key in excluded { excludedOpcodes.insert(key) }
-                    let unsupported = excluded.contains { key in
-                        if key == "sw_last" { return initialSwitch == nil }
-                        guard let cc = ETSFZ.captures(key, "^(?:lo|hi)cc([0-9]{1,3})$") else { return true }
-                        return ETSFZ.jsNumber(cc[1]) >= 128
-                    }
-                    if unsupported { unsupportedRegionCount += 1 }
                     continue
                 }
                 guard let sampleValue = raw["sample"], !sampleValue.isEmpty else { continue }
-                let sample = try normalizePath(item.defaultPath + unquote(sampleValue), directory: directory)
-                let region = try normalizeRegion(raw, samplePath: sample, seqGroup: item.seqGroup)
-                if let hasSample, !hasSample(sample) {
+                // `*sine` などは音のファイルでなく作る音（ETSFZGenerator）。道に直さない。
+                let generator = ETSFZGenerator.isGenerator(sampleValue)
+                let sample = generator ? sampleValue
+                    : try normalizePath(item.defaultPath + unquote(sampleValue), directory: directory)
+                var region = try normalizeRegion(raw, samplePath: sample, seqGroup: item.seqGroup,
+                                                 adjustedEnvelopes: &adjustedEnvelopes)
+                if generator {
+                    // 作る音は真ん中の C を基準に、鍵を離すまで鳴り続ける。
+                    region.pitch_keycenter = 60
+                    region.loop_mode = 2
+                }
+                if !generator, let hasSample, !hasSample(sample) {
                     missingSamples.insert(sample)
                     continue
                 }
@@ -579,13 +606,14 @@ enum ETSFZParser {
             ignoredOpcodes: ETSFZ.jsSorted(Array(ignoredOpcodes)),
             excludedOpcodes: ETSFZ.jsSorted(Array(excludedOpcodes)),
             missingSamples: ETSFZ.jsSorted(Array(missingSamples)),
-            invalidRegions: ETSFZ.jsSorted(Array(invalidRegions)))
+            invalidRegions: ETSFZ.jsSorted(Array(invalidRegions)),
+            adjustedEnvelopes: ETSFZ.jsSorted(Array(adjustedEnvelopes)))
         if !diagnostics.isEmpty { onDiagnostic?(diagnostics) }
         var warnings: [ETSFZWarning] = []
         if invalidRegionCount > 0 { warnings.append(ETSFZWarning(code: "invalid-regions", count: invalidRegionCount)) }
         if !missingSamples.isEmpty { warnings.append(ETSFZWarning(code: "missing-samples", count: missingSamples.count)) }
-        if unsupportedRegionCount > 0 {
-            warnings.append(ETSFZWarning(code: "unsupported-regions", count: unsupportedRegionCount))
+        if !adjustedEnvelopes.isEmpty {
+            warnings.append(ETSFZWarning(code: "envelope-times-adjusted", count: adjustedEnvelopes.count))
         }
         return ETSFZParseResult(regions: regions, dependencies: ETSFZ.jsSorted(Array(dependencies)),
                                 diagnostics: diagnostics, warnings: warnings)

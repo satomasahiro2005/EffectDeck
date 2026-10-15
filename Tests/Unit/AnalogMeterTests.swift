@@ -48,8 +48,8 @@ final class AnalogMeterTests: XCTestCase {
 
     func testRejectsMalformedFrames() {
         XCTAssertNil(ETAnalogMeter.parse(nil))
-        // mode が範囲の外・チャンネル 0・17。
-        XCTAssertNil(ETAnalogMeter.parse(frame(mode: 6, channels: [(0, 0)])))
+        // mode が範囲の外（2.14.0 で 6 = Custom が増えた）・チャンネル 0・17。
+        XCTAssertNil(ETAnalogMeter.parse(frame(mode: 7, channels: [(0, 0)])))
         XCTAssertNil(ETAnalogMeter.parse(frame(mode: 0, channels: [])))
         XCTAssertNil(ETAnalogMeter.parse(frame(mode: 0, channels: Array(repeating: (0, 0), count: 17))))
         // flags は Loudness 以外では 0 のみ。

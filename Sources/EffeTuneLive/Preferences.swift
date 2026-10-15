@@ -60,13 +60,6 @@ final class Preferences: ObservableObject {
     @Published var remoteAddress: String {
         didSet { save(remoteAddress, Key.remoteAddress) }
     }
-    /// PC の鎖を編集しているあいだ、Analyzer の図を PC の測定値で描く。既定は切。
-    @Published var remoteMirrorAnalyzers: Bool {
-        didSet {
-            save(remoteMirrorAnalyzers, Key.remoteMirrorAnalyzers)
-            RemoteMirror.shared.telemetryPreferenceChanged()
-        }
-    }
 
     /// しきい値だけが変わったときに呼ばれる。組み直さずに値を差し替える。
     var onSilenceThresholdChange: (() -> Void)?
@@ -100,7 +93,8 @@ final class Preferences: ObservableObject {
         }
         remoteWantsConnection = wantsConnection
         remoteAddress = d.string(forKey: Key.remoteAddress) ?? ""
-        remoteMirrorAnalyzers = d.bool(forKey: Key.remoteMirrorAnalyzers)
+        // 前の版の Mirror Analyzers（2026-10-15 に外した）の控えは捨てる。
+        d.removeObject(forKey: "pref.remoteMirrorAnalyzers")
 
         // **init の代入では didSet が走らない。**
         // そのため、保存値が true でも起動直後だけ画面が落ちていた。
@@ -131,8 +125,6 @@ final class Preferences: ObservableObject {
         if remoteWantsConnection != connect { remoteWantsConnection = connect }
         let address = d.string(forKey: Key.remoteAddress) ?? ""
         if remoteAddress != address { remoteAddress = address }
-        let mirror = d.bool(forKey: Key.remoteMirrorAnalyzers)
-        if remoteMirrorAnalyzers != mirror { remoteMirrorAnalyzers = mirror }
     }
 
     private func save(_ v: Any, _ key: String) {

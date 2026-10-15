@@ -1,8 +1,8 @@
 diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
-index 4d7c9dd..1ac821f 100644
+index d435af9..379cab0 100644
 --- a/dsp/core/engine.cpp
 +++ b/dsp/core/engine.cpp
-@@ -1189,26 +1189,49 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
+@@ -1272,26 +1272,49 @@ et_status Engine::processPipeline(std::uint32_t channel_count, std::uint32_t fra
  
      if (node.external) {
        if (pipeline_external_process_ == nullptr) return ET_ERR_STATE;

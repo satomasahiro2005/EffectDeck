@@ -136,9 +136,16 @@ UI_AFTER = {
 # Adaptive Prediction（2.13.0）の resetToken は Reset を押すたびに増える数。kernel は値が変わったら学習を
 # 捨てる。上流は getSerializableParameters で消し、プリセットの照合からも外す
 # （getPresetComparisonExcludedKeys）。
+# SFZ Note Player（2.14.0）の previewMidi / previewVelocity は鍵盤を押している間だけ鳴らす試し弾きの音。
+# 上流は getParameters に入れず、getWorkletPluginData で worklet へだけ渡す（-1 が鳴らさない）。
 RUNTIME_ONLY = {
     ("TonalBalanceEQPlugin", "measurementPaused"),
     ("AdaptivePredictionEffectPlugin", "resetToken"),
+    ("SFZNotePlayerPlugin", "previewMidi"),
+    # Note Spectrogram（2.14.0）の te は保存しない。上流は Color が Instrument (3)/(9) か Highlight が None 以外の
+    # ときに立てて worklet へだけ渡す（note_spectrogram.js の getWorkletPluginData / noteEventsEnabled）。
+    ("NoteSpectrogramPlugin", "timbreEnabled"),
+    ("SFZNotePlayerPlugin", "previewVelocity"),
 }
 
 

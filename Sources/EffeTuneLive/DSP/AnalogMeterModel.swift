@@ -12,7 +12,7 @@
 //    analog_meter.js:1-2）
 //
 //  ペイロードの並び（analog_meter.js:190-224、dsp/bindings/js/src/telemetry.js:409-461）:
-//      0                u8  mode          0..5（ETAnalogMeter.modes の添字）
+//      0                u8  mode          0..6（ETAnalogMeter.modes の添字。6 = Custom は 2.14.0）
 //      1                u8  channelCount  1..16
 //      2                u16 flags         bit0 = Integrated が有効、bit1 = LRA が有効（Loudness の枠だけ）
 //      4 + 8*ch         f32 needleDb      針の dBFS（バリスティクス済み）
@@ -26,9 +26,13 @@ enum ETAnalogMeter {
 
     // MARK: 定数（analog_meter.js:1-24）
 
-    static let modes = ["VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness"]
+    static let modes = ["VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness", "Custom"]
     static let loudnessMode = 5
+    static let customMode = 6
     static let ppmScales = ["DIN", "BBC", "dB"]
+    /// Custom の検波（DSP の de）と目盛り（表示の dc）。2.14.0 の ANALOG_METER_DETECTORS / DIALS。
+    static let detectors = ["Average Rectified", "RMS", "Sample Peak", "True Peak"]
+    static let dials = ["VU", "DIN", "BBC", "dB", "dBFS"]
     static let ppmBBC = 1
     static let maxChannels = 16
     static let maxColumns = 4
@@ -52,6 +56,8 @@ enum ETAnalogMeter {
         var needle = 0                  // ln（0 = Momentary、1 = Short-term）
         var target: Double = -23        // tg
         var loudnessScale = 0           // ls（0 = EBU +9、1 = EBU +18）
+        var detector = 0                // de（DSP。Custom の検波、detectors の添字）
+        var dial = 0                    // dc（Custom の目盛り、dials の添字）
 
         /// 上流の setParameters と同じ寄せ方（analog_meter.js:326-336）。
         /// 数でないものは前の値のまま、範囲の外は端、列挙は決まった値だけ。
@@ -63,24 +69,43 @@ enum ETAnalogMeter {
     /// 行ごとに、どのモードで効くか（ANALOG_METER_ACTIVE_MODES、analog_meter.js:46-57）。
     /// 効かない行は上流では隠れる（syncControlStates、:415-421）。
     private static let activeModes: [String: [String]] = [
-        "it": ["RMS"],
+        "it": ["RMS", "Custom"],
         "at": ["PPM"],
-        "rt": ["PPM", "Sample Peak", "True Peak"],
-        "rl": ["VU", "PPM", "RMS"],
-        "rg": ["PPM", "RMS", "Sample Peak", "True Peak"],
+        "rt": ["PPM", "Sample Peak", "True Peak", "Custom"],
+        "rl": ["VU", "PPM", "RMS", "Custom"],
+        "rg": ["PPM", "RMS", "Sample Peak", "True Peak", "Custom"],
         "sc": ["PPM"],
-        "ph": ["PPM", "RMS", "Sample Peak", "True Peak"],
+        "ph": ["PPM", "RMS", "Sample Peak", "True Peak", "Custom"],
         "ln": ["Loudness"],
         "tg": ["Loudness"],
         "ls": ["Loudness"],
+        "de": ["Custom"], "nr": ["Custom"], "os": ["Custom"], "dc": ["Custom"],
     ]
 
-    /// その行がいまのモードで効くか（isAnalogMeterParameterActive、analog_meter.js:59-63）。
+    /// その行がいまのモードで効くか（isAnalogMeterParameterActive）。
+    /// Custom では検波と目盛りの選び方で、効かない行がある（RMS 以外の Integration など）。
     static func isActive(_ key: String, settings: Settings) -> Bool {
         let mode = modes.indices.contains(settings.mode) ? modes[settings.mode] : modes[0]
+        if mode == "Custom" {
+            let detector = detectors.indices.contains(settings.detector) ? detectors[settings.detector] : detectors[0]
+            switch key {
+            case "it": return detector == "RMS"
+            case "rt": return detector == "Sample Peak" || detector == "True Peak"
+            case "rl": return settings.dial != 4
+            case "rg": return [1, 3, 4].contains(settings.dial)
+            default: break
+            }
+        }
         // BBC の針は 1〜7 の固定の目盛りなので、Range は何も決めない。
         if key == "rg" && mode == "PPM" && settings.ppmScale == ppmBBC { return false }
         return activeModes[key]?.contains(mode) ?? false
+    }
+
+    /// 行を出すか（isAnalogMeterParameterVisible）。Custom は効く場面のある行を全部出したまま、
+    /// 検波と目盛りの選び方で効かない行を薄くする（isActive が偽）。ほかのモードは効く行だけ出す。
+    static func isVisible(_ key: String, settings: Settings) -> Bool {
+        if settings.mode == customMode { return activeModes[key]?.contains("Custom") ?? false }
+        return isActive(key, settings: settings)
     }
 
     /// ピークホールドを持つモード（ANALOG_METER_ACTIVE_MODES.ph）。
@@ -148,7 +173,15 @@ enum ETAnalogMeter {
 
     static func scale(mode: String, settings s: Settings) -> Scale {
         let rl = s.reference, rg = s.range
-        if mode == "VU" {
+        // 目盛りの形。Custom は Dial で選ぶ（dB は RMS の目盛り、dBFS は検波が True Peak なら dBTP）。
+        var style = mode == "PPM" ? "PPM \(ppmScales[ppmScales.indices.contains(s.ppmScale) ? s.ppmScale : 0])" : mode
+        if mode == "Custom" {
+            let peak = detectors.indices.contains(s.detector) && detectors[s.detector] == "True Peak"
+                ? "True Peak" : "Sample Peak"
+            let styles = ["VU", "PPM DIN", "PPM BBC", "RMS", peak]
+            style = styles[styles.indices.contains(s.dial) ? s.dial : 0]
+        }
+        if style == "VU" {
             let full = pow(10, 3.0 / 20)
             return Scale(
                 unit: "VU", min: -20, max: 3, reference: 0, redFrom: 0,
@@ -160,21 +193,21 @@ enum ETAnalogMeter {
                 },
                 format: { "\(signed($0)) VU" })
         }
-        if mode == "PPM" && s.ppmScale == 2 {
+        if style == "PPM dB" {
             return Scale(
                 unit: "dB", min: -rg, max: 5, reference: 0, redFrom: 0,
                 toLabel: { $0 - rl }, positionOverride: nil,
                 ticks: linearTicks(-rg, 5, rg > 30 ? 10 : 5, extra: [0, 5]),
                 format: { "\(signed($0)) dB" })
         }
-        if mode == "PPM" && s.ppmScale != ppmBBC {
+        if style == "PPM DIN" {
             return Scale(
                 unit: "dB", min: -rg, max: 5, reference: -9, redFrom: 0,
                 toLabel: { $0 - (rl + 9) }, positionOverride: nil,
                 ticks: linearTicks(-rg, 5, 10, extra: [-9, -5, 0, 5], unlabeled: [-10]),
                 format: { "\(signed($0)) dB" })
         }
-        if mode == "PPM" {
+        if style == "PPM BBC" {
             return Scale(
                 unit: "", min: 1, max: 7, reference: 4, redFrom: 6,
                 // 目盛り 2〜7 は 4 dB おき、1 は 2 の 6 dB 下。
@@ -186,7 +219,7 @@ enum ETAnalogMeter {
                 ticks: (1...7).map { Tick(value: Double($0), label: String($0)) },
                 format: { "Mark \($0 < 0 ? "0.0" : String(format: "%.1f", $0))" })
         }
-        if mode == "RMS" {
+        if style == "RMS" {
             return Scale(
                 unit: "dB", min: -rg, max: -rl, reference: 0,
                 redFrom: nil,
@@ -194,8 +227,8 @@ enum ETAnalogMeter {
                 ticks: linearTicks(-rg, -rl, 10, extra: [0]),
                 format: { "\(signed($0)) dB" })
         }
-        if mode == "Sample Peak" || mode == "True Peak" {
-            let unit = mode == "True Peak" ? "dBTP" : "dBFS"
+        if style == "Sample Peak" || style == "True Peak" {
+            let unit = style == "True Peak" ? "dBTP" : "dBFS"
             return Scale(
                 unit: unit, min: -rg, max: 0, reference: nil, redFrom: nil,
                 toLabel: { $0 }, positionOverride: nil,

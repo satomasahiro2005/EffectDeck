@@ -779,17 +779,22 @@ private struct TubeSimulatorHUD: View {
     private struct Reading: Identifiable {
         let label: String
         let value: String
+        /// 手元の音から計った値か。偽の 2 つ（入力の基準）は設定から出るので、PC の鎖でも出す（上流 2.14.0）。
+        let measured: Bool
         var id: String { label }
 
-        init(_ label: String, _ value: String) {
+        init(_ label: String, _ value: String, measured: Bool = true) {
             self.label = label
             self.value = value
+            self.measured = measured
         }
     }
 
+    @Environment(\.etLocalAudio) private var localAudio
+
     private var readouts: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(readings) { reading in
+            ForEach(readings.filter { localAudio || !$0.measured }) { reading in
                 HStack(spacing: 6) {
                     Text(reading.label)
                         .font(.system(size: 9, weight: .semibold))
@@ -804,10 +809,12 @@ private struct TubeSimulatorHUD: View {
                         .minimumScaleFactor(0.6)
                 }
             }
-            Text(safetyLine)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if localAudio {
+                Text(safetyLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -831,8 +838,8 @@ private struct TubeSimulatorHUD: View {
                     Self.stereoFixed(d.map { $0.left.vak2 + $0.left.vk2 - $0.left.vbPlus },
                                      d.map { $0.right.vak2 + $0.right.vk2 - $0.right.vbPlus },
                                      "V", digits: 2, integerDigits: 3)),
-            Reading("INPUT REFERENCE (0 dBFS)", inputReferenceText),
-            Reading("STAGE 1 EXTERNAL INPUT (0 dBFS)", stage1ExternalInputText),
+            Reading("INPUT REFERENCE (0 dBFS)", inputReferenceText, measured: false),
+            Reading("STAGE 1 EXTERNAL INPUT (0 dBFS)", stage1ExternalInputText, measured: false),
             Reading("POWER LTP BALANCE",
                     Self.stereoFixed(l?.ltpBalanceV, r?.ltpBalanceV,
                                      "V", digits: 2, integerDigits: 3)),

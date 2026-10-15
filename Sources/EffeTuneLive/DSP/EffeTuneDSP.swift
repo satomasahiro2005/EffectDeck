@@ -51,6 +51,12 @@ final class EffeTuneDSP: ObservableObject {
     /// そうしたのは、既に端末に残っている `expanded` をそのまま生かすため。
     @Published var collapsedFully: Set<UUID> = []
 
+    /// SFZ Note Player の図を触って試し弾きしている間。無音でも休ませない（AudioIO.refreshGateIdle）。
+    /// 上流は 'sfz-note-preview' の lease で force-active にする（sfz_note_player.js の _bindPreview）。
+    var sfzPreviewing = false {
+        didSet { if sfzPreviewing != oldValue { AudioIO.shared.refreshGateIdle() } }
+    }
+
     /// restore() の最中だけ true。読み込みで入れた値を書き戻さないため。
     private var restoring = false
     @Published private(set) var ready = false

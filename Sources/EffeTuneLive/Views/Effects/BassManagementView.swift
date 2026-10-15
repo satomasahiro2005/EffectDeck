@@ -113,7 +113,7 @@ private struct BassManagementBody: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                statusRow(s)
+                statusRow(s).etLocalAudioOnly()
             }
         }
         .onAppear { sync() }

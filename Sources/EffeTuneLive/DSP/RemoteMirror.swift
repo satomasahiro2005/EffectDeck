@@ -50,8 +50,8 @@
 //    bypass      全体のバイパス
 //    listPresets / getPreset / savePreset   PC のプリセットの写し（presetsChanged でも）と、PC への足し込み
 //    listIRs / getIR / putIR               同じく IR（irsChanged でも）。512 KiB ずつ base64 で
-//    telemetry   PC のアナライザの測定値を受ける入切（Mirror Analyzers）。受けた枠は Telemetry へ差し込む
-//                PC が overlays を持てば PEQ の重ね表示の前後も受け、手元の探りの tap へ差し込む
+//    selectIR    PC の IR Library から IR Reverb の段に入れる（2.14.0 の irSelection。2 本組の IR も選べる）。
+//                段は sync1 の state の ids（PC の段の id）と epoch・slot で指す
 //
 //  **返事は seq で待つ**（request）。データの返事（presets・preset・state）は ack の後に同じ seq で来る。
 //  getIR だけは塊（irChunk）が先で ack が最後。
@@ -71,12 +71,9 @@
 //  だけで、足すこと自体は止めない。段の番号がずれるので、params は最後に送った鎖の対応表で
 //  PC の番号へ直して送る。
 //
-//  **PC のアナライザの測定値を映す（telemetry。PC が hello の features に "telemetry" を出すときだけ）。**
-//  編集しているあいだ鳴っているのは PC なので、Analyzer の図は PC の枠で描く。
-//  PC は段ごと・種類ごとに最新の枠だけを 15 fps で送ってくる（index は PC の鎖の番号）。
-//  sentMap を裏返して手元の段を引き、名前が合う Analyzer の段だけ tapId を付け替えて
-//  Telemetry.inject へ入れる。映している tap は Telemetry.setMirrored で知らせ、手元の枠は捨てる。
-//  背景に回ったら止める（setAppActive）。PC は誰も受けていなければ枠を作らない。
+//  **PC の測定値は受けない。**公式の EffeTune は測定値を送らない（remote-v1 に telemetry が無い）ので、
+//  編集しているあいだの Analyzer の図は沈める（ETRemoteMeasurementDim）。前は Mirror Analyzers で
+//  自前の PC から受けていたが、公式に無いので外した（2026-10-15）。
 //
 //  音のスレッドには触らない。ここは全部メインで、通信は URLSession が別のスレッドで持つ。
 //  IR のファイルの読み書きと鍵の計算はメインの外（Task.detached）。
@@ -127,8 +124,6 @@ final class RemoteMirror: ObservableObject {
     /// 版は出さない（つながっていないのに並べると、つながっているように読める）。
     /// つないだら書き換え、別の PC を読んだ・Forget したら消す。
     @Published private(set) var lastHost: ETRemoteLastHost? = RemoteMirror.loadLastHost()
-    /// PC の測定値を映している段の tapId。ETRemoteMeasurementDim はここに入った段を沈めない。
-    @Published private(set) var mirroredTaps: Set<UInt32> = []
 
     private let log = Logger(subsystem: "ai.nemut.effetune", category: "remote")
     private let session = URLSession(configuration: .default)
@@ -213,12 +208,10 @@ final class RemoteMirror: ObservableObject {
     private var mirrorTicket = 0
     private var mirroredTicket = 0
 
-    // MARK: PC のアナライザの測定値
+    // MARK: つないでいる PC
 
     /// つないでいる PC の EffeTune（hello の返事から）。つながっていないときは nil。
     @Published private(set) var host: ETRemoteHostInfo?
-    /// つながっていて、PC が telemetry を持っていない（公式の EffeTune は持たない）。このとき Options の節は出さない。
-    var telemetryUnsupported: Bool { isRemote && (host.map { !$0.supports("telemetry") } ?? false) }
     /// 手元と PC の EffeTune の食い違い（効果の差と dsp の版）。つながっていない・食い違いが無いときは nil。
     var mismatch: ETRemoteMismatch? {
         guard isRemote else { return nil }
@@ -226,19 +219,12 @@ final class RemoteMirror: ObservableObject {
     }
     /// この効果を PC が持っていない（つながっているあいだだけ）。カードの印と、鎖に載せない段の判定。
     func hostLacks(_ effect: String) -> Bool { isRemote && host?.lacks(effect) == true }
-    /// PC が hello の features に "telemetry" を出した。
-    private var serverTelemetry = false
-    /// PC が hello の features に "overlays" を出した（PEQ の重ね表示の前後の枠を送れる）。
-    private var serverOverlays = false
-    /// 最後に送った telemetry の入切。
-    private var telemetryWanted = false
-    /// 最後に送った telemetry の seq。古い ack の ok:false で今の入切を倒さない。
-    private var telemetrySeq: Int?
-    /// 前にいるか。背景（.background）では PC に枠を作らせない。
+    /// 前にいるか（.background でない）。
     private var appActive = true
-    /// 鎖の組み直し（tapId が変わる）を拾って映す段を決め直す。
-    private var chainSink: AnyCancellable?
-    private static let telemetryFPS = 15
+    /// 最後に入れた state の sync1 の控え（epoch・slot・段の id）。selectIR が段を指すのに使う。
+    private var pcEpoch: String?
+    private var pcSlot: String?
+    private var pcIds: [String] = []
 
     private static let lastHostKey = "remote.lastHost"
     private static let stashKey = "remote.stash"
@@ -427,8 +413,6 @@ final class RemoteMirror: ObservableObject {
             let info = ETRemoteHostInfo(state: state)
             self.host = info
             self.setLastHost(ETRemoteLastHost(info))
-            self.serverTelemetry = info.supports("telemetry")
-            self.serverOverlays = info.supports("overlays")
             self.enterRemote(state)
         }
     }
@@ -468,15 +452,11 @@ final class RemoteMirror: ObservableObject {
         chainInFlight.removeAll()
         resyncWanted = false
         progress = nil
-        // 接続ごと消えたので PC へは送らない（送れない）。映していた段は手元の枠へ戻す。
-        // 退避を戻す（leaveRemote）より先に外す。戻した鎖で refreshMirrored が走らないように。
+        // 接続ごと消えたので PC へは送らない（送れない）。
         host = nil
-        serverTelemetry = false
-        serverOverlays = false
-        telemetryWanted = false
-        telemetrySeq = nil
-        chainSink = nil
-        setMirrored([])
+        pcEpoch = nil
+        pcSlot = nil
+        pcIds = []
         // 待っている request を全部終わらせる（nil で返る）。
         let pending = waiters
         waiters.removeAll()
@@ -606,7 +586,6 @@ final class RemoteMirror: ObservableObject {
             await self?.syncAll(generation: gen)
         }
         watchLocalIRs()
-        updateTelemetry()
     }
 
     /// 切った・切れた。退避した鎖を戻す。
@@ -684,12 +663,14 @@ final class RemoteMirror: ObservableObject {
         if let bypass = state["masterBypass"] as? Bool, dsp.bypass != bypass {
             dsp.bypass = bypass
         }
+        pcEpoch = state["epoch"] as? String
+        pcSlot = state["slot"] as? String
+        pcIds = (state["ids"] as? [Any])?.compactMap { $0 as? String } ?? []
         applyingRemote = false
         // いま入れた鎖は PC と同じなので、送ったことにして控えを合わせる。
         let projected = ETRemoteProjection.project(dsp.chain, host: host)
         sentForm = projected.pipeline
         sentMap = projected.remoteIndex
-        refreshMirrored()
     }
 
     /// PC で起きた変更。150 ms まとめて入れる。手元のコマンドの返事を待っているあいだは入れない。
@@ -801,8 +782,6 @@ final class RemoteMirror: ObservableObject {
     private func sendChain(_ chain: [ETChainNode]) {
         let projected = ETRemoteProjection.project(chain, host: host)
         sentMap = projected.remoteIndex
-        // 外部の段を足し引きすると、PC の番号の無い段が変わる。
-        refreshMirrored()
         if let sent = sentForm, (sent as NSArray).isEqual(to: projected.pipeline) { return }
         sentForm = projected.pipeline
         if let n = sendEdit(["op": "chain", "pipeline": projected.pipeline]) {
@@ -870,10 +849,6 @@ final class RemoteMirror: ObservableObject {
             if waiter(object) { waiters.removeValue(forKey: n) }
             return
         }
-        if op == "telemetry" {
-            receiveTelemetry(object)
-            return
-        }
         if op == "presetsChanged" {
             presetsChangedOnPC()
             return
@@ -893,12 +868,32 @@ final class RemoteMirror: ObservableObject {
         follow(object)
     }
 
-    // MARK: - PC のアナライザの測定値
+    // MARK: - PC の IR Library から選ぶ（selectIR）
 
-    /// Mirror Analyzers の入切が変わった（Preferences の didSet）。
-    func telemetryPreferenceChanged() {
-        updateTelemetry()
+    /// PC の IR Library から選べるか（PC が irSelection を持ち、編集している）。
+    var canSelectPCIR: Bool { isRemote && host?.supports("irSelection") == true }
+
+    /// PC の IR Library（2 本組も含む）。取れなければ nil。
+    func pcIRs() async -> [ETRemoteIRItem]? {
+        guard canSelectPCIR,
+              let reply = await request(["op": "listIRs", "includePairs": true], reply: "irs", timeout: 10),
+              let items = reply["items"] as? [[String: Any]] else { return nil }
+        return items.compactMap(ETRemoteIRItem.init)
     }
+
+    /// 手元の番号 index の IR Reverb に、PC の IR を入れる。PC が入れ終えた state で手元も追う。
+    func selectPCIR(at index: Int, irId: String) async -> Bool {
+        guard canSelectPCIR, let epoch = pcEpoch, let slot = pcSlot,
+              sentMap.indices.contains(index), let remote = sentMap[index], pcIds.indices.contains(remote)
+        else { return false }
+        // 手元の変更が先に着くように。積んであるつまみを先に流す。
+        flushParams()
+        let reply = await request(["op": "selectIR", "epoch": epoch, "slot": slot,
+                                   "id": pcIds[remote], "ir": irId], reply: "ack", timeout: 20)
+        return reply != nil
+    }
+
+    // MARK: - 前と背景
 
     /// 前に出た・背景に回った。PipelineView の scenePhase から
     /// （.background だけを背景とする。ETDisplayPump を止める条件と同じ）。
@@ -907,115 +902,6 @@ final class RemoteMirror: ObservableObject {
         appActive = on
         // 前に戻った。背景のあいだに PC が消えていたら、次の見回りを待たずに確かめ始める。
         if on, let t = task { ping(t, generation: generation) }
-        updateTelemetry()
-    }
-
-    /// 受けるかを決め直し、変わったら PC へ送る。受けるあいだは鎖の組み直しを見張る。
-    private func updateTelemetry() {
-        let want = isRemote && serverTelemetry && Preferences.shared.remoteMirrorAnalyzers && appActive
-        if want != telemetryWanted {
-            telemetryWanted = want
-            sendTelemetry(want)
-        }
-        if want {
-            if chainSink == nil {
-                // $chain は書き換わる前に流れる。書き換わった後の鎖で決め直すため、一度メインへ回す。
-                // 探り（重ね表示の tap）は publish() で作るので $chain より後になりうる。探りの足し引きも見る。
-                let dsp = EffeTuneDSP.shared
-                chainSink = dsp.$chain.map { _ in () }
-                    .merge(with: dsp.$probeRevision.map { _ in () })
-                    .sink { [weak self] _ in
-                        Task { @MainActor [weak self] in self?.refreshMirrored() }
-                    }
-            }
-            refreshMirrored()
-        } else {
-            chainSink = nil
-            setMirrored([])
-        }
-    }
-
-    private func sendTelemetry(_ on: Bool) {
-        var message: [String: Any] = ["op": "telemetry", "on": on, "fps": Self.telemetryFPS]
-        // PEQ の重ね表示の前後も受ける。古い PC は overlays を知らないので送らない。
-        if on && serverOverlays { message["overlays"] = true }
-        let n = send(message) { [weak self] reply in
-            guard let reply else { return true }
-            guard reply["op"] as? String == "ack" else { return false }
-            if reply["ok"] as? Bool == false {
-                self?.telemetryRejected(seq: reply["seq"] as? Int)
-            }
-            return true
-        }
-        telemetrySeq = n
-        if let n { armTimeout(n, seconds: 10) }
-    }
-
-    /// 断られた。切ったものとして扱う（次に入切が変われば送り直す）。
-    private func telemetryRejected(seq n: Int?) {
-        guard let n, n == telemetrySeq, telemetryWanted else { return }
-        log.notice("remote: telemetry を断られた seq=\(n)")
-        telemetryWanted = false
-        chainSink = nil
-        setMirrored([])
-    }
-
-    /// PC の番号が付いている Analyzer の段を映す。外部の段（PC へ渡らない）は番号が無い。
-    /// PC が重ね表示を送れるなら、PEQ の探りの tap も映す（ETRemoteOverlayGate はここに入った tap だけ描く）。
-    private func refreshMirrored() {
-        guard telemetryWanted, isRemote else {
-            setMirrored([])
-            return
-        }
-        let chain = EffeTuneDSP.shared.chain
-        var taps = Set<UInt32>()
-        for i in chain.indices where chain[i].spec.isAnalyzer && chain[i].tapId != 0
-            && sentMap.indices.contains(i) && sentMap[i] != nil {
-            taps.insert(chain[i].tapId)
-        }
-        if serverOverlays {
-            for i in chain.indices where sentMap.indices.contains(i) && sentMap[i] != nil {
-                let t = overlayTaps(at: i)
-                if let before = t.before { taps.insert(before) }
-                if let after = t.after { taps.insert(after) }
-            }
-        }
-        setMirrored(taps)
-    }
-
-    /// 手元の番号 i の段が重ね表示の枠を受ける tap。
-    private func overlayTaps(at i: Int) -> ETRemoteTelemetry.OverlayTaps {
-        let dsp = EffeTuneDSP.shared
-        guard dsp.chain.indices.contains(i) else { return ETRemoteTelemetry.OverlayTaps() }
-        return ETRemoteTelemetry.overlayTaps(dsp.chain[i], probes: Self.probeTuple(dsp.probeTaps(at: i)))
-    }
-
-    private static func probeTuple(_ t: EffeTuneDSP.ProbeTaps?) -> (before: UInt32, after: UInt32)? {
-        t.map { (before: $0.before, after: $0.after) }
-    }
-
-    private func setMirrored(_ taps: Set<UInt32>) {
-        if mirroredTaps != taps { mirroredTaps = taps }
-        Telemetry.shared.setMirrored(taps)
-    }
-
-    /// PC の枠を手元の段へ付け替えて差し込む。
-    ///
-    /// **手元の鎖の変更（chain）が PC に着く前は捨てる。**PC の番号と手元の番号が食い違いうる。
-    /// つまみ（params）の ack 待ちでは捨てない。番号は動かないうえ、つまみを動かしながら
-    /// スペアナを見るのがこの機能の使いどころで、busy で捨てると動かしているあいだ図が止まる。
-    /// **名前も比べる。**PC で鎖が変わってから手元が追う（follow の 150 ms）までは、
-    /// 同じ番号に別の段がいる。同じ種類のアナライザ 2 本の入れ替えだけは 1 回ぶん取り違えうる（PoC では受ける）。
-    /// 重ね表示の枠（role 付き）は、その段の探りの tap（FIR PEQ は after だけ段の tapId）へ差し込む。
-    /// 振り分けは ETRemoteTelemetry.route（段の本数の門 = flushParams と同じ、名前の照合も中）。
-    private func receiveTelemetry(_ message: [String: Any]) {
-        guard telemetryWanted, isRemote, !chainSettling else { return }
-        let entries = ETRemoteTelemetry.parse(message)
-        guard !entries.isEmpty, let sent = sentForm else { return }
-        let dsp = EffeTuneDSP.shared
-        let frames = ETRemoteTelemetry.route(entries, chain: dsp.chain, sentMap: sentMap, sent: sent,
-                                             mirrored: mirroredTaps) { Self.probeTuple(dsp.probeTaps(at: $0)) }
-        if !frames.isEmpty { Telemetry.shared.inject(frames) }
     }
 
     /// ショート形式の配列を段の並びへ。読めない値は寄せ、知らない段は落ちる（ETShareLink.parse）。

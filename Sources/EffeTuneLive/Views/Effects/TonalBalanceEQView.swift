@@ -316,11 +316,13 @@ private struct TonalBalanceFigure: View {
                     markersOverlay(plot, bands: bands)
                 })
             if !graphOnly {
+                // 手元の音の平均を消す。PC の鎖を編集しているあいだは出さない（上流 2.14.0）。
                 ETMeasurementButton(title: "Reset") {
                     dsp.resetState(at: index)
                     dbTop = ETTonalBalance.defaultDbRange
                     dbBottom = -ETTonalBalance.defaultDbRange
                 }
+                .etLocalAudioOnly()
             }
         }
         .onAppear { updateRange() }

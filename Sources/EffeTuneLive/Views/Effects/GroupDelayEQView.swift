@@ -260,7 +260,7 @@ struct GroupDelayEQView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            status
+            status.etLocalAudioOnly()
 
             if !graphOnly {
                 bandStrip

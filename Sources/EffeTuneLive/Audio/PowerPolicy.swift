@@ -75,7 +75,9 @@ struct PowerGate {
             resting = false
         } else {
             silentFor += seconds
-            if silentFor >= idleSeconds { resting = true }
+            // 休むかはその都度決める。休んでいる途中で idleSeconds が無限になったら
+            // （SFZ の試し弾き・Adaptive Prediction を足した）、次のブロックで起きる。
+            resting = silentFor >= idleSeconds
         }
         return !resting
     }

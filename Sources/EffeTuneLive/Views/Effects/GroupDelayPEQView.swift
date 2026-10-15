@@ -229,10 +229,10 @@ private struct GroupDelayPEQBody: View {
     private var content: some View {
         if graphOnly {
             // 畳んだカード。触れないので状態だけ出す。
-            statusBox
+            statusBox.etLocalAudioOnly()
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                statusBox
+                statusBox.etLocalAudioOnly()
                 bandPicker
                 bandControls
                 tapsRow

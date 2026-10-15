@@ -57,6 +57,10 @@ struct IRReverbView: View {
     @StateObject private var library = IRLibrary.shared
     @State private var picking = false
     @State private var browsing = false
+    /// PC の鎖を編集しているとき、Choose from library… は PC の IR Library を開く（2.14.0 の selectIR）。
+    /// 取り込みと消すのは PC でやる（上流の remote の画面と同じ）ので Import file… は出さない。
+    @ObservedObject private var remote = RemoteMirror.shared
+    @State private var browsingPC = false
     /// 送り込めたときの 1 行。nil なら入っていない。
     @State private var loaded: String?
     /// 送り込めなかった理由。上流の文をそのまま出す。
@@ -69,7 +73,7 @@ struct IRReverbView: View {
 
     var body: some View {
         if graphOnly {
-            decayGraph
+            decayGraph.etLocalAudioOnly()
         } else {
             editor
         }
@@ -95,8 +99,10 @@ struct IRReverbView: View {
             // **何も入っていなければ箱ごと出さない。**「No impulse response loaded」の 1 行のために
             // ファイル名の箱が場所を取っていた。入っていない段は Import file… の行だけで分かる。
             // 送り込めなかった理由は出すので、failure があるときは残す。
-            if hasNotice { notice }
-            decayGraph
+            // 名前・形・減衰の図・ライブラリの数は手元の IR の話。PC の鎖を編集しているあいだは
+            // 出さない（上流 2.14.0 の local-audio-only）。IR は Choose from library… で PC から選ぶ。
+            if hasNotice { notice.etLocalAudioOnly() }
+            decayGraph.etLocalAudioOnly()
 
             ForEach(node.spec.params) { param in
                 if case .enumeration(let options) = param.kind,
@@ -113,6 +119,9 @@ struct IRReverbView: View {
         .sheet(isPresented: $browsing) {
             IRLibraryView { entry in apply(entry.url, id: entry.id) }
         }
+        .sheet(isPresented: $browsingPC) {
+            ETRemoteIRLibraryView(index: index)
+        }
         // 下ごしらえや cm / lt / cr で DSP が入れ直すと、新しい 1 行は assetInfo に入る。
         // この画面で入れたときの `loaded` が残っていると前の 1 行を出し続けるので捨てる。
         .onChange(of: dsp.assetInfo[node.id]) { _, _ in loaded = nil }
@@ -125,30 +134,35 @@ struct IRReverbView: View {
             HStack(spacing: 8) {
                 // fileImporter と sheet を同じビューに重ねない。
                 // 重ねると後から付けた方しか出ない（PipelineView.swift:29-32）。
-                actionButton("Import file…") { picking = true }
-                    .fileImporter(isPresented: $picking,
-                                  // **全部選べるようにする。**型で絞ると、拡張子が
-                                  // 無いものや別の型を名乗るものが灰色になって選べない。
-                                  // 音かどうかは IRLibrary が中身の頭を見て判じる。
-                                  allowedContentTypes: [.item],
-                                  allowsMultipleSelection: true) { result in
-                        if case .success(let urls) = result {
-                            // 複数選べるのはライブラリへ溜めるため。
-                            // 畳み込みへ渡すのは最後の 1 本だけ（上流も同じ）。
-                            // 取り込みは鍵を返す。最後の 1 本をそのまま使う。
-                            var lastKey: String?
-                            for url in urls { lastKey = library.importFile(at: url) }
-                            if let url = urls.last { apply(url, id: lastKey) }
+                if !remote.canSelectPCIR {
+                    actionButton("Import file…") { picking = true }
+                        .fileImporter(isPresented: $picking,
+                                      // **全部選べるようにする。**型で絞ると、拡張子が
+                                      // 無いものや別の型を名乗るものが灰色になって選べない。
+                                      // 音かどうかは IRLibrary が中身の頭を見て判じる。
+                                      allowedContentTypes: [.item],
+                                      allowsMultipleSelection: true) { result in
+                            if case .success(let urls) = result {
+                                // 複数選べるのはライブラリへ溜めるため。
+                                // 畳み込みへ渡すのは最後の 1 本だけ（上流も同じ）。
+                                // 取り込みは鍵を返す。最後の 1 本をそのまま使う。
+                                var lastKey: String?
+                                for url in urls { lastKey = library.importFile(at: url) }
+                                if let url = urls.last { apply(url, id: lastKey) }
+                            }
                         }
-                    }
+                }
 
-                actionButton("Choose from library…") { browsing = true }
+                actionButton("Choose from library…") {
+                    if remote.canSelectPCIR { browsingPC = true } else { browsing = true }
+                }
             }
 
             Text(status)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .etLocalAudioOnly()
         }
     }
 
@@ -389,5 +403,69 @@ struct IRReverbView: View {
     private func intValue(_ param: ETParam) -> Int {
         guard node.values.indices.contains(param.offset) else { return 0 }
         return Int(node.values[param.offset].rounded())
+    }
+}
+
+/// PC の IR Library から選ぶ（2.14.0 の selectIR。上流 remote-ir-library.js）。選ぶだけで、取り込みと消すのは PC。
+/// 2 本組（True Stereo の 2 ファイル）も選べる。選んだら PC が入れ、その鎖の state で手元も追う。
+private struct ETRemoteIRLibraryView: View {
+    let index: Int
+    @Environment(\.dismiss) private var dismiss
+    @State private var items: [ETRemoteIRItem]?
+    @State private var query = ""
+    @State private var failed = false
+    @State private var working = false
+
+    private var shown: [ETRemoteIRItem] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return (items ?? []).filter { needle.isEmpty || $0.name.lowercased().contains(needle) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if failed {
+                    Text("EffeTune could not apply this change. Try again.")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                if items == nil {
+                    ProgressView()
+                } else if shown.isEmpty {
+                    Text("No impulse responses in the library.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(shown) { item in
+                    Button {
+                        pick(item)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name).font(.system(size: 15)).lineLimit(2)
+                            Text(item.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(working)
+                }
+            }
+            .searchable(text: $query)
+            .navigationTitle(RemoteMirror.shared.host?.name ?? "IR Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            .task { items = await RemoteMirror.shared.pcIRs() ?? [] }
+        }
+    }
+
+    private func pick(_ item: ETRemoteIRItem) {
+        working = true
+        failed = false
+        Task {
+            let ok = await RemoteMirror.shared.selectPCIR(at: index, irId: item.id)
+            working = false
+            if ok { dismiss() } else { failed = true }
+        }
     }
 }

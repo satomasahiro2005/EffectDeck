@@ -16,10 +16,10 @@ index cebdb75..ce12cd1 100644
  }
  
 diff --git a/dsp/core/engine.cpp b/dsp/core/engine.cpp
-index 97bdf6c..4d7c9dd 100644
+index c919159..d435af9 100644
 --- a/dsp/core/engine.cpp
 +++ b/dsp/core/engine.cpp
-@@ -769,7 +769,9 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -852,7 +852,9 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
    snapshot.node_count_ = node_count;
    snapshot.channel_count_ = max_channels_;
    for (std::uint32_t index = 0u; index < node_count; ++index) {
@@ -30,7 +30,7 @@ index 97bdf6c..4d7c9dd 100644
    }
    PipelineLatencyUpdate update;
    const et_status status = preparePipelineLatencyUpdate(snapshot, update);
-@@ -793,8 +795,10 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
+@@ -876,8 +878,10 @@ et_status Engine::configurePipeline(const std::uint8_t *descriptor,
  }
  
  void Engine::setPipelineExternalCallback(et_pipeline_external_process process,
@@ -41,7 +41,7 @@ index 97bdf6c..4d7c9dd 100644
    pipeline_external_context_ = context;
  }
  
-@@ -810,7 +814,7 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
+@@ -893,7 +897,7 @@ et_status Engine::capturePipelineLatencySnapshot(PipelineLatencySnapshot &snapsh
    snapshot.channel_count_ = max_channels_;
    for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
      snapshot.latencies_[index] = pipeline_[index].external
@@ -50,7 +50,7 @@ index 97bdf6c..4d7c9dd 100644
                                       : instanceLatency(pipeline_[index].instance);
    }
    return ET_OK;
-@@ -962,7 +966,7 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
+@@ -1045,7 +1049,7 @@ et_status Engine::applyPipelineLatencyUpdate(PipelineLatencyUpdate &update) noex
    }
    for (std::uint32_t index = 0u; index < pipeline_count_; ++index) {
      const std::uint32_t current_latency = pipeline_[index].external
@@ -60,10 +60,10 @@ index 97bdf6c..4d7c9dd 100644
      if (snapshot.latencies_[index] != current_latency) {
        return ET_ERR_STATE;
 diff --git a/dsp/core/engine.h b/dsp/core/engine.h
-index f9fa99e..6dd4106 100644
+index 6189ec2..ffe2951 100644
 --- a/dsp/core/engine.h
 +++ b/dsp/core/engine.h
-@@ -85,7 +85,9 @@ public:
+@@ -101,7 +101,9 @@ public:
  
    et_status configurePipeline(const std::uint8_t *descriptor,
                                std::uint32_t descriptor_bytes) noexcept;
@@ -74,7 +74,7 @@ index f9fa99e..6dd4106 100644
    class PipelineLatencySnapshot;
    class PipelineLatencyUpdate;
    // Capture/apply run on the engine's owning thread between process calls. Preparation
-@@ -137,6 +139,11 @@ public:
+@@ -153,6 +155,11 @@ public:
    [[nodiscard]] float *combined() noexcept { return arena_.combined(); }
    [[nodiscard]] float *bus(std::uint32_t index) noexcept { return arena_.bus(index); }
    [[nodiscard]] float *scratch(std::uint32_t index) noexcept { return arena_.scratch(index); }
@@ -86,7 +86,7 @@ index f9fa99e..6dd4106 100644
    [[nodiscard]] char *byteScratch() noexcept { return arena_.byteScratch(); }
    [[nodiscard]] std::uint8_t *telemetryStaging() noexcept { return arena_.telemetryStaging(); }
    [[nodiscard]] std::uint32_t telemetryCapacity() const noexcept {
-@@ -248,6 +255,7 @@ private:
+@@ -267,6 +274,7 @@ private:
    bool pipeline_latency_reserved_ = false;
    bool pipeline_delay_history_dirty_ = false;
    et_pipeline_external_process pipeline_external_process_ = nullptr;

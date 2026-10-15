@@ -110,8 +110,9 @@ struct CrosstalkCancellationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            measurements
-            notice
+            // 測るのも状態の行も手元の音の話。PC の鎖を編集しているあいだは出さない（上流 2.14.0）。
+            measurements.etLocalAudioOnly()
+            notice.etLocalAudioOnly()
             designControls
 
             ForEach(node.spec.params) { param in

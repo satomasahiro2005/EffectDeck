@@ -41,7 +41,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Studio VU (-18 dBFS)",
       group: "",
       json: #"""
-      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-18,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-18,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -49,7 +49,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "SMPTE VU (-20 dBFS)",
       group: "",
       json: #"""
-      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-20,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-20,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -57,7 +57,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Hot VU (-14 dBFS)",
       group: "",
       json: #"""
-      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -65,7 +65,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Loud Master VU (-8 dBFS)",
       group: "",
       json: #"""
-      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-8,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-8,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -73,7 +73,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "DIN PPM",
       group: "",
       json: #"""
-      {"md":"PPM","it":0.3,"at":5,"rt":1.5,"rl":-18,"rg":50,"sc":0,"ph":0,"ln":0,"tg":-23,"ls":0}
+      {"md":"PPM","it":0.3,"at":5,"rt":1.5,"rl":-18,"rg":50,"sc":0,"ph":0,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -81,7 +81,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "BBC PPM",
       group: "",
       json: #"""
-      {"md":"PPM","it":0.3,"at":10,"rt":2.33,"rl":-18,"rg":40,"sc":1,"ph":0,"ln":0,"tg":-23,"ls":0}
+      {"md":"PPM","it":0.3,"at":10,"rt":2.33,"rl":-18,"rg":40,"sc":1,"ph":0,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -89,7 +89,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Nagra Modulometer",
       group: "",
       json: #"""
-      {"md":"PPM","it":0.3,"at":7.5,"rt":1.5,"rl":-18,"rg":30,"sc":2,"ph":0,"ln":0,"tg":-23,"ls":0}
+      {"md":"PPM","it":0.3,"at":7.5,"rt":1.5,"rl":-18,"rg":30,"sc":2,"ph":0,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -97,7 +97,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "K-20",
       group: "",
       json: #"""
-      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-20,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-20,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -105,7 +105,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "K-14",
       group: "",
       json: #"""
-      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":46,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":46,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -113,7 +113,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "K-12",
       group: "",
       json: #"""
-      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-12,"rg":48,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-12,"rg":48,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -121,7 +121,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Digital Peak",
       group: "",
       json: #"""
-      {"md":"Sample Peak","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":60,"sc":0,"ph":2,"ln":0,"tg":-23,"ls":0}
+      {"md":"Sample Peak","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":60,"sc":0,"ph":2,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -129,7 +129,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "True Peak Clip Watch",
       group: "",
       json: #"""
-      {"md":"True Peak","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":20,"sc":0,"ph":10,"ln":0,"tg":-23,"ls":0}
+      {"md":"True Peak","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":20,"sc":0,"ph":10,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -137,7 +137,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "EBU R128 (-23 LUFS)",
       group: "",
       json: #"""
-      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0}
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -145,7 +145,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "EBU R128 +18 Scale",
       group: "",
       json: #"""
-      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":1}
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":1,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -153,7 +153,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "TV (-24 LKFS)",
       group: "",
       json: #"""
-      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-24,"ls":0}
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-24,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -161,7 +161,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Streaming (-14 LUFS)",
       group: "",
       json: #"""
-      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":1,"tg":-14,"ls":0}
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":1,"tg":-14,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
       """#),
     ETEffectPreset(
       effect: "Analog Meter",
@@ -169,7 +169,31 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Streaming (-16 LUFS)",
       group: "",
       json: #"""
-      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":1,"tg":-16,"ls":0}
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":1,"tg":-16,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "bouncy-vu",
+      label: "Bouncy VU",
+      group: "",
+      json: #"""
+      {"md":"Custom","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":15,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "slow-rms",
+      label: "Slow RMS",
+      group: "",
+      json: #"""
+      {"md":"Custom","it":3,"at":5,"rt":1.5,"rl":-18,"rg":42,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"RMS","nr":1000,"os":0,"dc":3}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "fast-peak",
+      label: "Fast Peak",
+      group: "",
+      json: #"""
+      {"md":"Custom","it":0.3,"at":5,"rt":0.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"True Peak","nr":10,"os":0,"dc":4}
       """#),
     ETEffectPreset(
       effect: "Power Amp Sag",

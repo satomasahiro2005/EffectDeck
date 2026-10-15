@@ -29,6 +29,8 @@ struct GateView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
     @ETTelemetryFeed private var telemetry
+    /// 偽（PC の鎖を編集している）なら GR の札とメーターを出さない（上流 2.14.0）。
+    @Environment(\.etLocalAudio) private var localAudio
 
     var body: some View {
         let threshold = DynamicsParams.value(node, "th")
@@ -47,7 +49,7 @@ struct GateView: View {
                 inputRange: -96...0,
                 outputRange: -96...0,
                 tickStep: 24,
-                caption: amount.map { "GR \(ETFormat.db($0))" } ?? "GR —")
+                caption: localAudio ? amount.map { "GR \(ETFormat.db($0))" } ?? "GR —" : nil)
 
             if let amount {
                 MeterView(channels: [ETMeterChannel(id: 0, label: "GR", levelDB: amount)],

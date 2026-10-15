@@ -13,14 +13,17 @@ let ETCatalog: [ETEffect] = [
       name: "Analog Meter",
       about: "Classic needle meter with VU, PPM, peak, and loudness ballistics",
       category: "analyzer",
-      paramsHash: 0xc0e236cd,
-      floatCount: 4,
-      defaults: [0.0, 0.3, 5.0, 1.5],
+      paramsHash: 0xad3d461c,
+      floatCount: 7,
+      defaults: [0.0, 0.3, 5.0, 1.5, 0.0, 300.0, 1.25],
       params: [
-        ETParam(name: "mode", key: "md", label: "Mode", kind: .enumeration(["VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness"]), defaultValue: 0.0, offset: 0, count: 1),
+        ETParam(name: "mode", key: "md", label: "Mode", kind: .enumeration(["VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness", "Custom"]), defaultValue: 0.0, offset: 0, count: 1),
+        ETParam(name: "detector", key: "de", label: "Detector", kind: .enumeration(["Average Rectified", "RMS", "Sample Peak", "True Peak"]), defaultValue: 0.0, offset: 4, count: 1),
         ETParam(name: "integration", key: "it", label: "Integration", kind: .number(min: 0.05, max: 3.0, step: 0.01, unit: "s", isInteger: false), defaultValue: 0.3, offset: 1, count: 1),
         ETParam(name: "attack", key: "at", label: "Attack", kind: .number(min: 1.0, max: 20.0, step: 0.1, unit: "ms", isInteger: false), defaultValue: 5.0, offset: 2, count: 1),
-        ETParam(name: "release", key: "rt", label: "Release", kind: .number(min: 0.1, max: 5.0, step: 0.01, unit: "s", isInteger: false), defaultValue: 1.5, offset: 3, count: 1)
+        ETParam(name: "release", key: "rt", label: "Release", kind: .number(min: 0.1, max: 5.0, step: 0.01, unit: "s", isInteger: false), defaultValue: 1.5, offset: 3, count: 1),
+        ETParam(name: "needleResponse", key: "nr", label: "Needle Response", kind: .number(min: 1.0, max: 3000.0, step: 0.0, unit: "ms", isInteger: false), defaultValue: 300.0, offset: 5, count: 1),
+        ETParam(name: "overshoot", key: "os", label: "Overshoot", kind: .number(min: 0.0, max: 25.0, step: 0.05, unit: "%", isInteger: false), defaultValue: 1.25, offset: 6, count: 1)
       ]),
     ETEffect(
       type: "ChromaSpiralPlugin",
@@ -49,12 +52,13 @@ let ETCatalog: [ETEffect] = [
       name: "Note Spectrogram",
       about: "Multi-pitch piano roll",
       category: "analyzer",
-      paramsHash: 0x9d70750b,
-      floatCount: 2,
-      defaults: [28.0, 91.0],
+      paramsHash: 0xafc5ff07,
+      floatCount: 3,
+      defaults: [28.0, 91.0, 0.0],
       params: [
         ETParam(name: "minimumMidi", key: "mn", label: "Lowest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 28.0, offset: 0, count: 1),
-        ETParam(name: "maximumMidi", key: "mx", label: "Highest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 91.0, offset: 1, count: 1)
+        ETParam(name: "maximumMidi", key: "mx", label: "Highest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 91.0, offset: 1, count: 1),
+        ETParam(name: "timbreEnabled", key: "te", label: "Timbre Enabled", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1, runtimeOnly: true)
       ]),
     ETEffect(
       type: "OscilloscopePlugin",
@@ -65,7 +69,7 @@ let ETCatalog: [ETEffect] = [
       floatCount: 7,
       defaults: [0.01, 0.0, 0.0, 0.0, 0.0001, 0.0, 0.0],
       params: [
-        ETParam(name: "displayTime", key: "dt", label: "Display Time", kind: .number(min: 0.001, max: 0.1, step: 0.0, unit: "s", isInteger: false), defaultValue: 0.01, offset: 0, count: 1),
+        ETParam(name: "displayTime", key: "dt", label: "Display Time", kind: .number(min: 0.001, max: 10.0, step: 0.0, unit: "s", isInteger: false), defaultValue: 0.01, offset: 0, count: 1),
         ETParam(name: "triggerMode", key: "tm", label: "Trigger Mode", kind: .enumeration(["Auto", "Normal", "Off"]), defaultValue: 0.0, offset: 1, count: 1),
         ETParam(name: "triggerLevel", key: "tl", label: "Trigger Level", kind: .number(min: -1.0, max: 1.0, step: 0.01, unit: "", isInteger: false), defaultValue: 0.0, offset: 2, count: 1),
         ETParam(name: "triggerEdge", key: "te", label: "Trigger Edge", kind: .enumeration(["Rising", "Falling"]), defaultValue: 0.0, offset: 3, count: 1),
@@ -1330,9 +1334,9 @@ let ETCatalog: [ETEffect] = [
       name: "SFZ Note Player",
       about: "Plays an imported SFZ instrument from detected notes",
       category: "others",
-      paramsHash: 0x0f17627c,
-      floatCount: 16,
-      defaults: [0.75, -60.0, -10.0, 28.0, 91.0, 32.0, 20.0, 100.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 40.0, 50.0],
+      paramsHash: 0x378e7f2b,
+      floatCount: 19,
+      defaults: [0.75, -60.0, -10.0, 28.0, 91.0, 32.0, 20.0, 100.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 40.0, 50.0, 0.0, -1.0, 100.0],
       params: [
         ETParam(name: "playHighest", key: "hi", label: "Highest", kind: .toggle, defaultValue: 1.0, offset: 12, count: 1),
         ETParam(name: "playMiddle", key: "md", label: "Middle", kind: .toggle, defaultValue: 1.0, offset: 11, count: 1),
@@ -1346,6 +1350,9 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "dryMix", key: "dm", label: "Dry", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 20.0, offset: 6, count: 1),
         ETParam(name: "wetMix", key: "wm", label: "Wet", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 7, count: 1),
         ETParam(name: "octaveShift", key: "os", label: "Octave", kind: .number(min: -2.0, max: 2.0, step: 1.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 8, count: 1),
+        ETParam(name: "sampleShift", key: "ss", label: "Sample Shift", kind: .number(min: -6.0, max: 6.0, step: 1.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 16, count: 1),
+        ETParam(name: "previewMidi", key: "pm", label: "Preview Midi", kind: .number(min: -1.0, max: 127.0, step: 0.0, unit: "", isInteger: true), defaultValue: -1.0, offset: 17, count: 1, runtimeOnly: true),
+        ETParam(name: "previewVelocity", key: "pv", label: "Preview Velocity", kind: .number(min: 1.0, max: 127.0, step: 0.0, unit: "", isInteger: true), defaultValue: 100.0, offset: 18, count: 1, runtimeOnly: true),
         ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -60.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 9, count: 1),
         ETParam(name: "timingOffsetMs", key: "tm", label: "Timing", kind: .number(min: -100.0, max: 100.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 0.0, offset: 13, count: 1),
         ETParam(name: "minimumMidi", key: "mn", label: "Lowest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 28.0, offset: 3, count: 1),

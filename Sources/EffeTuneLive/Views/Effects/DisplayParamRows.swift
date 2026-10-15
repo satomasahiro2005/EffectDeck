@@ -67,23 +67,41 @@ struct ETDisplayNumberRow: View {
 
 /// 選択肢から 1 つ。上流の createRadioGroup（横に並ぶ 2〜3 択）に当たる。
 struct ETDisplayChoiceRow<Value: Hashable>: View {
+    /// 並べ方。選択肢が多くて横に入らないもの（Note Spectrogram の Highlight 11 個）はメニュー。
+    enum Style { case segmented, menu }
+
     let title: String
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
+    var style: Style = .segmented
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 14))
-            Picker(title, selection: $selection) {
-                ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                    Text(option.label).tag(option.value)
-                }
+        switch style {
+        case .segmented:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 14))
+                picker.pickerStyle(.segmented)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .padding(.vertical, 2)
+        case .menu:
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 14))
+                Spacer(minLength: 8)
+                picker.pickerStyle(.menu)
+            }
+            .padding(.vertical, 2)
         }
-        .padding(.vertical, 2)
+    }
+
+    private var picker: some View {
+        Picker(title, selection: $selection) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                Text(option.label).tag(option.value)
+            }
+        }
+        .labelsHidden()
     }
 }
 

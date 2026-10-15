@@ -9,16 +9,14 @@
 //                              情報（PC）・設定（Options）・操作（Connect / Scan QR Code / Disconnect / Forget）を別の Section に分ける
 //    - RemoteScannerView       PC の画面の QR（http://host:port/?t=…）を読む。VisionKit の
 //                              DataScannerViewController（公開 API）。そのリンク以外の QR は拾わない
-//    - ETRemoteMeasurementDim  PC の鎖を編集しているあいだ、PC の測定値を映していない Analyzer の図を沈める
+//    - ETRemoteMeasurementDim  PC の鎖を編集しているあいだ、Analyzer の図を沈める
 //    - ETRemoteUnsupportedMark PC の EffeTune が持っていない効果の段に、送れないと出す（鎖には載せない）
 //
 //  **Analyzer の図を沈める訳。**編集しているあいだ鳴っているのは PC で、Analyzer の図が描くのは
 //  この端末の音（Telemetry）。PC の音の図ではないので、読めない形にして押せなくする。
 //  沈めるのは GraphCanvas（ほぼ全部の図の土台）と Pitch Meter の図だけで、つまみは PC へ送れるので残す。
 //  EQ の曲線のような設計の図も GraphCanvas を使うが、印はカードが Analyzer のときしか立てない。
-//  **Mirror Analyzers を入れて PC が telemetry を持っていれば沈めない。**図は PC の枠で描く
-//  （RemoteMirror.mirroredTaps）。映す段に入った時点で手元の枠は捨ててあるので、
-//  PC の枠が来るまでは Waiting のまま。PC の番号が無い段・PC が古い版・切のときは沈めたまま。
+//  公式の EffeTune は測定値を送らないので、PC の音の図に替える手は無い（上流の remote の画面も測定を外す）。
 
 import AVFoundation
 import SwiftUI
@@ -143,7 +141,7 @@ struct RemoteContent: View {
 /// 別の Section にする。形は状態（ETRemoteIntent.layout）で決まる。
 ///
 ///   unpaired  Scan QR Code だけ
-///   active    PC（Status・Address・EffeTune の版・食い違い）／ Options（Mirror Analyzers）／ Disconnect
+///   active    PC（Status・Address・EffeTune の版・食い違い）／ Disconnect
 ///             形は控え（つなぎたい）で決まる。つなぎ直しを止める Disconnect は、つながる前にも要るので。
 ///             Status と版はいまのつなぎ（status・host）で、つながるまでは Connecting か Error と版なし
 ///   idle      PC（Address・前に見た EffeTune の版）／ Connect・Scan QR Code ／ Forget
@@ -185,13 +183,6 @@ struct RemoteRows: View {
                     }
                 }
                 mismatchRows
-            }
-            // 測定値を送れる PC（features に telemetry を出すもの）にだけ出す。公式の EffeTune 2.13.0 は
-            // telemetry も overlays も持たない（remote-v1）ので、そちらには節ごと出さない。
-            if mirror.host?.supports("telemetry") == true {
-                Section("Options") {
-                    Toggle("Mirror Analyzers", isOn: $prefs.remoteMirrorAnalyzers)
-                }
             }
             Section {
                 Button("Disconnect") { mirror.disconnectByUser() }
@@ -373,6 +364,22 @@ extension EnvironmentValues {
     /// 真のあいだ、測った音を描く図（GraphCanvas・Pitch Meter）を沈めて押せなくする。
     /// 立てるのは ETRemoteMeasurementDim だけ。
     @Entry var etMeasurementDimmed: Bool = false
+    /// 偽のあいだ（PC の鎖を編集している）、手元の音から作る表示を出さない（上流 2.14.0 の
+    /// local-audio-only / hasLocalAudio === false）。PC は音の値を送らないので、出せば手元の音の値になる。
+    @Entry var etLocalAudio: Bool = true
+}
+
+/// 手元の音から作る表示（計った値・状態の行・測る操作）に掛ける。PC の鎖を編集しているあいだは出さない。
+private struct ETLocalAudioOnly: ViewModifier {
+    @Environment(\.etLocalAudio) private var localAudio
+
+    func body(content: Content) -> some View {
+        if localAudio { content }
+    }
+}
+
+extension View {
+    func etLocalAudioOnly() -> some View { modifier(ETLocalAudioOnly()) }
 }
 
 extension View {
@@ -385,8 +392,8 @@ extension View {
     }
 }
 
-/// PEQ の図に重ねるスペクトラム（と After ⇄ Compare の札）を包む。PC の鎖を編集しているあいだは
-/// PC の前後の枠を映している tap（RemoteMirror.mirroredTaps）だけ描く。手元の音は PC の音と関係ない。
+/// PEQ の図に重ねるスペクトラム（と After ⇄ Compare の札）を包む。PC の鎖を編集しているあいだは描かない。
+/// 手元の音は PC の音と関係ない（上流の remote の画面も測定の線を外す）。
 /// 手元で使っているときは素通し。RemoteMirror を観測するのはここ（図の本体は観測しない）。
 struct ETRemoteOverlayGate<Content: View>: View {
     let tap: UInt32
@@ -399,14 +406,14 @@ struct ETRemoteOverlayGate<Content: View>: View {
     }
 
     var body: some View {
-        if !mirror.isRemote || mirror.mirroredTaps.contains(tap) {
+        if !mirror.isRemote {
             content()
         }
     }
 }
 
-/// カードに掛ける。Analyzer のカードで、PC の鎖を編集しているあいだ、PC の測定値を
-/// 映していない段にだけ印を立てる。RemoteMirror を観測するのはここ（カードの本体は観測しない）。
+/// カードに掛ける。Analyzer のカードで、PC の鎖を編集しているあいだ印を立てる（図は手元の音なので沈める）。
+/// RemoteMirror を観測するのはここ（カードの本体は観測しない）。
 struct ETRemoteMeasurementDim: ViewModifier {
     let applies: Bool
     let tap: UInt32
@@ -418,8 +425,9 @@ struct ETRemoteMeasurementDim: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.environment(\.etMeasurementDimmed,
-                            applies && mirror.isRemote && !mirror.mirroredTaps.contains(tap))
+        content
+            .environment(\.etMeasurementDimmed, applies && mirror.isRemote)
+            .environment(\.etLocalAudio, !mirror.isRemote)
     }
 }
 

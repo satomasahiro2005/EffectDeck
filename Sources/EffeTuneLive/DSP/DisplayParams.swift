@@ -41,7 +41,8 @@ enum ETDisplayParam {
     static func table(for type: String) -> [String: Kind] {
         switch type {
         case "NoteSpectrogramPlugin":
-            return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number]
+            // hl（Highlight）と os（Onsets）は 2.14.0。cl に Instrument3 / Instrument9 が増えた。
+            return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number, "hl": .text, "os": .flag]
         case "SpectrogramPlugin":
             return ["sc": .text, "cl": .text, "kb": .flag]
         case "SpectrumAnalyzerPlugin":
@@ -58,11 +59,15 @@ enum ETDisplayParam {
             // 全部数。sc（PPM Scale 0/1/2）・ln（Needle 0/1）・ls（Scale 0/1）は
             // 上流が数のまま持つ（analog_meter.js:14-16、:323-336 の Number.isInteger・=== 0/1）。
             // 保存形式で文字にすると上流は読まない。
+            // dc（Custom の Dial 0〜4）は 2.14.0。
             return ["rl": .number, "rg": .number, "sc": .number, "ph": .number,
-                    "ln": .number, "tg": .number, "ls": .number]
+                    "ln": .number, "tg": .number, "ls": .number, "dc": .number]
         case "RhythmAnalyzerPlugin":
             // sp は 4/6/8/12/16 のどれか（上流は最寄りへ寄せる、rhythm_analyzer.js:10・:179-187）。
             return ["sp": .number, "vt": .flag, "vm": .flag, "ve": .flag, "vl": .flag]
+        case "SFZNotePlayerPlugin":
+            // 2.14.0 の声の図の色。Normal か Rainbow（画面では Note Colors、sfz_note_player.js:77）。
+            return ["cl": .text]
         default:
             return [:]
         }
@@ -76,7 +81,7 @@ enum ETDisplayParam {
         switch type {
         case "AnalogMeterPlugin":
             return ["rl": "-14.0", "rg": "40.0", "sc": "0.0", "ph": "1.0",
-                    "ln": "0.0", "tg": "-23.0", "ls": "0.0"]
+                    "ln": "0.0", "tg": "-23.0", "ls": "0.0", "dc": "0.0"]
         case "RhythmAnalyzerPlugin":
             // 2.13.0 で Tempogram と Echo rows は既定で隠す（rhythm_analyzer.js の RHYTHM_ANALYZER_DEFAULTS）。
             return ["sp": "8.0", "vt": "false", "vm": "true", "ve": "false", "vl": "true"]

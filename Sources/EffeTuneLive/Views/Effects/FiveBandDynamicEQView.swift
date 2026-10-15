@@ -84,8 +84,9 @@ struct FiveBandDynamicEQView: View {
 
     // MARK: 曲線
 
+    /// live が偽（PC の鎖を編集している）なら 3 の合成は引かない。効いている量は手元の音のもの。
     static func curves(bands: [ETDynamicEQBand], gains: [Double],
-                       selected: Int, sampleRate: Double) -> [ETFrequencyCurve] {
+                       selected: Int, sampleRate: Double, live: Bool = true) -> [ETFrequencyCurve] {
         var out: [ETFrequencyCurve] = []
         let current = bands[selected]
 
@@ -111,6 +112,7 @@ struct FiveBandDynamicEQView: View {
         }
 
         // 3. いま効いている量での合成。
+        guard live else { return out }
         out.append(.sampled(id: "sum", count: Self.samples,
                             from: Self.lowHz, to: Self.highHz) { hz in
             var total = 0.0
@@ -467,6 +469,7 @@ private struct FiveBandDynamicEQGraph: View {
     let bandCount: Int
 
     @ETTelemetryFeed private var telemetry
+    @Environment(\.etLocalAudio) private var localAudio
 
     var body: some View {
         let live = FiveBandDynamicEQView.liveGains(telemetry: telemetry,
@@ -477,11 +480,13 @@ private struct FiveBandDynamicEQGraph: View {
 
         FrequencyResponseGraph(
             curves: FiveBandDynamicEQView.curves(bands: bands, gains: gains,
-                                                 selected: selected, sampleRate: sampleRate),
+                                                 selected: selected, sampleRate: sampleRate,
+                                                 live: localAudio),
             frequencyRange: lowHz...highHz,
             decibelRange: -12...12,
             decibelStep: 6,
-            caption: FiveBandDynamicEQView.caption(selected: selected, gains: gains,
-                                                   live: live != nil))
+            caption: localAudio
+                ? FiveBandDynamicEQView.caption(selected: selected, gains: gains, live: live != nil)
+                : nil)
     }
 }

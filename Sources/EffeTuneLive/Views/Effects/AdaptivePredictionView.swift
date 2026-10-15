@@ -78,6 +78,7 @@ struct AdaptivePredictionView: View {
                                 shown: hold ? 1 : nil)
             row("hold")
             ETMeasurementButton(title: "Reset") { reset() }
+                .etLocalAudioOnly()
             if faulted {
                 Text(Self.faultMessage)
                     .font(.system(size: 11))

@@ -27,6 +27,8 @@ struct ExpanderView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
     @ETTelemetryFeed private var telemetry
+    /// 偽（PC の鎖を編集している）なら GR の札とメーターを出さない（上流 2.14.0）。
+    @Environment(\.etLocalAudio) private var localAudio
 
     var body: some View {
         let threshold = DynamicsParams.value(node, "th")
@@ -45,7 +47,7 @@ struct ExpanderView: View {
                 inputRange: -60...0,
                 outputRange: -60...0,
                 tickStep: 12,
-                caption: amount.map { "GAIN CHANGE \(ETFormat.db($0))" } ?? "GAIN CHANGE —")
+                caption: localAudio ? amount.map { "GAIN CHANGE \(ETFormat.db($0))" } ?? "GAIN CHANGE —" : nil)
 
             if let amount {
                 // 段の名前は枠の左 16pt の余白に入るので 2 文字まで。

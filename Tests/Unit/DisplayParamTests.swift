@@ -14,8 +14,9 @@ final class DisplayParamTests: XCTestCase {
 
     /// 表を持つのは 6 種だけ。ほかは空。
     func testTableCoversTheSixUpstreamTypes() {
+        // hl（Highlight）は 2.14.0。
         XCTAssertEqual(Set(ETDisplayParam.table(for: "NoteSpectrogramPlugin").keys),
-                       ["cl", "pr", "ly", "vl", "ts"])
+                       ["cl", "pr", "ly", "vl", "ts", "hl", "os"])
         XCTAssertEqual(Set(ETDisplayParam.table(for: "SpectrogramPlugin").keys), ["sc", "cl", "kb"])
         XCTAssertEqual(Set(ETDisplayParam.table(for: "SpectrumAnalyzerPlugin").keys),
                        ["sc", "dm", "cl", "kb"])
@@ -62,7 +63,8 @@ final class DisplayParamTests: XCTestCase {
     /// 書いて JSON にして読み戻すと同じ文字列に戻る。書く型は上流のもの。
     func testWriteThenReadRoundTrips() throws {
         let cases: [(String, [String: String])] = [
-            ("NoteSpectrogramPlugin", ["cl": "Rainbow", "pr": "High", "ly": "Piano", "vl": "false", "ts": "2.5"]),
+            ("NoteSpectrogramPlugin", ["cl": "Instrument3", "pr": "High", "ly": "Piano", "vl": "false", "ts": "2.5",
+                                       "hl": "Vocal", "os": "true"]),
             ("SpectrogramPlugin", ["sc": "linear", "cl": "Gray", "kb": "true"]),
             ("SpectrumAnalyzerPlugin", ["sc": "log-hq", "dm": "bar", "cl": "Fire", "kb": "false"]),
             ("PitchMeterPlugin", ["ly": "Guitar", "cl": "Mono"]),

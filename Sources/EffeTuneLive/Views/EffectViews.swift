@@ -36,8 +36,6 @@ enum ETEffectViews {
         "BassExtenderPlugin",
         // つまみと Reset だけ（AdaptivePredictionView.swift）。
         "AdaptivePredictionEffectPlugin",
-        // バンクの選択欄とつまみだけ（SFZNotePlayerView.swift）。
-        "SFZNotePlayerPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。

@@ -95,6 +95,7 @@ struct MultibandExpanderView: View {
                 caption: "Band \(selected + 1)  in / out")
 
             MultibandExpanderMeter(tapId: node.tapId)
+                .etLocalAudioOnly()
 
             if !graphOnly {
                 parameters(selected: selected)
