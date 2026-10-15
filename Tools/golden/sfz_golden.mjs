@@ -155,7 +155,22 @@ default_path=samples/
     recursive: '#include "recursive.sfz"\n<region> sample=a.wav key=60',
     escape: '<region> sample=../outside.wav key=60',
     absolute: '#include "/etc/passwd"',
-    missingInclude: '#include "nothing.sfz"'
+    missingInclude: '#include "nothing.sfz"',
+    // 2.14.0: ファイルの代わりに作る音・エンベロープの時間を収める・sw_lolast / sw_hilast。
+    generators: `<region> sample=*sine key=60 ampeg_release=250
+<region> sample=*noise key=61 ampeg_attack=-3 loop_mode=no_loop pitch_keycenter=70
+<region> sample=*saw key=62 ampeg_decay=abc
+<region> sample=*silence key=63
+<region> sample=a.wav key=64 ampeg_hold=100.5
+`,
+    switchRange: `<control> set_cc1=10
+<global> sw_default=c3
+<region> sample=a.wav key=60 sw_lolast=c2 sw_hilast=c4
+<region> sample=a.wav key=61 sw_lolast=d3
+<region> sample=a.wav key=62 sw_hilast=b2
+<region> sample=a.wav key=63 sw_lolast=200
+<region> sample=a.wav key=64 sustain_sw=on sostenuto_sw=on
+`
 };
 const parserCases = [
     { name: 'basic', files: { 'basic.sfz': text.basic }, selected: 'basic.sfz' },
@@ -169,7 +184,9 @@ const parserCases = [
     { name: 'escape', files: { 'escape.sfz': text.escape }, selected: 'escape.sfz' },
     { name: 'absolute', files: { 'absolute.sfz': text.absolute }, selected: 'absolute.sfz' },
     { name: 'missing-include', files: { 'missing.sfz': text.missingInclude }, selected: 'missing.sfz' },
-    { name: 'too-large', files: { 'big.sfz': '<region> sample=a.wav key=60 '.repeat(40) }, selected: 'big.sfz', maxBytes: 200 }
+    { name: 'too-large', files: { 'big.sfz': '<region> sample=a.wav key=60 '.repeat(40) }, selected: 'big.sfz', maxBytes: 200 },
+    { name: 'generators', files: { 'gen.sfz': text.generators }, selected: 'gen.sfz' },
+    { name: 'switch-range', files: { 'sw.sfz': text.switchRange }, selected: 'sw.sfz' }
 ];
 const sampleNames = Object.keys(audio);
 const encoded = value => JSON.parse(JSON.stringify(value, (key, v) => (v === undefined ? null : v)));
@@ -352,6 +369,31 @@ for (const limit of [12000, 10000, 9000, 8000, 7000, 6500, 6000, 5500, 5000, 600
     await runImport(`limit-${limit}`, importFolder, 'piano.sfz', limit);
 }
 await runImport('no-regions', { 'empty.sfz': '<region> sample=gone.wav key=60' }, 'empty.sfz', 256 * 1024 * 1024);
+
+// 2.14.0: ARIA の bank.xml（$sample_dir の $Banks/ を隣の Samples へ）。合った bank.xml だけが入れ物に入る。
+const ariaFolder = {
+    'Garritan/Garritan.bank.xml': '<?xml version="1.0"?>\n<AriaBank name="G">\n<AriaElement path="Programs/inst.sfz" />\n' +
+        '<Define name="$sample_dir" value="$Banks/Garritan/Samples" />\n<Define name=\'$gain\' value="-3" />\n' +
+        '<Define name="bad" value="1" />\n<Define name="$amp" value="a &amp; b" /></AriaBank>',
+    'Garritan/Programs/inst.sfz': '<region> sample=$sample_dir/d.wav key=60 volume=$gain\n<region> sample=*tri key=61',
+    'Garritan/Samples/d.wav': audio['samples/d.wav'],
+    'Other/Other.bank.xml': '<AriaBank><AriaElement path="x.sfz" /><Define name="$sample_dir" value="nope" /></AriaBank>',
+    'Other/x.sfz': '<region> sample=y.wav key=60'
+};
+await runImport('aria-bank', ariaFolder, 'Garritan/Programs/inst.sfz', 256 * 1024 * 1024);
+// 一覧に無い SFZ でも、同じフォルダに bank.xml が 1 つならその定義を使う。
+await runImport('aria-unlisted', {
+    'B/B.bank.xml': '<AriaBank><Define name="$dir" value="Samples" /></AriaBank>',
+    'B/unlisted.sfz': '<region> sample=$dir/e.wav key=60',
+    'B/Samples/e.wav': audio['samples/e.wav']
+}, 'B/unlisted.sfz', 256 * 1024 * 1024);
+// UTF-8 として読めない本文は windows-1252 で読む（é = 0xE9）。
+await runImport('windows-1252', {
+    'latin.sfz': new Uint8Array([...encoder.encode('<region> sample=caf'), 0xE9, ...encoder.encode('.wav key=60')]),
+    'café.wav': audio['samples/f.wav']
+}, 'latin.sfz', 256 * 1024 * 1024);
+await runImport('generators-only', { 'gen.sfz': '<region> sample=*sine lokey=0 hikey=127\n<region> sample=*noise key=60' },
+    'gen.sfz', 256 * 1024 * 1024);
 
 const folderList = ['root/a.sfz', 'root/b/c.SFZ', 'root/d.wav', 'root/b/e.sfz'];
 const folderCase = { paths: folderList, expected: listSfzFolderFiles(folderList.map(name => new FakeFile(name, new Uint8Array(1)))) };

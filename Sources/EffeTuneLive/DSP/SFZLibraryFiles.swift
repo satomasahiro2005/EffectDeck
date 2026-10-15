@@ -134,7 +134,8 @@ enum ETSFZService {
                         onDiagnostic: ((ETSFZDiagnostics) -> Void)? = nil) throws -> ETSFZPrepared {
         let bank = try ETSFZBank.decode(bytes, maxBytes: maxBytes)
         var parsed = try parse(selectedPath: bank.selectedPath, readFile: { bank.file($0) },
-                               hasFile: { bank.ranges[$0] != nil }, maxBytes: maxBytes, onDiagnostic: onDiagnostic)
+                               hasFile: { bank.ranges[$0] != nil }, filePaths: Array(bank.ranges.keys),
+                               maxBytes: maxBytes, onDiagnostic: onDiagnostic)
         parsed.warnings = ETSFZBank.mergeWarnings(bank.warnings, parsed.warnings)
         var prepared = try prepareSamples(parsed, readSample: { bank.file($0) }, decode: decode,
                                           maxBytes: maxBytes, onDiagnostic: onDiagnostic)
@@ -142,17 +143,17 @@ enum ETSFZService {
         return prepared
     }
 
+    /// 入れ物の中の SFZ を読む（parseBankFiles）。入れ物に bank.xml があればその `<Define>` も効かせる。
     private static func parse(selectedPath: String, readFile: (String) -> Data?, hasFile: @escaping (String) -> Bool,
+                              filePaths: [String],
                               maxBytes: Int, onDiagnostic: ((ETSFZDiagnostics) -> Void)?) throws -> ETSFZParseResult {
-        try ETSFZParser.parse(selectedPath: selectedPath,
-                              readText: { path in
-                                  guard let bytes = readFile(path) else { return nil }
-                                  guard let text = String(data: bytes, encoding: .utf8) else {
-                                      throw ETSFZError.prepare("An SFZ file is not valid text.")
-                                  }
-                                  return text
-                              },
-                              hasSample: hasFile, maxBytes: maxBytes, onDiagnostic: onDiagnostic)
+        let readText: (String) throws -> String? = { path in readFile(path).map(ETSFZSource.decodeText) }
+        let defines = try ETSFZSource.bankDefines(selectedPath: selectedPath,
+                                                  bankPaths: filePaths.filter(ETSFZSource.isBankPath),
+                                                  readText: readText).defines
+        return try ETSFZParser.parse(selectedPath: selectedPath, readText: readText,
+                                     hasSample: hasFile, maxBytes: maxBytes, defines: defines,
+                                     onDiagnostic: onDiagnostic)
     }
 
     /// 領域が指す音を全部読み、資産に組む（prepareSfzSamples）。
@@ -162,6 +163,13 @@ enum ETSFZService {
         var samples: [String: ETSFZPCM] = [:]
         var decodedBytes = 0
         for path in ETSFZ.jsSorted(Array(Set(parsed.regions.map(\.sample)))) {
+            if ETSFZGenerator.isGenerator(path) {
+                let pcm = ETSFZGenerator.pcm(path)
+                decodedBytes += pcm.channels[0].count * 4
+                if decodedBytes > maxBytes { throw ETSFZError.tooLarge("The SFZ samples are too large to load.") }
+                samples[path] = pcm
+                continue
+            }
             guard let bytes = try readSample(path) else { throw ETSFZError.prepare("An SFZ sample could not be found.") }
             let ext = (path as NSString).pathExtension
             let pcm = try decode(bytes, ext, maxBytes - decodedBytes)
@@ -209,27 +217,33 @@ enum ETSFZService {
             return bytes
         }
         var stored: [String: Data] = [:]
+        let readText: (String) throws -> String? = { path in
+            var bytes = stored[path]
+            if bytes == nil {
+                bytes = try read(path)
+                guard let loaded = bytes else { return nil }
+                stored[path] = loaded
+            }
+            return ETSFZSource.decodeText(bytes!)
+        }
+        let bankDefines = try ETSFZSource.bankDefines(
+            selectedPath: selectedPath, bankPaths: selected.keys.filter(ETSFZSource.isBankPath), readText: readText)
+        // 開き直すときに要るのは、合った bank.xml の定義だけ。読んだほかの候補は入れ物に入れない。
+        for path in Array(stored.keys) where path != bankDefines.bankPath { stored[path] = nil }
         var parsed = try ETSFZParser.parse(
-            selectedPath: selectedPath,
-            readText: { path in
-                var bytes = stored[path]
-                if bytes == nil {
-                    bytes = try read(path)
-                    guard let loaded = bytes else { return nil }
-                    stored[path] = loaded
-                }
-                guard let text = String(data: bytes!, encoding: .utf8) else {
-                    throw ETSFZError.prepare("An SFZ file is not valid text.")
-                }
-                return text
-            },
-            hasSample: { selected[$0] != nil }, maxBytes: maxBytes, onDiagnostic: onDiagnostic)
+            selectedPath: selectedPath, readText: readText,
+            hasSample: { selected[$0] != nil }, maxBytes: maxBytes, defines: bankDefines.defines,
+            onDiagnostic: onDiagnostic)
         if parsed.regions.isEmpty { throw ETSFZError(code: .noRegions, message: "The SFZ has no playable regions.") }
 
         var accumulated = stored.values.reduce(0) { $0 + $1.count }
         var metadata: [String: ETSFZSampleInfo] = [:]
         var sizes = stored.mapValues(\.count)
         for path in ETSFZ.jsSorted(Array(Set(parsed.regions.map(\.sample)))) {
+            if ETSFZGenerator.isGenerator(path) {
+                metadata[path] = ETSFZGenerator.metadata(path)
+                continue
+            }
             let file = selected[path]!
             let header = inspect(file.url)
             metadata[path] = ETSFZSampleInfo(size: file.size, frames: header?.frames ?? 0, channels: header?.channels ?? 0)
@@ -247,7 +261,8 @@ enum ETSFZService {
             stored[selectedPath] = text
             accumulated = text.count
         }
-        for path in ETSFZ.jsSorted(Array(Set(parsed.regions.map(\.sample)))) where stored[path] == nil {
+        for path in ETSFZ.jsSorted(Array(Set(parsed.regions.map(\.sample))))
+        where stored[path] == nil && !ETSFZGenerator.isGenerator(path) {
             let file = selected[path]!
             if accumulated + file.size > maxBytes { throw ETSFZError.tooLarge("The SFZ bank is too large to save.") }
             let bytes = try read(path)!

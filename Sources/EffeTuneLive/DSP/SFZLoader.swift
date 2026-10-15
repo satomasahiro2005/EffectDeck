@@ -274,11 +274,13 @@ final class SFZLoader: ObservableObject {
 
     // MARK: 取り込み
 
-    /// 選んだフォルダの中の全ファイル（深さ 32・1 万本まで）。道は選んだフォルダからの相対。
+    /// 選んだフォルダの中の全ファイル（深さ 32・SFZ は 1 万本まで）。道は選んだフォルダからの相対。
+    /// 2.14.0 から上流は数えるのを SFZ だけにした（音のファイルが多いバンクを断らない）。
     nonisolated static func enumerate(folder: URL) throws -> [ETSFZFolderFile] {
         let scoped = folder.startAccessingSecurityScopedResource()
         defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
         var out: [ETSFZFolderFile] = []
+        var instruments = 0
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey]
         guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys) else {
             throw ETSFZError.prepare("The SFZ folder could not be read.")
@@ -290,8 +292,11 @@ final class SFZLoader: ObservableObject {
             let relative = Array(parts.dropFirst(base.count))
             if relative.count > 32 { throw ETSFZError.prepare("The SFZ folder is nested too deeply.") }
             if values?.isDirectory == true { continue }
-            if out.count >= 10000 { throw ETSFZError.prepare("The SFZ folder contains too many files.") }
             let path = try ETSFZParser.normalizePath(relative.joined(separator: "/"))
+            if path.lowercased().hasSuffix(".sfz") {
+                instruments += 1
+                if instruments > 10000 { throw ETSFZError.prepare("The SFZ folder contains too many instruments.") }
+            }
             out.append(ETSFZFolderFile(path: path, url: url, size: values?.fileSize ?? 0))
         }
         return out
@@ -397,7 +402,7 @@ final class SFZLoader: ObservableObject {
             "loop-points-ignored": "Unused loop settings were adjusted so this SFZ could be loaded.",
             "invalid-regions": "Some sounds had invalid settings and were skipped.",
             "missing-samples": "Some sample files could not be found. The available sounds were loaded.",
-            "unsupported-regions": "Some sounds use playback conditions this effect does not support and were skipped.",
+            "envelope-times-adjusted": "Some sound fade times were invalid and were adjusted so this SFZ could be loaded.",
             "reduced-bank": "A smaller selection of sounds was loaded to fit the size limit while keeping every note.",
         ]
         var seen = Set<String>()

@@ -41,6 +41,7 @@ enum ETSFZBank {
     static let magic: UInt32 = 0x315A_4653
     static let warningCodes: Set<String> = [
         "invalid-regions", "missing-samples", "unsupported-regions", "reduced-bank", "loop-points-ignored",
+        "envelope-times-adjusted",
     ]
     static let headerBytes = 12
     static let maxFiles = 10000
@@ -311,7 +312,8 @@ enum ETSFZBank {
                 let text = key == "loop_mode" ? loopModes[Int(value)] : jsNumberString(value)
                 return "\(key)=\(text)"
             }
-            return "<region> sample=" + jsonString(root + region.sample) + " " + fields.joined(separator: " ")
+            let sample = ETSFZGenerator.isGenerator(region.sample) ? region.sample : root + region.sample
+            return "<region> sample=" + jsonString(sample) + " " + fields.joined(separator: " ")
         }.joined(separator: "\n")
     }
 
