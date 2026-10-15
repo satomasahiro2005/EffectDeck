@@ -1,28 +1,29 @@
 New since 2026.10.08
 
-New
-- Mini Meters: spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in a Picture in Picture window, over any app. Turn it on from the … menu → Mini Meters.
-- Remote Control: edit the effect chain of EffeTune 2.14 on a computer on the same network. Allow remote control in EffeTune's settings, then scan its QR code from Settings → Remote. IR Reverb can choose from the computer's IR Library.
-- SFZ Note Player: plays SFZ instruments you import from Files. Imported instruments stay in the SFZ Library, and the voice display plays a note when touched.
-- Settings → About → Reset All Data erases chains, presets, imported files and settings, including the iCloud copy.
+Remote Control
+- Edit the effect chain of EffeTune 2.14 on a computer on the same network. Allow remote control in EffeTune's settings, then scan its QR code from Settings → Remote. IR Reverb can choose from the computer's IR Library.
 
-EffeTune 2.14.0 (DSP 0.14.0)
-- Analog Meter adds a Custom mode with its own detector and dial.
-- Oscilloscope shows up to 10 seconds. With Trigger Mode Off it scrolls smoothly.
-- Note Spectrogram adds instrument colours, Highlight and note onsets.
-- Adaptive Prediction, Cassette Mode and the new Rhythm Analyzer layout (2.13.0).
+iPad
+- Cards with a graph switch between open and graph only when tapped, in two columns too.
+- Rotating keeps your place in the chain. Cards were misaligned after rotating until you scrolled.
+
+Dragging
+- A card you drag folds to its title until you drop it, so it is easy to move past other cards.
+- Dragging is smoother.
+
+Floating Meters
+- Spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in a Picture in Picture window, over any app. Turn it on from the … menu → Floating Meters.
+
+Also new
+- EffeTune 2.14.0 (DSP 0.14.0): Analog Meter Custom mode, Oscilloscope up to 10 seconds (smooth scrolling with Trigger Mode Off), Note Spectrogram instrument colours, Highlight and onsets.
+- SFZ Note Player plays SFZ instruments you import from Files, keeps them in the SFZ Library, and plays a note when you touch its voice display.
+- Adaptive Prediction, Cassette Mode and the new Rhythm Analyzer layout (EffeTune 2.13.0).
 - IR Reverb shows the energy decay curve and RT60 of the loaded impulse response.
-
-Battery
+- Settings → About → Reset All Data erases chains, presets, imported files and settings, including the iCloud copy.
+- Share this chain always makes an effectdeck.nemut.ai link that opens in EffectDeck.
 - Less work while idle: no 96/192 kHz resampling while bypassed, and the extension and the app wake only when audio arrives.
 
-Other
-- Share this chain always makes an effectdeck.nemut.ai link that opens in EffectDeck.
-- A card you drag folds to its title until you drop it, and dragging is smoother.
-- iPad: cards with a graph switch between open and graph only when tapped.
-
 Fixes
-- iPad: cards were misaligned after rotating until you scrolled.
 - Remote Control: the Scan QR Code sheet closed immediately.
 
 Previous updates (2026.10.08):

@@ -1959,7 +1959,7 @@ private struct PipelineToolbar: ToolbarContent {
     /// 立てると親が確認を出す。ここで出せないのは ToolbarContent が View でないから。
     @Binding var confirmingReset: Bool
     @ObservedObject var dsp: EffeTuneDSP
-    /// Mini Meters のトグルの印。
+    /// Floating Meters のトグルの印。
     @ObservedObject var pip = ETPiPVisualizer.shared
     let io: AudioIO
     /// 拡張が繋がっているか。繋がっていないあいだマスターを沈める。
@@ -2123,7 +2123,7 @@ private struct PipelineToolbar: ToolbarContent {
                     Text("Chain Input").tag(Int32(ET_METER_TAP_INPUT))
                     Text("Chain Output").tag(Int32(ET_METER_TAP_OUTPUT))
                 } label: {
-                    Label("Mini Meters", systemImage: "pip.enter")
+                    Label("Floating Meters", systemImage: "pip.enter")
                 }
                 .pickerStyle(.menu)
                 // 押したその場で始められるよう、メニューを開いたら PiP の用意をする（PiPVisualizer.swift の頭）。
