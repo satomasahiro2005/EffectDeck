@@ -111,6 +111,18 @@ final class OutputCorrection: ObservableObject {
         reconcile(cause: on ? "remote" : "local")
     }
 
+    /// 全部消した（ETFactoryReset）。入切と紐付けを入れ物から読み直す。
+    /// 落ち着いている出力先はいまの事実なので、覚え直す。
+    func reloadAfterReset() {
+        isOn = core.isOn
+        if let device {
+            core.setCurrentDevice(device)
+            core.noteName(device)
+        }
+        refreshBindings()
+        reconcile(cause: "reset", always: true)
+    }
+
     /// DSP を用意した（EffeTuneDSP.prepare の restore() の後）。
     /// 組み直し（レートの変更など）では、入っているものはそのまま残る（段は rebuildAll が作り直してある）。
     func dspPrepared() {

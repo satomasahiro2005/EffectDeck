@@ -86,6 +86,11 @@ extension PipelineStore {
         return parse(json, catalog: catalog)
     }
 
+    /// 列に積んだ書き込みを書き切るまで待つ（ETFactoryReset）。
+    static func flush() {
+        writer.sync {}
+    }
+
     static var hasSaved: Bool {
         requested || UserDefaults.standard.data(forKey: lastKey) != nil
     }

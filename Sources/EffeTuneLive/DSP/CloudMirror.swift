@@ -136,6 +136,38 @@ enum CloudMirror {
         }
     }
 
+    // MARK: - 消す
+
+    /// iCloud に消し残しがあるか。全部消す（ETFactoryReset）で消し切れなかったときに立てる。
+    /// 立っているあいだは iCloud から戻さず、起動のたびに消し直す（seedIfEmpty）。
+    static let erasePendingKey = "cloud.erasePending"
+
+    /// iCloud の EffectDeck の鍵を全部消す。消せたら true。
+    ///
+    /// **消せなかったら印を立てる。**KVS の消しは端末の控えに入って OS が後で送るので、
+    /// 送れたかはこちらから分からない。分かるのは synchronize() が控えを書けなかったこと
+    /// （entitlement が無いなど）だけ。そのときは成功と言わず、次の起動で消し直す。
+    @MainActor
+    @discardableResult
+    static func eraseAll() -> Bool {
+        let store = cloud
+        for key in store.dictionaryRepresentation.keys { store.removeObject(forKey: key) }
+        let ok = store.synchronize()
+        if ok {
+            UserDefaults.standard.removeObject(forKey: erasePendingKey)
+            log.notice("iCloud の写しを消した")
+        } else {
+            UserDefaults.standard.set(true, forKey: erasePendingKey)
+            log.error("iCloud の写しを消せなかった。次の起動で消し直す")
+        }
+        return ok
+    }
+
+    @MainActor
+    private static var erasePending: Bool {
+        UserDefaults.standard.bool(forKey: erasePendingKey)
+    }
+
     // MARK: - 戻す
 
     /// 起動で 1 回だけ。**App の init から呼ぶ**（EffeTuneLiveApp.swift）。
@@ -158,7 +190,9 @@ enum CloudMirror {
         // 「メモリとディスクを揃えられたか」で、iCloud と揃ったかではない。
         _ = cloud.synchronize()
 
-        seed()
+        // 前に消し切れなかった写しを、戻す前に消す。消し切れるまでは戻さない。
+        if erasePending { eraseAll() }
+        if !erasePending { seed() }
         observe()
     }
 
@@ -196,6 +230,7 @@ enum CloudMirror {
             // どのスレッドで来るか決まっていないので、触る前に main へ寄せる。
             // seed() は手元が空の鍵しか触らないので、遅れて来ても壊すものが無い。
             Task { @MainActor in
+                guard !erasePending else { return }
                 if seed() { onChainRestored?() }
             }
         }

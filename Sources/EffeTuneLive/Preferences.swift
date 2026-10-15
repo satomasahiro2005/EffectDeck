@@ -108,6 +108,33 @@ final class Preferences: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
     }
 
+    /// 全部消したあと（ETFactoryReset）。init と同じ読み方で読み直す。
+    /// **変わったものだけ代入する。**音の設定は代入するたびに経路を組み直す（onAudioChange）。
+    func reload() {
+        let d = defaults
+        let rate = PreferencesValues.processingRate(d.object(forKey: Key.rate))
+        if processingRate != rate { processingRate = rate }
+        let lat = PreferencesValues.latency(d.string(forKey: Key.latency))
+        if latency != lat { latency = lat }
+        let power = ETPowerMode(rawValue: d.string(forKey: Key.power) ?? "") ?? .balanced
+        if powerMode != power { powerMode = power }
+        let silence = PreferencesValues.silenceThreshold(d.object(forKey: Key.silence))
+        if silenceThresholdDb != silence { silenceThresholdDb = silence }
+        let awake = d.object(forKey: Key.awake) as? Bool ?? false
+        if keepScreenAwake != awake { keepScreenAwake = awake }
+        let sync = d.bool(forKey: Key.syncVisualsToAudio)
+        if syncVisualsToAudio != sync { syncVisualsToAudio = sync }
+        let canvas = PreferencesValues.jsfxCanvasMode(d.string(forKey: Key.jsfxCanvasMode))
+        if jsfxCanvasMode != canvas { jsfxCanvasMode = canvas }
+        let connect = PreferencesValues.remoteWantsConnection(
+            stored: d.object(forKey: Key.remoteConnect), legacy: d.object(forKey: Key.remoteEnabled))
+        if remoteWantsConnection != connect { remoteWantsConnection = connect }
+        let address = d.string(forKey: Key.remoteAddress) ?? ""
+        if remoteAddress != address { remoteAddress = address }
+        let mirror = d.bool(forKey: Key.remoteMirrorAnalyzers)
+        if remoteMirrorAnalyzers != mirror { remoteMirrorAnalyzers = mirror }
+    }
+
     private func save(_ v: Any, _ key: String) {
         defaults.set(v, forKey: key)
     }

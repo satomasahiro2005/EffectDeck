@@ -102,6 +102,17 @@ final class SFZLibrary: ObservableObject {
         entries = (try? files.readIndex()) ?? []
     }
 
+    /// 取り込んだバンクを全部消す（ETFactoryReset）。
+    func eraseAll() {
+        try? FileManager.default.removeItem(at: files.root)
+        try? files.createFolder()
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        var folder = files.root
+        try? folder.setResourceValues(excluded)
+        reload()
+    }
+
     func entry(id: String) -> ETSFZLibraryEntry? { entries.first { $0.id == id } }
 
     /// 書き終えたバンクを一覧に足す（バンクの入れ物は呼び手が先に書いておく）。

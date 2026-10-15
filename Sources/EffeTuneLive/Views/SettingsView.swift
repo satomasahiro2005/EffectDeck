@@ -310,12 +310,46 @@ struct SettingsView: View {
             Text("Feedback")
         }
 
+        ETResetAllDataSection(done: { dismiss() })
+
         // 名前が 1 つも無いうちは節ごと出さない。
         if !ETReporterThanks.isEmpty {
             Section {
             } footer: {
                 Text(ETReporterThanks.line)
             }
+        }
+    }
+}
+
+/// 全部消す（ETFactoryReset、#15）。About のいちばん下に置く。押す前に必ず 1 度聞く。
+///
+/// **聞くのは alert。**この節の外にある sheet（Remote の Scan QR Code）とは
+/// 付ける View が別なので潰し合わない。消せたらシートを閉じる。開いたままだと、
+/// 消えた設定が並んでいて何が起きたのか読めない。
+private struct ETResetAllDataSection: View {
+    let done: () -> Void
+
+    @State private var confirming = false
+    /// 手元は消せたが iCloud を消し切れなかった。
+    @State private var cloudFailed = false
+
+    var body: some View {
+        Section {
+            Button("Reset All Data", role: .destructive) { confirming = true }
+                .alert("Reset All Data?", isPresented: $confirming) {
+                    Button("Reset", role: .destructive) {
+                        if ETFactoryReset.run() { done() } else { cloudFailed = true }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This erases your chain, presets, imported IRs, JSFX and SFZ files, output corrections and settings on this device and in iCloud. This can't be undone.")
+                }
+                .alert("Couldn't erase iCloud data", isPresented: $cloudFailed) {
+                    Button("OK") { done() }
+                } message: {
+                    Text("Data on this device was erased. EffectDeck will erase its iCloud copy the next time it starts.")
+                }
         }
     }
 }

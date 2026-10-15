@@ -46,7 +46,8 @@ final class EffectPresetStore: ObservableObject {
         reload()
     }
 
-    private func reload() {
+    /// 入れ物を読み直す。init と、全部消したあと（ETFactoryReset）。
+    func reload() {
         saved = core.saved
     }
 

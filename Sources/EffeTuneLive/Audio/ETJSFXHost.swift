@@ -218,6 +218,18 @@ final class ETJSFXHost: ObservableObject {
     private var renderConfiguration: RenderConfiguration?
     private var latencyTimer: Timer?
 
+    /// 取り込んだものを全部消す（ETFactoryReset）。鎖の段は呼ぶ前に外してある。
+    /// 同梱の見本（DebugFactory）は refresh が写し直す。
+    func eraseImported() {
+        for path in ["JSFX/Sources", "JSFX/Replaced"] {
+            if let url = try? Self.storageURL(path) { try? FileManager.default.removeItem(at: url) }
+        }
+        if let url = Self.replacedAliasesURL() { try? FileManager.default.removeItem(at: url) }
+        replacedAliases = JSFXReplace.Aliases()
+        pendingTargets.removeAll()
+        refresh()
+    }
+
     private init() {
         replacedAliases = Self.loadReplacedAliases()
         refresh()

@@ -32,7 +32,8 @@ final class PresetStore: ObservableObject {
         reload()
     }
 
-    private func reload() {
+    /// 入れ物を読み直す。init と、全部消したあと（ETFactoryReset）。
+    func reload() {
         names = core.names
         emptyFolders = core.emptyFolders
     }

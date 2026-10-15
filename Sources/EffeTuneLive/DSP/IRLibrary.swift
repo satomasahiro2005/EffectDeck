@@ -51,6 +51,13 @@ final class IRLibrary: ObservableObject {
         entries = IRLibraryFiles.entries(in: root)
     }
 
+    /// 取り込んだ IR を全部消す（ETFactoryReset）。
+    func eraseAll() {
+        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reload()
+    }
+
     /// ファイルを取り込む。すでに同じ中身があれば、その鍵を返すだけ。
     @discardableResult
     func importFile(at source: URL) -> String? {
