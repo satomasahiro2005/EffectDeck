@@ -1,10 +1,11 @@
 //  MiniMeters.swift
-//  PiP に出す横長の帯（MiniMeters の形）。左から スペクトログラム・波形・ステレオ・レベル。
+//  PiP に出す横長の帯（MiniMeters の形）。左から スペクトログラム・波形・スペアナ・ステレオ・レベル。
 //
 //  **見た目は MiniMeters の既定に寄せる。**minimeters.app の宣伝動画と画像、テーマのひな形
 //  （_TEMPLATE）から拾った:
 //      背景は黒。区画は枠も隙間も無く隣り合わせに切る。字は出さない。
 //      スペクトログラム  低い所は暗い紫、上がるほど 紫 → 赤紫 → 橙 → 淡い黄
+//      スペアナ         Both の形。量の色の塗りに 172,192,222 の線
 //      波形            RGB のモード。低域 0–200Hz が赤、中域 200–2kHz が緑、高域 2kHz– が 50,50,255。
 //                     足し合わせて一番強い色を明るさいっぱいにする（よく混ざると白っぽくなる）
 //      ステレオ         灰色の菱形の格子に、波形と同じ色の点
@@ -25,9 +26,10 @@ final class ETMiniMeters {
     static let pixelHeight = 256
 
     // 区画の幅（ピクセル）。足して pixelWidth。
-    private static let spectrogramWidth = 400
-    private static let waveformWidth = 560
-    private static let stereoWidth = 256
+    private static let spectrogramWidth = 300
+    private static let waveformWidth = 400
+    private static let spectrumWidth = 300
+    private static let stereoWidth = 216
     private static let levelWidth = 64
 
     private var sampleRate: Double = 48000
@@ -58,8 +60,10 @@ final class ETMiniMeters {
     private var window = [Float](repeating: 0, count: fftSize)
     /// 区画ぶんのピクセル（RGBA、上が 0）。1 回描くごとに左へ送り、右端に新しい列を足す。
     private var spectrogram = [UInt32](repeating: 0xFF000000, count: spectrogramWidth * pixelHeight)
-    /// 1 回で足す列の幅。30 回/秒で 400 ピクセルなら約 6.7 秒。
+    /// 1 回で足す列の幅。30 回/秒で 300 ピクセルなら 5 秒。
     private static let spectrogramStep = 2
+    /// スペアナの 2 ピクセルごとの値（dB、傾き込み）。上がるときはすぐ、落ちるときはゆっくり。
+    private var spectrumDB = [Float](repeating: -120, count: spectrumWidth / 2)
 
     // MARK: ステレオ
 
@@ -234,6 +238,18 @@ final class ETMiniMeters {
             let pixel = Self.heat(db)
             for x in (width - step)..<width { spectrogram[y * width + x] = pixel }
         }
+        // スペアナも同じ FFT から。
+        let columns = spectrumDB.count
+        for c in 0..<columns {
+            let t0 = Double(c) / Double(columns), t1 = Double(c + 1) / Double(columns)
+            let b0 = max(1, Int(20 * pow(1000, t0) / binHz))
+            let b1 = min(n / 2 - 1, max(b0, Int(20 * pow(1000, t1) / binHz)))
+            var peak: Float = 0
+            for b in b0...b1 { peak = max(peak, power[b]) }
+            let center = 20 * pow(1000, (t0 + t1) / 2)
+            let db = peak > 0 ? 10 * log10(peak * scale) + 6 + Float(3 * log2(center / 1000)) : -120
+            spectrumDB[c] = db > spectrumDB[c] ? db : max(db, spectrumDB[c] - 1.5)
+        }
     }
 
     /// 量（dB）から色。黒 → 深い紫 → 紫 → 赤紫 → 赤橙 → 橙 → 淡い黄（MiniMeters のスペクトログラムの見え方）。
@@ -279,12 +295,15 @@ final class ETMiniMeters {
         x += spectrogramRect.width
         let waveRect = CGRect(x: x, y: 0, width: CGFloat(Self.waveformWidth), height: h)
         x += waveRect.width
+        let spectrumRect = CGRect(x: x, y: 0, width: CGFloat(Self.spectrumWidth), height: h)
+        x += spectrumRect.width
         let stereoRect = CGRect(x: x, y: 0, width: CGFloat(Self.stereoWidth), height: h)
         x += stereoRect.width
         let levelRect = CGRect(x: x, y: 0, width: CGFloat(Self.levelWidth), height: h)
 
         drawSpectrogram(context, spectrogramRect)
         drawWaveform(context, waveRect)
+        drawSpectrum(context, spectrumRect)
         drawStereo(context, stereoRect)
         drawLevels(context, levelRect)
     }
@@ -306,6 +325,47 @@ final class ETMiniMeters {
         context.scaleBy(x: 1, y: -1)
         context.interpolationQuality = .none
         context.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
+        context.restoreGState()
+    }
+
+    /// MiniMeters の Both の形。塗りは列ごとに量の色（スペクトログラムと同じ並び）、上に 172,192,222 の線。
+    /// 後ろに 10 刻みの周波数の細い線。
+    private func drawSpectrum(_ context: CGContext, _ rect: CGRect) {
+        context.saveGState()
+        context.clip(to: rect)
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.07))
+        var decade = 10.0
+        while decade < 20000 {
+            for k in 1...9 {
+                let f = decade * Double(k)
+                guard f >= 20 && f <= 20000 else { continue }
+                let gx = rect.minX + CGFloat(log(f / 20) / log(1000)) * rect.width
+                context.fill(CGRect(x: gx.rounded(), y: rect.minY, width: 1, height: rect.height))
+            }
+            decade *= 10
+        }
+        func y(_ db: Float) -> CGFloat {
+            let t = CGFloat((min(max(db, -84), -6) + 84) / 78)
+            return rect.maxY - t * rect.height
+        }
+        let columns = spectrumDB.count
+        let line = CGMutablePath()
+        for c in 0..<columns {
+            let top = y(spectrumDB[c])
+            let x = rect.minX + CGFloat(c) * 2
+            let color = Self.heat(spectrumDB[c])
+            context.setFillColor(red: CGFloat((color >> 16) & 0xFF) / 255,
+                                 green: CGFloat((color >> 8) & 0xFF) / 255,
+                                 blue: CGFloat(color & 0xFF) / 255, alpha: 1)
+            context.fill(CGRect(x: x, y: top, width: 2, height: rect.maxY - top))
+            let p = CGPoint(x: x + 1, y: top)
+            if c == 0 { line.move(to: p) } else { line.addLine(to: p) }
+        }
+        context.addPath(line)
+        context.setStrokeColor(Self.meter)
+        context.setLineWidth(2)
+        context.setLineJoin(.round)
+        context.strokePath()
         context.restoreGState()
     }
 
