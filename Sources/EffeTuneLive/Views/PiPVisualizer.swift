@@ -132,6 +132,27 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         guard wantsStart, let controller, controller.isPictureInPicturePossible,
               !controller.isPictureInPictureActive else { return }
         wantsStart = false
+        attempt += 1
+        let this = attempt
+        controller.startPictureInPicture()
+        // **黙って始まらないことがある。**作ったばかりの係では possible が真でも、
+        // startPictureInPicture が何も言わずに終わる（実機のログ。2 回目に押すと出た）。
+        // 少し待っても始まりかけていなければ、もう一度だけ始める。
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            ETPiPVisualizer.shared.retryIfSilent(this)
+        }
+    }
+
+    /// 何回目に始めたか。retryIfSilent が古い回のやり直しをしないように。
+    private var attempt = 0
+    /// willStart が来たか（始まりかけている）。
+    fileprivate var starting = false
+
+    private func retryIfSilent(_ this: Int) {
+        guard this == attempt, point != nil, let controller,
+              !starting, !controller.isPictureInPictureActive else { return }
+        log.info("PiP が始まらなかったのでもう一度 possible=\(controller.isPictureInPicturePossible, privacy: .public)")
         controller.startPictureInPicture()
     }
 
@@ -147,6 +168,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     /// PiP が止まった。自分で閉じたのでなければ、出していた所を控えて前に来たら出し直す。
     fileprivate func didStop() {
+        starting = false
         let now = CACurrentMediaTime()
         let state = UIApplication.shared.applicationState
         let closedByUser = stopIsIntended || now - pausedAt < 1.5
@@ -186,11 +208,12 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     private func attachHost() {
+        // 前に来た知らせの時点ではまだ鍵の窓が無いことがある（起動直後）。そのときは前にいる場面の窓に置く。
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows)
+            + scenes.flatMap(\.windows)
         guard host.superview == nil,
-              let window = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .flatMap(\.windows)
-                .first(where: \.isKeyWindow) else { return }
+              let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return }
         host.frame = CGRect(x: 0, y: 0, width: 2, height: 2)
         window.insertSubview(host, at: 0)
     }
@@ -288,6 +311,19 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 // MARK: - PiP の知らせ
 
 extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
+    nonisolated func pictureInPictureControllerWillStartPictureInPicture(
+        _ pictureInPictureController: AVPictureInPictureController) {
+        Task { @MainActor in
+            ETPiPVisualizer.shared.starting = true
+            ETPiPVisualizer.shared.log.info("PiP が始まる")
+        }
+    }
+
+    nonisolated func pictureInPictureControllerDidStartPictureInPicture(
+        _ pictureInPictureController: AVPictureInPictureController) {
+        Task { @MainActor in ETPiPVisualizer.shared.starting = false }
+    }
+
     nonisolated func pictureInPictureControllerDidStopPictureInPicture(
         _ pictureInPictureController: AVPictureInPictureController) {
         Task { @MainActor in ETPiPVisualizer.shared.didStop() }
@@ -298,6 +334,7 @@ extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
         failedToStartPictureInPictureWithError error: Error) {
         let text = error.localizedDescription
         Task { @MainActor in
+            ETPiPVisualizer.shared.starting = false
             ETPiPVisualizer.shared.log.error("PiP を始められない: \(text, privacy: .public)")
             ETPiPVisualizer.shared.teardown()
         }

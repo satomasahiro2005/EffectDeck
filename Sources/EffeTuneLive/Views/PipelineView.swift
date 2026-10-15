@@ -2120,6 +2120,8 @@ private struct PipelineToolbar: ToolbarContent {
                 } label: {
                     Label("Mini Meters", systemImage: "pip.enter")
                 }
+                // 押したその場で始められるよう、メニューを開いたら PiP の用意をする（PiPVisualizer.swift の頭）。
+                .onAppear { ETPiPVisualizer.shared.prepare() }
                 // **出力補正と Build with ChatGPT… はここに置かない。**持ち主のシートに置く
                 // （「…のメニューに置くのは変」）。出力補正は Presets のシートの Output Correction の行、
                 // 鎖を組ませる依頼はエフェクト一覧の Effects の面の頭（と空の鎖の表示）。
