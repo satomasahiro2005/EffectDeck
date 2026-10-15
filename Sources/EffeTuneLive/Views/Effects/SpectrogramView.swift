@@ -332,7 +332,6 @@ private struct SpectrogramGraph: View {
             }
             .onChange(of: column?.sequence) { _, _ in push(column) }
             // 手元と PC で時計が違う。入れ替わったら溜めた列を捨てる（残すと span が狂う）。
-            .onChange(of: telemetry.mirrored.contains(tapId)) { _, _ in band.reset() }
             .onChange(of: scale) { _, new in band.scale = new }
             .onChange(of: lut) { _, new in band.lut = new }
     }

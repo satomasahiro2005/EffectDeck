@@ -1,12 +1,26 @@
-App Review notes: JSFX scripts
+App Review notes
 
 Guideline 5 (China): ChatGPT and OpenAI are no longer mentioned in the metadata
 or screenshots. On the China mainland storefront (StoreKit countryCode CHN)
 the app hides both ChatGPT entries described below.
 
-This update: after updating from an earlier version, the main screen shows a
-red Restart Required band until the device restarts once. A fresh install does
-not. EffeTune Remote Control is off.
+Remote Control (optional)
+EffectDeck can also edit the effect chain of EffeTune, the free desktop app
+whose effects EffectDeck uses (https://github.com/Frieve-A/effetune, 2.14 or
+later), running on a computer on the same Wi-Fi network.
+- On the computer: EffeTune > Settings > Remote Control > Allow remote control
+  shows a QR code.
+- In EffectDeck: Settings (top right ...) > Remote > Scan QR Code.
+- The camera is used only to read that QR code. The local network is used only
+  to connect to the computer address inside it (plain WebSocket on port
+  47300-47309). Nothing is sent to any other server, and nothing is recorded.
+- Without a computer running EffeTune this feature cannot be exercised; the rest
+  of the app works the same without it.
+
+SFZ Note Player
+SFZ instruments are folders of text definitions and audio samples. The user
+picks a folder in Files (SFZ Library > Import Folder...). The files are copied
+into the app and played as samples. They are data, not code.
 
 What it is
 EffectDeck can host JSFX, the single-file audio effect script format used by

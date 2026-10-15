@@ -135,7 +135,6 @@ enum PreferencesValues {
         static let remoteEnabled = "pref.remoteEnabled"
         static let remoteConnect = "pref.remoteConnect"
         static let remoteAddress = "pref.remoteAddress"
-        static let remoteMirrorAnalyzers = "pref.remoteMirrorAnalyzers"
     }
 
     /// 起動でつなぎ直すか。新しい鍵があればそれ、無ければ前の版の remoteEnabled を引き継ぐ

@@ -609,7 +609,6 @@ private struct NoteSpectrogramGraph: View {
             .onChange(of: graphHeight) { _, h in band.fit(height: h * displayScale) }
             .onChange(of: latestSequence) { _, _ in ingest() }
             // 手元と PC で時計が違う。入れ替わったら溜めた列を捨てる（残すと Time Span の列数が狂う）。
-            .onChange(of: telemetry.mirrored.contains(tapId)) { _, _ in band.reset() }
             .onChange(of: display) { _, now in band.display = now }
     }
 
