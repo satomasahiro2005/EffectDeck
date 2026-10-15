@@ -1,54 +1,32 @@
-Restart your iPhone or iPad once after this update (the device, not the app). Until you do, EffectDeck shows up in Control Center but won't connect, and the main screen shows Restart Required. Only this update requires it. A fresh install does not.
-
-New since 2026.10.04
+New since 2026.10.08
 
 New
-- Output Correction: assign one of your presets to each pair of headphones or speaker. It is applied after the chain, switches automatically when the output changes, and never modifies the chain. Choose it from the Output Correction row below the chain.
+- Mini Meters: spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in a Picture in Picture window, over any app. Turn it on from the … menu → Mini Meters.
+- Remote Control: edit the effect chain of EffeTune 2.14 on a computer on the same network. Allow remote control in EffeTune's settings, then scan its QR code from Settings → Remote. IR Reverb can choose from the computer's IR Library.
+- SFZ Note Player: plays SFZ instruments you import from Files. Imported instruments stay in the SFZ Library, and the voice display plays a note when touched.
+- Settings → About → Reset All Data erases chains, presets, imported files and settings, including the iCloud copy.
 
-Fixes
-- Third-party AUv3 plug-ins did not appear under Plugins.
-- Apple Audio Units such as AUDelay showed only parameter controls instead of their own interface (since 2026.09.28).
-- Dropping below the last card failed after Reset chain or deleting a card.
+EffeTune 2.14.0 (DSP 0.14.0)
+- Analog Meter adds a Custom mode with its own detector and dial.
+- Oscilloscope shows up to 10 seconds. With Trigger Mode Off it scrolls smoothly.
+- Note Spectrogram adds instrument colours, Highlight and note onsets.
+- Adaptive Prediction, Cassette Mode and the new Rhythm Analyzer layout (2.13.0).
+- IR Reverb shows the energy decay curve and RT60 of the loaded impulse response.
+
+Battery
+- Less work while idle: no 96/192 kHz resampling while bypassed, and the extension and the app wake only when audio arrives.
 
 Other
-- JSFX scripts run about 1.3 to 1.4 times faster on iPhone, with bit-identical output.
-- JSFX: fixed a crash or incorrect values when a function using x[] was called more than once, and a crash from file_rewind or file_riff on a handle that is not open.
-- Available Effects has three tabs: Effects, Plugins and Presets. Import JSFX is at the top of Plugins, and System Presets are at the end of Presets.
-- Effects can be dropped beside and between cards, below the last card, onto an empty chain, and, on iPad, onto the left list.
+- Share this chain always makes an effectdeck.nemut.ai link that opens in EffectDeck.
+- A card you drag folds to its title until you drop it, and dragging is smoother.
+- iPad: cards with a graph switch between open and graph only when tapped.
 
-Previous updates (2026.10.04):
+Fixes
+- iPad: cards were misaligned after rotating until you scrolled.
+- Remote Control: the Scan QR Code sheet closed immediately.
 
-EffeTune 2.12.0 (DSP 0.12.0)
-- New: Analog Meter, Rhythm Analyzer and Tonal Balance EQ.
-- Note Spectrogram adds keyboard and Volume controls matching EffeTune.
-- Effect resets and default values match upstream. Pitch Meter adds orientation.
-- AM Radio, TV Audio and Vinyl controls use tabs matching EffeTune.
-- IR Reverb adds preprocessing controls, and Room EQ adds its graph.
-- Connection timeout detection uses data received from the current peer.
-- JSFX fixes address integer overflow and memory handling.
+Previous updates (2026.10.08):
 
-Previous updates (2026.09.28):
-
-iPad
-- A wide window shows the chain as a list on the left and every card open on the right. Reorder in the list, and drop effects into it.
-
-JSFX
-EffectDeck hosts JSFX, the single-file script format REAPER uses.
-- Import from Files, a link, the clipboard or the share sheet.
-- Sliders keep their ranges, curves and menus. Scripts that draw (@gfx) get a canvas with touch, keyboard, menus and full screen.
-- @serialize state is saved with the chain and presets. Reported latency is compensated.
-- A script that keeps overrunning its time budget is bypassed, and the card says by how much. Re-enable puts it back.
-- In Plugins, the ... next to a script offers View Source, Copy Source, Share as a link and Delete.
-
-EffeTune 2.11.0 (DSP 0.11.0)
-- New: Attack Tonal Balance, Bass Extender, Chroma Spiral, Bass Management.
-- Oversampling up to 8x on Saturation, Dynamic Saturation, Exciter, Harmonic Distortion and Multiband Saturation, 16x on Hard Clipping.
-
-Presets and sharing
-- Presets > Import from clipboard reads a chain pasted as text.
-- Share this chain makes an effectdeck.nemut.ai link that opens EffectDeck and keeps AU and JSFX stages.
-- 15Band PEQ imports an AutoEq ParametricEQ.txt.
-
-Known
-- Older versions of Spotify cannot connect on tracks with Canvas. Update Spotify to the latest version. Spotify or YouTube sometimes cannot connect because iOS treats them as video. See Known limitations and issues #1, #3 and #4.
-- Overnight battery use is still being measured (issue #5).
+- Output Correction: assign one of your presets to each pair of headphones or speaker. It is applied after the chain and switches automatically when the output changes.
+- Third-party AUv3 plug-ins appear under Plugins, and Apple Audio Units show their own interface.
+- JSFX scripts run about 1.3 to 1.4 times faster on iPhone.

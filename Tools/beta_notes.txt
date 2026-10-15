@@ -5,20 +5,15 @@ This beta includes all work in progress, including features not yet in the App S
 
 New
 
-- EffeTune 2.13.0 (DSP 0.13.0): SFZ Note Player, the Adaptive Prediction screen, Cassette Mode, and the new Note Spectrogram and Rhythm Analyzer layouts. Remote Control now works with the released EffeTune 2.13.0 on your computer.
-- IR Reverb shows the energy decay curve and RT60 of the loaded impulse response, as in EffeTune.
-- iPad (two columns): cards with a graph can be switched between open and graph only by tapping them.
-- Share this chain always makes an effectdeck.nemut.ai link. It opens directly in EffectDeck, and the page offers the chain to the EffeTune web app as well. Please check that tapping a shared link opens the chain.
-
-Battery
-
-Less work while idle: no 96/192 kHz resampling while bypassed, the link between the extension and the app wakes only when audio arrives instead of polling, and less checking in the background. Please check battery use with the screen off, and report any dropouts or failures to reconnect after switching outputs, calls or locking.
+- Mini Meters: the … menu → Mini Meters shows spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in Picture in Picture. It stays on until you choose Off. If another app takes over Picture in Picture, it comes back when you return to EffectDeck. Please check that it starts with one tap and keeps moving over other apps.
+- EffeTune 2.14.0 (DSP 0.14.0): Analog Meter Custom mode, Oscilloscope up to 10 seconds (scrolls smoothly with Trigger Mode Off), Note Spectrogram instrument colours, Highlight and onsets, and the SFZ Library and voice display for SFZ Note Player.
+- Remote Control works with EffeTune 2.14 on your computer. While editing the computer's chain, IR Reverb chooses from the computer's IR Library, and values measured from local audio are hidden.
+- Settings → About → Reset All Data erases everything, including the iCloud copy.
+- The New section in Available Effects is gone.
 
 Fixes
 
-- iPad: cards were misaligned after rotating until you scrolled.
-- Remote Control: the Scan QR Code sheet closed immediately.
-- SFZ Note Player: choosing a folder with several SFZ files now shows the list to pick from.
+- A card you drag folds to its title until you drop it, and dragging is smoother.
 
 If anything looks or sounds wrong, please use Settings → About → Report a problem and include your device, the output in use and what was playing.
 
@@ -28,19 +23,14 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 
 【新機能】
 
-・EffeTune 2.13.0（DSP 0.13.0）に対応しました。SFZ Note Player、Adaptive Predictionの画面、CassetteのMode、Note SpectrogramとRhythm Analyzerの新しい配置が加わりました。Remote Controlは、公開版のEffeTune 2.13.0で使えるようになりました。
-・IR Reverbに、読み込んだインパルス応答のエネルギー減衰曲線とRT60を、EffeTuneと同じ形で表示します。
-・iPad（2列表示）：グラフを持つカードは、タップで開いた表示とグラフのみの表示を切り替えられます。
-・Share this chainは常にeffectdeck.nemut.aiのリンクを作ります。リンクからEffectDeckで直接開き、ページからはEffeTuneのWeb版でも開けます。共有したリンクをタップしてチェーンが開くかご確認ください。
-
-【バッテリー】
-
-待機中の処理を減らしました。バイパス中は96/192kHzのリサンプリングを行わず、拡張とアプリの間の通信は定期的な確認をやめて音が届いたときだけ動き、バックグラウンドでの確認も減らしています。画面を消した状態での電池の減り方と、出力先の切り替え・通話・ロックの後に音が途切れたり接続が戻らなかったりしないかをご確認ください。
+・Mini Meters：…メニュー → Mini Metersで、チェーンの入口または出口の音のスペクトログラム・波形・スペクトラム・ステレオ・レベルをピクチャ・イン・ピクチャで表示します。Offを選ぶまで表示し続け、ほかのアプリにピクチャ・イン・ピクチャを取られても、EffectDeckに戻ると再び表示します。1回のタップで表示されるか、ほかのアプリの上で動き続けるかをご確認ください。
+・EffeTune 2.14.0（DSP 0.14.0）に対応しました。Analog MeterのCustomモード、最大10秒のOscilloscope（Trigger ModeがOffなら滑らかに流れます）、Note Spectrogramの楽器の色・Highlight・音の始まりの印、SFZ Note PlayerのSFZ Libraryと声の表示が加わりました。
+・Remote Controlは、パソコンのEffeTune 2.14で使えます。パソコンのチェーンを編集している間、IR Reverbはパソコンのライブラリから選び、手元の音から測る表示は隠します。
+・Settings → About → Reset All Dataで、iCloudの控えも含めてすべて消去できます。
+・エフェクト一覧のNewの欄をなくしました。
 
 【不具合の修正】
 
-・iPadで、回転した後にスクロールするまでカードの位置がずれる不具合を修正しました。
-・Remote Controlで、Scan QR Codeの画面がすぐ閉じる不具合を修正しました。
-・SFZ Note Player：SFZが複数入ったフォルダを選ぶと、選ぶための一覧を表示するようにしました。
+・ドラッグしているカードは、離すまで名前の行だけに畳み、ドラッグも軽くなりました。
 
 表示や音に問題がある場合は、Settings → About → Report a problemから、ご使用の端末、出力先、再生していた内容を添えてご報告ください。

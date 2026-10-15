@@ -15,6 +15,9 @@ cannot be exercised; the rest of the app does not need it.
 SFZ Note Player: SFZ instruments are folders of text and audio samples the user
 picks in Files. They are copied into the app and played. Data, not code.
 
+Mini Meters (... menu): Picture in Picture shows meters drawn from the app's own
+audio. Nothing is recorded or sent.
+
 JSFX scripts
 EffectDeck can host JSFX, the single-file text effect format used by REAPER.
 A script the user brings in becomes an effect in the chain, with its own
