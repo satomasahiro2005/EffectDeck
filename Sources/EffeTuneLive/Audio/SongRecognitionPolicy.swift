@@ -6,8 +6,9 @@
 //  切り出した理由は、間合い（どれだけ聞かせて、当たったらどれだけ休むか）を実機で試すと
 //  1 回に 20 秒かかるため。Foundation だけなので Linux でも測れる（Tests/Unit/SongRecognitionPolicyTests.swift）。
 //
-//  聞き取りは Apple へ音の指紋を送る。**聞かせ続けない**のが方針で、当たったら休み、
-//  外れたら長めに休み、無音ならやめる。
+//  当たったら少し休んで聞き直す。DJ ミックスのように無音を挟まず曲が替わるため
+//  （本人「最近はdjmixとか多い」）。外れても出ている曲は消さない（つなぎの途中で外れるため）。
+//  Visualizer を見ているときはたぶん充電中なので、聞き直す間合いは短くてよい（本人）。
 
 import Foundation
 
@@ -27,10 +28,10 @@ struct SongRecognitionPolicy {
     static let silenceToReset: TimeInterval = 2
     /// 1 回の聞き取りに聞かせる上限。
     static let attemptLimit: TimeInterval = 20
-    /// 当たったあとの休み。
-    static let restAfterMatch: TimeInterval = 20
+    /// 当たったあとの休み。休みが明けたら、溜めておいた音（SongRecognizer の history）から聞き直す。
+    static let restAfterMatch: TimeInterval = 10
     /// 当たらなかったあとの休み。
-    static let restAfterMiss: TimeInterval = 30
+    static let restAfterMiss: TimeInterval = 5
     /// エラーのあとの休み。
     static let restAfterError: TimeInterval = 60
 
@@ -68,8 +69,7 @@ struct SongRecognitionPolicy {
         case .listening(let since, let silentSince):
             if now - since >= Self.attemptLimit {
                 phase = .resting(until: now + Self.restAfterMiss, silentSince: nil)
-                lastID = nil
-                return .drop(clear: true)
+                return .drop(clear: false)
             }
             guard silent else {
                 phase = .listening(since: since, silentSince: nil)

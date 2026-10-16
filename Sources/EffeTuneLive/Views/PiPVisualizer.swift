@@ -55,7 +55,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
     /// 器の形。iPad も iPhone と同じ横長の 1 段（本人「ipadでもiphoneと揃えてくれ」）。
-    private let layout: ETMiniMeters.Layout = .strip
+    private let layout: ETMiniMeters.Layout = ETFeatures.visualizer ? .stripWithArtwork : .strip
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
     private var activeAt: CFTimeInterval = 0
     private var foreground: NSObjectProtocol?
@@ -113,6 +113,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         }
         point = newPoint
         prepare()
+        if ETFeatures.visualizer { ETSongRecognizer.shared.setActive(true, for: .floatingMeters) }
         let made = ETMiniMeters(layout: layout)
         made.reset()
         meters = made
@@ -168,6 +169,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         meters = nil
         point = nil
         ETMeterTap_SetPoint(Int32(ET_METER_TAP_OFF))
+        if ETFeatures.visualizer { ETSongRecognizer.shared.setActive(false, for: .floatingMeters) }
     }
 
     /// PiP が止まった。トグルが入ったままなら、前に来たときに出し直す。
@@ -235,6 +237,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private func tick() {
         guard let meters else { return }
         meters.pull(rate: AudioIO.shared.sampleRate)
+        if ETFeatures.visualizer { meters.artwork = ETSongRecognizer.shared.artwork }
         enqueue(meters)
     }
 

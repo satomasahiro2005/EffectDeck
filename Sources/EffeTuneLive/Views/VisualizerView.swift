@@ -51,7 +51,7 @@ struct VisualizerView: View {
     }
 
     private func update() {
-        if onScreen && scenePhase == .active { recognizer.start() } else { recognizer.stop() }
+        recognizer.setActive(onScreen && scenePhase == .active, for: .sheet)
     }
 
     /// 画像は AsyncImage の既定（URLSession.shared と URLCache.shared）に任せる。自前の置き場は持たない。

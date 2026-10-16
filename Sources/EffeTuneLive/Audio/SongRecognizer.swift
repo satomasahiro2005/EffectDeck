@@ -9,8 +9,10 @@
 //  matchStreamingBuffer へ渡す。SHManagedSession・SHSignatureGenerator・MusicKit は使わない。
 //  ShazamKit を import するのはこのファイルだけ。
 //
-//  **いつ動くか。**Visualizer のシートが出ていて、アプリが前にいて、拡張から音が来ているあいだだけ
-//  （VisualizerView が start / stop を呼ぶ。相手が居なければ読み手は空回りする）。
+//  **いつ動くか。**Visualizer のシートが（アプリが前にいて）出ているか、Floating Meters が出ているあいだ
+//  （それぞれが setActive を呼ぶ。相手が居なければ読み手は空回りする）。
+//  読み手は読んだ音を 10 秒ぶん溜めておき（history）、聞き始めるときは溜めた分から聞かせる。
+//  休み明けの聞き直しがすぐ当たるように。
 //  聞かせる長さ・休み・無音の扱いは SongRecognitionPolicy（Foundation だけ。そちらに説明）。
 //
 //  **ShazamKit は音の指紋を Apple へ送る。**だから ETFeatures.visualizer は Debug と Beta だけ。
@@ -34,14 +36,26 @@ final class ETSongRecognizer {
     private(set) var current: ETRecognizedSong?
     /// 取得状況（logStatus と同じ中身を 1 項目 1 行で）。デバッグ用の画面に出す。
     private(set) var status = ""
+    /// current のアートワーク。Floating Meters が CoreGraphics で描く。読み込むまでは nil。
+    @ObservationIgnored private(set) var artwork: CGImage?
+
+    /// 聞き取りを頼んでいる所。どれかが居るあいだ動く。
+    enum Client { case sheet, floatingMeters }
 
     @ObservationIgnored fileprivate var feeder: ETShazamFeeder?
     @ObservationIgnored private var mock: Task<Void, Never>?
+    @ObservationIgnored private var clients: Set<Client> = []
+    @ObservationIgnored private var artworkTask: Task<Void, Never>?
 
     private init() {}
 
+    func setActive(_ active: Bool, for client: Client) {
+        if active { clients.insert(client) } else { clients.remove(client) }
+        if clients.isEmpty { stop() } else { start() }
+    }
+
     /// 聞き取りを始める。繰り返し呼んでよい。
-    func start() {
+    private func start() {
         guard feeder == nil, mock == nil else { return }
         if UserDefaults.standard.bool(forKey: "ETMockShazam") {
             mock = Task { @MainActor in
@@ -57,18 +71,33 @@ final class ETSongRecognizer {
     }
 
     /// やめる。繰り返し呼んでよい。出ている曲も消す。
-    func stop() {
+    private func stop() {
         feeder?.stop()
         feeder = nil
         mock?.cancel()
         mock = nil
-        current = nil
+        publish(nil)
         status = ""
     }
 
     fileprivate func publish(_ song: ETRecognizedSong?) {
         guard current != song else { return }
         current = song
+        artworkTask?.cancel()
+        artworkTask = nil
+        artwork = nil
+        guard let song, let url = song.artworkURL else { return }
+        artworkTask = Task { @MainActor [weak self] in
+            let image = await Self.loadImage(url)
+            guard !Task.isCancelled, let self, self.current == song else { return }
+            self.artwork = image
+        }
+    }
+
+    /// URLCache.shared に乗せる（AsyncImage と同じ置き場）。
+    private static func loadImage(_ url: URL) async -> CGImage? {
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        return UIImage(data: data)?.cgImage
     }
 
     /// 止めたあとに遅れて届いた結果を捨てるため、出した読み手がまだ生きているかを見る。
@@ -116,8 +145,14 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "ai.nemut.effetune.shazam", qos: .utility)
     private let timer: DispatchSourceTimer
+    /// 溜めておくモノラルの長さ（フレーム）。10 秒。
+    private static let historyFrames = 480_000
     /// 0.5 秒ぶんの interleaved 2ch。一度だけ確保する。
     private var scratch = [Float](repeating: 0, count: 48_000)
+    /// 読んだ音のモノラル（輪）。休んでいるあいだも溜める。音が飛んだら捨てる（historyCount = 0）。
+    private var history = [Float](repeating: 0, count: historyFrames)
+    private var historyHead = 0
+    private var historyCount = 0
     private var cursor: UInt64 = 0
     private var generation: UInt64 = 0
     private var session: SHSession?
@@ -176,6 +211,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             cursor = rx.tapWritePosition()
             dropSession()
             policy.peerLost()
+            historyCount = 0
             publish(nil)
             return
         }
@@ -187,6 +223,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             Self.log.notice("tap skipped \(skipped, privacy: .public) samples")
             dropSession()
             policy.discontinuity()
+            historyCount = 0
         }
         guard frames > 0 else {
             // 新しい音が来ないのも無音と見る。元のアプリが止まるとホストは IO を止めるが、
@@ -195,6 +232,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             lastPeak = 0
             if case .drop(let clear) = policy.audio(now: CACurrentMediaTime(), peak: 0) {
                 dropSession()
+                // 止まる前と再開後の音をつなげて聞かせない。
+                historyCount = 0
                 if clear { publish(nil) }
                 Self.log.notice("session dropped: \(clear ? "attempt timed out" : "no data", privacy: .public)")
             }
@@ -204,11 +243,12 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         var peak: Float = 0
         for i in 0..<(frames * 2) { peak = max(peak, abs(scratch[i])) }
         lastPeak = peak
+        remember(frames: frames)
 
         switch policy.audio(now: CACurrentMediaTime(), peak: peak) {
         case .startAndFeed:
             makeSession()
-            feed(frames: frames)
+            feedHistory()
         case .feed:
             feed(frames: frames)
         case .drop(let clear):
@@ -256,6 +296,29 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private func dropSession() {
         session?.delegate = nil
         session = nil
+    }
+
+    /// 左右を平均したモノラルを溜める。
+    private func remember(frames: Int) {
+        let n = Self.historyFrames
+        for i in 0..<frames {
+            history[historyHead] = 0.5 * (scratch[2 * i] + scratch[2 * i + 1])
+            historyHead = (historyHead + 1) % n
+        }
+        historyCount = min(historyCount + frames, n)
+    }
+
+    /// 溜めた分（いま読んだ分を含む）を古い順に聞かせる。
+    private func feedHistory() {
+        let n = Self.historyFrames, count = historyCount
+        guard let session, count > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(count)),
+              let channel = buffer.floatChannelData?[0] else { return }
+        buffer.frameLength = AVAudioFrameCount(count)
+        let start = (historyHead - count + n) % n
+        for i in 0..<count { channel[i] = history[(start + i) % n] }
+        session.matchStreamingBuffer(buffer, at: AVAudioTime(sampleTime: fedFrames, atRate: Self.sampleRate))
+        fedFrames += Int64(count)
     }
 
     /// 左右を平均したモノラルにして聞かせる。SHSession が後まで持つかもしれないので、

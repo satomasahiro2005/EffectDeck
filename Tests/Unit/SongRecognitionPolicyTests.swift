@@ -71,19 +71,22 @@ final class SongRecognitionPolicyTests: XCTestCase {
         XCTAssertEqual(p.audio(now: 5, peak: loud), .startAndFeed)
     }
 
-    func testAttemptLimitDropsAndClears() {
+    func testAttemptLimitDropsAndKeepsSong() {
         var p = started()
-        XCTAssertEqual(p.audio(now: 19.75, peak: loud), .feed)
-        XCTAssertEqual(p.audio(now: 20, peak: loud), .drop(clear: true))
-        XCTAssertEqual(p.phase, .resting(until: 50, silentSince: nil))
-        XCTAssertNil(p.lastID)
-        XCTAssertEqual(p.audio(now: 21, peak: loud), .skip)
+        _ = p.matched(id: "a", now: 1)
+        XCTAssertEqual(p.audio(now: 11, peak: loud), .startAndFeed)
+        XCTAssertEqual(p.audio(now: 30.75, peak: loud), .feed)
+        XCTAssertEqual(p.audio(now: 31, peak: loud), .drop(clear: false))
+        XCTAssertEqual(p.phase, .resting(until: 36, silentSince: nil))
+        XCTAssertEqual(p.lastID, "a")
+        XCTAssertEqual(p.audio(now: 32, peak: loud), .skip)
+        XCTAssertEqual(p.audio(now: 36, peak: loud), .startAndFeed)
     }
 
     func testMatchRestsAndReportsChange() {
         var p = started()
         XCTAssertTrue(p.matched(id: "a", now: 8))
-        XCTAssertEqual(p.phase, .resting(until: 28, silentSince: nil))
+        XCTAssertEqual(p.phase, .resting(until: 18, silentSince: nil))
         XCTAssertEqual(p.audio(now: 9, peak: loud), .skip)
         XCTAssertFalse(p.matched(id: "a", now: 30))
         XCTAssertTrue(p.matched(id: "b", now: 60))
@@ -93,8 +96,8 @@ final class SongRecognitionPolicyTests: XCTestCase {
     func testRestEndsAfterTimeout() {
         var p = started()
         _ = p.matched(id: "a", now: 8)
-        XCTAssertEqual(p.audio(now: 27.75, peak: loud), .skip)
-        XCTAssertEqual(p.audio(now: 28, peak: loud), .startAndFeed)
+        XCTAssertEqual(p.audio(now: 17.75, peak: loud), .skip)
+        XCTAssertEqual(p.audio(now: 18, peak: loud), .startAndFeed)
         XCTAssertEqual(p.lastID, "a")
     }
 

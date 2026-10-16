@@ -31,6 +31,8 @@ final class ETMiniMeters {
         let spectrum: CGRect
         let stereo: CGRect
         let level: CGRect
+        /// 聞き取った曲のアートワーク（ETSongRecognizer）。幅 0 なら描かない。
+        var artwork: CGRect = .zero
 
         /// iPhone。横長の 1 段（5:1）。左から スペクトログラム・波形・スペアナ・ステレオ・レベル。
         static let strip = Layout(
@@ -40,6 +42,16 @@ final class ETMiniMeters {
             spectrum: CGRect(x: 700, y: 0, width: 300, height: 256),
             stereo: CGRect(x: 1000, y: 0, width: 216, height: 256),
             level: CGRect(x: 1216, y: 0, width: 64, height: 256))
+
+        /// strip の波形を削って、その分にアートワークを置く（ETFeatures.visualizer のとき）。
+        static let stripWithArtwork = Layout(
+            width: 1280, height: 256,
+            spectrogram: CGRect(x: 0, y: 0, width: 300, height: 256),
+            waveform: CGRect(x: 556, y: 0, width: 144, height: 256),
+            spectrum: CGRect(x: 700, y: 0, width: 300, height: 256),
+            stereo: CGRect(x: 1000, y: 0, width: 216, height: 256),
+            level: CGRect(x: 1216, y: 0, width: 64, height: 256),
+            artwork: CGRect(x: 300, y: 0, width: 256, height: 256))
 
     }
 
@@ -316,6 +328,23 @@ final class ETMiniMeters {
         drawSpectrum(context, layout.spectrum)
         drawStereo(context, layout.stereo)
         drawLevels(context, layout.level)
+        if layout.artwork.width > 0 { drawArtwork(context, layout.artwork) }
+    }
+
+    /// 呼び手（ETPiPVisualizer）が描く前に入れる。nil なら枠だけ。
+    var artwork: CGImage?
+
+    private func drawArtwork(_ context: CGContext, _ rect: CGRect) {
+        context.setFillColor(Self.groove)
+        context.fill(rect)
+        guard let artwork else { return }
+        // context は上が 0 なので、絵が逆さにならないよう区画の中だけ戻す。
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .high
+        context.draw(artwork, in: CGRect(origin: .zero, size: rect.size))
+        context.restoreGState()
     }
 
     private func drawSpectrogram(_ context: CGContext, _ rect: CGRect) {
