@@ -1,8 +1,8 @@
 //  SongRecognitionPolicyTests.swift
 //  曲の聞き取りの間合い（SongRecognitionPolicy）。
 //
-//  壊れると: 無音のあいだ Apple へ指紋を送り続ける、当たったあとも聞かせ続ける、
-//  外れたまま永久に聞かせる、曲が変わってもアートワークが替わらない。
+//  壊れると: 無音のあいだ Apple へ指紋を送り続ける、鳴っているのに聞くのを止める、
+//  曲が変わってもアートワークが替わらない。
 
 import XCTest
 
@@ -62,48 +62,26 @@ final class SongRecognitionPolicyTests: XCTestCase {
         XCTAssertEqual(p.audio(now: 40, peak: loud), .startAndFeed)
     }
 
-    func testNoDataGapWhileRestingRearms() {
+    func testKeepsFeedingWhilePlaying() {
         var p = started()
-        _ = p.matched(id: "a", now: 1)
-        XCTAssertEqual(p.audio(now: 2, peak: quiet), .skip)
-        XCTAssertEqual(p.audio(now: 4, peak: quiet), .skip)
-        XCTAssertEqual(p.phase, .waiting)
-        XCTAssertEqual(p.audio(now: 5, peak: loud), .startAndFeed)
+        for t in stride(from: 0.25, through: 600, by: 0.25) {
+            XCTAssertEqual(p.audio(now: t, peak: loud), .feed)
+        }
     }
 
-    func testAttemptLimitDropsAndKeepsSong() {
+    func testMatchKeepsListeningAndReportsChange() {
         var p = started()
-        _ = p.matched(id: "a", now: 1)
-        XCTAssertEqual(p.audio(now: 11, peak: loud), .startAndFeed)
-        XCTAssertEqual(p.audio(now: 30.75, peak: loud), .feed)
-        XCTAssertEqual(p.audio(now: 31, peak: loud), .drop(clear: false))
-        XCTAssertEqual(p.phase, .resting(until: 36, silentSince: nil))
-        XCTAssertEqual(p.lastID, "a")
-        XCTAssertEqual(p.audio(now: 32, peak: loud), .skip)
-        XCTAssertEqual(p.audio(now: 36, peak: loud), .startAndFeed)
-    }
-
-    func testMatchRestsAndReportsChange() {
-        var p = started()
-        XCTAssertTrue(p.matched(id: "a", now: 8))
-        XCTAssertEqual(p.phase, .resting(until: 18, silentSince: nil))
-        XCTAssertEqual(p.audio(now: 9, peak: loud), .skip)
-        XCTAssertFalse(p.matched(id: "a", now: 30))
-        XCTAssertTrue(p.matched(id: "b", now: 60))
+        XCTAssertTrue(p.matched(id: "a"))
+        XCTAssertEqual(p.phase, .listening(since: 0, silentSince: nil))
+        XCTAssertEqual(p.audio(now: 9, peak: loud), .feed)
+        XCTAssertFalse(p.matched(id: "a"))
+        XCTAssertTrue(p.matched(id: "b"))
         XCTAssertEqual(p.lastID, "b")
     }
 
-    func testRestEndsAfterTimeout() {
+    func testSilenceDuringErrorRestRearms() {
         var p = started()
-        _ = p.matched(id: "a", now: 8)
-        XCTAssertEqual(p.audio(now: 17.75, peak: loud), .skip)
-        XCTAssertEqual(p.audio(now: 18, peak: loud), .startAndFeed)
-        XCTAssertEqual(p.lastID, "a")
-    }
-
-    func testSilenceDuringRestRearms() {
-        var p = started()
-        _ = p.matched(id: "a", now: 8)
+        p.failed(code: 202, now: 8)
         XCTAssertEqual(p.audio(now: 10, peak: quiet), .skip)
         XCTAssertEqual(p.audio(now: 11.5, peak: loud), .skip)       // 音が戻れば数え直し
         XCTAssertEqual(p.audio(now: 12, peak: quiet), .skip)
@@ -129,16 +107,16 @@ final class SongRecognitionPolicyTests: XCTestCase {
 
     func testPeerLostClearsID() {
         var p = started()
-        _ = p.matched(id: "a", now: 8)
+        _ = p.matched(id: "a")
         p.peerLost()
         XCTAssertEqual(p.phase, .waiting)
         XCTAssertNil(p.lastID)
-        XCTAssertTrue(p.matched(id: "a", now: 10))
+        XCTAssertTrue(p.matched(id: "a"))
     }
 
     func testDiscontinuityKeepsID() {
         var p = started()
-        _ = p.matched(id: "a", now: 8)
+        _ = p.matched(id: "a")
         p.discontinuity()
         XCTAssertEqual(p.phase, .waiting)
         XCTAssertEqual(p.lastID, "a")

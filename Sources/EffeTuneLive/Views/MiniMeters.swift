@@ -43,15 +43,15 @@ final class ETMiniMeters {
             stereo: CGRect(x: 1000, y: 0, width: 216, height: 256),
             level: CGRect(x: 1216, y: 0, width: 64, height: 256))
 
-        /// strip の波形を削って、その分にアートワークを置く（ETFeatures.visualizer のとき）。
+        /// strip の波形を削って、その分のアートワークをいちばん左に置く（ETFeatures.visualizer のとき）。
         static let stripWithArtwork = Layout(
             width: 1280, height: 256,
-            spectrogram: CGRect(x: 0, y: 0, width: 300, height: 256),
+            spectrogram: CGRect(x: 256, y: 0, width: 300, height: 256),
             waveform: CGRect(x: 556, y: 0, width: 144, height: 256),
             spectrum: CGRect(x: 700, y: 0, width: 300, height: 256),
             stereo: CGRect(x: 1000, y: 0, width: 216, height: 256),
             level: CGRect(x: 1216, y: 0, width: 64, height: 256),
-            artwork: CGRect(x: 300, y: 0, width: 256, height: 256))
+            artwork: CGRect(x: 0, y: 0, width: 256, height: 256))
 
     }
 

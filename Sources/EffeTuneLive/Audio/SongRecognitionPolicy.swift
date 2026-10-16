@@ -3,12 +3,13 @@
 //
 //  入力は「いま」の時刻と、聞かせようとしている音のピークだけ。返すのは、
 //  セッションを作って聞かせるか・そのまま聞かせるか・捨てるか・何もしないか。
-//  切り出した理由は、間合い（どれだけ聞かせて、当たったらどれだけ休むか）を実機で試すと
-//  1 回に 20 秒かかるため。Foundation だけなので Linux でも測れる（Tests/Unit/SongRecognitionPolicyTests.swift）。
+//  Foundation だけなので Linux でも測れる（Tests/Unit/SongRecognitionPolicyTests.swift）。
 //
-//  当たったら少し休んで聞き直す。DJ ミックスのように無音を挟まず曲が替わるため
-//  （本人「最近はdjmixとか多い」）。外れても出ている曲は消さない（つなぎの途中で外れるため）。
-//  Visualizer を見ているときはたぶん充電中なので、聞き直す間合いは短くてよい（本人）。
+//  **鳴っているあいだは休まず聞かせ続ける。**当たっても外れても同じセッションに流し続け、
+//  曲が替われば SHSession が次の一致を返す。DJ ミックスのように無音を挟まず曲が替わるうえ
+//  ずっと鳴っているので、休みを入れても意味がない（本人）。Visualizer を見ているときは
+//  たぶん充電中なので電池も気にしない（本人）。止めるのは無音が続いたとき・音が飛んだとき・エラーのときだけ。
+//  外れても出ている曲は消さない（つなぎの途中で外れるため）。
 
 import Foundation
 
@@ -26,12 +27,6 @@ struct SongRecognitionPolicy {
     static let silencePeak: Float = 1e-4
     /// 聞かせている最中でも、無音がこれだけ続いたら捨てる。曲間で次の曲を拾い直すため。
     static let silenceToReset: TimeInterval = 2
-    /// 1 回の聞き取りに聞かせる上限。
-    static let attemptLimit: TimeInterval = 20
-    /// 当たったあとの休み。休みが明けたら、溜めておいた音（SongRecognizer の history）から聞き直す。
-    static let restAfterMatch: TimeInterval = 10
-    /// 当たらなかったあとの休み。
-    static let restAfterMiss: TimeInterval = 5
     /// エラーのあとの休み。
     static let restAfterError: TimeInterval = 60
 
@@ -67,10 +62,6 @@ struct SongRecognitionPolicy {
             return .startAndFeed
 
         case .listening(let since, let silentSince):
-            if now - since >= Self.attemptLimit {
-                phase = .resting(until: now + Self.restAfterMiss, silentSince: nil)
-                return .drop(clear: false)
-            }
             guard silent else {
                 phase = .listening(since: since, silentSince: nil)
                 return .feed
@@ -94,7 +85,7 @@ struct SongRecognitionPolicy {
                 return .skip
             }
             let from = silentSince ?? now
-            // 曲間の無音で休みを切り上げ、次の曲をすぐ拾えるようにする。
+            // 無音が続いたら休みを切り上げ、次の音からすぐ聞き直す。
             phase = now - from >= Self.silenceToReset
                 ? .waiting
                 : .resting(until: until, silentSince: from)
@@ -102,9 +93,8 @@ struct SongRecognitionPolicy {
         }
     }
 
-    /// 曲に当たった。曲が変わったなら true（呼ぶ側はセッションを捨てる）。
-    mutating func matched(id: String, now: TimeInterval) -> Bool {
-        phase = .resting(until: now + Self.restAfterMatch, silentSince: nil)
+    /// 曲に当たった。曲が変わったなら true。聞かせ続ける（セッションは捨てない）。
+    mutating func matched(id: String) -> Bool {
         let changed = id != lastID
         lastID = id
         return changed

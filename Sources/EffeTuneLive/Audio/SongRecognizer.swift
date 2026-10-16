@@ -12,7 +12,7 @@
 //  **いつ動くか。**Visualizer のシートが（アプリが前にいて）出ているか、Floating Meters が出ているあいだ
 //  （それぞれが setActive を呼ぶ。相手が居なければ読み手は空回りする）。
 //  読み手は読んだ音を 10 秒ぶん溜めておき（history）、聞き始めるときは溜めた分から聞かせる。
-//  休み明けの聞き直しがすぐ当たるように。
+//  無音やエラーのあとの聞き直しがすぐ当たるように。
 //  聞かせる長さ・休み・無音の扱いは SongRecognitionPolicy（Foundation だけ。そちらに説明）。
 //
 //  **ShazamKit は音の指紋を Apple へ送る。**だから ETFeatures.visualizer は Debug と Beta だけ。
@@ -56,7 +56,8 @@ final class ETSongRecognizer {
 
     /// 聞き取りを始める。繰り返し呼んでよい。
     private func start() {
-        guard feeder == nil, mock == nil else { return }
+        guard mock == nil else { return }
+        if let feeder { feeder.start(); return }
         if UserDefaults.standard.bool(forKey: "ETMockShazam") {
             mock = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(1))
@@ -70,14 +71,12 @@ final class ETSongRecognizer {
         made.start()
     }
 
-    /// やめる。繰り返し呼んでよい。出ている曲も消す。
+    /// やめる。繰り返し呼んでよい。出ている曲と取得状況は残す（画面を離れても消えないように。本人）。
+    /// 読み手も捨てずに止めるだけにして、数（一致・外れ・最後のエラー）を次に始めたときへ持ち越す。
     private func stop() {
-        feeder?.stop()
-        feeder = nil
+        feeder?.pause()
         mock?.cancel()
         mock = nil
-        publish(nil)
-        status = ""
     }
 
     fileprivate func publish(_ song: ETRecognizedSong?) {
@@ -159,6 +158,10 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private var fedFrames: Int64 = 0
     private var policy = SongRecognitionPolicy()
     private var hadPeer = false
+    /// timer が動いているか（DispatchSource の resume / suspend は対にしないと落ちる）。
+    private var running = false
+    /// 止めていたあいだの音を読まないよう、次の tick で読む位置を「いま」へ移す。
+    private var resync = false
     private var loggedMiss = false
     // 取得状況を 1 秒ごとにログへ出すための数（logStatus）。
     private var ticks = 0
@@ -168,6 +171,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private var matches = 0
     private var misses = 0
     private var lastError = "-"
+    /// 最後の一致の中身（SHMatchedMediaItem）。一致度は 0〜1。
+    private var lastMatch = "-"
 
     override init() {
         timer = DispatchSource.makeTimerSource(queue: queue)
@@ -176,15 +181,25 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         timer.schedule(deadline: .now(), repeating: .milliseconds(250), leeway: .milliseconds(50))
     }
 
+    /// 止めてあれば動かす。繰り返し呼んでよい。
     func start() {
-        timer.resume()
+        queue.sync {
+            guard !running else { return }
+            running = true
+            timer.resume()
+        }
     }
 
-    func stop() {
+    /// 止める。数と相手の世代は残し、次に動かしたときは「いま」から読む。
+    func pause() {
         queue.sync {
-            timer.cancel()
+            guard running else { return }
+            running = false
+            timer.suspend()
             dropSession()
-            policy.reset()
+            policy.discontinuity()
+            historyCount = 0
+            resync = true
         }
     }
 
@@ -213,6 +228,11 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             policy.peerLost()
             historyCount = 0
             publish(nil)
+            return
+        }
+        if resync {
+            resync = false
+            cursor = rx.tapWritePosition()
             return
         }
 
@@ -287,6 +307,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             "misses=\(misses)",
             "skipped=\(skippedTotal)",
             "lastError=\(lastError)",
+            "match=\(lastMatch)",
         ]
         Self.log.notice("status \(fields.joined(separator: " "), privacy: .public)")
         let line = fields.joined(separator: "\n")
@@ -347,8 +368,9 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             let id = item.shazamID ?? item.isrc ?? item.appleMusicID ?? "\(title)|\(item.artist ?? "")"
             let song = ETRecognizedSong(id: id, title: title, artist: item.artist, artworkURL: item.artworkURL)
             matches += 1
-            let changed = policy.matched(id: id, now: CACurrentMediaTime())
-            dropSession()
+            lastMatch = String(format: "conf=%.2f skew=%.4f offset=%.1fs", item.confidence,
+                               item.frequencySkew, item.predictedCurrentMatchOffset)
+            let changed = policy.matched(id: id)
             guard changed else { return }
             Self.log.notice("matched id=\(id, privacy: .public) title=\(title, privacy: .public) artist=\(item.artist ?? "-", privacy: .public) artwork=\(item.artworkURL?.absoluteString ?? "-", privacy: .public)")
             publish(song)
@@ -360,7 +382,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             guard self.session === session else { return }
             guard let error else {
                 misses += 1
-                // 外れは続けて聞かせる（上限まで streaming が聞き直す）。ログは 1 セッションに 1 回。
+                // 外れても聞かせ続ける（streaming が聞き直す）。ログは 1 セッションに 1 回。
                 if !loggedMiss {
                     loggedMiss = true
                     Self.log.notice("no match")
