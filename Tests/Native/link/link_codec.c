@@ -428,6 +428,76 @@ ET_CASE(stream_roundtrip_random_splits) {
     free(chunk);
 }
 
+// ---- 聞き取り用の読み手（ETLinkTapRead） ----
+
+ET_CASE(tap_reads_oldest_first) {
+    float ring[16], dst[16];
+    for (int i = 0; i < 16; i++) ring[i] = (float)i;
+    uint64_t r = 0, skipped = 99;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 8, &r, dst, 6, &skipped), 6);
+    CHECK_EQ(r, 6);
+    CHECK_EQ(skipped, 0);
+    for (int i = 0; i < 6; i++) CHECK_FEQ(dst[i], (float)i);
+    // 残りは 2 サンプル。多めに頼んでも書かれたぶんまで。
+    CHECK_EQ(ETLinkTapRead(ring, 16, 8, &r, dst, 100, &skipped), 2);
+    CHECK_EQ(r, 8);
+    CHECK_FEQ(dst[0], 6.0f);
+    CHECK_FEQ(dst[1], 7.0f);
+}
+
+ET_CASE(tap_wraps_ring) {
+    float ring[16], dst[16];
+    for (int i = 0; i < 16; i++) ring[i] = (float)(100 + i);
+    uint64_t r = 12, skipped = 0;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 20, &r, dst, 8, &skipped), 8);
+    const float want[8] = {112, 113, 114, 115, 100, 101, 102, 103};
+    for (int i = 0; i < 8; i++) CHECK_FEQ(dst[i], want[i]);
+    CHECK_EQ(r, 20);
+    CHECK_EQ(skipped, 0);
+}
+
+ET_CASE(tap_caught_up_returns_zero) {
+    float ring[16] = {0}, dst[4] = {7, 7, 7, 7};
+    uint64_t r = 10, skipped = 99;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 10, &r, dst, 4, &skipped), 0);
+    CHECK_EQ(r, 10);
+    CHECK_EQ(skipped, 0);
+    CHECK_FEQ(dst[0], 7.0f);
+}
+
+ET_CASE(tap_lag_over_half_skips_to_quarter) {
+    float ring[16], dst[16];
+    for (int i = 0; i < 16; i++) ring[i] = (float)i;
+    // 遅れ 20 > 8。w - 4 = 16 へ飛び、そこから 4 サンプルが残る。
+    uint64_t r = 0, skipped = 0;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 20, &r, dst, 100, &skipped), 4);
+    CHECK_EQ(skipped, 16);
+    CHECK_EQ(r, 20);
+    for (int i = 0; i < 4; i++) CHECK_FEQ(dst[i], (float)i);
+    // ちょうど半周の遅れは飛ばさない。
+    r = 12; skipped = 99;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 20, &r, dst, 100, &skipped), 8);
+    CHECK_EQ(skipped, 0);
+}
+
+ET_CASE(tap_odd_max_rounds_down) {
+    float ring[16], dst[16];
+    for (int i = 0; i < 16; i++) ring[i] = (float)i;
+    uint64_t r = 0, skipped = 0;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 8, &r, dst, 5, &skipped), 4);
+    CHECK_EQ(r, 4);
+    CHECK_EQ(ETLinkTapRead(ring, 16, 8, &r, dst, 1, &skipped), 0);
+    CHECK_EQ(r, 4);
+}
+
+ET_CASE(tap_reader_ahead_clamps) {
+    float ring[16] = {0}, dst[4];
+    uint64_t r = 10, skipped = 99;
+    CHECK_EQ(ETLinkTapRead(ring, 16, 6, &r, dst, 4, &skipped), 0);
+    CHECK_EQ(r, 6);
+    CHECK_EQ(skipped, 0);
+}
+
 int main(int argc, char **argv) {
     static const et_case cases[] = {
         ET_ENTRY(encoder_header_layout),
@@ -446,6 +516,12 @@ int main(int argc, char **argv) {
         ET_ENTRY(several_chunks_one_recv),
         ET_ENTRY(consume_short_buffer_untouched),
         ET_ENTRY(stream_roundtrip_random_splits),
+        ET_ENTRY(tap_reads_oldest_first),
+        ET_ENTRY(tap_wraps_ring),
+        ET_ENTRY(tap_caught_up_returns_zero),
+        ET_ENTRY(tap_lag_over_half_skips_to_quarter),
+        ET_ENTRY(tap_odd_max_rounds_down),
+        ET_ENTRY(tap_reader_ahead_clamps),
     };
     return et_run(argc, argv, cases, ET_COUNT(cases));
 }

@@ -506,6 +506,8 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
     // 今の相手を受けた時点の _receivedFrames。枯れの判定はこの相手から
     // 受け取った分で見る（累計で見ると 2 本目以降の立ち上がりを枯れと数える）。
     uint64_t _receivedAtAccept;
+    // 相手を受けた回数。聞き取りの読み手が、繋ぎ直しで位置を取り直すのに見る。
+    _Atomic uint64_t _peerGeneration;
 }
 
 + (ETLinkReceiver *)shared {
@@ -528,6 +530,7 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
 
 - (BOOL)listening { return _listenFd >= 0; }
 - (BOOL)hasPeer   { return _peerFd >= 0; }
+- (uint64_t)peerGeneration { return atomic_load_explicit(&_peerGeneration, memory_order_relaxed); }
 
 /// 溜まりの方針が持つ状態（狙い 1024 / 2048、枯れ・切り詰めの数、溜め直し）。
 /// 数と閾値の意味は ETLinkCodec.h。受け手は 1 つしか無いのでプロセスに 1 組。
@@ -720,6 +723,7 @@ static void ETLinkReceiverTakeChunk(void *ctx, const uint8_t *payload, uint32_t 
     _peerFd = c;
     _rxLen = 0;     // 前の相手の書きかけを新しいストリームに混ぜない
     _receivedAtAccept = _receivedFrames;
+    atomic_fetch_add_explicit(&_peerGeneration, 1, memory_order_relaxed);
     // **浅い側から始め直す。**前の相手で枯れて深くしたぶんを
     // 引き継ぐと、一度の混み合いで遅れが増えたまま固定される。
     [ETLinkReceiver resetLinkState];
@@ -883,6 +887,30 @@ static void ETLinkReceiverTakeChunk(void *ctx, const uint8_t *payload, uint32_t 
         dispatch_source_set_timer(_probeSrc, dispatch_time(DISPATCH_TIME_NOW, (int64_t)RX_PROBE_NS),
                                   RX_PROBE_NS, RX_PROBE_LEEWAY_NS);
     }
+}
+
+- (uint64_t)tapWritePosition {
+    return atomic_load_explicit(&_w, memory_order_acquire);
+}
+
+- (uint32_t)tapReadFrom:(uint64_t *)cursor into:(float *)dst maxFrames:(uint32_t)maxFrames skipped:(uint64_t *)skipped {
+    if (!cursor || !dst || maxFrames == 0) return 0;
+    uint64_t w = atomic_load_explicit(&_w, memory_order_acquire);
+    uint64_t skippedNow = 0;
+    uint32_t got = ETLinkTapRead(_ring, ET_LINK_RECV_RING_SAMPLES, w, cursor, dst, maxFrames * 2, &skippedNow);
+    // 写している間に書き手が 1 周より先へ行っていたら、写したものは新旧が混ざっている。
+    // 読んだ分の先頭（今の位置 - got）がリングの外へ出たかで見る。
+    // 書き手は _w を進める前にリングへ写す（writeSamples:）ので、公開前の 1 チャンク
+    // （最大 ET_LINK_MAX_SAMPLES）がすでに古い側のスロットを上書きしていることがある。その分を余白に取る。
+    uint64_t w2 = atomic_load_explicit(&_w, memory_order_acquire);
+    uint64_t start = *cursor - got;
+    if (w2 > start && w2 - start > ET_LINK_RECV_RING_SAMPLES - ET_LINK_MAX_SAMPLES) {
+        *cursor = w2;
+        if (skipped) *skipped += skippedNow + got;
+        return 0;
+    }
+    if (skipped) *skipped += skippedNow;
+    return got / 2;
 }
 
 - (uint32_t)readInterleaved:(float *)out frames:(uint32_t)frames {

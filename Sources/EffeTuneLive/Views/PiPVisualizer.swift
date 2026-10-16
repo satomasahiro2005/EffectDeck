@@ -23,6 +23,7 @@
 //  なので止める操作をはっきりさせた（本人「mini metersはトグルにするか」）。**切るのはメニューの Off と拡大。**
 //  このアプリの中で ✕ を押しても切らず、次にこのアプリが前に来たときに出す（本人「オフにしないで勝手に」）。
 //  ただしアプリに戻すボタン（拡大）は切る。切らないとアプリの中でまた出て、閉じる手が Off しか無い。
+//  Debug と Beta では、拡大はそのうえで Visualizer のシートを開く（ETFeatures.visualizer）。
 
 import AVKit
 import CoreMedia
@@ -38,6 +39,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     @Published private(set) var point: Int32?
     /// メニューのトグル。入っている所。nil なら切ってある。外で止まっても、これが残っていれば出し直す。
     @Published private(set) var selected: Int32?
+    /// アプリに戻すボタンで Visualizer を開く頼み。PipelineView が数の変化だけを見る。
+    @Published private(set) var visualizerRequests = 0
 
     private static let framesPerSecond = 30
 
@@ -204,6 +207,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     /// メニューの Off 以外に閉じる手が無くなる（本人「拡大したらオフにしないと戻す方法がない」）。
     fileprivate func restoring() {
         selected = nil
+        if ETFeatures.visualizer { visualizerRequests &+= 1 }
     }
 
     private func attachHost() {

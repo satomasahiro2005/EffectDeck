@@ -75,6 +75,32 @@ uint32_t ETLinkRingWrite(float *ring, uint64_t ringSamples, uint64_t w,
     return bad;
 }
 
+uint32_t ETLinkTapRead(const float *ring, uint64_t ringSamples, uint64_t w,
+                       uint64_t *r, float *dst, uint32_t maxSamples, uint64_t *skipped) {
+    if (skipped) *skipped = 0;
+    if (!ring || ringSamples == 0 || !r || !dst) return 0;
+    uint64_t rr = *r;
+    if (rr > w) { *r = w; return 0; }
+    // 遅れが半周を越えたら、書き手に追い越される前に新しい側（1/4 周ぶん）へ飛ぶ。
+    if (w - rr > ringSamples / 2) {
+        uint64_t to = (w - ringSamples / 4) & ~(uint64_t)1;
+        if (skipped) *skipped = to - rr;
+        rr = to;
+    }
+    uint64_t avail = w - rr;
+    uint64_t n = maxSamples & ~(uint32_t)1;
+    if (n > avail) n = avail & ~(uint64_t)1;
+    if (n > 0) {
+        uint64_t at = rr % ringSamples;
+        uint64_t first = ringSamples - at;
+        if (first > n) first = n;
+        memcpy(dst, ring + at, (size_t)first * sizeof(float));
+        if (n > first) memcpy(dst + first, ring, (size_t)(n - first) * sizeof(float));
+    }
+    *r = rr + n;
+    return (uint32_t)n;
+}
+
 size_t ETLinkConsume(uint8_t *buf, size_t *len, ETLinkChunkFn onChunk, void *ctx) {
     if (!buf || !len) return 0;
     size_t have = *len;

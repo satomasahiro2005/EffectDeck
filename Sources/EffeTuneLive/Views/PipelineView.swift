@@ -57,6 +57,8 @@ struct PipelineView: View {
         /// Presets のシートを開かせると、行を押しただけで鎖ごと読み込まれてしまうので分けた。
         /// 紐付けがまだ無いときの入口は Presets の Output Correction の行（同じ中身を押して進む形で出す）。
         case outputCorrection
+        /// 試作の Visualizer（曲の聞き取りとアートワーク。VisualizerView.swift）。ETFeatures.visualizer が true のときだけ出す。
+        case visualizer
         var id: String { rawValue }
     }
 
@@ -303,6 +305,8 @@ struct PipelineView: View {
                 RemotePanelView()
             case .outputCorrection:
                 OutputCorrectionView(isRemote: isRemote)
+            case .visualizer:
+                VisualizerView()
             // ConnectBanner の Help から。Settings 側は自分の NavigationStack で押す。
             case .tips:
                 NavigationStack {
@@ -334,7 +338,8 @@ struct PipelineView: View {
             // 撮るシートを指定されていればそれを出す。
             // ピッカーはpresentPickerを通す。2列ではまだ+が無いので、popoverにすると落ちる。
             if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name),
-               which != .remote || ETFeatures.remoteControl {
+               (which != .remote || ETFeatures.remoteControl),
+               (which != .visualizer || ETFeatures.visualizer) {
                 if which == .picker { presentPicker() } else { sheet = which }
             }
             // 動きを撮るために、しばらくしてから自分で開く。
@@ -423,6 +428,8 @@ struct PipelineView: View {
             isRemote = remote
         }
         .onReceive(io.$processingRate) { processingRate = $0 }
+        // Floating Meters の PiP の拡大ボタンから（PiPVisualizer.swift）。
+        .onReceive(ETPiPVisualizer.shared.$visualizerRequests.dropFirst()) { _ in openVisualizer() }
         .onReceive(io.$restartNeeded) { restartNeeded = $0 }
         // @Published の publisher は書き換わる前に新しい値を流すので、oc の側は読まず流れてきた値で組む。
         .onReceive(OutputCorrection.shared.$device.combineLatest(OutputCorrection.shared.$bindings)) { device, bindings in
@@ -616,6 +623,17 @@ struct PipelineView: View {
             return
         }
         Self.openAfterClosingSheet({ sheet = which }, sheet: $sheet, afterSheet: $afterSheet)
+    }
+
+    /// PiP の拡大ボタンから。出ているシートやpopoverを畳んでから出す（待っている続きは捨てない）。
+    private func openVisualizer() {
+        guard ETFeatures.visualizer, sheet != .visualizer else { return }
+        // 画面に居ない popover の閉じるのは来ないので、待たずに替える（PipelineToolbar.present と同じ）。
+        if usesSplit, sheet == .picker, !pickerInSheet, !pickerOnScreen {
+            sheet = .visualizer
+            return
+        }
+        Self.openAfterClosingSheet({ sheet = .visualizer }, sheet: $sheet, afterSheet: $afterSheet)
     }
 
     /// 窓の幅。**跨いだときだけ書く。**同じ値を書いても、送るたびの組み直しは起きないが、
@@ -2150,6 +2168,9 @@ private struct PipelineToolbar: ToolbarContent {
             Menu {
                 Button("Settings", systemImage: "gearshape") { present(.settings) }
                 Button("Routing", systemImage: "arrow.triangle.branch") { present(.routing) }
+                if ETFeatures.visualizer {
+                    Button("Visualizer", systemImage: "music.note") { present(.visualizer) }
+                }
                 // 試作: 鎖の入口か出口の音を、横長のメーターにして PiP の窓に出す（PiPVisualizer.swift）。
                 // トグル。入れているあいだは、外で消えても戻ったら出し直す。
                 Picker(selection: Binding(get: { pip.selected ?? Int32(ET_METER_TAP_OFF) },

@@ -78,6 +78,14 @@ void ETLinkSenderPushInterleaved(const float *samples, uint32_t frames, uint32_t
 @property (class, nonatomic, readonly) uint32_t trimCount;
 @property (class, nonatomic, readonly) uint64_t trimFrames;
 
+/// 繋がった回数。相手を受けるたびに 1 増える（_q が書く。読み手は別のキュー）。
+@property (nonatomic, readonly) uint64_t peerGeneration;
+/// 音のスレッドとは別の読み手のための、いまの書き位置（サンプル）。読み手の位置の初期値に使う。
+- (uint64_t)tapWritePosition;
+/// 古い順に interleaved 2ch を写す。音のスレッドから呼ばないこと（objc_msgSend を通る）。
+/// 写した後に書き手が追い越していたら（w' - 開始 > リング - 1 チャンク。書き込み中の 1 チャンクは _w に出る前に写される）その回は捨て、*skipped に数を足して 0 を返す。
+- (uint32_t)tapReadFrom:(uint64_t *)cursor into:(float *)dst maxFrames:(uint32_t)maxFrames skipped:(uint64_t *)skipped;
+
 /// 繋ぎ直したときに浅い側から始め直す。数えたものも 0 に戻す。
 + (void)resetLinkState;
 - (BOOL)start;

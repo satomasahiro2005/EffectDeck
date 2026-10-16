@@ -92,6 +92,14 @@ uint32_t ETLinkEncodeNext(uint8_t *dst, size_t *outBytes,
 uint32_t ETLinkRingWrite(float *ring, uint64_t ringSamples, uint64_t w,
                          const uint8_t *payload, uint32_t count);
 
+/// 受け手のリングを、音のスレッドとは別の読み手が古い順に読む（曲の聞き取り用）。
+/// *r は読み手の位置（サンプル。偶数）。[*r, w) のうち古い順に最大 maxSamples（偶数に切り下げ）を dst に写し、
+/// *r を進めて写した数を返す。遅れが ringSamples/2 を越えていたら、先に *r を w - ringSamples/4 へ飛ばし
+/// （偶数に揃える）、飛ばしたサンプル数を *skipped に書く（飛ばさなければ 0）。*r > w なら *r = w にして 0 を返す。
+/// 確保も atomic も無い。w は呼ぶ側が acquire で読んで渡す。
+uint32_t ETLinkTapRead(const float *ring, uint64_t ringSamples, uint64_t w,
+                       uint64_t *r, float *dst, uint32_t maxSamples, uint64_t *skipped);
+
 /// 取り出したチャンクを渡す先。payload は count 個の float のバイト列。
 typedef void (*ETLinkChunkFn)(void *ctx, const uint8_t *payload, uint32_t count);
 
