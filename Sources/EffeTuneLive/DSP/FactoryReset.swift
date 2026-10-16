@@ -65,6 +65,7 @@ enum ETFactoryReset {
         EffectPresetStore.shared.reload()
         OutputCorrection.shared.reloadAfterReset()
         Preferences.shared.reload()
+        ETVisualizerSettings.shared.reload()
 
         // 6. iCloud。最後に消す。上で書いた既定の鎖の写しもここで消える。
         return CloudMirror.eraseAll()

@@ -1,5 +1,8 @@
 //  PiPVisualizer.swift
-//  Mini Meters（MiniMeters.swift の横長の帯）を Picture in Picture の窓に出す。試作。
+//  Floating Meters。Visualizer（Views/Visualizer/）を Picture in Picture の窓に出す。
+//  描くのは画面の Visualizer と同じ描き手（ETVisualizerRenderer）で、設定の形も同じ。
+//  違うのは設定の保存先（ETVisualizerSettings.floating）だけ。縦横比・パネル・並び順・見た目は
+//  Visualizer の編集画面で替え、PiP の窓は選んだ縦横比で開く。
 //
 //  **PiP は動画の口しか無い。**描いた絵を 1 枚ずつ CMSampleBuffer にして
 //  AVSampleBufferDisplayLayer に流し、そのレイヤーを PiP の元にする
@@ -7,7 +10,8 @@
 //
 //  **背景でも描き続ける。**PiP は他のアプリの上で見るもので、そのあいだこのアプリは背景にいる。
 //  CADisplayLink は背景で止まるのでタイマーで回す。音は ETMeterTap から直に読むので、
-//  図のテレメトリ（ETDisplayPump）には頼らない。
+//  図のテレメトリ（ETDisplayPump）には頼らない。測る所を向けるのは ETVisualizerTap で、
+//  画面の Visualizer と同じ輪を分け合う。
 //
 //  レイヤーは窓のいちばん奥に 2pt で置く。PiP の元は窓に入っていないと始まらない。
 //
@@ -15,7 +19,7 @@
 //  後になり、そこで始めても押した操作の外なので出ない（初回は 2 回押さないと出なかった）。
 //  起きたとき・前に来たときに窓とレイヤーと 1 枚目を用意し、押したらその場で始める。しまっても用意は残す。
 //
-//  **入り切りはメニューのトグル（selected）。**入っているあいだに PiP が外で止まったら、このアプリが
+//  **入り切りはメニューのトグル（isSelected）。**入っているあいだに PiP が外で止まったら、このアプリが
 //  前に来たときにもう一度出す。YouTube などが PiP を始めるとこちらは止められるため（PiP は 1 つだけ）。
 //  外で ✕ を押したのと奪われたのは見分けられない。実機のログ（10-16）では届く知らせ
 //  （setPlaying(false) → willStop → didStop、0.8 秒）も止まった後の possible も同じで、他のアプリが
@@ -23,9 +27,13 @@
 //  なので止める操作をはっきりさせた（本人「mini metersはトグルにするか」）。**切るのはメニューの Off と拡大。**
 //  このアプリの中で ✕ を押しても切らず、次にこのアプリが前に来たときに出す（本人「オフにしないで勝手に」）。
 //  ただしアプリに戻すボタン（拡大）は切る。切らないとアプリの中でまた出て、閉じる手が Off しか無い。
-//  Debug と Beta では、拡大はそのうえで Visualizer のシートを開く（ETFeatures.visualizer）。
+//  拡大はそのうえで Visualizer のシートを開く（どの版でも）。
+//
+//  **縦横比を替えたら器を作り直す。**窓の形は器（ピクセルバッファ）の大きさで決まる。出ている最中に替えたときに
+//  窓が追いつくかは実機で確かめる（v1 は PiP を止めて出し直さない。didTransitionToRenderSize のログで見る）。
 
 import AVKit
+import Combine
 import CoreMedia
 import UIKit
 import os
@@ -35,10 +43,11 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     static let shared = ETPiPVisualizer()
 
-    /// 測っている所（ET_METER_TAP_INPUT / ET_METER_TAP_OUTPUT）。nil なら出していない。
-    @Published private(set) var point: Int32?
-    /// メニューのトグル。入っている所。nil なら切ってある。外で止まっても、これが残っていれば出し直す。
-    @Published private(set) var selected: Int32?
+    /// 描いて流している最中か。
+    @Published private(set) var isRunning = false
+    /// メニューのトグル。入っているか。外で止まっても、これが残っていれば出し直す。
+    /// 測る所は ETVisualizerSettings.source。
+    @Published private(set) var isSelected = false
     /// アプリに戻すボタンで Visualizer を開く頼み。PipelineView が数の変化だけを見る。
     @Published private(set) var visualizerRequests = 0
 
@@ -51,22 +60,48 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     /// 押されたが、まだ始められない（絵が 1 枚も入っていない）。
     private var wantsStart = false
     private var timer: DispatchSourceTimer?
-    private var meters: ETMiniMeters?
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
-    /// 器の形。iPad も iPhone と同じ横長の 1 段（本人「ipadでもiphoneと揃えてくれ」）。
-    private let layout: ETMiniMeters.Layout = ETFeatures.visualizer ? .stripWithArtwork : .strip
+    /// Floating Meters の設定（ETVisualizerSettings.floating）。窓の形もこれで決まる。
+    private var config: ETVisualizerConfig
+    private var placements: [ETVisualizerPlacement]
+    private var pixelWidth: Int
+    private var pixelHeight: Int
+    private var settingsSink: AnyCancellable?
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
     private var activeAt: CFTimeInterval = 0
     private var foreground: NSObjectProtocol?
 
     private override init() {
+        let config = ETVisualizerSettings.shared.floating.normalized(for: .floating)
+        let size = Self.pixelSize(config)
+        self.config = config
+        pixelWidth = size.0
+        pixelHeight = size.1
+        placements = Self.placements(config, size)
         super.init()
         foreground = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { ETPiPVisualizer.shared.becameActive() }
         }
+        // 発行されるのは変わる前（willSet）なので、読み直さず渡された値を使う。
+        settingsSink = ETVisualizerSettings.shared.$floating.dropFirst().sink { [weak self] value in
+            MainActor.assumeIsolated { self?.apply(value) }
+        }
     }
+
+    /// 器の大きさ。窓はこの縦横比で開く。
+    private static func pixelSize(_ config: ETVisualizerConfig) -> (Int, Int) {
+        ETVisualizerLayout.pipPixelSize(config.aspect.ratio ?? 5)
+    }
+
+    /// 置き場は、実際の器の縦横比で組む。
+    private static func placements(_ config: ETVisualizerConfig, _ size: (Int, Int)) -> [ETVisualizerPlacement] {
+        ETVisualizerLayout.place(config.visibleKinds(allowsArtwork: ETFeatures.visualizer),
+                                 analogMode: config.analogMode, ratio: Double(size.0) / Double(size.1))
+    }
+
+    private var needs: ETVisualizerNeedsSet { config.needs(allowsArtwork: ETFeatures.visualizer) }
 
     // MARK: - 出す・しまう
 
@@ -87,40 +122,34 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
                 Task { @MainActor in ETPiPVisualizer.shared.startIfPossible() }
             }
         }
-        if meters == nil {
-            // 1 枚目（何も鳴っていない帯）。入らないと isPictureInPicturePossible が立たない。
-            enqueue(ETMiniMeters(layout: layout))
+        if pool == nil {
+            // 1 枚目（いまの器の大きさの、まだ何も計っていない絵）。入らないと isPictureInPicturePossible が立たない。
+            enqueue()
         }
     }
 
-    /// メニューのトグル。nil で切る。
-    func select(_ newPoint: Int32?) {
-        selected = newPoint
-        if let newPoint { start(point: newPoint) } else { stop() }
+    /// メニューのトグル。
+    func select(_ on: Bool) {
+        isSelected = on
+        if on { start() } else { stop() }
     }
 
-    private func start(point newPoint: Int32) {
+    private func start() {
         guard AVPictureInPictureController.isPictureInPictureSupported() else {
             log.error("PiP が使えない端末")
             return
         }
-        ETMeterTap_SetPoint(newPoint)
-        if point != nil, controller?.isPictureInPictureActive == true {
-            // 出ている窓のまま、測る所だけ替える。
-            point = newPoint
-            meters?.reset()
-            return
-        }
-        point = newPoint
+        // 出ている窓のまま測る所だけ替わったときは、ETVisualizerTap がもう向け直して解析を捨てている。
+        if isRunning, controller?.isPictureInPictureActive == true { return }
+        ETVisualizerTap.shared.acquire(self)
+        isRunning = true
         prepare()
-        if ETFeatures.visualizer { ETSongRecognizer.shared.setActive(true, for: .floatingMeters) }
-        let made = ETMiniMeters(layout: layout)
-        made.reset()
-        meters = made
+        ETVisualizerAnalysis.shared.register(self, needs: needs)
+        updateRecognition()
         startTimer()
         tick()
         wantsStart = true
-        log.info("PiP を始める possible=\(self.controller?.isPictureInPicturePossible == true, privacy: .public)")
+        log.notice("PiP を始める possible=\(self.controller?.isPictureInPicturePossible == true, privacy: .public)")
         // 用意ができていれば押したその場で始める。まだなら立った所で（startIfPossible）。
         startIfPossible()
     }
@@ -155,9 +184,9 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     fileprivate var starting = false
 
     private func retryIfSilent(_ this: Int) {
-        guard this == attempt, point != nil, let controller,
+        guard this == attempt, isRunning, let controller,
               !starting, !controller.isPictureInPictureActive else { return }
-        log.info("PiP が始まらなかったのでもう一度 possible=\(controller.isPictureInPicturePossible, privacy: .public)")
+        log.notice("PiP が始まらなかったのでもう一度 possible=\(controller.isPictureInPicturePossible, privacy: .public)")
         controller.startPictureInPicture()
     }
 
@@ -166,10 +195,17 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         wantsStart = false
         timer?.cancel()
         timer = nil
-        meters = nil
-        point = nil
-        ETMeterTap_SetPoint(Int32(ET_METER_TAP_OFF))
-        if ETFeatures.visualizer { ETSongRecognizer.shared.setActive(false, for: .floatingMeters) }
+        isRunning = false
+        ETVisualizerAnalysis.shared.unregister(self)
+        ETVisualizerTap.shared.release(self)
+        updateRecognition()
+    }
+
+    /// 曲の聞き取りは、流している最中で、アートワークを出す設定のときだけ（版が許すときだけ）。
+    private func updateRecognition() {
+        guard ETFeatures.visualizer else { return }
+        let wanted = isRunning && config.visibleKinds(allowsArtwork: true).contains(.artwork)
+        ETSongRecognizer.shared.setActive(wanted, for: .floatingMeters)
     }
 
     /// PiP が止まった。トグルが入ったままなら、前に来たときに出し直す。
@@ -180,7 +216,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         // 前にいて、前に来てから時間が経っている → このアプリの中で ✕ を押した。切る。
         // 前に来た直後なら、離れたアプリの PiP に奪われた（✕ を押す間は無い）。
         let closedInApp = state == .active && now - activeAt > 2
-        log.info("PiP が止まった selected=\(self.selected != nil, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
+        log.notice("PiP が止まった selected=\(self.isSelected, privacy: .public) state=\(state.rawValue, privacy: .public) sinceActive=\(now - self.activeAt, privacy: .public)")
         teardown()
         // 中で ✕ を押したのなら、次に前に来るまで出し直さない。
         if state == .active && !closedInApp { resume() }
@@ -195,21 +231,21 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     /// トグルが入っていて出ていなければ出し直す。
     private func resume() {
-        guard let again = selected, point == nil else { return }
-        log.info("PiP を出し直す")
+        guard isSelected, !isRunning else { return }
+        log.notice("PiP を出し直す")
         // 前に来た回のうちはまだ始められないことがあるので、1 回遅らせる。
         Task { @MainActor in
             let pip = ETPiPVisualizer.shared
-            guard pip.selected == again, pip.point == nil else { return }
-            pip.start(point: again)
+            guard pip.isSelected, !pip.isRunning else { return }
+            pip.start()
         }
     }
 
     /// アプリに戻すボタン（拡大）。切る。切らないと、戻ってきたアプリの中でまた出て、
     /// メニューの Off 以外に閉じる手が無くなる（本人「拡大したらオフにしないと戻す方法がない」）。
     fileprivate func restoring() {
-        selected = nil
-        if ETFeatures.visualizer { visualizerRequests &+= 1 }
+        isSelected = false
+        visualizerRequests &+= 1
     }
 
     private func attachHost() {
@@ -221,6 +257,32 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
               let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return }
         host.frame = CGRect(x: 0, y: 0, width: 2, height: 2)
         window.insertSubview(host, at: 0)
+    }
+
+    // MARK: - 設定が替わった
+
+    /// 縦横比・パネル・並び順・見た目が替わった。器の大きさが替われば作り直して窓の形を替える。
+    private func apply(_ new: ETVisualizerConfig) {
+        config = new.normalized(for: .floating)
+        let size = Self.pixelSize(config)
+        placements = Self.placements(config, size)
+        let resized = size.0 != pixelWidth || size.1 != pixelHeight
+        pixelWidth = size.0
+        pixelHeight = size.1
+        if resized {
+            pool = nil
+            format = nil
+            host.displayLayer.sampleBufferRenderer.flush()
+        }
+        if isRunning {
+            ETVisualizerAnalysis.shared.register(self, needs: needs)
+            updateRecognition()
+            tick()
+        } else if controller != nil {
+            enqueue()
+        }
+        let kinds = config.visibleKinds(allowsArtwork: ETFeatures.visualizer).map(\.rawValue).joined(separator: ",")
+        log.notice("PiP の設定 aspect=\(self.config.aspect.rawValue, privacy: .public) size=\(self.pixelWidth, privacy: .public)x\(self.pixelHeight, privacy: .public) panels=\(kinds, privacy: .public)")
     }
 
     // MARK: - 描く
@@ -235,14 +297,13 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     private func tick() {
-        guard let meters else { return }
-        meters.pull(rate: AudioIO.shared.sampleRate)
-        if ETFeatures.visualizer { meters.artwork = ETSongRecognizer.shared.artwork }
-        enqueue(meters)
+        guard isRunning else { return }
+        ETVisualizerAnalysis.shared.update(rate: AudioIO.shared.sampleRate, now: CACurrentMediaTime())
+        enqueue()
     }
 
-    private func enqueue(_ meters: ETMiniMeters) {
-        guard let buffer = pixelBuffer(meters), let format,
+    private func enqueue() {
+        guard let buffer = pixelBuffer(), let format,
               let sample = sampleBuffer(buffer, format: format) else { return }
         let output = host.displayLayer.sampleBufferRenderer
         if output.status == .failed {
@@ -252,8 +313,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         if output.isReadyForMoreMediaData { output.enqueue(sample) }
     }
 
-    private func pixelBuffer(_ meters: ETMiniMeters) -> CVPixelBuffer? {
-        let width = layout.width, height = layout.height
+    private func pixelBuffer() -> CVPixelBuffer? {
+        let width = pixelWidth, height = pixelHeight
         if pool == nil {
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -281,7 +342,9 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         // 上を 0 にする（UIKit の字の描き方に合わせる）。
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1, y: -1)
-        meters.draw(in: context)
+        ETVisualizerRenderer.draw(config: config, placements: placements, analysis: ETVisualizerAnalysis.shared,
+                                  artwork: ETFeatures.visualizer ? ETSongRecognizer.shared.artwork : nil,
+                                  in: context, pixelSize: CGSize(width: width, height: height))
         if format == nil {
             var made: CMVideoFormatDescription?
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer,
@@ -321,7 +384,7 @@ extension ETPiPVisualizer: AVPictureInPictureControllerDelegate {
         _ pictureInPictureController: AVPictureInPictureController) {
         Task { @MainActor in
             ETPiPVisualizer.shared.starting = true
-            ETPiPVisualizer.shared.log.info("PiP が始まる")
+            ETPiPVisualizer.shared.log.notice("PiP が始まる")
         }
     }
 
@@ -368,9 +431,15 @@ extension ETPiPVisualizer: AVPictureInPictureSampleBufferPlaybackDelegate {
     nonisolated func pictureInPictureControllerIsPlaybackPaused(
         _ pictureInPictureController: AVPictureInPictureController) -> Bool { false }
 
+    /// 窓が実際に取った描画の大きさ。縦横比を替えたとき窓が追いついたかを実機のログで見る。
     nonisolated func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController,
-        didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+        didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
+        let width = Int(newRenderSize.width), height = Int(newRenderSize.height)
+        Task { @MainActor in
+            ETPiPVisualizer.shared.log.notice("PiP の描画の大きさ \(width, privacy: .public)x\(height, privacy: .public)")
+        }
+    }
 
     nonisolated func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController,

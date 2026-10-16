@@ -1,0 +1,129 @@
+//  VisualizerLayout.swift
+//  パネルの置き場。並べた順に左上から行へ詰め、行をどこで切るかを縦横比から自動で決める。
+//  Foundation だけ（Tests/Unit/VisualizerLayoutTests.swift）。
+//
+//  **上流と同じ割合の矩形で持つ。**基準の舞台は幅 1280（上流の REFERENCE_WIDTH）、高さは 1280 / 縦横比。
+//  描く側（VisualizerRenderer）は舞台の幅に対する比で拡大する。矩形の作り方を足せば、
+//  上流のプリセットの型や自由配置もそのまま載る（いまは行の詰め込みだけ）。
+//
+//  各パネルには得意な形がある（Stereo とアートワークは正方形、Level Meter は細い棒、
+//  Analog Meter は上流と同じ 4:3 の文字盤）。切り方を全部試して、いちばん崩れないものを選ぶ。
+
+import Foundation
+
+struct ETVisualizerRect: Equatable {
+    var x: Double
+    var y: Double
+    var w: Double
+    var h: Double
+}
+
+struct ETVisualizerPlacement: Equatable {
+    var kind: ETVisualizerPanelKind
+    var rect: ETVisualizerRect
+    /// 行に 1 つだけ残った Level Meter は横向きの棒になる。ほかのパネルでは使わない。
+    var horizontal: Bool
+}
+
+enum ETVisualizerLayout {
+
+    /// 基準の舞台の幅（上流の REFERENCE_WIDTH）。
+    static let referenceWidth = 1280.0
+
+    /// そのパネルの得意な幅 / 高さ。
+    static func preferredAspect(_ kind: ETVisualizerPanelKind, analogMode: ETAnalogMeterChoice,
+                                aloneInRow: Bool) -> Double {
+        switch kind {
+        case .spectrogram: return 300.0 / 256.0
+        case .waveform: return 400.0 / 256.0
+        case .spectrum: return 300.0 / 256.0
+        case .stereo: return 216.0 / 256.0
+        // 上流の Level Meter は縦に細い棒で、行に 1 つだけのときは 16:1 の横長（プリセットの一番下）。
+        case .levelMeter: return aloneInRow ? 16.0 : 0.25
+        // 上流の Oscilloscope の描き面。
+        case .oscilloscope: return 32.0 / 15.0
+        // 4:3 の文字盤 1 つぶん。VU は左右の 2 つ。
+        case .analogMeter: return analogMode == .vu ? 8.0 / 3.0 : 4.0 / 3.0
+        case .artwork: return 1.0
+        }
+    }
+
+    /// 行の切り方を全部試して置き場を返す。空なら空。
+    /// 選び方: 全体を縦に引き伸ばす倍率 s が 1 に近い順（対数で見る）、行が少ない順、
+    /// 行の自然な高さの差が小さい順。同じなら先に試したほう（マスクの小さいほう＝行が少ない切り方）。
+    static func place(_ kinds: [ETVisualizerPanelKind], analogMode: ETAnalogMeterChoice,
+                      ratio: Double) -> [ETVisualizerPlacement] {
+        let n = kinds.count
+        guard n > 0, ratio > 0 else { return [] }
+        let width = referenceWidth
+        let height = width / ratio
+
+        var best: (key: (Double, Int, Double), rows: [[Int]])?
+        for mask in 0..<(1 << (n - 1)) {
+            var rows: [[Int]] = [[0]]
+            for i in 1..<n {
+                if mask & (1 << (i - 1)) != 0 { rows.append([i]) } else { rows[rows.count - 1].append(i) }
+            }
+            var naturals: [Double] = []
+            naturals.reserveCapacity(rows.count)
+            for row in rows {
+                let total = row.reduce(0.0) { $0 + preferredAspect(kinds[$1], analogMode: analogMode, aloneInRow: row.count == 1) }
+                naturals.append(width / total)
+            }
+            let s = height / naturals.reduce(0, +)
+            let key = ((abs(log(s)) * 1e9).rounded(), rows.count,
+                       (naturals.max() ?? 0) - (naturals.min() ?? 0))
+            if let current = best?.key {
+                let smaller = key.0 != current.0 ? key.0 < current.0
+                    : (key.1 != current.1 ? key.1 < current.1 : key.2 < current.2)
+                if !smaller { continue }
+            }
+            best = (key, rows)
+        }
+        guard let rows = best?.rows else { return [] }
+
+        // 行の高さと列の幅を割合で出し、累積で丸めて隙間なく敷く。
+        var naturals: [Double] = []
+        var aspects: [[Double]] = []
+        for row in rows {
+            let list = row.map { preferredAspect(kinds[$0], analogMode: analogMode, aloneInRow: row.count == 1) }
+            aspects.append(list)
+            naturals.append(width / list.reduce(0, +))
+        }
+        let s = height / naturals.reduce(0, +)
+        var placements: [ETVisualizerPlacement] = []
+        var top = 0.0
+        for (r, row) in rows.enumerated() {
+            let rowHeight = naturals[r] * s
+            let y0 = top.rounded()
+            let y1 = (top + rowHeight).rounded()
+            let total = aspects[r].reduce(0, +)
+            var left = 0.0
+            for (c, index) in row.enumerated() {
+                let w = width * aspects[r][c] / total
+                let x0 = left.rounded()
+                let x1 = (left + w).rounded()
+                placements.append(ETVisualizerPlacement(
+                    kind: kinds[index],
+                    rect: ETVisualizerRect(x: x0, y: y0, w: x1 - x0, h: y1 - y0),
+                    horizontal: kinds[index] == .levelMeter && row.count == 1))
+                left += w
+            }
+            top += rowHeight
+        }
+        return placements
+    }
+
+    /// Fit の縦横比。細すぎる・太すぎる画面でも配置が壊れないよう 9:16 〜 21:9 に収める。
+    static func fitRatio(width: Double, height: Double) -> Double {
+        guard width > 0, height > 0 else { return 16.0 / 9.0 }
+        return min(max(width / height, 9.0 / 16.0), 21.0 / 9.0)
+    }
+
+    /// PiP の器の大きさ（ピクセル）。長いほうの辺を 1280 にして、短いほうは偶数に丸める。
+    static func pipPixelSize(_ ratio: Double) -> (Int, Int) {
+        func even(_ x: Double) -> Int { Int((x / 2).rounded()) * 2 }
+        let long = Int(referenceWidth)
+        return ratio >= 1 ? (long, even(referenceWidth / ratio)) : (even(referenceWidth * ratio), long)
+    }
+}

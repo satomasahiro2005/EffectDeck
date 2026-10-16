@@ -292,6 +292,14 @@ targets:
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
       # 曲の聞き取りの間合い。Foundationだけ（SongRecognitionPolicyTests）。
       - path: Sources/EffeTuneLive/Audio/SongRecognitionPolicy.swift
+      # Visualizer の設定の形と保存（VisualizerConfigTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerConfig.swift
+      # Visualizer のパネルの置き場（VisualizerLayoutTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerLayout.swift
+      # メーターの落ち方とVUの針（VisualizerBallisticsTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerBallistics.swift
+      # スペクトログラムの色（VisualizerPaletteTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerPalette.swift
       # JSFX を建てる専用スレッドと列挙つまみの選択。Foundation だけ（JSFXLoaderTests）。
       - path: Sources/EffeTuneLive/Audio/ETJSFXLoader.swift
       # ソース表示の行分けと色分け。Foundationだけ（JSFXSourceSyntaxTests）。

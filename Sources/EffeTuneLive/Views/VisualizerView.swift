@@ -1,82 +1,43 @@
 //  VisualizerView.swift
-//  試作の Visualizer。拡張から受けた音で曲を聞き取り、アートワークと曲名を出す
-//  （聞き取りは Audio/SongRecognizer.swift。ETFeatures.visualizer が true のときだけ入口が出る）。
+//  Visualizer の画面。CoreGraphics の描き手（Views/Visualizer/）が画面いっぱいに描く。
+//  どのパネルを出すか・並び順・縦横比・見た目は右上の Customize で替える（Floating Meters と同じ設定の形）。
 //
-//  シートで出す（PipelineView.Sheet.visualizer）。出ていて、アプリが前にいるあいだだけ聞き取る。
-//  聞き取れていないあいだは枠だけ。「聞いています」「見つかりません」のような字は出さない。
+//  シートで出す（PipelineView.Sheet.visualizer）。出ていて、アプリが前にいるあいだだけ回る。
+//  曲名と歌手名は出さない（Dynamic Island に出ている）。アートワークはパネルの 1 つで、
+//  曲の聞き取りが使える版（ETFeatures.visualizer）でだけ出る。
 
 import SwiftUI
 
 struct VisualizerView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var onScreen = false
 
-    private var recognizer: ETSongRecognizer { .shared }
+    private enum Route: Hashable {
+        case customize
+    }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                artwork
-                if let song = recognizer.current {
-                    VStack(spacing: 4) {
-                        Text(song.title)
-                            .font(.title2.weight(.semibold))
-                        if let artist = song.artist {
-                            Text(artist)
-                                .foregroundStyle(.secondary)
+            ETVisualizerSurfaceView(surface: .inApp)
+                // 舞台は安全領域の中に置き（Dynamic Island やホームインジケータの下に潜らせない）、
+                // 背景の黒だけ端まで広げる。
+                .background { Color.black.ignoresSafeArea(edges: [.bottom, .horizontal]) }
+                .navigationTitle("Visualizer")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        NavigationLink(value: Route.customize) {
+                            Label("Customize", systemImage: "slider.horizontal.3")
                         }
                     }
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
                 }
-                Text(recognizer.status)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("Visualizer")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                .navigationDestination(for: Route.self) { _ in
+                    ETVisualizerEditorView()
                 }
-            }
         }
-        .onAppear { onScreen = true; update() }
-        .onDisappear { onScreen = false; update() }
-        .onChange(of: scenePhase) { update() }
-    }
-
-    private func update() {
-        recognizer.setActive(onScreen && scenePhase == .active, for: .sheet)
-    }
-
-    /// 画像は AsyncImage の既定（URLSession.shared と URLCache.shared）に任せる。自前の置き場は持たない。
-    private var artwork: some View {
-        AsyncImage(url: recognizer.current?.artworkURL) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFit()
-            } else {
-                placeholder
-            }
-        }
-        // 曲が替わったら前の絵を引きずらず、枠から読み直す。
-        .id(recognizer.current?.artworkURL)
-        .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: 480, maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private var placeholder: some View {
-        Rectangle()
-            .fill(.quaternary)
-            .overlay(
-                Image(systemName: "music.note")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.secondary)
-            )
+        // 全画面の向きを固定していたら外す。iPhone だけ（ETInterfaceOrientation.rotates）。
+        .onAppear { ETInterfaceOrientation.request(.all) }
     }
 }

@@ -40,7 +40,7 @@ final class ETSongRecognizer {
     @ObservationIgnored private(set) var artwork: CGImage?
 
     /// 聞き取りを頼んでいる所。どれかが居るあいだ動く。
-    enum Client { case sheet, floatingMeters }
+    enum Client: Hashable { case floatingMeters, view(ObjectIdentifier) }
 
     @ObservationIgnored fileprivate var feeder: ETShazamFeeder?
     @ObservationIgnored private var mock: Task<Void, Never>?
@@ -143,6 +143,26 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private static var loggedCatalog = false
 
     private let queue = DispatchQueue(label: "ai.nemut.effetune.shazam", qos: .utility)
+    /// ログの写し（Library/Caches/shazam.log）。idevicesyslog は Wi-Fi 越しだと途切れるので、
+    /// 後から `xcrun devicectl device copy from` で吸い出せるよう端末に残す。5MB を越えたら空にする。
+    private let file: FileHandle? = {
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let url = dir.appendingPathComponent("shazam.log")
+        if let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int, size > 5_000_000 {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        let handle = try? FileHandle(forWritingTo: url)
+        _ = try? handle?.seekToEnd()
+        return handle
+    }()
+    private let stamp: DateFormatter = {
+        let made = DateFormatter()
+        made.dateFormat = "HH:mm:ss.SSS"
+        return made
+    }()
     private let timer: DispatchSourceTimer
     /// 溜めておくモノラルの長さ（フレーム）。10 秒。
     private static let historyFrames = 480_000
@@ -215,7 +235,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
                 dropSession()
                 policy.peerLost()
                 publish(nil)
-                Self.log.notice("peer lost")
+                note("peer lost")
             }
             return
         }
@@ -240,7 +260,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         let frames = Int(rx.tapRead(from: &cursor, into: &scratch, maxFrames: Self.maxFrames, skipped: &skipped))
         if skipped > 0 {
             skippedTotal += skipped
-            Self.log.notice("tap skipped \(skipped, privacy: .public) samples")
+            note("tap skipped \(skipped) samples")
             dropSession()
             policy.discontinuity()
             historyCount = 0
@@ -255,7 +275,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
                 // 止まる前と再開後の音をつなげて聞かせない。
                 historyCount = 0
                 if clear { publish(nil) }
-                Self.log.notice("session dropped: \(clear ? "attempt timed out" : "no data", privacy: .public)")
+                note("session dropped: \(clear ? "attempt timed out" : "no data")")
             }
             return
         }
@@ -274,7 +294,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         case .drop(let clear):
             dropSession()
             if clear { publish(nil) }
-            Self.log.notice("session dropped: \(clear ? "attempt timed out" : "silence", privacy: .public)")
+            note("session dropped: \(clear ? "attempt timed out" : "silence")")
         case .skip:
             break
         }
@@ -290,7 +310,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         if !Self.loggedCatalog {
             Self.loggedCatalog = true
             let catalog = made.catalog
-            Self.log.notice("catalog query signature \(catalog.minimumQuerySignatureDuration, privacy: .public)s...\(catalog.maximumQuerySignatureDuration, privacy: .public)s")
+            note("catalog query signature \(catalog.minimumQuerySignatureDuration)s...\(catalog.maximumQuerySignatureDuration)s")
         }
     }
 
@@ -309,9 +329,16 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             "lastError=\(lastError)",
             "match=\(lastMatch)",
         ]
-        Self.log.notice("status \(fields.joined(separator: " "), privacy: .public)")
+        note("status \(fields.joined(separator: " "))")
         let line = fields.joined(separator: "\n")
         Task { @MainActor [self] in ETSongRecognizer.shared.publish(status: line, from: self) }
+    }
+
+    /// queue の上で呼ぶ。
+    private func note(_ line: String) {
+        Self.log.notice("\(line, privacy: .public)")
+        // 旧 API の write(_:) は I/O エラーで ObjC 例外を投げ、Swift では捕まえられない。
+        try? file?.write(contentsOf: Data("\(stamp.string(from: Date())) \(line)\n".utf8))
     }
 
     private func dropSession() {
@@ -371,8 +398,9 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             lastMatch = String(format: "conf=%.2f skew=%.4f offset=%.1fs", item.confidence,
                                item.frequencySkew, item.predictedCurrentMatchOffset)
             let changed = policy.matched(id: id)
+            note("find id=\(id) title=\(title) conf=\(item.confidence) skew=\(item.frequencySkew) matchOffset=\(item.matchOffset) offset=\(item.predictedCurrentMatchOffset) changed=\(changed)")
             guard changed else { return }
-            Self.log.notice("matched id=\(id, privacy: .public) title=\(title, privacy: .public) artist=\(item.artist ?? "-", privacy: .public) artwork=\(item.artworkURL?.absoluteString ?? "-", privacy: .public)")
+            note("matched id=\(id) title=\(title) artist=\(item.artist ?? "-") artwork=\(item.artworkURL?.absoluteString ?? "-")")
             publish(song)
         }
     }
@@ -385,7 +413,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
                 // 外れても聞かせ続ける（streaming が聞き直す）。ログは 1 セッションに 1 回。
                 if !loggedMiss {
                     loggedMiss = true
-                    Self.log.notice("no match")
+                    note("no match")
                 }
                 return
             }
@@ -393,7 +421,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             let ns = error as NSError
             lastError = "\(ns.domain) \(ns.code)"
             let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\($0.domain) \($0.code)" } ?? "-"
-            Self.log.notice("error domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) \(ns.localizedDescription, privacy: .public) underlying=\(underlying, privacy: .public)")
+            note("error domain=\(ns.domain) code=\(ns.code) \(ns.localizedDescription) underlying=\(underlying)")
             policy.failed(code: ns.code, now: CACurrentMediaTime())
             dropSession()
         }

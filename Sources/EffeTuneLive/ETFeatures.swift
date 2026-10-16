@@ -21,14 +21,15 @@ enum ETFeatures {
     /// 審査用の説明（Tools/review_notes.txt）は「Remote Control is off」のままなので、出す前に書き直すこと。
     static var remoteControl: Bool { true }
 
-    /// 試作の Visualizer（曲の聞き取りとアートワーク。Audio/SongRecognizer.swift・Views/VisualizerView.swift）。
+    /// Visualizer のうち、曲の聞き取り（ShazamKit。Audio/SongRecognizer.swift）に頼るもの。
+    /// Visualizer の画面・その編集画面（Views/Visualizer/）・⋯ のメニューの Visualizer・Floating Meters の拡大ボタンは
+    /// **どの版にも出る。**ここが絞るのは、聞き取りを使う次の 3 つだけ。
+    ///   - Artwork のパネル（編集画面の Panels の一覧からも消え、描かれもしない）
+    ///   - 編集画面の Song Recognition の節（取得状況。デバッグ用）
+    ///   - ETSongRecognizer.setActive を呼ぶこと全部（Release では 1 度も呼ばない）
     /// **Debug と Beta だけ。**ShazamKit は音の指紋を Apple へ送り、アートワークも取りに行くので、
     /// site/src/text.js の PRIVACY（音は端末から出ない・音の処理は通信しない）と Tools/review_notes.txt と食い違う。
     /// 店の版で開ける前にそれらを書き直すこと。
-    /// 開けたときの入口:
-    ///   - ⋯ のメニューの Visualizer（PipelineToolbar）
-    ///   - Floating Meters の PiP の拡大ボタン（ETPiPVisualizer.restoring）
-    ///   - 撮影用の `-ETSheet visualizer`（PipelineView）
     static var visualizer: Bool {
 #if DEBUG || ET_BETA
         true

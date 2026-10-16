@@ -57,7 +57,8 @@ struct PipelineView: View {
         /// Presets のシートを開かせると、行を押しただけで鎖ごと読み込まれてしまうので分けた。
         /// 紐付けがまだ無いときの入口は Presets の Output Correction の行（同じ中身を押して進む形で出す）。
         case outputCorrection
-        /// 試作の Visualizer（曲の聞き取りとアートワーク。VisualizerView.swift）。ETFeatures.visualizer が true のときだけ出す。
+        /// Visualizer の画面（VisualizerView.swift。Views/Visualizer/ の描き手で描く。どの版でも出る）。
+        /// 右上の Customize で、パネル・並び順・縦横比・見た目を Floating Meters と同じ形で替える。
         case visualizer
         var id: String { rawValue }
     }
@@ -306,7 +307,7 @@ struct PipelineView: View {
             case .outputCorrection:
                 OutputCorrectionView(isRemote: isRemote)
             case .visualizer:
-                VisualizerView()
+                VisualizerView().presentationSizing(.page)
             // ConnectBanner の Help から。Settings 側は自分の NavigationStack で押す。
             case .tips:
                 NavigationStack {
@@ -338,8 +339,7 @@ struct PipelineView: View {
             // 撮るシートを指定されていればそれを出す。
             // ピッカーはpresentPickerを通す。2列ではまだ+が無いので、popoverにすると落ちる。
             if let name = ETScreenshotSeed.sheet, let which = Sheet(rawValue: name),
-               (which != .remote || ETFeatures.remoteControl),
-               (which != .visualizer || ETFeatures.visualizer) {
+               (which != .remote || ETFeatures.remoteControl) {
                 if which == .picker { presentPicker() } else { sheet = which }
             }
             // 動きを撮るために、しばらくしてから自分で開く。
@@ -627,7 +627,7 @@ struct PipelineView: View {
 
     /// PiP の拡大ボタンから。出ているシートやpopoverを畳んでから出す（待っている続きは捨てない）。
     private func openVisualizer() {
-        guard ETFeatures.visualizer, sheet != .visualizer else { return }
+        guard sheet != .visualizer else { return }
         // 画面に居ない popover の閉じるのは来ないので、待たずに替える（PipelineToolbar.present と同じ）。
         if usesSplit, sheet == .picker, !pickerInSheet, !pickerOnScreen {
             sheet = .visualizer
@@ -1989,6 +1989,8 @@ private struct PipelineToolbar: ToolbarContent {
     @ObservedObject var dsp: EffeTuneDSP
     /// Floating Meters のトグルの印。
     @ObservedObject var pip = ETPiPVisualizer.shared
+    /// Floating Meters の測る所（Visualizer の画面と共通）。
+    @ObservedObject var visualizerSettings = ETVisualizerSettings.shared
     let io: AudioIO
     /// 拡張が繋がっているか。繋がっていないあいだマスターを沈める。
     let hasPeer: Bool
@@ -2168,13 +2170,25 @@ private struct PipelineToolbar: ToolbarContent {
             Menu {
                 Button("Settings", systemImage: "gearshape") { present(.settings) }
                 Button("Routing", systemImage: "arrow.triangle.branch") { present(.routing) }
-                if ETFeatures.visualizer {
-                    Button("Visualizer", systemImage: "music.note") { present(.visualizer) }
-                }
-                // 試作: 鎖の入口か出口の音を、横長のメーターにして PiP の窓に出す（PiPVisualizer.swift）。
+                Button("Visualizer", systemImage: "waveform.path.ecg.rectangle") { present(.visualizer) }
+                // 鎖の入口か出口の音を、Visualizer と同じ描き手で PiP の窓に出す（PiPVisualizer.swift）。
+                // 設定（パネル・縦横比・見た目）は Visualizer の Customize。測る所はここと共通。
                 // トグル。入れているあいだは、外で消えても戻ったら出し直す。
-                Picker(selection: Binding(get: { pip.selected ?? Int32(ET_METER_TAP_OFF) },
-                                          set: { pip.select($0 == Int32(ET_METER_TAP_OFF) ? nil : $0) })) {
+                Picker(selection: Binding(
+                    get: {
+                        pip.isSelected ? (visualizerSettings.source == .input ? Int32(ET_METER_TAP_INPUT)
+                                                                              : Int32(ET_METER_TAP_OUTPUT))
+                                       : Int32(ET_METER_TAP_OFF)
+                    },
+                    set: { point in
+                        if point == Int32(ET_METER_TAP_OFF) {
+                            pip.select(false)
+                        } else {
+                            let wanted: ETVisualizerSource = point == Int32(ET_METER_TAP_INPUT) ? .input : .output
+                            if visualizerSettings.source != wanted { visualizerSettings.source = wanted }
+                            pip.select(true)
+                        }
+                    })) {
                     Text("Off").tag(Int32(ET_METER_TAP_OFF))
                     Text("Chain Input").tag(Int32(ET_METER_TAP_INPUT))
                     Text("Chain Output").tag(Int32(ET_METER_TAP_OUTPUT))
