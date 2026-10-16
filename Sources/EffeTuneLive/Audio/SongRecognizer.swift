@@ -117,6 +117,14 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private var policy = SongRecognitionPolicy()
     private var hadPeer = false
     private var loggedMiss = false
+    // 取得状況を 1 秒ごとにログへ出すための数（logStatus）。
+    private var ticks = 0
+    private var lastPeak: Float = 0
+    private var skippedTotal: UInt64 = 0
+    private var sessions = 0
+    private var matches = 0
+    private var misses = 0
+    private var lastError = "-"
 
     override init() {
         timer = DispatchSource.makeTimerSource(queue: queue)
@@ -140,6 +148,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     // MARK: - 読む
 
     private func tick() {
+        ticks += 1
+        if ticks % 4 == 0 { logStatus() }
         let rx = ETLinkReceiver.shared
         guard rx.hasPeer else {
             if hadPeer {
@@ -165,6 +175,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         var skipped: UInt64 = 0
         let frames = Int(rx.tapRead(from: &cursor, into: &scratch, maxFrames: Self.maxFrames, skipped: &skipped))
         if skipped > 0 {
+            skippedTotal += skipped
             Self.log.notice("tap skipped \(skipped, privacy: .public) samples")
             dropSession()
             policy.discontinuity()
@@ -173,6 +184,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             // 新しい音が来ないのも無音と見る。元のアプリが止まるとホストは IO を止めるが、
             // 接続は残って tapRead は 0 を返し続ける。時計を進めないと聞き取りが居座り、
             // 再開時に時刻の飛んだ流れを聞かせてしまう。
+            lastPeak = 0
             if case .drop(let clear) = policy.audio(now: CACurrentMediaTime(), peak: 0) {
                 dropSession()
                 if clear { publish(nil) }
@@ -183,6 +195,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
 
         var peak: Float = 0
         for i in 0..<(frames * 2) { peak = max(peak, abs(scratch[i])) }
+        lastPeak = peak
 
         switch policy.audio(now: CACurrentMediaTime(), peak: peak) {
         case .startAndFeed:
@@ -203,6 +216,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         let made = SHSession()
         made.delegate = self
         session = made
+        sessions += 1
         fedFrames = 0
         loggedMiss = false
         if !Self.loggedCatalog {
@@ -210,6 +224,11 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             let catalog = made.catalog
             Self.log.notice("catalog query signature \(catalog.minimumQuerySignatureDuration, privacy: .public)s...\(catalog.maximumQuerySignatureDuration, privacy: .public)s")
         }
+    }
+
+    private func logStatus() {
+        let db = lastPeak > 0 ? 20 * log10(lastPeak) : -.infinity
+        Self.log.notice("status peer=\(self.hadPeer, privacy: .public) phase=\(String(describing: self.policy.phase), privacy: .public) peak=\(db, format: .fixed(precision: 1), privacy: .public)dB session=\(self.session != nil, privacy: .public) fed=\(self.fedFrames, privacy: .public) sessions=\(self.sessions, privacy: .public) matches=\(self.matches, privacy: .public) misses=\(self.misses, privacy: .public) skipped=\(self.skippedTotal, privacy: .public) lastError=\(self.lastError, privacy: .public)")
     }
 
     private func dropSession() {
@@ -242,6 +261,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             let title = item.title ?? "Unknown"
             let id = item.shazamID ?? item.isrc ?? item.appleMusicID ?? "\(title)|\(item.artist ?? "")"
             let song = ETRecognizedSong(id: id, title: title, artist: item.artist, artworkURL: item.artworkURL)
+            matches += 1
             let changed = policy.matched(id: id, now: CACurrentMediaTime())
             dropSession()
             guard changed else { return }
@@ -254,6 +274,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         queue.async { [self] in
             guard self.session === session else { return }
             guard let error else {
+                misses += 1
                 // 外れは続けて聞かせる（上限まで streaming が聞き直す）。ログは 1 セッションに 1 回。
                 if !loggedMiss {
                     loggedMiss = true
@@ -263,6 +284,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             }
             // 202（Missing entitlements = App Services の ShazamKit が未有効）も、ここのログだけで画面には出さない。
             let ns = error as NSError
+            lastError = "\(ns.domain) \(ns.code)"
             let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\($0.domain) \($0.code)" } ?? "-"
             Self.log.notice("error domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) \(ns.localizedDescription, privacy: .public) underlying=\(underlying, privacy: .public)")
             policy.failed(code: ns.code, now: CACurrentMediaTime())
