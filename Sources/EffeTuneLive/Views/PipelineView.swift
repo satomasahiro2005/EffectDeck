@@ -556,9 +556,19 @@ struct PipelineView: View {
     /// 根の.sheetに渡すもの。**2列ではピッカーを普通はここへ出さない。**+に付けたpopoverが出す。
     /// +がまだ居ないうちに開いたときだけ、ここへ出す（pickerInSheet）。
     /// 1列では$sheetそのものと同じ。
+    ///
+    /// **畳み終えた後の nil で popover を消さない。**シートの外を押して閉じると、SwiftUI は
+    /// 畳む動きが終わってから nil を書く。その前に + を押していると、書かれる時には sheet が
+    /// .picker（popover）になっていて、出ようとしていた popover の状態だけを消していた。
+    /// 状態は「出ている」と「出ていない」がずれたまま残り、右上の + を押しても何も起きなくなった
+    /// （iPad、10-16 本人「設定のシートとか出して戻ると右上の奴ぜんぶタップしても反応しなくなる」）。
+    /// 根の .sheet が出していない値（2 列の popover）は、根の .sheet からは消させない。
     private var presentedSheet: Binding<Sheet?> {
         Binding(get: { usesSplit && sheet == .picker && !pickerInSheet ? nil : sheet },
-                set: { sheet = $0 })
+                set: { new in
+                    if new == nil, usesSplit, sheet == .picker, !pickerInSheet { return }
+                    sheet = new
+                })
     }
 
     /// ピッカーを出す。空の鎖のAdd Effect、取り込んだJSFX、JSFXのリンク、撮影の-ETSheetはここを通す。
@@ -2021,8 +2031,36 @@ private struct PipelineToolbar: ToolbarContent {
     /// 押し直しても何も起きず、popoverの後ろで待っていた警告も出ないシートを待ち続ける。
     /// 親のpresentSheetを閉包で受け取らないのは、閉包は毎回違う値になり、親が作り直されるたびに
     /// ここも評価し直されるから（提示の途中のMenuが作り直される。型の頭）。
+    /// 2 列の + 。**シートの上には popover を出せない。**シートが出ている・畳みかけているなら、
+    /// 畳み終えてから出す（openAfterClosingSheet → 根の onDismiss の runAfterSheet）。
+    /// 「出ている」のに画面に居ない popover（pickerOnScreen が偽）は、一度下ろしてから出し直す。
+    private func openPopoverPicker() {
+        let shown = $sheet
+        let inSheet = $pickerInSheet
+        switch sheet {
+        case nil:
+            pickerInSheet = false
+            sheet = .picker
+        case .picker?:
+            guard !pickerOnScreen else { return }
+            sheet = nil
+            Task { @MainActor in
+                await ETPresentation.settled()
+                guard shown.wrappedValue == nil else { return }
+                inSheet.wrappedValue = false
+                shown.wrappedValue = .picker
+            }
+        default:
+            PipelineView.openAfterClosingSheet({
+                inSheet.wrappedValue = false
+                shown.wrappedValue = .picker
+            }, sheet: $sheet, afterSheet: $afterSheet)
+        }
+    }
+
     private func present(_ which: PipelineView.Sheet) {
-        guard pickerAsPopover, sheet == .picker else {
+        // 画面に居ない popover の閉じるのは来ないので、待たずに替える。
+        guard pickerAsPopover, sheet == .picker, pickerOnScreen else {
             sheet = which
             return
         }
@@ -2087,10 +2125,7 @@ private struct PipelineToolbar: ToolbarContent {
                 // **+から出す。**選ぶたびに閉じる。つまんで運ぶと自分で閉じ、
                 // 右のカード・余白、左の一覧の行の間のどれへでも落とせる。
                 // 押せたなら+は画面に居る。popoverで出す。
-                Button("Add Effect", systemImage: "plus") {
-                    pickerInSheet = false
-                    sheet = .picker
-                }
+                Button("Add Effect", systemImage: "plus") { openPopoverPicker() }
                     .popover(isPresented: pickerShown) {
                         ETPickerHost(dsp: dsp, sheet: $sheet, pluginError: $pluginError,
                                      pane: $pickerPane, fresh: $freshJSFX,
