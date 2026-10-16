@@ -48,9 +48,15 @@ enum ETVisualizerLayout {
         }
     }
 
+    /// 大きさの偏りの重み。s だけで選ぶと、1:1 や 9:16 でアートワークが 1 段を独り占めして
+    /// 残りが下の細い 1 段に押し込まれる（シミュレータで確かめた）。
+    static let imbalanceWeight = 0.3
+
     /// 行の切り方を全部試して置き場を返す。空なら空。
-    /// 選び方: 全体を縦に引き伸ばす倍率 s が 1 に近い順（対数で見る）、行が少ない順、
-    /// 行の自然な高さの差が小さい順。同じなら先に試したほう（マスクの小さいほう＝行が少ない切り方）。
+    /// 選び方: |log s|（全体を縦に引き伸ばす倍率 s が 1 から離れるほど悪い）に、パネルの面積の
+    /// 最大と最小の比の対数 × imbalanceWeight を足したものが小さい順、行が少ない順、
+    /// 行の自然な高さの差が小さい順。Level Meter は細い棒が持ち味なので面積の比に入れない。
+    /// 同じなら先に試したほう（マスクの小さいほう＝行が少ない切り方）。
     static func place(_ kinds: [ETVisualizerPanelKind], analogMode: ETAnalogMeterChoice,
                       ratio: Double) -> [ETVisualizerPlacement] {
         let n = kinds.count
@@ -71,7 +77,19 @@ enum ETVisualizerLayout {
                 naturals.append(width / total)
             }
             let s = height / naturals.reduce(0, +)
-            let key = ((abs(log(s)) * 1e9).rounded(), rows.count,
+            var smallest = Double.infinity, largest = 0.0
+            for (r, row) in rows.enumerated() {
+                let list = row.map { preferredAspect(kinds[$0], analogMode: analogMode, aloneInRow: row.count == 1) }
+                let total = list.reduce(0, +)
+                for (c, index) in row.enumerated() where kinds[index] != .levelMeter {
+                    let area = width * list[c] / total * naturals[r] * s
+                    smallest = min(smallest, area)
+                    largest = max(largest, area)
+                }
+            }
+            let imbalance = largest > 0 ? log(largest / smallest) : 0
+            let cost = abs(log(s)) + Self.imbalanceWeight * imbalance
+            let key = ((cost * 1e9).rounded(), rows.count,
                        (naturals.max() ?? 0) - (naturals.min() ?? 0))
             if let current = best?.key {
                 let smaller = key.0 != current.0 ? key.0 < current.0

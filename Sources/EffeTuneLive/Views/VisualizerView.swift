@@ -15,8 +15,12 @@ struct VisualizerView: View {
         case customize
     }
 
+    /// 撮影用に `-ETVisualizerRoute customize` で設定の画面から開く。
+    @State private var path: [Route] = UserDefaults.standard.string(forKey: "ETVisualizerRoute") == "customize"
+        ? [.customize] : []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ETVisualizerSurfaceView(surface: .inApp)
                 // 舞台は安全領域の中に置き（Dynamic Island やホームインジケータの下に潜らせない）、
                 // 背景の黒だけ端まで広げる。
@@ -38,6 +42,11 @@ struct VisualizerView: View {
                 }
         }
         // 全画面の向きを固定していたら外す。iPhone だけ（ETInterfaceOrientation.rotates）。
-        .onAppear { ETInterfaceOrientation.request(.all) }
+        .onAppear {
+            ETInterfaceOrientation.request(.all)
+#if DEBUG
+            ETVisualizerSnapshot.runIfRequested()
+#endif
+        }
     }
 }
