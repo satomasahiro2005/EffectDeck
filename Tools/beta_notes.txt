@@ -3,17 +3,9 @@ The Japanese version follows below.
 
 This beta includes all work in progress, including features not yet in the App Store version. The layout is still being adjusted and may change between builds.
 
-New
-
-- Floating Meters: the … menu → Floating Meters shows spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in Picture in Picture. If another app takes over Picture in Picture, it comes back when you return to EffectDeck. Please check that it starts with one tap and keeps moving over other apps.
-- EffeTune 2.14.0 (DSP 0.14.0): Analog Meter Custom mode, Oscilloscope up to 10 seconds (scrolls smoothly with Trigger Mode Off), Note Spectrogram instrument colours, Highlight and onsets, and the SFZ Library and voice display for SFZ Note Player.
-- Remote Control works with EffeTune 2.14 on your computer. While editing the computer's chain, IR Reverb chooses from the computer's IR Library, and values measured from local audio are hidden.
-- Settings → About → Reset All Data erases everything, including the iCloud copy.
-- The New section in Available Effects is gone.
-
 Fixes
 
-- A card you drag folds to its title until you drop it, and dragging is smoother.
+- iPad (two columns): after closing a sheet such as Settings by tapping outside it, the buttons at the top right (+, Presets, …) could stop responding. Please check that they keep working when you close a sheet and tap them right away.
 
 If anything looks or sounds wrong, please use Settings → About → Report a problem and include your device, the output in use and what was playing.
 
@@ -21,16 +13,8 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 
 本ベータ版には、App Store版に未搭載の機能を含む、開発中の内容をすべて収録しています。画面の配置は調整中のため、ビルドごとに変更される場合があります。
 
-【新機能】
-
-・Floating Meters：…メニュー → Floating Metersで、チェーンの入口または出口の音のスペクトログラム・波形・スペクトラム・ステレオ・レベルをピクチャ・イン・ピクチャで表示します。ほかのアプリにピクチャ・イン・ピクチャを取られても、EffectDeckに戻ると再び表示します。1回のタップで表示されるか、ほかのアプリの上で動き続けるかをご確認ください。
-・EffeTune 2.14.0（DSP 0.14.0）に対応しました。Analog MeterのCustomモード、最大10秒のOscilloscope（Trigger ModeがOffなら滑らかに流れます）、Note Spectrogramの楽器の色・Highlight・音の始まりの印、SFZ Note PlayerのSFZ Libraryと声の表示が加わりました。
-・Remote Controlは、パソコンのEffeTune 2.14で使えます。パソコンのチェーンを編集している間、IR Reverbはパソコンのライブラリから選び、手元の音から測る表示は隠します。
-・Settings → About → Reset All Dataで、iCloudの控えも含めてすべて消去できます。
-・エフェクト一覧のNewの欄をなくしました。
-
 【不具合の修正】
 
-・ドラッグしているカードは、離すまで名前の行だけに畳み、ドラッグも軽くなりました。
+・iPad（2列表示）で、Settingsなどのシートを外側のタップで閉じた後、右上のボタン（+・Presets・…）が反応しなくなることがある不具合を修正しました。シートを閉じてすぐに押しても動くかご確認ください。
 
 表示や音に問題がある場合は、Settings → About → Report a problemから、ご使用の端末、出力先、再生していた内容を添えてご報告ください。
