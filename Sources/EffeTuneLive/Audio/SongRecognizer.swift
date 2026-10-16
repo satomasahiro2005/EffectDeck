@@ -5,8 +5,9 @@
 //  音のスレッドとは別の読み手が自分の位置で古い順に読む（tapRead）。読むのは専用の直列キューで、
 //  250ms ごとに 0.5 秒ぶんまで。link.recv のキューにも ETMeterTap にも触れない。
 //
-//  聞かせるのは SHSession だけ（Shazam のカタログ）。48kHz のモノラルに落として
-//  matchStreamingBuffer へ渡す。SHManagedSession・SHSignatureGenerator・MusicKit は使わない。
+//  問い合わせるのは SHSession だけ（Shazam のカタログ）。48kHz のモノラルに落として溜め、
+//  直近 4 秒を SHSignatureGenerator で署名にして 2 秒ごとに match へ投げる（query の説明）。
+//  SHManagedSession（マイクを使う）と MusicKit は使わない。
 //  ShazamKit を import するのはこのファイルだけ。
 //
 //  **いつ動くか。**Visualizer のシートが（アプリが前にいて）出ているか、Floating Meters が出ているあいだ
@@ -175,7 +176,21 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private var cursor: UInt64 = 0
     private var generation: UInt64 = 0
     private var session: SHSession?
+    /// 問い合わせに使ったフレームの合計（取得状況の fed）。
     private var fedFrames: Int64 = 0
+    /// 1 回に問い合わせる長さ（フレーム）。4 秒。
+    private static let queryWindow = 192_000
+    /// 何 tick（250ms）ごとに問い合わせるか。2 秒。
+    private static let queryEveryTicks = 8
+    /// 返事を待つ上限。これを過ぎたら次を投げる。
+    private static let queryTimeout: CFTimeInterval = 6
+    private var queryTick = 0
+    private var inFlightSince: CFTimeInterval?
+    /// カタログが受け付ける最短の署名（フレーム）。makeSession で読む。読むまでは 3 秒。
+    private var minimumQueryFrames = 144_000.0
+    private var queries = 0
+    private var lastLatency = "-"
+
     private var policy = SongRecognitionPolicy()
     private var hadPeer = false
     /// timer が動いているか（DispatchSource の resume / suspend は対にしないと落ちる）。
@@ -288,9 +303,10 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         switch policy.audio(now: CACurrentMediaTime(), peak: peak) {
         case .startAndFeed:
             makeSession()
-            feedHistory()
+            query()
         case .feed:
-            feed(frames: frames)
+            queryTick += 1
+            if queryTick >= Self.queryEveryTicks { query() }
         case .drop(let clear):
             dropSession()
             if clear { publish(nil) }
@@ -305,11 +321,13 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         made.delegate = self
         session = made
         sessions += 1
-        fedFrames = 0
         loggedMiss = false
+        inFlightSince = nil
+        queryTick = 0
+        let catalog = made.catalog
+        minimumQueryFrames = max(1, catalog.minimumQuerySignatureDuration) * Self.sampleRate
         if !Self.loggedCatalog {
             Self.loggedCatalog = true
-            let catalog = made.catalog
             note("catalog query signature \(catalog.minimumQuerySignatureDuration)s...\(catalog.maximumQuerySignatureDuration)s")
         }
     }
@@ -322,6 +340,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             "peak=\(String(format: "%.1f", db))dB",
             "session=\(session != nil)",
             "fed=\(fedFrames)",
+            "queries=\(queries)",
+            "latency=\(lastLatency)",
             "sessions=\(sessions)",
             "matches=\(matches)",
             "misses=\(misses)",
@@ -356,29 +376,44 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         historyCount = min(historyCount + frames, n)
     }
 
-    /// 溜めた分（いま読んだ分を含む）を古い順に聞かせる。
-    private func feedHistory() {
-        let n = Self.historyFrames, count = historyCount
-        guard let session, count > 0,
+    /// 溜めた音の新しいほうから最大 queryWindow ぶんを署名にして問い合わせる。
+    /// **長い流れ（matchStreamingBuffer）を 1 本で聞かせるのはやめた。**流れは窓に古い曲が残ると
+    /// 当たらず、窓を 12 秒まで伸ばしてから聞き直すように見えた（10-17 の実機のログで曲の替わり目だけ
+    /// 当たりが 12 秒刻みになり、新しい曲まで 10〜22 秒かかった）。短い窓を決まった間隔で投げれば、
+    /// 窓に古い曲が残るのは最大 queryWindow ぶんだけになる。
+    private func query() {
+        guard let session else { return }
+        let now = CACurrentMediaTime()
+        // 返事を待っているあいだは重ねない（返事が来なければ queryTimeout で諦めて投げ直す）。
+        if let sent = inFlightSince, now - sent < Self.queryTimeout { return }
+        let n = Self.historyFrames
+        let count = min(historyCount, Self.queryWindow)
+        guard Double(count) >= minimumQueryFrames,
               let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(count)),
               let channel = buffer.floatChannelData?[0] else { return }
         buffer.frameLength = AVAudioFrameCount(count)
         let start = (historyHead - count + n) % n
         for i in 0..<count { channel[i] = history[(start + i) % n] }
-        session.matchStreamingBuffer(buffer, at: AVAudioTime(sampleTime: fedFrames, atRate: Self.sampleRate))
+        let generator = SHSignatureGenerator()
+        do {
+            try generator.append(buffer, at: nil)
+        } catch {
+            note("signature failed \((error as NSError).domain) \((error as NSError).code)")
+            return
+        }
+        session.match(generator.signature())
+        inFlightSince = now
+        queries += 1
+        queryTick = 0
         fedFrames += Int64(count)
     }
 
-    /// 左右を平均したモノラルにして聞かせる。SHSession が後まで持つかもしれないので、
-    /// 毎回新しい器にする（音のスレッドではないので確保してよい）。
-    private func feed(frames: Int) {
-        guard let session,
-              let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(frames)),
-              let channel = buffer.floatChannelData?[0] else { return }
-        buffer.frameLength = AVAudioFrameCount(frames)
-        for i in 0..<frames { channel[i] = 0.5 * (scratch[2 * i] + scratch[2 * i + 1]) }
-        session.matchStreamingBuffer(buffer, at: AVAudioTime(sampleTime: fedFrames, atRate: Self.sampleRate))
-        fedFrames += Int64(frames)
+    /// 返事が来た。かかった時間を残す（速さを測るため）。
+    private func answered(_ what: String) {
+        guard let sent = inFlightSince else { return }
+        inFlightSince = nil
+        lastLatency = String(format: "%.2fs", CACurrentMediaTime() - sent)
+        note("answer \(what) latency=\(lastLatency)")
     }
 
     private func publish(_ song: ETRecognizedSong?) {
@@ -391,6 +426,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         queue.async { [self] in
             // 作り直す前のセッションの返事は捨てる。
             guard self.session === session, let item = match.mediaItems.first else { return }
+            answered("match")
             let title = item.title ?? "Unknown"
             let id = item.shazamID ?? item.isrc ?? item.appleMusicID ?? "\(title)|\(item.artist ?? "")"
             let song = ETRecognizedSong(id: id, title: title, artist: item.artist, artworkURL: item.artworkURL)
@@ -408,6 +444,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     func session(_ session: SHSession, didNotFindMatchFor signature: SHSignature, error: Error?) {
         queue.async { [self] in
             guard self.session === session else { return }
+            answered(error == nil ? "miss" : "error")
             guard let error else {
                 misses += 1
                 // 外れても聞かせ続ける（streaming が聞き直す）。ログは 1 セッションに 1 回。

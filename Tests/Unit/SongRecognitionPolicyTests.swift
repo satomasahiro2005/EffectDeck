@@ -71,12 +71,27 @@ final class SongRecognitionPolicyTests: XCTestCase {
 
     func testMatchKeepsListeningAndReportsChange() {
         var p = started()
-        XCTAssertTrue(p.matched(id: "a"))
+        XCTAssertTrue(p.matched(id: "a"))                // 何も出ていなければすぐ出す
         XCTAssertEqual(p.phase, .listening(since: 0, silentSince: nil))
         XCTAssertEqual(p.audio(now: 9, peak: loud), .feed)
         XCTAssertFalse(p.matched(id: "a"))
+        XCTAssertFalse(p.matched(id: "b"))               // 替わり目の 1 回だけでは替えない
+        XCTAssertEqual(p.lastID, "a")
         XCTAssertTrue(p.matched(id: "b"))
         XCTAssertEqual(p.lastID, "b")
+    }
+
+    /// 替わり目で 1 回だけ違う曲に当たり、また元の曲に戻ったら替えない（10-17 の Shinedown）。
+    func testOneOffWrongMatchIsIgnored() {
+        var p = started()
+        XCTAssertTrue(p.matched(id: "a"))
+        XCTAssertFalse(p.matched(id: "wrong"))
+        XCTAssertFalse(p.matched(id: "a"))
+        XCTAssertNil(p.pendingID)
+        XCTAssertFalse(p.matched(id: "wrong"))
+        XCTAssertFalse(p.matched(id: "c"))               // 候補が替われば数え直し
+        XCTAssertEqual(p.lastID, "a")
+        XCTAssertTrue(p.matched(id: "c"))
     }
 
     func testSilenceDuringErrorRestRearms() {

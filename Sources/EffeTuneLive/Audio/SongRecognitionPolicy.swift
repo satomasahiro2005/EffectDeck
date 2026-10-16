@@ -50,6 +50,10 @@ struct SongRecognitionPolicy {
     private(set) var phase: Phase = .waiting
     /// 最後に当たった曲。同じ曲に当たり直しても変わったことにしない。
     private(set) var lastID: String?
+    /// 替わり先の候補。曲の替わり目では前の曲と次の曲が混ざった音を問い合わせ、まるで違う曲に
+    /// conf 1.00 で当たることがある（10-17 実機で 2 回、Shinedown など）。なので出ている曲から
+    /// 替えるのは、同じ候補に 2 回続けて当たったときだけにする。何も出ていないときはすぐ出す。
+    private(set) var pendingID: String?
 
     /// 新しい音が来た。
     mutating func audio(now: TimeInterval, peak: Float) -> Decision {
@@ -93,11 +97,19 @@ struct SongRecognitionPolicy {
         }
     }
 
-    /// 曲に当たった。曲が変わったなら true。聞かせ続ける（セッションは捨てない）。
+    /// 曲に当たった。出す曲が替わったなら true。聞かせ続ける（セッションは捨てない）。
     mutating func matched(id: String) -> Bool {
-        let changed = id != lastID
-        lastID = id
-        return changed
+        if id == lastID {
+            pendingID = nil
+            return false
+        }
+        if lastID == nil || pendingID == id {
+            lastID = id
+            pendingID = nil
+            return true
+        }
+        pendingID = id
+        return false
     }
 
     /// エラーが返った（呼ぶ側はセッションを捨てる）。
@@ -119,10 +131,12 @@ struct SongRecognitionPolicy {
     mutating func peerLost() {
         phase = .waiting
         lastID = nil
+        pendingID = nil
     }
 
     mutating func reset() {
         phase = .waiting
         lastID = nil
+        pendingID = nil
     }
 }
