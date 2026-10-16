@@ -32,6 +32,8 @@ final class ETSongRecognizer {
 
     /// いま出す曲。聞き取れていない・やめているあいだは nil。
     private(set) var current: ETRecognizedSong?
+    /// 取得状況（logStatus と同じ中身を 1 項目 1 行で）。デバッグ用の画面に出す。
+    private(set) var status = ""
 
     @ObservationIgnored fileprivate var feeder: ETShazamFeeder?
     @ObservationIgnored private var mock: Task<Void, Never>?
@@ -61,6 +63,7 @@ final class ETSongRecognizer {
         mock?.cancel()
         mock = nil
         current = nil
+        status = ""
     }
 
     fileprivate func publish(_ song: ETRecognizedSong?) {
@@ -69,6 +72,11 @@ final class ETSongRecognizer {
     }
 
     /// 止めたあとに遅れて届いた結果を捨てるため、出した読み手がまだ生きているかを見る。
+    fileprivate func publish(status line: String, from source: ETShazamFeeder) {
+        guard feeder === source else { return }
+        status = line
+    }
+
     fileprivate func publish(_ song: ETRecognizedSong?, from source: ETShazamFeeder) {
         guard feeder === source else { return }
         publish(song)
@@ -228,7 +236,21 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
 
     private func logStatus() {
         let db = lastPeak > 0 ? 20 * log10(lastPeak) : -.infinity
-        Self.log.notice("status peer=\(self.hadPeer, privacy: .public) phase=\(String(describing: self.policy.phase), privacy: .public) peak=\(db, format: .fixed(precision: 1), privacy: .public)dB session=\(self.session != nil, privacy: .public) fed=\(self.fedFrames, privacy: .public) sessions=\(self.sessions, privacy: .public) matches=\(self.matches, privacy: .public) misses=\(self.misses, privacy: .public) skipped=\(self.skippedTotal, privacy: .public) lastError=\(self.lastError, privacy: .public)")
+        let fields = [
+            "peer=\(hadPeer)",
+            "phase=\(policy.phase)",
+            "peak=\(String(format: "%.1f", db))dB",
+            "session=\(session != nil)",
+            "fed=\(fedFrames)",
+            "sessions=\(sessions)",
+            "matches=\(matches)",
+            "misses=\(misses)",
+            "skipped=\(skippedTotal)",
+            "lastError=\(lastError)",
+        ]
+        Self.log.notice("status \(fields.joined(separator: " "), privacy: .public)")
+        let line = fields.joined(separator: "\n")
+        Task { @MainActor [self] in ETSongRecognizer.shared.publish(status: line, from: self) }
     }
 
     private func dropSession() {

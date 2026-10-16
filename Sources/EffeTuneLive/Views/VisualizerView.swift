@@ -30,6 +30,10 @@ struct VisualizerView: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                 }
+                Text(recognizer.status)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
