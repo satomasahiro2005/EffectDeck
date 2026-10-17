@@ -68,6 +68,11 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var floating: ETFloatingMetersScene
     /// いま描く並びの JSFX の要素。
     private var jsfxElements: [ETVisualizerElement]
+    /// NCS の粒の器。NCS の要素と、取得中のアートワークの要素の分。
+    private let ncs = ETVisualizerNCS()
+    private var ncsElements: [ETVisualizerElement]
+    private var artworkElements: [ETVisualizerElement]
+    private var layoutHasNCS: Bool
     private var pixelWidth: Int
     private var pixelHeight: Int
     private var settingsSink: AnyCancellable?
@@ -80,6 +85,9 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         let size = Self.pixelSize(floating)
         self.floating = floating
         jsfxElements = Self.jsfx(floating)
+        ncsElements = Self.kinds(floating, .ncs)
+        artworkElements = ETFeatures.visualizer ? Self.kinds(floating, .artwork) : []
+        layoutHasNCS = !ncsElements.isEmpty
         pixelWidth = size.0
         pixelHeight = size.1
         super.init()
@@ -100,6 +108,10 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     private static func jsfx(_ floating: ETFloatingMetersScene) -> [ETVisualizerElement] {
         floating.scene[floating.layout].filter { $0.kind == .jsfx }
+    }
+
+    private static func kinds(_ floating: ETFloatingMetersScene, _ kind: ETVisualizerElementKind) -> [ETVisualizerElement] {
+        floating.scene[floating.layout].filter { $0.kind == kind }
     }
 
     private var needs: ETVisualizerNeedsSet {
@@ -203,6 +215,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         ETVisualizerAnalysis.shared.unregister(self)
         ETVisualizerJSFXPool.shared.release(self)
         ETVisualizerTap.shared.release(self)
+        ncs.releaseAll()
         updateRecognition()
     }
 
@@ -270,6 +283,9 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private func apply(_ new: ETFloatingMetersScene) {
         floating = new.normalized()
         jsfxElements = Self.jsfx(floating)
+        ncsElements = Self.kinds(floating, .ncs)
+        artworkElements = ETFeatures.visualizer ? Self.kinds(floating, .artwork) : []
+        layoutHasNCS = !ncsElements.isEmpty
         let size = Self.pixelSize(floating)
         let resized = size.0 != pixelWidth || size.1 != pixelHeight
         pixelWidth = size.0
@@ -359,15 +375,19 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
             song = ETVisualizerSongText(title: current.title, artist: current.artist ?? "")
         }
         let jsfxPool = ETVisualizerJSFXPool.shared
+        let now = CACurrentMediaTime()
+        // 曲の取得中は、アートワークが粒に替わる（Metal が無い版・曲を使えない版では重み 0）
+        let presentation: (weight: Double, color: ETVisualizerColor) = allowsSong && !artworkElements.isEmpty && ncs.isAvailable
+            ? recognizer.identifyingPresentation(now: now) : (weight: 0, color: ETNCSConstants.defaultColor)
         let frame = ETVisualizerFrame(
             analysis: ETVisualizerAnalysis.shared, artwork: artwork, blurredArtwork: blurred, song: song,
-            jsfxImages: jsfxPool.images(for: jsfxElements.map(\.id)), allowsSong: allowsSong, placeholders: false)
+            jsfxImages: jsfxPool.images(for: jsfxElements.map(\.id)), ncsImages: ncs.images(),
+            identifying: presentation.weight, allowsSong: allowsSong, placeholders: false)
         let size = CGSize(width: width, height: height)
         let unit = CGFloat(ETVisualizerUnit.floating(pixelWidth: Double(width), pixelHeight: Double(height)))
         ETVisualizerRenderer.draw(scene: floating.scene, layout: floating.layout, frame: frame, in: context,
                                   pixelSize: size, unit: unit)
         // JSFX の要素の枠（カードの内側）を 2 倍の点にして、1 枚頼む。
-        let now = CACurrentMediaTime()
         for element in jsfxElements {
             var content = ETVisualizerRenderer.pixelRect(element.rect, size)
             if element.card { content = content.insetBy(dx: 8 * unit, dy: 8 * unit) }
@@ -375,6 +395,12 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
             jsfxPool.step(element.id, holder: self,
                           logical: CGSize(width: content.width / 2, height: content.height / 2),
                           surfaceScale: 2, now: now)
+        }
+        // NCS の粒の器を進める（GPU に投げるだけで待たない）。最初の 1 枚（流していないとき）では進めない
+        if isRunning {
+            ncs.step(ncsElements: ncsElements, artworkElements: artworkElements, layoutHasNCS: layoutHasNCS,
+                     presentation: presentation, pixelSize: size, unit: unit, analysis: ETVisualizerAnalysis.shared,
+                     now: now)
         }
         if format == nil {
             var made: CMVideoFormatDescription?

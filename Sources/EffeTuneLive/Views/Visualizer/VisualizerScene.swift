@@ -8,7 +8,7 @@
 //  矩形は舞台に対する 0〜1 の割合で、並びの順がそのまま重なりの順（先頭が一番奥）。
 //
 //  **読むときは決して投げない。**知らない値は項目ごとに既定へ戻し、知らない種類の要素は捨てる。
-//  normalized() が上限（要素 24・JSFX 2）と矩形・不透明度の範囲を直す。
+//  normalized() が上限（要素 24・JSFX 2・NCS 2）と矩形・不透明度の範囲を直す。
 
 import Foundation
 
@@ -71,7 +71,7 @@ enum ETVisualizerElementKind: String, CaseIterable, Identifiable {
     case spectrum, spectrogram, waveform, oscilloscope, stereo
     case levelMeter = "level-meter"
     case analogMeter = "analog-meter"
-    case artwork, title, artist, jsfx
+    case artwork, title, artist, ncs, jsfx
 
     var id: String { rawValue }
 
@@ -87,6 +87,7 @@ enum ETVisualizerElementKind: String, CaseIterable, Identifiable {
         case .artwork: return "Artwork"
         case .title: return "Title"
         case .artist: return "Artist"
+        case .ncs: return "NCS"
         case .jsfx: return "JSFX"
         }
     }
@@ -94,7 +95,7 @@ enum ETVisualizerElementKind: String, CaseIterable, Identifiable {
     /// 曲の聞き取りに頼るもの（ETFeatures.visualizer の版でだけ出る）。
     var isSong: Bool { self == .artwork || self == .title || self == .artist }
     /// 解析を描く 7 種。
-    var isMeter: Bool { !(isSong || self == .jsfx) }
+    var isMeter: Bool { !(isSong || self == .jsfx || self == .ncs) }
     var isText: Bool { self == .title || self == .artist }
 }
 
@@ -168,12 +169,15 @@ struct ETVisualizerElement: Identifiable, Hashable {
     var font: ETVisualizerFont = .system
     var bold = false
     var alignment: ETVisualizerAlignment = .leading
+    /// NCS だけ。0.25...2（ncs_gl.py の gain）。
+    var ncsGain = 1.0
     /// kind が .jsfx のときだけ持つ。
     var jsfx: ETVisualizerJSFXElement?
 
     /// 見た目ごとの既定の色。メーターは trace、Analog Meter は text、字は白。
     static func defaultColor(kind: ETVisualizerElementKind, look: ETVisualizerStyle) -> ETVisualizerColor {
         switch kind {
+        case .ncs: return ETNCSConstants.defaultColor
         case .analogMeter: return ETVisualizerColor(look == .classic ? 0xACC0DE : 0xF6F8FB)
         case .title, .artist, .artwork, .jsfx: return ETVisualizerColor(0xFFFFFF)
         default: return ETVisualizerColor(look == .classic ? 0xACC0DE : 0x40DFFF)
@@ -217,6 +221,7 @@ struct ETVisualizerScene: Hashable {
     /// 並び 1 つあたり。
     static let maxElements = 24
     static let maxJSFX = 2
+    static let maxNCS = 2
     static let minSize = 0.02
 
     subscript(layout: ETVisualizerLayoutKey) -> [ETVisualizerElement] {
@@ -240,7 +245,10 @@ struct ETVisualizerScene: Hashable {
             case .levelMeter: if classic { needs.insert(.loudness) }
             case .analogMeter: needs.insert(element.analogMode == .loudness ? .loudness : .vu)
             case .stereo: if !classic { needs.insert(.stereoEnvelope) }
-            case .waveform, .oscilloscope, .artwork, .title, .artist, .jsfx: break
+            case .ncs: needs.insert(.ncs)
+            // 取得中はどの瞬間にも始まるので、アートワークも NCS の帯を頼む（Release では elements が落とす）
+            case .artwork: needs.insert(.ncs)
+            case .waveform, .oscilloscope, .title, .artist, .jsfx: break
             }
         }
         return needs
@@ -302,18 +310,24 @@ struct ETVisualizerScene: Hashable {
                 }
                 e.rect = Self.clamp(e.rect)
                 e.opacity = e.opacity.isFinite ? min(max(e.opacity, 0.1), 1) : 1
+                e.ncsGain = e.ncsGain.isFinite ? min(max(e.ncsGain, 0.25), 2) : 1
                 if !seen.insert(e.id).inserted {
                     e.id = UUID()
                     seen.insert(e.id)
                 }
                 result.append(e)
             }
-            // 上限。先頭から 24 個、その中の最初の 2 つまでの JSFX。
+            // 上限。先頭から 24 個、その中の最初の 2 つまでの JSFX と NCS。
             var jsfx = 0
+            var ncs = 0
             return result.prefix(Self.maxElements).filter { element in
                 guard element.kind == .jsfx else { return true }
                 jsfx += 1
                 return jsfx <= Self.maxJSFX
+            }.filter { element in
+                guard element.kind == .ncs else { return true }
+                ncs += 1
+                return ncs <= Self.maxNCS
             }
         }
         scene.portrait = fix(portrait)
@@ -380,6 +394,7 @@ private struct WireElement: Codable {
     var font: String?
     var bold: Bool?
     var align: String?
+    var gain: Double?
     var jsfx: WireJSFX?
 }
 
@@ -467,6 +482,7 @@ extension ETVisualizerElement {
             font: wire.font.flatMap(ETVisualizerFont.init(rawValue:)) ?? .system,
             bold: wire.bold ?? false,
             alignment: wire.align.flatMap(ETVisualizerAlignment.init(rawValue:)) ?? .leading,
+            ncsGain: wire.gain.flatMap { $0.isFinite ? $0 : nil } ?? 1,
             jsfx: payload)
     }
 
@@ -481,7 +497,7 @@ extension ETVisualizerElement {
             id: id.uuidString, kind: kind.rawValue, rect: [rect.x, rect.y, rect.w, rect.h], look: look.rawValue,
             color: color.hex, card: card, glow: glow, opacity: opacity, flipX: flipX, flipY: flipY,
             display: spectrumDisplay.rawValue, meter: analogMode.rawValue, font: font.rawValue, bold: bold,
-            align: alignment.rawValue, jsfx: payload)
+            align: alignment.rawValue, gain: ncsGain, jsfx: payload)
     }
 }
 

@@ -7,7 +7,7 @@
 //  scene-<id>-<大きさ>.png: 大きさは phone-portrait 786×1704・phone-landscape 1704×786・
 //  pad-portrait 1536×2048・pad-landscape 2048×1536（画素。倍率は短い辺 / 720）。
 //  floating-classic-<縦横比>.png: PiP の器の大きさ（長い辺 1280）で倍率 1。
-//  編集画面と同じく仮の字を出し（placeholders）、JSFX の絵は無し。
+//  編集画面と同じく仮の字を出し（placeholders）、JSFX と NCS の絵は無し。
 
 #if DEBUG
 import CoreGraphics
@@ -58,7 +58,7 @@ enum ETVisualizerSnapshot {
         return ETVisualizerFrame(
             analysis: ETVisualizerAnalysis.shared, artwork: artwork,
             blurredArtwork: ETVisualizerArtworkBlur.shared.image(for: artwork), song: song, jsfxImages: [:],
-            allowsSong: true, placeholders: true)
+            ncsImages: [:], identifying: 0, allowsSong: true, placeholders: true)
     }
 
     private static func render(_ scene: ETVisualizerScene, layout: ETVisualizerLayoutKey, width: Int, height: Int,

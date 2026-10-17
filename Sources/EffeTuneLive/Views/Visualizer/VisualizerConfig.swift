@@ -125,6 +125,8 @@ struct ETVisualizerNeedsSet: OptionSet {
     static let vu = ETVisualizerNeedsSet(rawValue: 1 << 5)
     /// ステレオの角度ごとのピーク（EffeTune の Stereo）。
     static let stereoEnvelope = ETVisualizerNeedsSet(rawValue: 1 << 6)
+    /// NCS の帯（ETNCSAudio.bands）。NCS の要素と、取得中の粒子を出すアートワークの要素。
+    static let ncs = ETVisualizerNeedsSet(rawValue: 1 << 7)
 }
 
 struct ETVisualizerConfig: Equatable {

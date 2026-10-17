@@ -95,6 +95,10 @@ struct ETVisualizerFrame {
     let song: ETVisualizerSongText?
     /// JSFX の要素 id → いまの絵。
     let jsfxImages: [UUID: CGImage]
+    /// NCS の絵（要素 id → いまの絵）。NCS の要素と、取得中のアートワークの要素。
+    let ncsImages: [UUID: CGImage]
+    /// 曲の取得中の重さ 0...1（1 で粒子だけ）。Metal が無い・曲を使えない版では 0。
+    let identifying: Double
     /// ETFeatures.visualizer。偽なら曲の要素とアートワークの背景は描かない。
     let allowsSong: Bool
     /// 編集画面。曲名・歌手・JSFX の名前を 35% の濃さで仮に出す。
@@ -150,8 +154,10 @@ enum ETVisualizerRenderer {
     static func draw(scene: ETVisualizerScene, layout: ETVisualizerLayoutKey, frame: ETVisualizerFrame,
                      in ctx: CGContext, pixelSize: CGSize, unit: CGFloat) {
         drawBackground(scene.background, frame, ctx, pixelSize)
+        // NCS の要素がある並びでは、取得中のアートワークは薄くなるだけで、2 つ目の球は描かない
+        let hasNCS = scene[layout].contains { $0.kind == .ncs }
         for element in scene[layout] where frame.allowsSong || !element.kind.isSong {
-            drawElement(element, scene.background, frame, ctx, pixelSize, unit)
+            drawElement(element, scene.background, frame, ctx, pixelSize, unit, hasNCS)
         }
     }
 
@@ -190,7 +196,8 @@ enum ETVisualizerRenderer {
     }
 
     private static func drawElement(_ e: ETVisualizerElement, _ background: ETVisualizerBackground,
-                                    _ frame: ETVisualizerFrame, _ ctx: CGContext, _ size: CGSize, _ unit: CGFloat) {
+                                    _ frame: ETVisualizerFrame, _ ctx: CGContext, _ size: CGSize, _ unit: CGFloat,
+                                    _ hasNCS: Bool) {
         let rect = pixelRect(e.rect, size)
         guard rect.width > 0, rect.height > 0 else { return }
         var blend = CGBlendMode.normal
@@ -236,7 +243,7 @@ enum ETVisualizerRenderer {
                 ctx.scaleBy(x: e.flipX ? -1 : 1, y: e.flipY ? -1 : 1)
                 ctx.translateBy(x: -content.midX, y: -content.midY)
             }
-            drawKind(e, content, frame, ctx, unit)
+            drawKind(e, content, frame, ctx, unit, hasNCS)
             ctx.restoreGState()
         }
         if layered { ctx.endTransparencyLayer() }
@@ -255,7 +262,7 @@ enum ETVisualizerRenderer {
     }
 
     private static func drawKind(_ e: ETVisualizerElement, _ content: CGRect, _ frame: ETVisualizerFrame,
-                                 _ ctx: CGContext, _ unit: CGFloat) {
+                                 _ ctx: CGContext, _ unit: CGFloat, _ hasNCS: Bool) {
         let analysis = frame.analysis
         let theme = themeFor(e)
         let classic = e.look == .classic
@@ -286,7 +293,16 @@ enum ETVisualizerRenderer {
         case .analogMeter:
             drawAnalogMeter(ctx, content, unit, theme, analysis, e.analogMode, labels: !classic)
         case .artwork:
-            drawArtwork(ctx, content, theme, frame.artwork, classic: classic)
+            drawArtwork(ctx, content, theme, frame.artwork, classic: classic, ncs: frame.ncsImages[e.id],
+                        weight: CGFloat(frame.identifying), hasNCS: hasNCS)
+        case .ncs:
+            // 中の正方形に、絵をそのまま。絵が無い（Metal が無い・まだ最初の 1 枚が出来ていない）ときは何も描かない
+            if let image = frame.ncsImages[e.id] {
+                let side = min(content.width, content.height)
+                ctx.interpolationQuality = .medium
+                drawUpright(ctx, image, in: CGRect(x: content.midX - side / 2, y: content.midY - side / 2,
+                                                   width: side, height: side))
+            }
         case .title:
             drawSongText(ctx, content, text: frame.song?.title ?? "", placeholder: frame.placeholders ? "Title" : nil, e)
         case .artist:
@@ -515,14 +531,20 @@ enum ETVisualizerRenderer {
     }
     private static var artworkClipPaths: [RectKey: CGPath] = [:]
 
+    /// `weight` は取得中の重さ。NCS の要素が無い並びなら、アートワークの上に粒（ncs）を重ねて入れ替える。
+    /// NCS の要素がある並びでは、アートワークが薄くなるだけ（粒は NCS の要素が出している）。
+    /// 粒の絵が無い（最初の 1 枚が出来ていない・Metal が使えない）ときは、アートワークをそのまま出す。
     private static func drawArtwork(_ ctx: CGContext, _ rect: CGRect, _ theme: ETVisualizerTheme,
-                                    _ artwork: CGImage?, classic: Bool) {
+                                    _ artwork: CGImage?, classic: Bool, ncs: CGImage?, weight: CGFloat, hasNCS: Bool) {
         if classic {
             // 今と同じ溝の上に置く。曲が取れていないあいだも溝は出す。
             ctx.setFillColor(theme.groove)
             ctx.fill(rect)
         }
-        guard let artwork else { return }
+        let showNCS = weight > 0 && !hasNCS && ncs != nil
+        let artAlpha: CGFloat = (weight > 0 && (showNCS || hasNCS)) ? 1 - weight : 1
+        let drawsArtwork = artwork != nil && artAlpha > 0
+        guard drawsArtwork || showNCS else { return }
         // ジャケットは正方形。枠が長方形（iPad の縦長・横長など）でも、枠の中のいちばん大きい正方形に置いて切り取らない。
         let side = min(rect.width, rect.height)
         let square = CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
@@ -542,13 +564,25 @@ enum ETVisualizerRenderer {
             ctx.addPath(path)
             ctx.clip()
         }
-        // cover-fit（visualizer-renderer.js の drawCover）。正方形の中で、画像が正方形でなければここで切る。
-        let fit = max(side / CGFloat(artwork.width), side / CGFloat(artwork.height))
-        let width = CGFloat(artwork.width) * fit, height = CGFloat(artwork.height) * fit
-        ctx.interpolationQuality = .high
         ctx.clip(to: square)
-        drawUpright(ctx, artwork, in: CGRect(x: square.midX - width / 2, y: square.midY - height / 2,
-                                             width: width, height: height))
+        if drawsArtwork, let artwork {
+            // cover-fit（visualizer-renderer.js の drawCover）。正方形の中で、画像が正方形でなければここで切る。
+            let fit = max(side / CGFloat(artwork.width), side / CGFloat(artwork.height))
+            let width = CGFloat(artwork.width) * fit, height = CGFloat(artwork.height) * fit
+            ctx.saveGState()
+            ctx.setAlpha(artAlpha)
+            ctx.interpolationQuality = .high
+            drawUpright(ctx, artwork, in: CGRect(x: square.midX - width / 2, y: square.midY - height / 2,
+                                                 width: width, height: height))
+            ctx.restoreGState()
+        }
+        if showNCS, let ncs {
+            ctx.saveGState()
+            ctx.setAlpha(weight)
+            ctx.interpolationQuality = .medium
+            drawUpright(ctx, ncs, in: square)
+            ctx.restoreGState()
+        }
         ctx.restoreGState()
     }
 

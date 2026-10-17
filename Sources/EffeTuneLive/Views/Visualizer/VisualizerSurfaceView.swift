@@ -73,6 +73,11 @@ final class ETVisualizerLayerView: UIView {
     private var seenVersion = -1
     private var seenLayout: ETVisualizerLayoutKey?
     private var jsfxElements: [ETVisualizerElement] = []
+    /// NCS の粒の器。NCS の要素と、取得中のアートワークの要素の分。
+    private let ncs = ETVisualizerNCS()
+    private var ncsElements: [ETVisualizerElement] = []
+    private var artworkElements: [ETVisualizerElement] = []
+    private var layoutHasNCS = false
 
     /// 0 は画素倍率 2・60Hz まで、1 は画素倍率 1・30Hz。
     private var quality = 0
@@ -140,6 +145,7 @@ final class ETVisualizerLayerView: UIView {
         ETVisualizerTap.shared.release(self)
         ETVisualizerAnalysis.shared.unregister(self)
         ETVisualizerJSFXPool.shared.release(self)
+        ncs.releaseAll()
         seenLayout = nil
         seenVersion = -1
         updateRecognition()
@@ -168,6 +174,9 @@ final class ETVisualizerLayerView: UIView {
         seenLayout = layout
         let scene = stage.scene
         jsfxElements = scene[layout].filter { $0.kind == .jsfx }
+        ncsElements = scene[layout].filter { $0.kind == .ncs }
+        artworkElements = ETFeatures.visualizer ? scene[layout].filter { $0.kind == .artwork } : []
+        layoutHasNCS = !ncsElements.isEmpty
         guard running else { return }
         ETVisualizerAnalysis.shared.register(self, needs: scene.needs(layout, allowsSong: ETFeatures.visualizer))
         updateRecognition()
@@ -254,10 +263,13 @@ final class ETVisualizerLayerView: UIView {
             song = ETVisualizerSongText(title: current.title, artist: current.artist ?? "")
         }
         let pool = ETVisualizerJSFXPool.shared
+        // 曲の取得中は、アートワークが粒に替わる（Metal が無い版・曲を使えない版では重み 0）
+        let presentation: (weight: Double, color: ETVisualizerColor) = allowsSong && !artworkElements.isEmpty && ncs.isAvailable
+            ? recognizer.identifyingPresentation(now: start) : (weight: 0, color: ETNCSConstants.defaultColor)
         let frame = ETVisualizerFrame(
             analysis: analysis, artwork: artwork, blurredArtwork: blurred, song: song,
-            jsfxImages: pool.images(for: jsfxElements.map(\.id)), allowsSong: allowsSong,
-            placeholders: stage.placeholders)
+            jsfxImages: pool.images(for: jsfxElements.map(\.id)), ncsImages: ncs.images(),
+            identifying: presentation.weight, allowsSong: allowsSong, placeholders: stage.placeholders)
 
         contextIndex ^= 1
         let ctx = contexts[contextIndex]
@@ -284,6 +296,10 @@ final class ETVisualizerLayerView: UIView {
                       logical: CGSize(width: content.width / pixelScale, height: content.height / pixelScale),
                       surfaceScale: pixelScale, now: start)
         }
+
+        // NCS の粒の器を進める（GPU に投げるだけで待たない）
+        ncs.step(ncsElements: ncsElements, artworkElements: artworkElements, layoutHasNCS: layoutHasNCS,
+                 presentation: presentation, pixelSize: size, unit: unit, analysis: analysis, now: start)
 
         adjustQuality(milliseconds: (CACurrentMediaTime() - start) * 1000)
     }

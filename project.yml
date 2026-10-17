@@ -292,6 +292,14 @@ targets:
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
       # 曲の聞き取りの間合い。Foundationだけ（SongRecognitionPolicyTests）。
       - path: Sources/EffeTuneLive/Audio/SongRecognitionPolicy.swift
+      # 実数列の FFT（RealFFTTests）。NCS の帯と Skip 検出器が使う。Foundationだけ。
+      - path: Sources/EffeTuneLive/Audio/RealFFT.swift
+      # 曲の飛ばしの検出（SkipDetectorTests）。音の特徴量・替わりの点数・拍の連続。Foundationだけ。
+      - path: Sources/EffeTuneLive/Audio/SkipDetector.swift
+      # 曲の取得中の見せ方の状態（SongIdentifyingTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Audio/SongIdentifying.swift
+      # NCS の要素の音の写し・描く大きさ・アートワークの色（NCSModelTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerNCSModel.swift
       # Visualizer の旧い設定の形（v1。移行でだけ使う。VisualizerConfigTests）と、場面と共有する列挙型。Foundationだけ。
       - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerConfig.swift
       # Visualizer の旧い並べ方（移行でだけ使う）とPiPの器の大きさ（VisualizerLayoutTests）。Foundationだけ。

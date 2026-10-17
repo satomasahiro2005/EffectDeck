@@ -9,12 +9,12 @@ import XCTest
 final class VisualizerPresetsTests: XCTestCase {
 
     func testCounts() {
-        XCTAssertGreaterThanOrEqual(ETVisualizerPresets.available(allowsSong: false).count, 6)
-        XCTAssertGreaterThanOrEqual(ETVisualizerPresets.available(allowsSong: true).count, 7)
-        XCTAssertEqual(ETVisualizerPresets.all.count, 7)
+        XCTAssertGreaterThanOrEqual(ETVisualizerPresets.available(allowsSong: false).count, 7)
+        XCTAssertGreaterThanOrEqual(ETVisualizerPresets.available(allowsSong: true).count, 8)
+        XCTAssertEqual(ETVisualizerPresets.all.count, 8)
         let ids = ETVisualizerPresets.all.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count)
-        XCTAssertEqual(ids, ["classic", "studio", "neon", "phosphor", "vintage", "spectral", "nowPlaying"])
+        XCTAssertEqual(ids, ["classic", "studio", "neon", "phosphor", "vintage", "spectral", "ncs", "nowPlaying"])
     }
 
     func testEveryPresetIsNormalized() {
@@ -99,16 +99,38 @@ final class VisualizerPresetsTests: XCTestCase {
     func testReleasePresetsHaveNoSong() {
         for preset in ETVisualizerPresets.available(allowsSong: false) {
             XCTAssertFalse(preset.usesSong, preset.id)
-            XCTAssertFalse(preset.scene.usesSong(.portrait), preset.id)
-            XCTAssertFalse(preset.scene.usesSong(.landscape), preset.id)
+            XCTAssertFalse(preset.scene.portrait.contains { $0.kind.isSong }, preset.id)
+            XCTAssertFalse(preset.scene.landscape.contains { $0.kind.isSong }, preset.id)
             XCTAssertNotEqual(preset.scene.background.kind, .artwork, preset.id)
         }
-        // 曲を使うものは、そう申告している。
+        // 曲が無いと成り立たないものは、そう申告している。曲の要素を抜いても残るものは false でよい。
         for preset in ETVisualizerPresets.all {
             let uses = preset.scene.usesSong(.portrait) || preset.scene.usesSong(.landscape)
-            XCTAssertEqual(uses, preset.usesSong, preset.id)
+            if preset.usesSong {
+                XCTAssertTrue(uses, preset.id)
+            } else {
+                for layout in ETVisualizerLayoutKey.allCases {
+                    XCTAssertFalse(preset.scene.elements(layout, allowsSong: false).isEmpty, preset.id)
+                }
+                XCTAssertNotEqual(preset.scene.background.kind, .artwork, preset.id)
+            }
         }
         XCTAssertEqual(ETVisualizerPresets.all.filter(\.usesSong).map(\.id), ["nowPlaying"])
+    }
+
+    func testNCSPresetCentresArtworkInSphere() throws {
+        let scene = try XCTUnwrap(ETVisualizerPresets.scene(id: "ncs"))
+        for layout in ETVisualizerLayoutKey.allCases {
+            let ncs = try XCTUnwrap(scene[layout].first { $0.kind == .ncs })
+            let art = try XCTUnwrap(scene[layout].first { $0.kind == .artwork })
+            XCTAssertEqual(ncs.rect.x + ncs.rect.w / 2, art.rect.x + art.rect.w / 2, accuracy: 1e-12)
+            XCTAssertEqual(ncs.rect.y + ncs.rect.h / 2, art.rect.y + art.rect.h / 2, accuracy: 1e-12)
+            XCTAssertEqual(ncs.color, ETNCSConstants.defaultColor)
+        }
+        let release = try XCTUnwrap(ETVisualizerPresets.available(allowsSong: false).first { $0.id == "ncs" })
+        for layout in ETVisualizerLayoutKey.allCases {
+            XCTAssertEqual(release.scene[layout].map(\.kind), [.ncs])
+        }
     }
 
     func testNoPresetHasJSFX() {

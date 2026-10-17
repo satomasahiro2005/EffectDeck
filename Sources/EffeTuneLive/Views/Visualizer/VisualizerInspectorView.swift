@@ -118,6 +118,13 @@ struct ETVisualizerInspectorView: View {
                                       selection: binding(element, \.alignment))
                 }
                 effects(element, meter: false)
+            case .ncs:
+                Section("Style") {
+                    ColorPicker("Color", selection: colorBinding(element), supportsOpacity: false)
+                    OpacityRow(title: "Intensity", value: binding(element, \.ncsGain, coalesce: "gain"), range: 0.25...2)
+                }
+                // Card と Opacity だけ（Glow・Flip・Look は出さない）
+                effects(element, meter: false)
             case .jsfx:
                 jsfxSections(element)
             default:

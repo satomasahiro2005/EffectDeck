@@ -239,7 +239,7 @@ final class VisualizerSceneEditingTests: XCTestCase {
 
     func testDefaultRectSquareKindsAreSquareInPoints() {
         for aspect in [852.0 / 393, 393.0 / 852, 1] {
-            for kind in [ETVisualizerElementKind.stereo, .artwork] {
+            for kind in [ETVisualizerElementKind.stereo, .artwork, .ncs] {
                 let r = E.defaultRect(kind, aspect: aspect)
                 // 点にすると、幅 = r.w × aspect、高さ = r.h（高さを 1 として）。
                 XCTAssertEqual(r.w * aspect, r.h, accuracy: 1e-9, "\(kind) \(aspect)")
@@ -273,6 +273,10 @@ final class VisualizerSceneEditingTests: XCTestCase {
         XCTAssertTrue(E.canAdd(.jsfx, to: [jsfx]))
         XCTAssertFalse(E.canAdd(.jsfx, to: [jsfx, jsfx]))
         XCTAssertTrue(E.canAdd(.spectrum, to: [jsfx, jsfx]))
+        let ncs = element(.ncs, R(x: 0, y: 0, w: 0.1, h: 0.1))
+        XCTAssertTrue(E.canAdd(.ncs, to: [ncs]))
+        XCTAssertFalse(E.canAdd(.ncs, to: [ncs, ncs]))
+        XCTAssertTrue(E.canAdd(.spectrum, to: [ncs, ncs]))
     }
 
     func testNewElement() {

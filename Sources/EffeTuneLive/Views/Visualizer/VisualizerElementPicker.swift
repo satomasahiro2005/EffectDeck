@@ -1,5 +1,5 @@
 //  VisualizerElementPicker.swift
-//  要素を足す画面。メーター 7 種・曲の要素（曲の聞き取りが使える版だけ）・@gfx を持つ JSFX。
+//  要素を足す画面。メーター 7 種と NCS・曲の要素（曲の聞き取りが使える版だけ）・@gfx を持つ JSFX。
 //  押すと足して選び、閉じる。入らない行（上限）は無効にして見せる。
 
 import SwiftUI
@@ -12,7 +12,7 @@ struct ETVisualizerElementPicker: View {
     @Environment(\.dismiss) private var dismiss
 
     private static let meters: [ETVisualizerElementKind] = [
-        .spectrum, .spectrogram, .waveform, .oscilloscope, .stereo, .levelMeter, .analogMeter,
+        .spectrum, .spectrogram, .waveform, .oscilloscope, .stereo, .levelMeter, .analogMeter, .ncs,
     ]
     private static let song: [ETVisualizerElementKind] = [.artwork, .title, .artist]
 

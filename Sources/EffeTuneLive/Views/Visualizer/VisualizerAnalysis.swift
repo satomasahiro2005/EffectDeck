@@ -164,6 +164,17 @@ final class ETVisualizerAnalysis {
     /// 添字は度（-atan2(y, x)）。値は 0.5·√(x²+y²) のピーク。
     private(set) var envelope: [Double] = []
 
+    // MARK: NCS の帯（.ncs）
+
+    private let ncsFFT = ETRealFFT(size: ETNCSAudio.fftSize)
+    private var ncsWindow = [Float](repeating: 0, count: ETNCSAudio.fftSize)
+    /// 96 帯。ETNCSAudio.bands の生の大きさ（NCS の要素が無いあいだは空）。
+    private(set) var ncsBands: [Float] = []
+    /// ncsBands を作り直すたびに増える。描く側は変わったときだけ ETNCSAudio を進める。
+    private(set) var ncsSerial = 0
+    /// 新しい標本が来ていない時間（秒）。
+    private var ncsQuietFor: Double = 0
+
     // MARK: FFT（スペクトログラム・スペクトラム）
 
     private let fftSetup: FFTSetup? = vDSP_create_fftsetup(vDSP_Length(fftLog2), FFTRadix(kFFTRadix2))
@@ -259,6 +270,7 @@ final class ETVisualizerAnalysis {
         } else {
             envelope = []
         }
+        if !union.contains(.ncs) { ncsBands = [] }
     }
 
     private func resetLoudness() {
@@ -356,6 +368,11 @@ final class ETVisualizerAnalysis {
         for i in needles.indices { needles[i].reset() }
         vuDB = [-240, -240]
         for i in envelope.indices { envelope[i] = 0 }
+        if !ncsBands.isEmpty {
+            for i in ncsBands.indices { ncsBands[i] = 0 }
+            ncsSerial += 1
+        }
+        ncsQuietFor = 0
         classicSpectrogram?.clear()
         effetuneSpectrogram?.clear()
         classicPending = 0
@@ -481,6 +498,35 @@ final class ETVisualizerAnalysis {
         }
 
         advanceSpectra(newSamples: n, dt: dt)
+        advanceNCS(newSamples: n, dt: Double(dt))
+    }
+
+    /// NCS の帯。新しい標本が来た回は、いちばん新しい 2048 標本（古い順）から 96 帯を作る。
+    /// 来ないまま 0.2 秒たったら 0 の帯にして、止まった音のあとで球が静まるようにする
+    /// （ncs_gl.py は止まったバッファをそのまま FFT し直すので、ここだけ違う）。
+    private func advanceNCS(newSamples n: Int, dt: Double) {
+        guard needs.contains(.ncs) else { return }
+        if n > 0 {
+            ncsQuietFor = 0
+            let size = ETNCSAudio.fftSize
+            if monoTotal >= size {
+                let start = monoTotal - size
+                let mask = Self.monoCount - 1
+                for i in 0..<size { ncsWindow[i] = mono[(start + i) & mask] }
+            } else {
+                for i in 0..<size { ncsWindow[i] = 0 }
+            }
+            ncsBands = ncsWindow.withUnsafeBufferPointer {
+                ETNCSAudio.bands($0, sampleRate: sampleRate, fft: ncsFFT)
+            }
+            ncsSerial += 1
+        } else {
+            ncsQuietFor += dt
+            if ncsQuietFor >= 0.2 {
+                ncsBands = [Float](repeating: 0, count: ETNCSAudio.bandCount)
+                ncsSerial += 1
+            }
+        }
     }
 
     /// 帯の量から色を作る。低域は赤、中域は緑、高域は 50,50,255 を足し、一番強い所を 1 にする。

@@ -146,4 +146,55 @@ final class SongRecognitionPolicyTests: XCTestCase {
         XCTAssertEqual(p.phase, .waiting)
         XCTAssertEqual(p.lastID, "a")
     }
+
+    func testBoundaryTrustsNextDifferentMatchEvenWithSkew() {
+        var p = started()
+        XCTAssertTrue(p.matched(id: "a"))
+        p.boundary()
+        XCTAssertTrue(p.trustNext)
+        // 境目のあとの音だけを聞かせているので、skew が大きくても 1 回で替える
+        XCTAssertTrue(p.matched(id: "b", skew: 0.0010))
+        XCTAssertEqual(p.lastID, "b")
+        XCTAssertFalse(p.trustNext)
+        // 信じるのは 1 回きり
+        XCTAssertFalse(p.matched(id: "c", skew: 0.0010))
+        XCTAssertEqual(p.pendingID, "c")
+    }
+
+    func testBoundarySameSongIsNotAChangeAndConsumesTrust() {
+        var p = started()
+        XCTAssertTrue(p.matched(id: "a"))
+        p.boundary()
+        XCTAssertFalse(p.matched(id: "a"))
+        XCTAssertFalse(p.trustNext)
+        // 誤検出だったので、次の別の曲は普通に 2 回要る
+        XCTAssertFalse(p.matched(id: "b", skew: 0.0010))
+    }
+
+    func testBoundaryDropsAPendingCandidate() {
+        var p = started()
+        XCTAssertTrue(p.matched(id: "a"))
+        XCTAssertFalse(p.matched(id: "x", skew: 0.0010))
+        XCTAssertEqual(p.pendingID, "x")
+        p.boundary()
+        XCTAssertNil(p.pendingID)
+    }
+
+    func testDiscontinuityClearsBoundaryTrust() {
+        var p = started()
+        _ = p.matched(id: "a")
+        p.boundary()
+        p.discontinuity()
+        XCTAssertFalse(p.trustNext)
+        XCTAssertFalse(p.matched(id: "b", skew: 0.0010))
+        var q = started()
+        _ = q.matched(id: "a")
+        q.boundary()
+        q.peerLost()
+        XCTAssertFalse(q.trustNext)
+        var r = started()
+        r.boundary()
+        r.reset()
+        XCTAssertFalse(r.trustNext)
+    }
 }

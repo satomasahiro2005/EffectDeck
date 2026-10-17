@@ -194,6 +194,10 @@ enum ETVisualizerEditing {
             // 点で正方形になるよう、幅と高さを縦横比で割り振る。
             let s = 0.4 * min(1, 1 / aspect)
             size = (s, s * aspect)
+        case .ncs:
+            // 点で正方形になるよう、幅と高さを縦横比で割り振る。
+            let s = 0.6 * min(1, 1 / aspect)
+            size = (s, s * aspect)
         case .levelMeter: size = (0.6, 0.05)
         case .analogMeter: size = (0.5, 0.3)
         case .title: size = (0.6, 0.06)
@@ -203,10 +207,11 @@ enum ETVisualizerEditing {
         return clamp(ETVisualizerRect(x: (1 - size.w) / 2, y: (1 - size.h) / 2, w: size.w, h: size.h))
     }
 
-    /// 足せるか。並び 1 つあたり 24 まで、JSFX は 2 まで。
+    /// 足せるか。並び 1 つあたり 24 まで、JSFX と NCS は 2 まで。
     static func canAdd(_ kind: ETVisualizerElementKind, to elements: [ETVisualizerElement]) -> Bool {
         guard elements.count < ETVisualizerScene.maxElements else { return false }
         if kind == .jsfx { return elements.filter { $0.kind == .jsfx }.count < ETVisualizerScene.maxJSFX }
+        if kind == .ncs { return elements.filter { $0.kind == .ncs }.count < ETVisualizerScene.maxNCS }
         return true
     }
 

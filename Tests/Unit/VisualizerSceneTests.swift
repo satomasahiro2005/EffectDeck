@@ -202,6 +202,29 @@ final class VisualizerSceneTests: XCTestCase {
         XCTAssertEqual(fixed.map(\.id), [mixed[0].id, mixed[1].id, mixed[2].id, mixed[3].id, mixed[5].id, mixed[7].id, mixed[9].id])
     }
 
+    func testNCSCapIsTwo() {
+        var mixed: [ETVisualizerElement] = []
+        for i in 0..<8 { mixed.append(element(i % 2 == 0 ? .ncs : .waveform)) }
+        let fixed = scene(landscape: mixed).normalized().landscape
+        XCTAssertEqual(fixed.filter { $0.kind == .ncs }.count, 2)
+        XCTAssertEqual(fixed.map(\.id), [mixed[0].id, mixed[1].id, mixed[2].id, mixed[3].id, mixed[5].id, mixed[7].id])
+    }
+
+    func testNCSGainRoundTripAndClamp() throws {
+        var e = element(.ncs)
+        e.ncsGain = 1.5
+        let s = scene(portrait: [e])
+        XCTAssertEqual(ETVisualizerScene.decode(s.encoded())?.portrait.first?.ncsGain, 1.5)
+        for (input, expected) in [(5.0, 2.0), (0.0, 0.25), (Double.nan, 1.0), (-1.0, 0.25), (0.8, 0.8)] {
+            var x = element(.ncs)
+            x.ncsGain = input
+            XCTAssertEqual(scene(portrait: [x]).normalized().portrait[0].ncsGain, expected, "\(input)")
+        }
+        // gain の無い保存（古い版）は 1
+        let text = "{\"portrait\":[{\"kind\":\"ncs\",\"rect\":[0,0,1,1]}],\"landscape\":[]}"
+        XCTAssertEqual(ETVisualizerScene.decode(json(text))?.portrait.first?.ncsGain, 1)
+    }
+
     func testNameIsTrimmedCappedAndNeverEmpty() {
         var s = scene()
         s.name = "  Hello \n"
@@ -237,9 +260,13 @@ final class VisualizerSceneTests: XCTestCase {
         XCTAssertEqual(needs(.analogMeter, .classic, mode: .vu), .vu)
         XCTAssertEqual(needs(.stereo, .classic), [])
         XCTAssertEqual(needs(.stereo, .effetune), .stereoEnvelope)
-        for kind in [ETVisualizerElementKind.waveform, .oscilloscope, .artwork, .title, .artist, .jsfx] {
+        for kind in [ETVisualizerElementKind.waveform, .oscilloscope, .title, .artist, .jsfx] {
             XCTAssertEqual(needs(kind, .effetune), [], kind.rawValue)
         }
+        // NCS の帯。アートワークは取得中に粒子を出すので同じ帯を頼む。
+        XCTAssertEqual(needs(.ncs, .effetune), .ncs)
+        XCTAssertEqual(needs(.artwork, .effetune), .ncs)
+        XCTAssertEqual(scene(landscape: [element(.artwork)]).needs(.landscape, allowsSong: false), [])
         XCTAssertEqual(scene(portrait: [element(.stereo)], landscape: [element(.spectrum)])
             .needs(.portrait, allowsSong: false), .stereoEnvelope)
     }
@@ -303,10 +330,17 @@ final class VisualizerSceneTests: XCTestCase {
         for kind in [ETVisualizerElementKind.title, .artist, .artwork, .jsfx] {
             XCTAssertEqual(ETVisualizerElement.defaultColor(kind: kind, look: .effetune).rgb, 0xFFFFFF)
         }
+        for look in ETVisualizerStyle.allCases {
+            XCTAssertEqual(ETVisualizerElement.defaultColor(kind: .ncs, look: look).rgb, 0x032457)
+        }
     }
 
     func testKindClassification() {
         XCTAssertEqual(ETVisualizerElementKind.allCases.filter(\.isMeter).count, 7)
+        XCTAssertFalse(ETVisualizerElementKind.ncs.isMeter)
+        XCTAssertFalse(ETVisualizerElementKind.ncs.isSong)
+        XCTAssertEqual(ETVisualizerElementKind.ncs.label, "NCS")
+        XCTAssertEqual(ETVisualizerElementKind.allCases.last, .jsfx)
         XCTAssertEqual(ETVisualizerElementKind.allCases.filter(\.isSong).map(\.rawValue), ["artwork", "title", "artist"])
         XCTAssertEqual(ETVisualizerElementKind.allCases.filter(\.isText).map(\.rawValue), ["title", "artist"])
         XCTAssertEqual(ETVisualizerElementKind.levelMeter.rawValue, "level-meter")

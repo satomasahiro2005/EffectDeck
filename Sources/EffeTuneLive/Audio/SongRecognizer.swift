@@ -20,6 +20,12 @@
 //  App ID の App Services で ShazamKit を有効にしておくこと（entitlement のキーは足さない）。
 //  外れていると com.apple.ShazamKit の 202（Missing entitlements）がログに出る。画面には何も出さない。
 //
+//  **曲を飛ばしたら、すぐ「取得中」を出す。**読み手は読んだ音（モノラル）を SkipDetector にも流し、
+//  音色・大きさ・拍の連続から曲の境目を見つける。見つけたら境目より後の音だけで問い合わせ直し
+//  （セッションを作り直して、境目より前の問い合わせの返事を捨てる）、そのあいだアートワークは
+//  NCS の粒に替わる（identifyingPresentation。重み・色は SongIdentifying）。同じ曲が続いていると分かれば
+//  （誤検出）、すぐ元のアートワークに戻る。点数と判定は shazam.log に全部残す。
+//
 //  撮影用に `-ETMockShazam 1` で作り物の曲を出す（ShazamKit は動かさない）。
 
 import AVFoundation
@@ -39,6 +45,8 @@ final class ETSongRecognizer {
     private(set) var status = ""
     /// current のアートワーク。Floating Meters が CoreGraphics で描く。読み込むまでは nil。
     @ObservationIgnored private(set) var artwork: CGImage?
+    /// current のアートワークの代表の色。取得中の粒を前の曲の色から始めるのに使う。
+    @ObservationIgnored private(set) var artworkTint: ETVisualizerColor?
 
     /// 聞き取りを頼んでいる所。どれかが居るあいだ動く。
     enum Client: Hashable { case floatingMeters, view(ObjectIdentifier) }
@@ -47,6 +55,8 @@ final class ETSongRecognizer {
     @ObservationIgnored private var mock: Task<Void, Never>?
     @ObservationIgnored private var clients: Set<Client> = []
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    /// 取得中の見せ方（粒の重みと色）。
+    @ObservationIgnored private var identifying = ETSongIdentifying()
 
     private init() {}
 
@@ -60,6 +70,8 @@ final class ETSongRecognizer {
         guard mock == nil else { return }
         if let feeder { feeder.start(); return }
         if UserDefaults.standard.bool(forKey: "ETMockShazam") {
+            // 出している曲が残っているなら始めない（同じ曲の publish は何も替えず、粒が消えなくなる）
+            if current == nil { identifying.begin(now: CACurrentMediaTime(), tint: nil) }
             mock = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { return }
@@ -86,12 +98,47 @@ final class ETSongRecognizer {
         artworkTask?.cancel()
         artworkTask = nil
         artwork = nil
-        guard let song, let url = song.artworkURL else { return }
+        guard let song else {
+            identifying.cancel()
+            artworkTint = nil
+            return
+        }
+        // 曲が替わった。検出で始まっていなければここから始める（アートワークを読み込むあいだも粒で埋める）。
+        // 始まっていれば何も替わらない（起点と色を守る）。artworkTint は前の曲の色のまま。
+        identifying.begin(now: CACurrentMediaTime(), tint: artworkTint)
+        guard let url = song.artworkURL else {
+            artworkTint = nil
+            identifying.reveal(now: CACurrentMediaTime())
+            return
+        }
         artworkTask = Task { @MainActor [weak self] in
             let image = await Self.loadImage(url)
             guard !Task.isCancelled, let self, self.current == song else { return }
             self.artwork = image
+            self.artworkTint = image.flatMap(Self.tint(of:))
+            // 読み込めなかったときも、粒は消す
+            self.identifying.reveal(now: CACurrentMediaTime())
         }
+    }
+
+    /// 取得中の粒を出す重み（0...1）と色。面が描くたびに呼ぶ。切り替えが終わっていれば idle に戻す。
+    func identifyingPresentation(now: TimeInterval) -> (weight: Double, color: ETVisualizerColor) {
+        identifying.settle(now: now)
+        return (identifying.weight(now: now), identifying.color(now: now, fallback: ETNCSConstants.defaultColor))
+    }
+
+    /// アートワークを 16×16 に縮めて代表の色を取る（ETNCSTint）。
+    private static func tint(of image: CGImage) -> ETVisualizerColor? {
+        var pixels = [UInt8](repeating: 0, count: 16 * 16 * 4)
+        let drawn = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let context = CGContext(data: raw.baseAddress, width: 16, height: 16, bitsPerComponent: 8,
+                                          bytesPerRow: 16 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 16, height: 16))
+            return true
+        }
+        return drawn ? ETNCSTint.tint(rgba: pixels, pixelCount: 16 * 16) : nil
     }
 
     /// URLCache.shared に乗せる（AsyncImage と同じ置き場）。
@@ -109,6 +156,26 @@ final class ETSongRecognizer {
     fileprivate func publish(_ song: ETRecognizedSong?, from source: ETShazamFeeder) {
         guard feeder === source else { return }
         publish(song)
+    }
+
+    /// 読み手からの取得中の知らせ。
+    fileprivate func identify(_ event: ETShazamFeeder.IdentifyEvent, from source: ETShazamFeeder) {
+        guard feeder === source else { return }
+        let now = CACurrentMediaTime()
+        switch event {
+        case .boundary:
+            identifying.begin(now: now, tint: artworkTint)
+        case .sameSong:
+            // 誤検出だった。元のアートワークにすぐ戻す
+            identifying.cancel()
+        case .listening(let active):
+            if active {
+                // 鳴っているのに曲が分かっていない
+                if current == nil { identifying.begin(now: now, tint: nil) }
+            } else {
+                identifying.cancel()
+            }
+        }
     }
 
     /// AsyncImage の道を通すために、手元で描いた PNG のファイルを指す。
@@ -197,6 +264,36 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private var lastLatency = "-"
 
     private var policy = SongRecognitionPolicy()
+
+    // 曲の境目（スキップ）の検出。読んだ音（モノラル）を SkipDetector に流す。
+    private var detector = ETSkipDetector()
+    /// 1 回に読んだ分のモノラル（detector に渡す）。
+    private var monoScratch = [Float](repeating: 0, count: 24_000)
+    /// 検出した境目（detector.samplesSeen と同じ数え方の標本）。これより後の音だけを問い合わせる。
+    private var boundarySample: Int64?
+    /// 境目を見つけた回数。ログで問い合わせを境目と結ぶための番号。
+    private var boundaryGeneration: UInt64 = 0
+    /// 境目のあと、最初の返事（当たり）が来たか。来るまで取得中を出し続ける。
+    private var answeredSinceBoundary = true
+    /// 直前の当たり。曲の中の変化（誤検出）か、同じ曲の別の所かを、再生位置の連続で見分ける。
+    private var lastFind: (id: String, offset: TimeInterval, at: CFTimeInterval)?
+    /// 取得中の知らせ（listening）を最後に送った値。
+    private var listeningActive = false
+    /// 境目のあとの最初の問い合わせは、この長さ（3 秒）の音がたまってから。
+    private static let boundaryFirstQueryFrames = 144_000
+    /// 当たりの再生位置が、前の当たりから時間どおりに進んだとみなすずれ。
+    private static let continuityTolerance: TimeInterval = 2
+
+    /// 読み手 → メインへの取得中の知らせ。
+    enum IdentifyEvent {
+        /// 曲の境目を見つけた。
+        case boundary
+        /// 境目のあとの最初の当たりが同じ曲だった（誤検出）。
+        case sameSong
+        /// 聞かせている最中か。
+        case listening(Bool)
+    }
+
     private var hadPeer = false
     /// timer が動いているか（DispatchSource の resume / suspend は対にしないと落ちる）。
     private var running = false
@@ -238,7 +335,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             timer.suspend()
             dropSession()
             policy.discontinuity()
-            historyCount = 0
+            forgetHistory()
+            updateListening()
             resync = true
         }
     }
@@ -254,6 +352,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
                 hadPeer = false
                 dropSession()
                 policy.peerLost()
+                updateListening()
                 publish(nil)
                 note("peer lost")
             }
@@ -266,7 +365,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             cursor = rx.tapWritePosition()
             dropSession()
             policy.peerLost()
-            historyCount = 0
+            forgetHistory()
+            updateListening()
             publish(nil)
             return
         }
@@ -283,7 +383,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             note("tap skipped \(skipped) samples")
             dropSession()
             policy.discontinuity()
-            historyCount = 0
+            forgetHistory()
+            updateListening()
         }
         guard frames > 0 else {
             // 新しい音が来ないのも無音と見る。元のアプリが止まるとホストは IO を止めるが、
@@ -293,10 +394,11 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             if case .drop(let clear) = policy.audio(now: CACurrentMediaTime(), peak: 0) {
                 dropSession()
                 // 止まる前と再開後の音をつなげて聞かせない。
-                historyCount = 0
+                forgetHistory()
                 if clear { publish(nil) }
                 note("session dropped: \(clear ? "attempt timed out" : "no data")")
             }
+            updateListening()
             return
         }
 
@@ -305,7 +407,9 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         lastPeak = peak
         remember(frames: frames)
 
-        switch policy.audio(now: CACurrentMediaTime(), peak: peak) {
+        let decision = policy.audio(now: CACurrentMediaTime(), peak: peak)
+        updateListening()
+        switch decision {
         case .startAndFeed:
             makeSession()
             query()
@@ -354,10 +458,14 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             "skipped=\(skippedTotal)",
             "lastError=\(lastError)",
             "match=\(lastMatch)",
+            "skipScore=\(String(format: "%.2f", detector.takeMaxScore()))",
         ]
         note("status \(fields.joined(separator: " "))")
         let line = fields.joined(separator: "\n")
-        Task { @MainActor [self] in ETSongRecognizer.shared.publish(status: line, from: self) }
+        // 順番を守るため、曲・状況・取得中の知らせはどれも同じ主キューの async で送る
+        DispatchQueue.main.async { [self] in
+            MainActor.assumeIsolated { ETSongRecognizer.shared.publish(status: line, from: self) }
+        }
     }
 
     /// queue の上で呼ぶ。
@@ -372,14 +480,89 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         session = nil
     }
 
-    /// 左右を平均したモノラルを溜める。
+    /// 左右を平均したモノラルを溜める。同じ音を SkipDetector にも流して、曲の境目を見る。
     private func remember(frames: Int) {
         let n = Self.historyFrames
         for i in 0..<frames {
-            history[historyHead] = 0.5 * (scratch[2 * i] + scratch[2 * i + 1])
+            let mono = 0.5 * (scratch[2 * i] + scratch[2 * i + 1])
+            history[historyHead] = mono
+            monoScratch[i] = mono
             historyHead = (historyHead + 1) % n
         }
         historyCount = min(historyCount + frames, n)
+        let events = monoScratch.withUnsafeBufferPointer {
+            detector.append(UnsafeBufferPointer(rebasing: $0[0..<frames]))
+        }
+        for event in events { handle(event) }
+    }
+
+    /// 溜めた音と検出器を捨てる。境目の記憶も要らない。
+    private func forgetHistory() {
+        historyCount = 0
+        detector.reset()
+        boundarySample = nil
+        lastFind = nil
+    }
+
+    /// 聞かせている最中かが変わったら、メインへ知らせる。
+    private func updateListening() {
+        var active = false
+        if case .listening = policy.phase { active = true }
+        guard active != listeningActive else { return }
+        listeningActive = active
+        publish(identify: .listening(active))
+    }
+
+    // MARK: - 曲の境目
+
+    private static func seconds(_ samples: Int64) -> String {
+        String(format: "%.2fs", Double(samples) / sampleRate)
+    }
+
+    private func scoreText(_ s: ETSkipDetector.Scores) -> String {
+        String(format: "score=%.2f timbre=%.2f level=%.2f centroid=%.2f gap=%d ref=%.1fs",
+               s.score, s.timbre, s.level, s.centroid, s.gap ? 1 : 0, Double(s.referenceFrames) * 0.02)
+    }
+
+    /// 検出器の出来事。飛んだときは、セッションを作り直し、境目より後の音だけで聞き直し、取得中を出す。
+    private func handle(_ event: ETSkipDetector.Event) {
+        switch event {
+        case .skip(let boundary, let at, let scores, let stage):
+            boundaryGeneration &+= 1
+            boundarySample = boundary
+            answeredSinceBoundary = false
+            missStreak = 0
+            policy.boundary()
+            // 境目より前の音で出した問い合わせの返事は、セッションごと捨てる（前のセッションの返事は無視される）
+            var reset = false
+            if session != nil {
+                dropSession()
+                makeSession()
+                reset = true
+            }
+            let relative = String(format: "%.2fs", Double(boundary - at) / Self.sampleRate)
+            let tail = "boundary=\(relative) gen=\(boundaryGeneration) session-reset=\(reset)"
+            switch stage {
+            case .instant:
+                note("skip detected stage=instant at=\(Self.seconds(at)) \(scoreText(scores)) \(tail)")
+            case .beat(let aligned, let bpm):
+                note("skip detected stage=beat at=\(Self.seconds(at)) aligned=\(String(format: "%.2f", aligned)) tempo=\(String(format: "%.1f", bpm))bpm \(scoreText(scores)) \(tail)")
+            case .noGrid:
+                note("skip detected stage=nogrid at=\(Self.seconds(at)) \(scoreText(scores)) \(tail)")
+            }
+            publish(identify: .boundary)
+        case .confirming(let at, let scores, let bpm, let strength):
+            note("skip candidate stage=confirm at=\(Self.seconds(at)) \(scoreText(scores)) tempo=\(String(format: "%.1f", bpm))bpm beat=\(String(format: "%.2f", strength))")
+        case .keep(let at, let scores, let reason):
+            switch reason {
+            case .aligned(let aligned, let bpm):
+                note("skip rejected reason=aligned at=\(Self.seconds(at)) aligned=\(String(format: "%.2f", aligned)) tempo=\(String(format: "%.1f", bpm))bpm \(scoreText(scores))")
+            case .noBeat(let ratio):
+                note("skip rejected reason=nobeat at=\(Self.seconds(at)) onset=\(String(format: "%.2f", ratio)) \(scoreText(scores))")
+            case .noGridLowScore:
+                note("skip rejected reason=nogrid at=\(Self.seconds(at)) \(scoreText(scores))")
+            }
+        }
     }
 
     /// 溜めた音の新しいほうから最大 queryWindow ぶんを署名にして問い合わせる。
@@ -393,13 +576,25 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         // 返事を待っているあいだは重ねない（返事が来なければ queryTimeout で諦めて投げ直す）。
         if let sent = inFlightSince, now - sent < Self.queryTimeout { return }
         let n = Self.historyFrames
+        // 境目を見つけたあとは、境目より後の音だけ（窓は [境目, いま]）。最初の問い合わせは 3 秒たまってから
+        var available = historyCount
+        var minimum = minimumQueryFrames
+        if let boundary = boundarySample {
+            let since = Int(detector.samplesSeen - boundary)
+            if since >= Self.queryWindowMax {
+                boundarySample = nil
+            } else {
+                available = min(available, max(since, 0))
+                minimum = max(minimum, Double(Self.boundaryFirstQueryFrames))
+            }
+        }
         // 外れが続くあいだは、直近 4 秒と伸ばした窓を交互に投げる。伸ばした窓だけにすると、曲を替えた直後は
         // 前の曲の音をかえって多く含み、新しい曲が窓の大半を占めるまで 4 回（約 8 秒）外れ続けた（10-17 の shazam.log）。
         // 直近 4 秒で曲の替わりを拾い、伸ばした窓で聞き分けにくい曲を拾う。
         let long = missStreak > 0 && queries % 2 == 1
         let window = long ? min(Self.queryWindow + missStreak * Self.queryWindowStep, Self.queryWindowMax) : Self.queryWindow
-        let count = min(historyCount, window)
-        guard Double(count) >= minimumQueryFrames,
+        let count = min(available, window)
+        guard Double(count) >= minimum,
               let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(count)),
               let channel = buffer.floatChannelData?[0] else { return }
         buffer.frameLength = AVAudioFrameCount(count)
@@ -414,6 +609,9 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         }
         session.match(generator.signature())
         inFlightSince = now
+        if !answeredSinceBoundary {
+            note("query after boundary gen=\(boundaryGeneration) window=\(String(format: "%.1f", Double(count) / Self.sampleRate))s")
+        }
         queries += 1
         queryTick = 0
         fedFrames += Int64(count)
@@ -428,7 +626,15 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     }
 
     private func publish(_ song: ETRecognizedSong?) {
-        Task { @MainActor [self] in ETSongRecognizer.shared.publish(song, from: self) }
+        DispatchQueue.main.async { [self] in
+            MainActor.assumeIsolated { ETSongRecognizer.shared.publish(song, from: self) }
+        }
+    }
+
+    private func publish(identify event: IdentifyEvent) {
+        DispatchQueue.main.async { [self] in
+            MainActor.assumeIsolated { ETSongRecognizer.shared.identify(event, from: self) }
+        }
     }
 
     // MARK: - SHSessionDelegate（知らないスレッドから来る）
@@ -445,6 +651,20 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             lastMatch = String(format: "conf=%.2f skew=%.4f offset=%.1fs", item.confidence,
                                item.frequencySkew, item.predictedCurrentMatchOffset)
             missStreak = 0
+            let now = CACurrentMediaTime()
+            if !answeredSinceBoundary {
+                answeredSinceBoundary = true
+                if id == policy.lastID {
+                    // 境目のあとの最初の当たりが、いま出している曲と同じ。再生位置が時間どおりに進んでいれば
+                    // 曲の中の変化（誤検出）、飛んでいれば同じ曲の別の所（曲の頭に戻した・繰り返し）。どちらも元のアートワークに戻す
+                    let drift = lastFind.map { item.predictedCurrentMatchOffset - ($0.offset + (now - $0.at)) }
+                    let continuous = drift.map { abs($0) <= Self.continuityTolerance } ?? false
+                    let driftText = drift.map { String(format: "%.2fs", abs($0)) } ?? "-"
+                    note("boundary \(continuous ? "false-alarm" : "same-song") gen=\(boundaryGeneration) id=\(id) drift=\(driftText)")
+                    publish(identify: .sameSong)
+                }
+            }
+            lastFind = (id, item.predictedCurrentMatchOffset, now)
             let changed = policy.matched(id: id, skew: item.frequencySkew)
             note("find id=\(id) title=\(title) conf=\(item.confidence) skew=\(item.frequencySkew) matchOffset=\(item.matchOffset) offset=\(item.predictedCurrentMatchOffset) changed=\(changed)")
             guard changed else { return }

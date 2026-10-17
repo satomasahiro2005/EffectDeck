@@ -56,6 +56,8 @@ struct SongRecognitionPolicy {
     /// 当たったときだけ替える（全部 2 回にしたら替わるのが 2 秒遅れて「めちゃめちゃ遅くなってる」）。
     /// 何も出ていないときはすぐ出す。
     private(set) var pendingID: String?
+    /// 曲の境目（スキップの検出）のあと、次の当たりを 1 回で信じる。
+    private(set) var trustNext = false
 
     /// 新しい音が来た。
     mutating func audio(now: TimeInterval, peak: Float) -> Decision {
@@ -106,7 +108,14 @@ struct SongRecognitionPolicy {
     mutating func matched(id: String, skew: Float = 0) -> Bool {
         if id == lastID {
             pendingID = nil
+            trustNext = false
             return false
+        }
+        if trustNext {
+            trustNext = false
+            lastID = id
+            pendingID = nil
+            return true
         }
         if lastID == nil || pendingID == id || abs(skew) <= Self.trustedSkew {
             lastID = id
@@ -115,6 +124,13 @@ struct SongRecognitionPolicy {
         }
         pendingID = id
         return false
+    }
+
+    /// 曲の境目を検出した（呼ぶ側はセッションを捨てて、境目より後の音だけを聞かせる）。
+    /// 境目より後の音だけを問い合わせるので、次の当たりは混ざった音ではない。1 回で信じる。
+    mutating func boundary() {
+        trustNext = true
+        pendingID = nil
     }
 
     /// エラーが返った（呼ぶ側はセッションを捨てる）。
@@ -130,6 +146,7 @@ struct SongRecognitionPolicy {
     /// 読み手の音が飛んだ（呼ぶ側はセッションを捨てる）。
     mutating func discontinuity() {
         phase = .waiting
+        trustNext = false
     }
 
     /// 相手が居なくなった・繋ぎ直した。
@@ -137,11 +154,13 @@ struct SongRecognitionPolicy {
         phase = .waiting
         lastID = nil
         pendingID = nil
+        trustNext = false
     }
 
     mutating func reset() {
         phase = .waiting
         lastID = nil
         pendingID = nil
+        trustNext = false
     }
 }

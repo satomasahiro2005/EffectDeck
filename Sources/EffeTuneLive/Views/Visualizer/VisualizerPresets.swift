@@ -11,7 +11,8 @@ import Foundation
 struct ETVisualizerPreset: Identifiable {
     let id: String
     let scene: ETVisualizerScene
-    /// 曲の要素か、アートワークの背景を使う。Release では出さない。
+    /// 曲が無いと意味をなさない（Release では出さない）。曲の要素を含んでも、無くて成り立つものは false
+    /// （Release では曲の要素を抜いて出す）。
     let usesSong: Bool
 }
 
@@ -25,11 +26,19 @@ enum ETVisualizerPresets {
         ETVisualizerPreset(id: "phosphor", scene: phosphor, usesSong: false),
         ETVisualizerPreset(id: "vintage", scene: vintage, usesSong: false),
         ETVisualizerPreset(id: "spectral", scene: spectral, usesSong: false),
+        ETVisualizerPreset(id: "ncs", scene: ncs, usesSong: false),
         ETVisualizerPreset(id: "nowPlaying", scene: nowPlaying, usesSong: true),
     ]
 
     static func available(allowsSong: Bool) -> [ETVisualizerPreset] {
-        allowsSong ? all : all.filter { !$0.usesSong }
+        if allowsSong { return all }
+        // 曲が無くても成り立つものは、曲の要素（NCS の中のアートワーク）を抜いて出す
+        return all.filter { !$0.usesSong }.map { preset in
+            var scene = preset.scene
+            scene.portrait = scene.portrait.filter { !$0.kind.isSong }
+            scene.landscape = scene.landscape.filter { !$0.kind.isSong }
+            return ETVisualizerPreset(id: preset.id, scene: scene, usesSong: false)
+        }
     }
 
     static func scene(id: String) -> ETVisualizerScene? {
@@ -205,7 +214,27 @@ enum ETVisualizerPresets {
             ])
     }()
 
-    // MARK: 7. Now Playing
+    // MARK: 7. NCS
+
+    /// 球の真ん中にアートワーク。球の静止時の半径は辺の約 0.255 倍で、アートワークは辺の約 26% に収まる。
+    /// Release では曲の要素（アートワーク）が抜けて、球だけが残る。
+    static let ncs: ETVisualizerScene = {
+        func e(_ i: Int, _ kind: ETVisualizerElementKind, _ r: [Double]) -> ETVisualizerElement {
+            element(8, i, kind, r)
+        }
+        return ETVisualizerScene(
+            name: "NCS", background: background(.solid, 0x05060A),
+            portrait: [
+                e(100, .ncs, [0, 0.2, 1, 0.6]),
+                e(101, .artwork, [0.37, 0.44, 0.26, 0.12]),
+            ],
+            landscape: [
+                e(0, .ncs, [0.1, 0, 0.8, 1]),
+                e(1, .artwork, [0.44, 0.37, 0.12, 0.26]),
+            ])
+    }()
+
+    // MARK: 8. Now Playing
 
     static let nowPlaying: ETVisualizerScene = {
         func e(_ i: Int, _ kind: ETVisualizerElementKind, _ r: [Double], color: UInt32? = nil,
