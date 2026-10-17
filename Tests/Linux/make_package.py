@@ -8,7 +8,7 @@ Logicバンドル（project.ymlのEffeTuneLiveUnitTests）を、Linuxのswift te
 - **何を入れるかはproject.ymlが決める。**ここに一覧を持たない。登録を忘れたファイルは
   Linuxでも落ちるので、Macで初めて気付くことにならない
 - 落とすのは.cpp .mm .h .c .m（Swiftのテストに入らない）と、JSFX*Tests・JSFXHostSupport
-  （ysfxを建てるのでMacだけ）
+  （ysfxを建てるのでMacだけ）、VisualizerSettings*（Combineが要るのでMacだけ）
 - アプリのソースは書き換えない。Linuxに無いもの（os / Accelerate / CryptoKit /
   Compression、FoundationにあってLinuxに無いAPI）はTests/Linux/Shimsの代役で埋める。
   例外は生成物のEffectCatalog.swiftだけで、1つの配列リテラルを1件ずつの定数に分けて写す
@@ -27,7 +27,7 @@ import sys
 
 TARGET = "EffeTuneLiveUnitTests"
 DROP_EXT = {".cpp", ".mm", ".h", ".c", ".m", ".hpp"}
-DROP_NAMES = ["JSFX*Tests.swift", "JSFXHostSupport.swift"]
+DROP_NAMES = ["JSFX*Tests.swift", "JSFXHostSupport.swift", "VisualizerSettings*.swift"]
 # Linux用の代役。モジュールごとのフォルダで、名前がそのままimportの名前になる。
 SHIM_MODULES = {
     "os": [],

@@ -96,11 +96,4 @@ final class VisualizerLayoutTests: XCTestCase {
         XCTAssertEqual(size(.square), [1280, 1280])
         XCTAssertEqual(size(.tall), [720, 1280])
     }
-
-    func testFitRatioClamps() {
-        XCTAssertEqual(ETVisualizerLayout.fitRatio(width: 800, height: 600), 4.0 / 3.0, accuracy: 1e-12)
-        XCTAssertEqual(ETVisualizerLayout.fitRatio(width: 100, height: 1000), 9.0 / 16.0, accuracy: 1e-12)
-        XCTAssertEqual(ETVisualizerLayout.fitRatio(width: 1000, height: 100), 21.0 / 9.0, accuracy: 1e-12)
-        XCTAssertEqual(ETVisualizerLayout.fitRatio(width: 0, height: 100), 16.0 / 9.0, accuracy: 1e-12)
-    }
 }

@@ -61,6 +61,17 @@ final class JSFXDeadlineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(ETJSFX_DeadlineWorstPermille(host.raw), 1000)
     }
 
+    /// Visualizer の要素（鎖に載せない host）は締切で止めない。主でない列で回すので、
+    /// 待たされただけで 3 回を超えて止まるため。同じ重いブロックを 5 回回しても走り続ける。
+    func testOfflineHostIsNotBypassedByDeadline() throws {
+        let host = try JSFX.load("slow", maxFrames: JSFX.deadlineFrames)
+        ETJSFX_SetOffline(host.raw, true)
+        host.set(0, JSFX.spin)
+        for _ in 0..<6 { block(host, frames: JSFX.deadlineFrames) }
+        XCTAssertTrue(host.isRunning, "鎖に載せない host が締切で止まった")
+        XCTAssertEqual(host.deadlineTrips, 0, "鎖に載せない host の締切を数えている")
+    }
+
     /// バイパス中の process は**素通り（0）**で、失敗（負）ではない。
     /// 負を返すと橋が段を外しにかかる。
     func testBypassedProcessPassesAudioThroughWithoutError() throws {

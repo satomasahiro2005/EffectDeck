@@ -377,6 +377,12 @@ final class ETVisualizerAnalysis {
         let n = Int(scratch.withUnsafeMutableBufferPointer {
             ETMeterTap_Read(cursor, $0.baseAddress, maxFrames, &cursor)
         })
+        // JSFX の要素にも同じ標本を渡す（輪を読むのはここ 1 か所だけ）。要素が無ければ何もしない。
+        if n > 0 {
+            scratch.withUnsafeBufferPointer {
+                ETVisualizerJSFXPool.shared.feed(UnsafeBufferPointer(rebasing: $0[0..<2 * n]), frames: n)
+            }
+        }
 
         let wantLoudness = needs.contains(.loudness)
         let wantVU = needs.contains(.vu) && needles.count == 2

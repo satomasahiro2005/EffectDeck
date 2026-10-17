@@ -60,6 +60,11 @@ bool ETJSFX_ClearDiagnostic(ETJSFX *host);
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *host);
 /// 1 ブロックの持ち時間に対して使った割合の最大値（1/1000）。1000 で使い切り。
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *host);
+/// 鎖に載せない（Visualizer の要素）ときに true。process の締切の判定（自動バイパス）を飛ばす。
+/// 主でない列で回すと、待たされただけで 3 回超えて止まるため。重さは呼ぶ側が標本を捨てて抑える。
+void ETJSFX_SetOffline(ETJSFX *host, bool offline);
+/// EEL の RAM の使用量（全体。NSEEL_RAM_memused）。Visualizer が新しく建てる前に見る。
+size_t ETJSFX_EELMemoryUsed(void);
 /// EEL の実行系（WDL の ns-eel.h の NSEEL_EXEC_*。0 は portable）。**照合と測るためだけ。**アプリは既定
 /// （NSEEL_EXEC_DEFAULT）のまま。この建て方で使えない番号は false で何も変えない。結果は 1 ビットも変わらない（速さだけ）。
 /// 保守（Reconfigure と同じ）の中で替える: 走っているブロックと @gfx が抜けるのを待ち、替わるのは次のブロックから。

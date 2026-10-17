@@ -1,16 +1,23 @@
 //  VisualizerRenderer.swift
-//  Visualizer を描く唯一の描き手。アプリの中の画面も Floating Meters も、これが同じ設定の形
-//  （ETVisualizerConfig）と置き場（ETVisualizerLayout）から CoreGraphics でピクセルの器へ直に描く。
-//  UIKit にも頼らない（字は CoreText）。Mac の試し描きで同じ物を動かす。
+//  Visualizer を描く唯一の描き手。アプリの中の画面も Floating Meters も、これが同じ場面
+//  （ETVisualizerScene）から CoreGraphics でピクセルの器へ直に描く。
+//  UIKit にも CoreImage にも頼らない（字は CoreText、ぼかしたアートワークは呼び手が作って渡す）。
+//  Mac の試し描きで同じ物を動かす。
 //
-//  **Classic は以前の MiniMeters そのまま**（色・目盛り・字なし）。倍率 1 の帯では 1 ピクセルも変わらない。
-//  **EffeTune は上流の Visualizer の既定に合わせる**（背景 #080d1c、線 #40dfff、Heatmap、Stereo の
-//  相関と左右差の棒、Analog Meter の VU の文字盤）。Oscilloscope と Analog Meter は Classic にも出るので、
+//  **Classic は以前の MiniMeters そのまま**（色・目盛り・字なし）。Floating Meters の帯（長い辺 1280 画素、
+//  倍率 1）では 1 ピクセルも変わらない。矩形の辺は画素に丸める（ETVisualizerEditing.pixelEdges）ので、
+//  Classic の場面は昔の整数の矩形とぴったり同じになる。
+//  **EffeTune は上流の Visualizer の既定に合わせる**（線 #40dfff、Heatmap、Stereo の相関と左右差の棒、
+//  Analog Meter の VU の文字盤）。Oscilloscope と Analog Meter は Classic にも出るので、
 //  そのときは同じ形を Classic の色で字なしで描く。
 //
-//  座標: 基準の舞台は幅 1280（VisualizerLayout）。器の幅 / 1280 を倍率にして、線の太さも大きさも倍率で拡げる。
+//  座標: 場面の矩形は舞台に対する 0〜1。線の太さ・目盛り・字の倍率は呼び手が渡す unit
+//  （アプリの中は短い辺 / 720、Floating Meters は長い辺 / 1280。ETVisualizerUnit）。字の大きさは矩形の高さから決める。
 //  `ctx` は上が 0 の向き（呼び手が反転してある）。器は BGRA（premultipliedFirst・little endian）。
-//  毎回の確保はしない（色と路は static に置き、色は setFillColor(red:…) で入れる）。
+//  毎回の確保はしない（色と路と字は static に置く）。
+//
+//  要素は並びの順に、背景 → (不透明度・光彩があれば透過層) → カード → 枠で切る → 反転 → 描く。
+//  光彩は透過層ごと影を落とす（要素ごとに 1 回。描く 1 本ずつに影を付けない）。
 
 import CoreGraphics
 import CoreText
@@ -64,6 +71,34 @@ struct ETVisualizerTheme {
     static func of(_ style: ETVisualizerStyle) -> ETVisualizerTheme {
         style == .classic ? classic : effetune
     }
+
+    /// 線・棒の色と、針・字の色だけ替えた写し。
+    func with(trace: CGColor, text: CGColor) -> ETVisualizerTheme {
+        ETVisualizerTheme(background: background, trace: trace, text: text, gridSubtle: gridSubtle,
+                          gridSoft: gridSoft, label: label, danger: danger, deep: deep, groove: groove)
+    }
+}
+
+/// 場面に添える「いま描く曲」。
+struct ETVisualizerSongText: Equatable {
+    let title: String
+    let artist: String
+}
+
+/// 1 枚を描くのに要る、場面の外の材料。
+struct ETVisualizerFrame {
+    let analysis: ETVisualizerAnalysis
+    /// 曲の聞き取りが使えない版（ETFeatures.visualizer が偽）では nil。
+    let artwork: CGImage?
+    /// ぼかしたアートワーク（ETVisualizerArtworkBlur）。出来るまでは nil で、背景の色で塗る。
+    let blurredArtwork: CGImage?
+    let song: ETVisualizerSongText?
+    /// JSFX の要素 id → いまの絵。
+    let jsfxImages: [UUID: CGImage]
+    /// ETFeatures.visualizer。偽なら曲の要素とアートワークの背景は描かない。
+    let allowsSong: Bool
+    /// 編集画面。曲名・歌手・JSFX の名前を 35% の濃さで仮に出す。
+    let placeholders: Bool
 }
 
 @MainActor
@@ -72,49 +107,199 @@ enum ETVisualizerRenderer {
     /// 0 dBFS の高さ（区画の半分に対する割合）。-0.2 dB ぶん（0.5 dB は空きすぎ）。
     private static let waveformHeadroom = CGFloat(pow(10, -0.2 / 20))
 
-    static func draw(config: ETVisualizerConfig, placements: [ETVisualizerPlacement],
-                     analysis: ETVisualizerAnalysis, artwork: CGImage?,
-                     in ctx: CGContext, pixelSize: CGSize) {
-        let theme = ETVisualizerTheme.of(config.style)
-        let scale = pixelSize.width / CGFloat(ETVisualizerLayout.referenceWidth)
-        let classic = config.style == .classic
-        ctx.setFillColor(theme.background)
-        ctx.fill(CGRect(origin: .zero, size: pixelSize))
+    // MARK: - 場面
 
-        for placement in placements {
-            let r = placement.rect
-            let rect = CGRect(x: r.x * scale, y: r.y * scale, width: r.w * scale, height: r.h * scale)
-            ctx.saveGState()
-            ctx.clip(to: rect)
-            switch placement.kind {
-            case .spectrogram:
-                if classic {
-                    drawClassicSpectrogram(ctx, rect, scale, analysis.classicSpectrogram)
-                } else if let ring = analysis.effetuneSpectrogram {
-                    drawRing(ctx, ring, rect, newest: ring.columns, quality: .low)
-                }
-            case .waveform:
-                if classic { drawClassicWaveform(ctx, rect, scale, analysis) }
-                else { drawWaveform(ctx, rect, scale, theme, analysis) }
-            case .oscilloscope:
-                drawOscilloscope(ctx, rect, scale, theme, analysis)
-            case .spectrum:
-                if classic { drawClassicSpectrum(ctx, rect, scale, theme, analysis) }
-                else { drawSpectrum(ctx, rect, scale, theme, analysis, config.spectrumDisplay) }
-            case .stereo:
-                if classic { drawClassicStereo(ctx, rect, scale, theme, analysis) }
-                else { drawStereo(ctx, rect, scale, theme, analysis, r.w < 400) }
-            case .levelMeter:
-                withLevelOrientation(ctx, rect, horizontal: placement.horizontal) { local in
-                    if classic { drawClassicLevel(ctx, local, scale, theme, analysis) }
-                    else { drawLevel(ctx, local, scale, theme, analysis) }
-                }
-            case .analogMeter:
-                drawAnalogMeter(ctx, rect, scale, theme, analysis, config.analogMode, labels: !classic)
-            case .artwork:
-                drawArtwork(ctx, rect, theme, artwork, classic: classic)
+    /// 矩形の辺を画素に丸める（決まりは ETVisualizerEditing.pixelEdges）。
+    static func pixelRect(_ r: ETVisualizerRect, _ size: CGSize) -> CGRect {
+        let e = ETVisualizerEditing.pixelEdges(r, width: Double(size.width), height: Double(size.height))
+        return CGRect(x: e.0, y: e.1, width: e.2, height: e.3)
+    }
+
+    /// 色の入れ物。要素ごと・毎フレームに作らない。64 を超えたら空にする。
+    private static var colorCache: [UInt64: CGColor] = [:]
+
+    private static func color(_ rgb: ETVisualizerColor, alpha: CGFloat = 1) -> CGColor {
+        let key = UInt64(rgb.rgb) | (UInt64((alpha * 255).rounded()) << 32)
+        if let cached = colorCache[key] { return cached }
+        let c = rgb.components
+        let made = CGColor(red: CGFloat(c.r), green: CGFloat(c.g), blue: CGFloat(c.b), alpha: alpha)
+        if colorCache.count >= 64 { colorCache.removeAll(keepingCapacity: true) }
+        colorCache[key] = made
+        return made
+    }
+
+    private static func themeFor(_ e: ETVisualizerElement) -> ETVisualizerTheme {
+        let base = ETVisualizerTheme.of(e.look)
+        let c = color(e.color)
+        return e.kind == .analogMeter ? base.with(trace: base.trace, text: c) : base.with(trace: c, text: base.text)
+    }
+
+    /// 上下のグラデーション。同じ 2 色の間は作り直さない。
+    private static var gradientKey: (UInt32, UInt32)?
+    private static var gradientCache: CGGradient?
+
+    private static func gradient(_ top: ETVisualizerColor, _ bottom: ETVisualizerColor) -> CGGradient? {
+        if let key = gradientKey, key == (top.rgb, bottom.rgb), let cached = gradientCache { return cached }
+        let made = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                              colors: [color(top), color(bottom)] as CFArray, locations: [0, 1])
+        gradientKey = (top.rgb, bottom.rgb)
+        gradientCache = made
+        return made
+    }
+
+    static func draw(scene: ETVisualizerScene, layout: ETVisualizerLayoutKey, frame: ETVisualizerFrame,
+                     in ctx: CGContext, pixelSize: CGSize, unit: CGFloat) {
+        drawBackground(scene.background, frame, ctx, pixelSize)
+        for element in scene[layout] where frame.allowsSong || !element.kind.isSong {
+            drawElement(element, scene.background, frame, ctx, pixelSize, unit)
+        }
+    }
+
+    private static func drawBackground(_ background: ETVisualizerBackground, _ frame: ETVisualizerFrame,
+                                       _ ctx: CGContext, _ size: CGSize) {
+        let full = CGRect(origin: .zero, size: size)
+        switch background.kind {
+        case .solid:
+            ctx.setFillColor(color(background.color))
+            ctx.fill(full)
+        case .gradient:
+            if let gradient = gradient(background.color, background.color2) {
+                ctx.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: size.height),
+                                       options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            } else {
+                ctx.setFillColor(color(background.color))
+                ctx.fill(full)
             }
+        case .artwork:
+            if frame.allowsSong, let blurred = frame.blurredArtwork {
+                // 舞台いっぱいに cover-fit。上に黒を重ねて暗くする。
+                let fit = max(size.width / CGFloat(blurred.width), size.height / CGFloat(blurred.height))
+                let width = CGFloat(blurred.width) * fit, height = CGFloat(blurred.height) * fit
+                ctx.saveGState()
+                ctx.interpolationQuality = .medium
+                drawUpright(ctx, blurred, in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2,
+                                                     width: width, height: height))
+                ctx.restoreGState()
+                ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: CGFloat(background.dim)))
+                ctx.fill(full)
+            } else {
+                ctx.setFillColor(color(background.color))
+                ctx.fill(full)
+            }
+        }
+    }
+
+    private static func drawElement(_ e: ETVisualizerElement, _ background: ETVisualizerBackground,
+                                    _ frame: ETVisualizerFrame, _ ctx: CGContext, _ size: CGSize, _ unit: CGFloat) {
+        let rect = pixelRect(e.rect, size)
+        guard rect.width > 0, rect.height > 0 else { return }
+        var blend = CGBlendMode.normal
+        if e.kind == .jsfx, let mode = e.jsfx?.blend {
+            switch mode {
+            case .normal: blend = .normal
+            case .screen: blend = .screen
+            case .add: blend = .plusLighter
+            }
+        }
+        // 不透明度・光彩・合成は、要素ぜんぶを 1 枚にまとめてから掛ける（透過層）。
+        let layered = e.opacity < 1 || e.glow || blend != .normal
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        if layered {
+            ctx.setAlpha(CGFloat(e.opacity))
+            if blend != .normal { ctx.setBlendMode(blend) }
+            if e.glow {
+                ctx.setShadow(offset: .zero, blur: 12 * unit, color: color(e.color, alpha: 0.85))
+            }
+            ctx.beginTransparencyLayer(in: rect.insetBy(dx: -16 * unit, dy: -16 * unit), auxiliaryInfo: nil)
+            ctx.setBlendMode(.normal)
+        }
+
+        var content = rect
+        if e.card {
+            let radius = 10 * unit
+            ctx.setFillColor(color(background.cardColor, alpha: CGFloat(background.cardOpacity)))
+            addRoundedRect(ctx, rect, radius)
+            ctx.fillPath()
+            ctx.setStrokeColor(color(background.cardBorder))
+            ctx.setLineWidth(unit)
+            addRoundedRect(ctx, rect.insetBy(dx: unit / 2, dy: unit / 2), max(0, radius - unit / 2))
+            ctx.strokePath()
+            content = rect.insetBy(dx: 8 * unit, dy: 8 * unit)
+        }
+        if !e.card || (content.width >= 2 && content.height >= 2) {
+            // 枠で切る。層の中でだけ切るので、光彩の影は枠の外へ出る。
+            ctx.saveGState()
+            ctx.clip(to: content)
+            if e.flipX || e.flipY {
+                ctx.translateBy(x: content.midX, y: content.midY)
+                ctx.scaleBy(x: e.flipX ? -1 : 1, y: e.flipY ? -1 : 1)
+                ctx.translateBy(x: -content.midX, y: -content.midY)
+            }
+            drawKind(e, content, frame, ctx, unit)
             ctx.restoreGState()
+        }
+        if layered { ctx.endTransparencyLayer() }
+    }
+
+    /// 角丸の枠の路（確保しない）。
+    private static func addRoundedRect(_ ctx: CGContext, _ r: CGRect, _ radius: CGFloat) {
+        let k = min(radius, r.width / 2, r.height / 2)
+        ctx.beginPath()
+        ctx.move(to: CGPoint(x: r.minX + k, y: r.minY))
+        ctx.addArc(tangent1End: CGPoint(x: r.maxX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.maxY), radius: k)
+        ctx.addArc(tangent1End: CGPoint(x: r.maxX, y: r.maxY), tangent2End: CGPoint(x: r.minX, y: r.maxY), radius: k)
+        ctx.addArc(tangent1End: CGPoint(x: r.minX, y: r.maxY), tangent2End: CGPoint(x: r.minX, y: r.minY), radius: k)
+        ctx.addArc(tangent1End: CGPoint(x: r.minX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.minY), radius: k)
+        ctx.closePath()
+    }
+
+    private static func drawKind(_ e: ETVisualizerElement, _ content: CGRect, _ frame: ETVisualizerFrame,
+                                 _ ctx: CGContext, _ unit: CGFloat) {
+        let analysis = frame.analysis
+        let theme = themeFor(e)
+        let classic = e.look == .classic
+        switch e.kind {
+        case .spectrogram:
+            if classic {
+                drawClassicSpectrogram(ctx, content, unit, analysis.classicSpectrogram)
+            } else if let ring = analysis.effetuneSpectrogram {
+                drawRing(ctx, ring, content, newest: ring.columns, quality: .low)
+            }
+        case .waveform:
+            if classic { drawClassicWaveform(ctx, content, unit, analysis) }
+            else { drawWaveform(ctx, content, unit, theme, analysis) }
+        case .oscilloscope:
+            drawOscilloscope(ctx, content, unit, theme, analysis)
+        case .spectrum:
+            if classic { drawClassicSpectrum(ctx, content, unit, theme, analysis) }
+            else { drawSpectrum(ctx, content, unit, theme, analysis, e.spectrumDisplay) }
+        case .stereo:
+            if classic { drawClassicStereo(ctx, content, unit, theme, analysis) }
+            else { drawStereo(ctx, content, unit, theme, analysis, content.width / unit < 400) }
+        case .levelMeter:
+            // 向きは矩形の形で決める（幅が高さより大きければ横）。
+            withLevelOrientation(ctx, content, horizontal: content.width > content.height) { local in
+                if classic { drawClassicLevel(ctx, local, unit, theme, analysis) }
+                else { drawLevel(ctx, local, unit, theme, analysis) }
+            }
+        case .analogMeter:
+            drawAnalogMeter(ctx, content, unit, theme, analysis, e.analogMode, labels: !classic)
+        case .artwork:
+            drawArtwork(ctx, content, theme, frame.artwork, classic: classic)
+        case .title:
+            drawSongText(ctx, content, text: frame.song?.title ?? "", placeholder: frame.placeholders ? "Title" : nil, e)
+        case .artist:
+            drawSongText(ctx, content, text: frame.song?.artist ?? "", placeholder: frame.placeholders ? "Artist" : nil, e)
+        case .jsfx:
+            if let image = frame.jsfxImages[e.id] {
+                ctx.interpolationQuality = .medium
+                drawUpright(ctx, image, in: content)
+            } else if frame.placeholders, let name = e.jsfx?.name, !name.isEmpty {
+                let size = min(content.height / 4, 28 * unit)
+                drawLabel(ctx, name, size: size, at: CGPoint(x: content.midX, y: content.midY),
+                          anchorX: 0.5, anchorY: 0.5, color: color(e.color, alpha: 0.35))
+            }
         }
     }
 
@@ -320,9 +505,15 @@ enum ETVisualizerRenderer {
 
     // MARK: - アートワーク
 
-    /// 角丸の枠の路。区画が変わったときだけ作り直す。
-    private static var artworkClipRect = CGRect.null
-    private static var artworkClipPath: CGPath?
+    /// 角丸の枠の路。区画ごとに覚える（場面にアートワークが複数あっても毎フレーム作り直さない）。8 を超えたら空にする。
+    private struct RectKey: Hashable {
+        let x: Int, y: Int, w: Int, h: Int
+        init(_ r: CGRect) {
+            x = Int((r.minX * 16).rounded()); y = Int((r.minY * 16).rounded())
+            w = Int((r.width * 16).rounded()); h = Int((r.height * 16).rounded())
+        }
+    }
+    private static var artworkClipPaths: [RectKey: CGPath] = [:]
 
     private static func drawArtwork(_ ctx: CGContext, _ rect: CGRect, _ theme: ETVisualizerTheme,
                                     _ artwork: CGImage?, classic: Bool) {
@@ -332,22 +523,31 @@ enum ETVisualizerRenderer {
             ctx.fill(rect)
         }
         guard let artwork else { return }
+        // ジャケットは正方形。枠が長方形（iPad の縦長・横長など）でも、枠の中のいちばん大きい正方形に置いて切り取らない。
+        let side = min(rect.width, rect.height)
+        let square = CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
         ctx.saveGState()
         if !classic {
             // 上流の artwork は角を 6% 丸める（visualizer-renderer.js:190, 239-243）。
-            let radius = min(rect.width, rect.height) * 0.06
-            if artworkClipRect != rect || artworkClipPath == nil {
-                artworkClipRect = rect
-                artworkClipPath = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            let radius = side * 0.06
+            let key = RectKey(square)
+            let path: CGPath
+            if let cached = artworkClipPaths[key] {
+                path = cached
+            } else {
+                path = CGPath(roundedRect: square, cornerWidth: radius, cornerHeight: radius, transform: nil)
+                if artworkClipPaths.count >= 8 { artworkClipPaths.removeAll() }
+                artworkClipPaths[key] = path
             }
-            if let path = artworkClipPath { ctx.addPath(path) }
+            ctx.addPath(path)
             ctx.clip()
         }
-        // cover-fit（visualizer-renderer.js の drawCover）。
-        let fit = max(rect.width / CGFloat(artwork.width), rect.height / CGFloat(artwork.height))
+        // cover-fit（visualizer-renderer.js の drawCover）。正方形の中で、画像が正方形でなければここで切る。
+        let fit = max(side / CGFloat(artwork.width), side / CGFloat(artwork.height))
         let width = CGFloat(artwork.width) * fit, height = CGFloat(artwork.height) * fit
         ctx.interpolationQuality = .high
-        drawUpright(ctx, artwork, in: CGRect(x: rect.midX - width / 2, y: rect.midY - height / 2,
+        ctx.clip(to: square)
+        drawUpright(ctx, artwork, in: CGRect(x: square.midX - width / 2, y: square.midY - height / 2,
                                              width: width, height: height))
         ctx.restoreGState()
     }
@@ -806,6 +1006,78 @@ enum ETVisualizerRenderer {
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         ctx.textPosition = CGPoint(x: p.x - anchorX * label.width,
                                    y: p.y - anchorY * (label.ascent + label.descent) + label.ascent)
+        CTLineDraw(label.line, ctx)
+        ctx.restoreGState()
+    }
+
+    // MARK: 曲名・歌手名
+
+    private struct TextKey: Hashable {
+        let text: String
+        let font: ETVisualizerFont
+        let bold: Bool
+        let size: Int
+        let width: Int
+    }
+    private static var textCache: [TextKey: Label] = [:]
+
+    private static func songFont(_ font: ETVisualizerFont, bold: Bool, size: CGFloat) -> CTFont {
+        switch font {
+        case .system:
+            return CTFontCreateUIFontForLanguage(bold ? .emphasizedSystem : .system, size, nil)
+                ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        case .serif:
+            return CTFontCreateWithName((bold ? "Georgia-Bold" : "Georgia") as CFString, size, nil)
+        case .monospaced:
+            return CTFontCreateWithName((bold ? "Menlo-Bold" : "Menlo-Regular") as CFString, size, nil)
+        }
+    }
+
+    /// 曲名・歌手名の 1 行。大きさは矩形の高さから決める。幅に入らなければ後ろを … で切る。
+    /// 空なら何も描かない（編集画面では「Title」「Artist」を 35% の濃さで仮に出す）。色は要素の色（濃さは層が掛ける）。
+    private static func drawSongText(_ ctx: CGContext, _ content: CGRect, text: String, placeholder: String?,
+                                     _ e: ETVisualizerElement) {
+        var shown = text
+        var alpha: CGFloat = 1
+        if shown.isEmpty {
+            guard let placeholder else { return }
+            shown = placeholder
+            alpha = 0.35
+        }
+        let size = content.height / 1.25
+        guard size >= 1, content.width >= 1 else { return }
+        let key = TextKey(text: shown, font: e.font, bold: e.bold, size: Int((size * 10).rounded()),
+                          width: Int(content.width))
+        let label: Label
+        if let cached = textCache[key] {
+            label = cached
+        } else {
+            let font = songFont(e.font, bold: e.bold, size: size)
+            let attributes: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key(rawValue: kCTFontAttributeName as String): font,
+                NSAttributedString.Key(rawValue: kCTForegroundColorFromContextAttributeName as String): true,
+            ]
+            var line = CTLineCreateWithAttributedString(NSAttributedString(string: shown, attributes: attributes))
+            if CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) > content.width {
+                let token = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attributes))
+                if let truncated = CTLineCreateTruncatedLine(line, Double(content.width), .end, token) { line = truncated }
+            }
+            var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+            let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+            label = Label(line: line, width: width, ascent: ascent, descent: descent)
+            if textCache.count >= 32 { textCache.removeAll() }
+            textCache[key] = label
+        }
+        let x: CGFloat
+        switch e.alignment {
+        case .leading: x = content.minX
+        case .center: x = content.midX - label.width / 2
+        case .trailing: x = content.maxX - label.width
+        }
+        ctx.saveGState()
+        ctx.setFillColor(color(e.color, alpha: alpha))
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        ctx.textPosition = CGPoint(x: x, y: content.midY - (label.ascent + label.descent) / 2 + label.ascent)
         CTLineDraw(label.line, ctx)
         ctx.restoreGState()
     }

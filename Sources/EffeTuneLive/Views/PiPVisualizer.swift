@@ -1,8 +1,10 @@
 //  PiPVisualizer.swift
 //  Floating Meters。Visualizer（Views/Visualizer/）を Picture in Picture の窓に出す。
-//  描くのは画面の Visualizer と同じ描き手（ETVisualizerRenderer）で、設定の形も同じ。
-//  違うのは設定の保存先（ETVisualizerSettings.floating）だけ。縦横比・パネル・並び順・見た目は
-//  Visualizer の編集画面で替え、PiP の窓は選んだ縦横比で開く。
+//  描くのは画面の Visualizer と同じ描き手（ETVisualizerRenderer）で、場面の形も同じ。
+//  違うのは保存先（ETVisualizerSettings.floating。場面に縦横比を足した形）と、倍率の取り方
+//  （器の長い辺が常に 1280 なので unit は 1）だけ。縦横比と場面は Visualizer の編集画面
+//  （Floating Meters の側）で替え、PiP の窓は選んだ縦横比で開く。
+//  縦横比が 1 以上なら landscape、1 未満（9:16）なら portrait の並びを描く。
 //
 //  **PiP は動画の口しか無い。**描いた絵を 1 枚ずつ CMSampleBuffer にして
 //  AVSampleBufferDisplayLayer に流し、そのレイヤーを PiP の元にする
@@ -62,9 +64,10 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var timer: DispatchSourceTimer?
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
-    /// Floating Meters の設定（ETVisualizerSettings.floating）。窓の形もこれで決まる。
-    private var config: ETVisualizerConfig
-    private var placements: [ETVisualizerPlacement]
+    /// Floating Meters の場面（ETVisualizerSettings.floating）。窓の形もこれで決まる。
+    private var floating: ETFloatingMetersScene
+    /// いま描く並びの JSFX の要素。
+    private var jsfxElements: [ETVisualizerElement]
     private var pixelWidth: Int
     private var pixelHeight: Int
     private var settingsSink: AnyCancellable?
@@ -73,12 +76,12 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var foreground: NSObjectProtocol?
 
     private override init() {
-        let config = ETVisualizerSettings.shared.floating.normalized(for: .floating)
-        let size = Self.pixelSize(config)
-        self.config = config
+        let floating = ETVisualizerSettings.shared.floating.normalized()
+        let size = Self.pixelSize(floating)
+        self.floating = floating
+        jsfxElements = Self.jsfx(floating)
         pixelWidth = size.0
         pixelHeight = size.1
-        placements = Self.placements(config, size)
         super.init()
         foreground = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
@@ -91,17 +94,17 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     }
 
     /// 器の大きさ。窓はこの縦横比で開く。
-    private static func pixelSize(_ config: ETVisualizerConfig) -> (Int, Int) {
-        ETVisualizerLayout.pipPixelSize(config.aspect.ratio ?? 5)
+    private static func pixelSize(_ floating: ETFloatingMetersScene) -> (Int, Int) {
+        ETVisualizerLayout.pipPixelSize(floating.aspect.ratio ?? 5)
     }
 
-    /// 置き場は、実際の器の縦横比で組む。
-    private static func placements(_ config: ETVisualizerConfig, _ size: (Int, Int)) -> [ETVisualizerPlacement] {
-        ETVisualizerLayout.place(config.visibleKinds(allowsArtwork: ETFeatures.visualizer),
-                                 analogMode: config.analogMode, ratio: Double(size.0) / Double(size.1))
+    private static func jsfx(_ floating: ETFloatingMetersScene) -> [ETVisualizerElement] {
+        floating.scene[floating.layout].filter { $0.kind == .jsfx }
     }
 
-    private var needs: ETVisualizerNeedsSet { config.needs(allowsArtwork: ETFeatures.visualizer) }
+    private var needs: ETVisualizerNeedsSet {
+        floating.scene.needs(floating.layout, allowsSong: ETFeatures.visualizer)
+    }
 
     // MARK: - 出す・しまう
 
@@ -145,6 +148,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         isRunning = true
         prepare()
         ETVisualizerAnalysis.shared.register(self, needs: needs)
+        ETVisualizerJSFXPool.shared.acquire(self, elements: jsfxElements)
         updateRecognition()
         startTimer()
         tick()
@@ -197,14 +201,15 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         timer = nil
         isRunning = false
         ETVisualizerAnalysis.shared.unregister(self)
+        ETVisualizerJSFXPool.shared.release(self)
         ETVisualizerTap.shared.release(self)
         updateRecognition()
     }
 
-    /// 曲の聞き取りは、流している最中で、アートワークを出す設定のときだけ（版が許すときだけ）。
+    /// 曲の聞き取りは、流している最中で、場面が曲を使うときだけ（版が許すときだけ）。
     private func updateRecognition() {
         guard ETFeatures.visualizer else { return }
-        let wanted = isRunning && config.visibleKinds(allowsArtwork: true).contains(.artwork)
+        let wanted = isRunning && floating.scene.usesSong(floating.layout)
         ETSongRecognizer.shared.setActive(wanted, for: .floatingMeters)
     }
 
@@ -261,11 +266,11 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
 
     // MARK: - 設定が替わった
 
-    /// 縦横比・パネル・並び順・見た目が替わった。器の大きさが替われば作り直して窓の形を替える。
-    private func apply(_ new: ETVisualizerConfig) {
-        config = new.normalized(for: .floating)
-        let size = Self.pixelSize(config)
-        placements = Self.placements(config, size)
+    /// 縦横比・場面が替わった。器の大きさが替われば作り直して窓の形を替える。
+    private func apply(_ new: ETFloatingMetersScene) {
+        floating = new.normalized()
+        jsfxElements = Self.jsfx(floating)
+        let size = Self.pixelSize(floating)
         let resized = size.0 != pixelWidth || size.1 != pixelHeight
         pixelWidth = size.0
         pixelHeight = size.1
@@ -276,13 +281,15 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         }
         if isRunning {
             ETVisualizerAnalysis.shared.register(self, needs: needs)
+            ETVisualizerJSFXPool.shared.acquire(self, elements: jsfxElements)
             updateRecognition()
             tick()
         } else if controller != nil {
             enqueue()
         }
-        let kinds = config.visibleKinds(allowsArtwork: ETFeatures.visualizer).map(\.rawValue).joined(separator: ",")
-        log.notice("PiP の設定 aspect=\(self.config.aspect.rawValue, privacy: .public) size=\(self.pixelWidth, privacy: .public)x\(self.pixelHeight, privacy: .public) panels=\(kinds, privacy: .public)")
+        let kinds = floating.scene.elements(floating.layout, allowsSong: ETFeatures.visualizer)
+            .map(\.kind.rawValue).joined(separator: ",")
+        log.notice("PiP の設定 aspect=\(self.floating.aspect.rawValue, privacy: .public) size=\(self.pixelWidth, privacy: .public)x\(self.pixelHeight, privacy: .public) layout=\(self.floating.layout.rawValue, privacy: .public) elements=\(kinds, privacy: .public)")
     }
 
     // MARK: - 描く
@@ -342,9 +349,33 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         // 上を 0 にする（UIKit の字の描き方に合わせる）。
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1, y: -1)
-        ETVisualizerRenderer.draw(config: config, placements: placements, analysis: ETVisualizerAnalysis.shared,
-                                  artwork: ETFeatures.visualizer ? ETSongRecognizer.shared.artwork : nil,
-                                  in: context, pixelSize: CGSize(width: width, height: height))
+        let allowsSong = ETFeatures.visualizer
+        let recognizer = ETSongRecognizer.shared
+        let artwork = allowsSong ? recognizer.artwork : nil
+        let blurred = allowsSong && floating.scene.background.kind == .artwork
+            ? ETVisualizerArtworkBlur.shared.image(for: artwork) : nil
+        var song: ETVisualizerSongText?
+        if allowsSong, let current = recognizer.current {
+            song = ETVisualizerSongText(title: current.title, artist: current.artist ?? "")
+        }
+        let jsfxPool = ETVisualizerJSFXPool.shared
+        let frame = ETVisualizerFrame(
+            analysis: ETVisualizerAnalysis.shared, artwork: artwork, blurredArtwork: blurred, song: song,
+            jsfxImages: jsfxPool.images(for: jsfxElements.map(\.id)), allowsSong: allowsSong, placeholders: false)
+        let size = CGSize(width: width, height: height)
+        let unit = CGFloat(ETVisualizerUnit.floating(pixelWidth: Double(width), pixelHeight: Double(height)))
+        ETVisualizerRenderer.draw(scene: floating.scene, layout: floating.layout, frame: frame, in: context,
+                                  pixelSize: size, unit: unit)
+        // JSFX の要素の枠（カードの内側）を 2 倍の点にして、1 枚頼む。
+        let now = CACurrentMediaTime()
+        for element in jsfxElements {
+            var content = ETVisualizerRenderer.pixelRect(element.rect, size)
+            if element.card { content = content.insetBy(dx: 8 * unit, dy: 8 * unit) }
+            guard content.width >= 1, content.height >= 1 else { continue }
+            jsfxPool.step(element.id, holder: self,
+                          logical: CGSize(width: content.width / 2, height: content.height / 2),
+                          surfaceScale: 2, now: now)
+        }
         if format == nil {
             var made: CMVideoFormatDescription?
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer,

@@ -176,6 +176,8 @@ struct ETJSFX {
     std::vector<uint32_t> sliders;
     std::atomic<uint8_t> mode{(uint8_t)Mode::maintenance};
     std::atomic<bool> audioActive{}, gfxActive{};
+    /// 鎖に載せない（Visualizer の要素）とき true。process の締切の判定（自動バイパス）を飛ばす。
+    std::atomic<bool> offline{false};
     /// 保守（SaveState / LoadState / Reconfigure / Destroy）と GFX の入力を 1 本ずつにする。
     /// **音のスレッドは取らない。**音は従来どおり mode と audioActive で外す。
     std::mutex exclusive;
@@ -388,6 +390,9 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
     scrub(planar, (size_t)channels * frames);
     h->nextBlockTime = sampleTime + frames / sampleRate;
     double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
+    // 鎖に載せない host（Visualizer の要素）は締切で止めない。主でない列で回すので、待たされただけで
+    // 3 回を超えて止まるため。重さは呼ぶ側が標本を捨てて抑える。
+    if (!h->offline.load(std::memory_order_relaxed)) {
     {   // 最大値を残す。使ったのは持ち時間の何割か。
         double budget = (double)frames / sampleRate;
         uint32_t ratio = budget > 0 ? (uint32_t)(elapsed / budget * 1000.0) : 0;
@@ -421,6 +426,7 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
             h->mode.compare_exchange_strong(running, (uint8_t)Mode::automaticBypass, std::memory_order_acq_rel);
         }
     } else if (!over && !slidersRan) h->deadlineOverruns.store(0);
+    }
     h->audioActive.store(false, std::memory_order_release);
     return 0;
 }
@@ -657,6 +663,8 @@ bool ETJSFX_ClearDiagnostic(ETJSFX *h)
 }
 bool ETJSFX_IsRunning(const ETJSFX *h){return h&&h->mode.load(std::memory_order_acquire)==(uint8_t)Mode::running;}
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *h){return h?h->deadlineTrips.load(std::memory_order_relaxed):0;}
+void ETJSFX_SetOffline(ETJSFX *h,bool offline){if(h)h->offline.store(offline,std::memory_order_relaxed);}
+size_t ETJSFX_EELMemoryUsed(void){return (size_t)NSEEL_RAM_memused;}
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *h){return h?h->deadlineWorst.load(std::memory_order_relaxed):0;}
 /// 実行系を替える。**保守の中で替える。**
 ///

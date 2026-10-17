@@ -58,7 +58,8 @@ struct PipelineView: View {
         /// 紐付けがまだ無いときの入口は Presets の Output Correction の行（同じ中身を押して進む形で出す）。
         case outputCorrection
         /// Visualizer の画面（VisualizerView.swift。Views/Visualizer/ の描き手で描く。どの版でも出る）。
-        /// 右上の Customize で、パネル・並び順・縦横比・見た目を Floating Meters と同じ形で替える。
+        /// **全画面のカバーで出す**（.fullScreenCover。シートの枠をアートに重ねない）。値はここで持ち、
+        /// 根の .sheet には渡さない（presentedSheet）。画面の中の編集画面で、場面を Floating Meters と同じ形で作る。
         case visualizer
         var id: String { rawValue }
     }
@@ -307,7 +308,8 @@ struct PipelineView: View {
             case .outputCorrection:
                 OutputCorrectionView(isRemote: isRemote)
             case .visualizer:
-                VisualizerView().presentationSizing(.page)
+                // 全画面のカバーで出す（下の .fullScreenCover）。ここへは来ない。
+                EmptyView()
             // ConnectBanner の Help から。Settings 側は自分の NavigationStack で押す。
             case .tips:
                 NavigationStack {
@@ -319,6 +321,12 @@ struct PipelineView: View {
                         }
                 }
             }
+        }
+        // Visualizer は全画面のカバー（シートの枠をアートに重ねない）。閉じたあとの続きはシートと同じ道で走らせる。
+        .fullScreenCover(isPresented: Binding(get: { sheet == .visualizer },
+                                              set: { if !$0, sheet == .visualizer { sheet = nil } }),
+                         onDismiss: runAfterSheet) {
+            VisualizerView()
         }
         .alert(alertTitle, isPresented: Binding(
             get: { pluginError != nil || linkError != nil || importError != nil },
@@ -571,9 +579,11 @@ struct PipelineView: View {
     /// （iPad、10-16 本人「設定のシートとか出して戻ると右上の奴ぜんぶタップしても反応しなくなる」）。
     /// 根の .sheet が出していない値（2 列の popover）は、根の .sheet からは消させない。
     private var presentedSheet: Binding<Sheet?> {
-        Binding(get: { usesSplit && sheet == .picker && !pickerInSheet ? nil : sheet },
+        Binding(get: { sheet == .visualizer || (usesSplit && sheet == .picker && !pickerInSheet) ? nil : sheet },
                 set: { new in
                     if new == nil, usesSplit, sheet == .picker, !pickerInSheet { return }
+                    // 全画面のカバー（下の .fullScreenCover）が出しているものは、シートの閉じる知らせで消さない。
+                    if new == nil, sheet == .visualizer { return }
                     sheet = new
                 })
     }
@@ -2172,7 +2182,7 @@ private struct PipelineToolbar: ToolbarContent {
                 Button("Routing", systemImage: "arrow.triangle.branch") { present(.routing) }
                 Button("Visualizer", systemImage: "waveform.path.ecg.rectangle") { present(.visualizer) }
                 // 鎖の入口か出口の音を、Visualizer と同じ描き手で PiP の窓に出す（PiPVisualizer.swift）。
-                // 設定（パネル・縦横比・見た目）は Visualizer の Customize。測る所はここと共通。
+                // 場面と縦横比は Visualizer の編集画面（Floating Meters の側）。測る所はここと共通。
                 // トグル。入れているあいだは、外で消えても戻ったら出し直す。
                 Picker(selection: Binding(
                     get: {

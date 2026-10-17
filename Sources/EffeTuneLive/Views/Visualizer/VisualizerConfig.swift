@@ -1,10 +1,11 @@
 //  VisualizerConfig.swift
-//  Visualizer の設定の形。アプリの中の画面（inApp）と Floating Meters（floating）が同じ形を使い、
-//  違うのは保存先だけ。Foundation だけ（Tests/Unit/VisualizerConfigTests.swift）。
+//  旧い設定の形（v1）。いまは旧い Floating Meters の保存を読んで場面へ移すとき（VisualizerMigration）にだけ使う。
+//  画面と Floating Meters が使う設定は場面（VisualizerScene）。ここの列挙型
+//  （ETVisualizerStyle・ETSpectrumDisplay・ETAnalogMeterChoice・ETVisualizerSource・ETVisualizerNeedsSet・
+//  ETVisualizerAspect）は場面と共有している。Foundation だけ（Tests/Unit/VisualizerConfigTests.swift）。
 //
-//  決めるのは 4 つ。縦横比・出すパネルと並び順・見た目（Classic / EffeTune）・
+//  v1 が決めていたのは 4 つ。縦横比・出すパネルと並び順・見た目（Classic / EffeTune）・
 //  Spectrum の線/棒と Analog Meter の VU/Loudness。
-//  並べ方（どこで行を切るか）は縦横比から VisualizerLayout が決める。
 //
 //  保存は JSON 1 つ。読むときは決して投げず、知らない値は面の既定に戻し、パネルは 8 種を 1 回ずつに直す。
 

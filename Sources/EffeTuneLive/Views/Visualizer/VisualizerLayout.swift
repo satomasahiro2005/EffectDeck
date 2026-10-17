@@ -1,22 +1,16 @@
 //  VisualizerLayout.swift
-//  パネルの置き場。並べた順に左上から行へ詰め、行をどこで切るかを縦横比から自動で決める。
+//  旧い並べ方。パネルを並べた順に左上から行へ詰め、行をどこで切るかを縦横比から自動で決める。
+//  いまは旧い Floating Meters の設定（ETVisualizerConfig v1）を新しい場面へ移すとき（VisualizerMigration）にだけ使い、
+//  画面は場面（VisualizerScene）の矩形をそのまま使う。PiP の器の大きさ（pipPixelSize）はいまも使う。
 //  Foundation だけ（Tests/Unit/VisualizerLayoutTests.swift）。
 //
 //  **上流と同じ割合の矩形で持つ。**基準の舞台は幅 1280（上流の REFERENCE_WIDTH）、高さは 1280 / 縦横比。
-//  描く側（VisualizerRenderer）は舞台の幅に対する比で拡大する。矩形の作り方を足せば、
-//  上流のプリセットの型や自由配置もそのまま載る（いまは行の詰め込みだけ）。
+//  返す矩形は 1280 基準の値で、場面へ移すときに舞台の幅・高さで割って 0〜1 にする。
 //
 //  各パネルには得意な形がある（Stereo とアートワークは正方形、Level Meter は細い棒、
 //  Analog Meter は上流と同じ 4:3 の文字盤）。切り方を全部試して、いちばん崩れないものを選ぶ。
 
 import Foundation
-
-struct ETVisualizerRect: Equatable {
-    var x: Double
-    var y: Double
-    var w: Double
-    var h: Double
-}
 
 struct ETVisualizerPlacement: Equatable {
     var kind: ETVisualizerPanelKind
@@ -130,12 +124,6 @@ enum ETVisualizerLayout {
             top += rowHeight
         }
         return placements
-    }
-
-    /// Fit の縦横比。細すぎる・太すぎる画面でも配置が壊れないよう 9:16 〜 21:9 に収める。
-    static func fitRatio(width: Double, height: Double) -> Double {
-        guard width > 0, height > 0 else { return 16.0 / 9.0 }
-        return min(max(width / height, 9.0 / 16.0), 21.0 / 9.0)
     }
 
     /// PiP の器の大きさ（ピクセル）。長いほうの辺を 1280 にして、短いほうは偶数に丸める。

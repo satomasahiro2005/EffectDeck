@@ -22,10 +22,11 @@ enum ETFeatures {
     static var remoteControl: Bool { true }
 
     /// Visualizer のうち、曲の聞き取り（ShazamKit。Audio/SongRecognizer.swift）に頼るもの。
-    /// Visualizer の画面・その編集画面（Views/Visualizer/）・⋯ のメニューの Visualizer・Floating Meters の拡大ボタンは
-    /// **どの版にも出る。**ここが絞るのは、聞き取りを使う次の 3 つだけ。
-    ///   - Artwork のパネル（編集画面の Panels の一覧からも消え、描かれもしない）
-    ///   - 編集画面の Song Recognition の節（取得状況。デバッグ用）
+    /// Visualizer の画面・その編集画面（Views/Visualizer/）・場面（JSFX の要素を含む）・⋯ のメニューの Visualizer・
+    /// Floating Meters の拡大ボタンは **どの版にも出る。**ここが絞るのは、聞き取りを使う次の 3 つだけ。
+    ///   - 曲の要素（Artwork・Title・Artist。追加の画面からも選択からも消え、描かれもしない）と、
+    ///     アートワークの背景（Scene の画面から選べず、場面に残っていても背景の色で塗る）、Now Playing のプリセット
+    ///   - Scene の画面の Song Recognition の節（取得状況。デバッグ用）
     ///   - ETSongRecognizer.setActive を呼ぶこと全部（Release では 1 度も呼ばない）
     /// **Debug と Beta だけ。**ShazamKit は音の指紋を Apple へ送り、アートワークも取りに行くので、
     /// site/src/text.js の PRIVACY（音は端末から出ない・音の処理は通信しない）と Tools/review_notes.txt と食い違う。

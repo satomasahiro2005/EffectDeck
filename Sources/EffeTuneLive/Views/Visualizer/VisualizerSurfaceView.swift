@@ -2,29 +2,52 @@
 //  アプリの中に Visualizer を出す面。CADisplayLink で回して、描き手（ETVisualizerRenderer）が
 //  ビットマップに描いた絵を CALayer の contents に置く。SwiftUI は通さない。
 //
-//  **見えていて、アプリが背景に回っていないあいだだけ回す。**窓から外れたとき（シートを閉じたとき）と
+//  **面は枠いっぱいに描く。**縦横比を選ばせない・黒帯を付けない。どちらの並び（portrait / landscape）を
+//  描くかは枠自身の形で決める（`forcedLayout` が無いとき）。編集画面は反対の向きや Floating Meters の縦横比を
+//  見せたいので、その形の枠に入れて、並びを `forcedLayout` で指す。
+//
+//  **見えていて、アプリが背景に回っていないあいだだけ回す。**窓から外れたとき（カバーを閉じたとき）と
 //  背景に回ったときに止める。止めるのは `.background` だけで `.inactive` では止めない
 //  （コントロールセンターを引き下ろすたびに作り直さない。PipelineView の scenePhase と同じ）。
 //
-//  **器の大きさは舞台の点の大きさ × 画素倍率。**画素倍率は 2（画面が 3x でも）、重いと 1 に落とす
+//  **器の大きさは枠の点の大きさ × 画素倍率。**画素倍率は 2（画面が 3x でも）、重いと 1 に落とす
 //  （上流の auto quality と同じ。描きの時間の EMA が 12ms を超えたら落とし、5ms を切ったら戻す）。
-//  幅は最大 2048。器は 2 枚を交互に使う（makeImage の絵が器を指したままだと、次の描きが写しを作って詰まる）。
+//  長い辺は最大 2048。器は 2 枚を交互に使う（makeImage の絵が器を指したままだと、次の描きが写しを作って詰まる）。
 
-import Combine
 import SwiftUI
 import UIKit
 import os
 
-struct ETVisualizerSurfaceView: UIViewRepresentable {
-    let surface: ETVisualizerSurface
-    /// 編集画面の見本。Fit は窓の形で組む。
-    var preview = false
-
-    func makeUIView(context: Context) -> ETVisualizerLayerView {
-        ETVisualizerLayerView(surface: surface, preview: preview)
+/// 面に描かせる物。編集画面は下書き（ドラッグ中の矩形を含む）をここへ入れる。
+@MainActor
+final class ETVisualizerStage {
+    enum Mode: Equatable {
+        case inApp
+        /// Floating Meters。縦横比は枠の形で表すので、ここでは単位の取り方を替えるためだけに持つ。
+        case floating(ETVisualizerAspect)
     }
 
-    /// 設定は面自身が購読している。
+    var mode: Mode = .inApp { didSet { version &+= 1 } }
+    var scene: ETVisualizerScene { didSet { version &+= 1 } }
+    /// 編集画面。曲名・歌手・JSFX の名前を仮に出す。
+    var placeholders = false
+    /// nil は枠の形で選ぶ。
+    var forcedLayout: ETVisualizerLayoutKey? { didSet { version &+= 1 } }
+    private(set) var version = 0
+
+    init(scene: ETVisualizerScene? = nil) {
+        self.scene = scene ?? ETVisualizerSettings.shared.scene
+    }
+}
+
+struct ETVisualizerSurfaceView: UIViewRepresentable {
+    let stage: ETVisualizerStage
+
+    func makeUIView(context: Context) -> ETVisualizerLayerView {
+        ETVisualizerLayerView(stage: stage)
+    }
+
+    /// 場面は舞台（stage）が持ち、面が自分で読む。
     func updateUIView(_ uiView: ETVisualizerLayerView, context: Context) {}
 }
 
@@ -32,34 +55,32 @@ struct ETVisualizerSurfaceView: UIViewRepresentable {
 final class ETVisualizerLayerView: UIView {
 
     private static let log = Logger(subsystem: "ai.nemut.effetune", category: "visualizer")
-    private static let maxPixelWidth = 2048
-    /// アプリの中の画面（見本でない）が Fit で最後に組んだ縦横比。編集画面の見本が同じ形で組めるように覚える。
-    static var lastInAppFitRatio: Double?
+    private static let maxPixelSide = 2048
 
-    private let surface: ETVisualizerSurface
-    private let preview: Bool
-    private var config: ETVisualizerConfig
+    private let stage: ETVisualizerStage
     private let stageLayer = CALayer()
     private var link: CADisplayLink?
     private var running = false
     private var inBackground: Bool
-    private var cancellable: AnyCancellable?
 
-    private var placements: [ETVisualizerPlacement] = []
     private var pixelWidth = 0
     private var pixelHeight = 0
+    private var pixelScale: CGFloat = 1
     private var contexts: [CGContext] = []
     private var contextIndex = 0
+
+    /// 最後に場面を読み込んだときの版と並び。
+    private var seenVersion = -1
+    private var seenLayout: ETVisualizerLayoutKey?
+    private var jsfxElements: [ETVisualizerElement] = []
 
     /// 0 は画素倍率 2・60Hz まで、1 は画素倍率 1・30Hz。
     private var quality = 0
     private var drawMilliseconds: Double = 0
     private var frames = 0
 
-    init(surface: ETVisualizerSurface, preview: Bool) {
-        self.surface = surface
-        self.preview = preview
-        config = ETVisualizerSettings.shared.config(surface)
+    init(stage: ETVisualizerStage) {
+        self.stage = stage
         inBackground = UIApplication.shared.applicationState == .background
         super.init(frame: .zero)
         backgroundColor = .black
@@ -67,13 +88,6 @@ final class ETVisualizerLayerView: UIView {
         stageLayer.contentsGravity = .resize
         stageLayer.backgroundColor = UIColor.black.cgColor
         layer.addSublayer(stageLayer)
-
-        // 発行されるのは変わる前（willSet）なので、読み直さず渡された値を使う。
-        let settings = ETVisualizerSettings.shared
-        let publisher = surface == .inApp ? settings.$inApp : settings.$floating
-        cancellable = publisher.dropFirst().sink { [weak self] value in
-            MainActor.assumeIsolated { self?.configChanged(value) }
-        }
         NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
                                                name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground),
@@ -113,10 +127,9 @@ final class ETVisualizerLayerView: UIView {
         made.add(to: .main, forMode: .common)
         link = made
         ETVisualizerTap.shared.acquire(self)
-        ETVisualizerAnalysis.shared.register(self, needs: config.needs(allowsArtwork: ETFeatures.visualizer))
-        updateRecognition()
         rebuildLayout()
-        Self.log.notice("view start surface=\(self.surface.rawValue, privacy: .public) preview=\(self.preview, privacy: .public)")
+        refreshScene()
+        Self.log.notice("view start mode=\(self.modeName, privacy: .public) layout=\(self.layout.rawValue, privacy: .public)")
     }
 
     private func stop() {
@@ -126,8 +139,16 @@ final class ETVisualizerLayerView: UIView {
         link = nil
         ETVisualizerTap.shared.release(self)
         ETVisualizerAnalysis.shared.unregister(self)
+        ETVisualizerJSFXPool.shared.release(self)
+        seenLayout = nil
+        seenVersion = -1
         updateRecognition()
-        Self.log.notice("view stop surface=\(self.surface.rawValue, privacy: .public) preview=\(self.preview, privacy: .public)")
+        Self.log.notice("view stop")
+    }
+
+    private var modeName: String {
+        if case .floating = stage.mode { return "floating" }
+        return "inApp"
     }
 
     private var frameRateRange: CAFrameRateRange {
@@ -135,19 +156,29 @@ final class ETVisualizerLayerView: UIView {
                      : CAFrameRateRange(minimum: 30, maximum: 30, preferred: 30)
     }
 
-    /// アートワークの聞き取りは、回っていて、アートワークを出す設定のときだけ（版が許すときだけ）。
-    private func updateRecognition() {
-        guard ETFeatures.visualizer else { return }
-        let wanted = running && config.visibleKinds(allowsArtwork: true).contains(.artwork)
-        ETSongRecognizer.shared.setActive(wanted, for: .view(ObjectIdentifier(self)))
+    /// 描く並び。指定が無ければ枠の形で決める。
+    private var layout: ETVisualizerLayoutKey {
+        stage.forcedLayout ?? .of(width: Double(max(pixelWidth, 1)), height: Double(max(pixelHeight, 1)))
     }
 
-    private func configChanged(_ new: ETVisualizerConfig) {
-        config = new
+    /// 場面を読み込み直す: 解析に頼むもの・曲の聞き取り・JSFX の要素。
+    private func refreshScene() {
+        seenVersion = stage.version
+        let layout = self.layout
+        seenLayout = layout
+        let scene = stage.scene
+        jsfxElements = scene[layout].filter { $0.kind == .jsfx }
         guard running else { return }
-        ETVisualizerAnalysis.shared.register(self, needs: config.needs(allowsArtwork: ETFeatures.visualizer))
+        ETVisualizerAnalysis.shared.register(self, needs: scene.needs(layout, allowsSong: ETFeatures.visualizer))
         updateRecognition()
-        rebuildLayout()
+        ETVisualizerJSFXPool.shared.acquire(self, elements: jsfxElements)
+    }
+
+    /// 曲の聞き取りは、回っていて、場面が曲を使うときだけ（版が許すときだけ）。
+    private func updateRecognition() {
+        guard ETFeatures.visualizer else { return }
+        let wanted = running && stage.scene.usesSong(layout)
+        ETSongRecognizer.shared.setActive(wanted, for: .view(ObjectIdentifier(self)))
     }
 
     // MARK: - 大きさ
@@ -157,45 +188,26 @@ final class ETVisualizerLayerView: UIView {
         rebuildLayout()
     }
 
-    /// 舞台の縦横比。Floating Meters の見本は PiP の器と同じ形。Fit は画面（見本では窓）の形。
-    private var stageRatio: Double {
-        if surface == .floating {
-            let size = ETVisualizerLayout.pipPixelSize(config.aspect.ratio ?? 5)
-            return Double(size.0) / Double(size.1)
-        }
-        if let ratio = config.aspect.ratio { return ratio }
-        if preview, let last = Self.lastInAppFitRatio { return last }
-        let reference = preview ? (window?.bounds.size ?? bounds.size) : bounds.size
-        return ETVisualizerLayout.fitRatio(width: Double(reference.width), height: Double(reference.height))
-    }
-
-    /// 舞台の枠・器の大きさ・置き場を作り直す。大きさが変わったときだけ器を作り直す。
+    /// 枠・器の大きさを作り直す。大きさが変わったときだけ器を作り直す。
     private func rebuildLayout() {
         let box = bounds
         guard box.width > 0, box.height > 0 else { return }
-        if surface == .inApp && !preview && config.aspect == .fit {
-            Self.lastInAppFitRatio = ETVisualizerLayout.fitRatio(width: Double(box.width), height: Double(box.height))
-        }
-        let ratio = stageRatio
-        var width = box.width
-        var height = width / ratio
-        if height > box.height {
-            height = box.height
-            width = height * ratio
-        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        stageLayer.frame = CGRect(x: (box.width - width) / 2, y: (box.height - height) / 2,
-                                  width: width, height: height)
+        stageLayer.frame = box
         CATransaction.commit()
 
         let screenScale = window?.windowScene?.screen.scale ?? 2
-        let pixelScale = quality == 0 ? min(screenScale, 2) : 1
-        var newWidth = Int((width * pixelScale).rounded())
-        var newHeight = Int((height * pixelScale).rounded())
-        if newWidth > Self.maxPixelWidth {
-            newHeight = Int((Double(newHeight) * Double(Self.maxPixelWidth) / Double(newWidth)).rounded())
-            newWidth = Self.maxPixelWidth
+        pixelScale = quality == 0 ? min(screenScale, 2) : 1
+        var newWidth = Int((box.width * pixelScale).rounded())
+        var newHeight = Int((box.height * pixelScale).rounded())
+        let longSide = max(newWidth, newHeight)
+        if longSide > Self.maxPixelSide {
+            let k = Double(Self.maxPixelSide) / Double(longSide)
+            newWidth = Int((Double(newWidth) * k).rounded())
+            newHeight = Int((Double(newHeight) * k).rounded())
+            // 長い辺で縮めたあとの、本当の画素 / 点。JSFX の絵の大きさ（点）がこれで決まる。
+            pixelScale = CGFloat(newWidth) / box.width
         }
         newWidth = max(newWidth, 2)
         newHeight = max(newHeight, 2)
@@ -205,9 +217,6 @@ final class ETVisualizerLayerView: UIView {
             contexts = (0..<2).compactMap { _ in makeContext(newWidth, newHeight) }
             contextIndex = 0
         }
-        placements = ETVisualizerLayout.place(config.visibleKinds(allowsArtwork: ETFeatures.visualizer),
-                                              analogMode: config.analogMode,
-                                              ratio: Double(pixelWidth) / Double(pixelHeight))
     }
 
     private func makeContext(_ width: Int, _ height: Int) -> CGContext? {
@@ -216,29 +225,65 @@ final class ETVisualizerLayerView: UIView {
                   bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
     }
 
+    /// 倍率。アプリの中は短い辺 / 720、Floating Meters は長い辺 / 1280。
+    private var unit: Double {
+        if case .floating = stage.mode {
+            return ETVisualizerUnit.floating(pixelWidth: Double(pixelWidth), pixelHeight: Double(pixelHeight))
+        }
+        return ETVisualizerUnit.inApp(pixelWidth: Double(pixelWidth), pixelHeight: Double(pixelHeight))
+    }
+
     // MARK: - 描く
 
     @objc private func tick(_ link: CADisplayLink) {
         guard contexts.count == 2 else { return }
         let start = CACurrentMediaTime()
+        if stage.version != seenVersion || seenLayout != self.layout { refreshScene() }
         let analysis = ETVisualizerAnalysis.shared
         analysis.update(rate: AudioIO.shared.sampleRate, now: start)
 
+        let layout = self.layout
+        let scene = stage.scene
+        let allowsSong = ETFeatures.visualizer
+        let recognizer = ETSongRecognizer.shared
+        let artwork = allowsSong ? recognizer.artwork : nil
+        let blurred = allowsSong && scene.background.kind == .artwork
+            ? ETVisualizerArtworkBlur.shared.image(for: artwork) : nil
+        var song: ETVisualizerSongText?
+        if allowsSong, let current = recognizer.current {
+            song = ETVisualizerSongText(title: current.title, artist: current.artist ?? "")
+        }
+        let pool = ETVisualizerJSFXPool.shared
+        let frame = ETVisualizerFrame(
+            analysis: analysis, artwork: artwork, blurredArtwork: blurred, song: song,
+            jsfxImages: pool.images(for: jsfxElements.map(\.id)), allowsSong: allowsSong,
+            placeholders: stage.placeholders)
+
         contextIndex ^= 1
         let ctx = contexts[contextIndex]
+        let size = CGSize(width: pixelWidth, height: pixelHeight)
+        let unit = CGFloat(self.unit)
         ctx.saveGState()
         // 上を 0 にする。
         ctx.translateBy(x: 0, y: CGFloat(pixelHeight))
         ctx.scaleBy(x: 1, y: -1)
-        ETVisualizerRenderer.draw(config: config, placements: placements, analysis: analysis,
-                                  artwork: ETFeatures.visualizer ? ETSongRecognizer.shared.artwork : nil,
-                                  in: ctx, pixelSize: CGSize(width: pixelWidth, height: pixelHeight))
+        ETVisualizerRenderer.draw(scene: scene, layout: layout, frame: frame, in: ctx, pixelSize: size, unit: unit)
         ctx.restoreGState()
         let image = ctx.makeImage()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         stageLayer.contents = image
         CATransaction.commit()
+
+        // JSFX の要素の枠（カードの内側）を点にして、1 枚頼む。
+        for element in jsfxElements {
+            var content = ETVisualizerRenderer.pixelRect(element.rect, size)
+            if element.card { content = content.insetBy(dx: 8 * unit, dy: 8 * unit) }
+            guard content.width >= 1, content.height >= 1 else { continue }
+            pool.step(element.id, holder: self,
+                      logical: CGSize(width: content.width / pixelScale, height: content.height / pixelScale),
+                      surfaceScale: pixelScale, now: start)
+        }
 
         adjustQuality(milliseconds: (CACurrentMediaTime() - start) * 1000)
     }

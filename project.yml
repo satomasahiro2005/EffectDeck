@@ -292,10 +292,20 @@ targets:
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
       # 曲の聞き取りの間合い。Foundationだけ（SongRecognitionPolicyTests）。
       - path: Sources/EffeTuneLive/Audio/SongRecognitionPolicy.swift
-      # Visualizer の設定の形と保存（VisualizerConfigTests）。Foundationだけ。
+      # Visualizer の旧い設定の形（v1。移行でだけ使う。VisualizerConfigTests）と、場面と共有する列挙型。Foundationだけ。
       - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerConfig.swift
-      # Visualizer のパネルの置き場（VisualizerLayoutTests）。Foundationだけ。
+      # Visualizer の旧い並べ方（移行でだけ使う）とPiPの器の大きさ（VisualizerLayoutTests）。Foundationだけ。
       - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerLayout.swift
+      # Visualizer の場面（背景と縦向き・横向きの要素の並び）とその保存（VisualizerSceneTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerScene.swift
+      # Visualizer の組み込みの場面（VisualizerPresetsTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerPresets.swift
+      # 旧い Floating Meters の設定を場面へ移す（VisualizerMigrationTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerMigration.swift
+      # Visualizer の編集の規則と取り消し（VisualizerSceneEditingTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerSceneEditing.swift
+      # Visualizer の設定の保存（VisualizerSettingsTests）。Combineが要るのでMacだけ（Linuxの写しからは外す。make_package.py）。
+      - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerSettings.swift
       # メーターの落ち方とVUの針（VisualizerBallisticsTests）。Foundationだけ。
       - path: Sources/EffeTuneLive/Views/Visualizer/VisualizerBallistics.swift
       # スペクトログラムの色（VisualizerPaletteTests）。Foundationだけ。
