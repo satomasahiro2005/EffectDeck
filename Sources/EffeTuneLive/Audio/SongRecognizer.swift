@@ -393,7 +393,11 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         // 返事を待っているあいだは重ねない（返事が来なければ queryTimeout で諦めて投げ直す）。
         if let sent = inFlightSince, now - sent < Self.queryTimeout { return }
         let n = Self.historyFrames
-        let window = min(Self.queryWindow + missStreak * Self.queryWindowStep, Self.queryWindowMax)
+        // 外れが続くあいだは、直近 4 秒と伸ばした窓を交互に投げる。伸ばした窓だけにすると、曲を替えた直後は
+        // 前の曲の音をかえって多く含み、新しい曲が窓の大半を占めるまで 4 回（約 8 秒）外れ続けた（10-17 の shazam.log）。
+        // 直近 4 秒で曲の替わりを拾い、伸ばした窓で聞き分けにくい曲を拾う。
+        let long = missStreak > 0 && queries % 2 == 1
+        let window = long ? min(Self.queryWindow + missStreak * Self.queryWindowStep, Self.queryWindowMax) : Self.queryWindow
         let count = min(historyCount, window)
         guard Double(count) >= minimumQueryFrames,
               let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(count)),
