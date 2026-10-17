@@ -51,8 +51,10 @@ struct SongRecognitionPolicy {
     /// 最後に当たった曲。同じ曲に当たり直しても変わったことにしない。
     private(set) var lastID: String?
     /// 替わり先の候補。曲の替わり目では前の曲と次の曲が混ざった音を問い合わせ、まるで違う曲に
-    /// conf 1.00 で当たることがある（10-17 実機で 2 回、Shinedown など）。なので出ている曲から
-    /// 替えるのは、同じ候補に 2 回続けて当たったときだけにする。何も出ていないときはすぐ出す。
+    /// conf 1.00 で当たることがある（10-17 実機、Shinedown。skew が 0.0010 と大きかった）。
+    /// 速さのずれ（skew）がほぼ無い当たりは 1 回で替え、ずれのある当たりは同じ候補に 2 回続けて
+    /// 当たったときだけ替える（全部 2 回にしたら替わるのが 2 秒遅れて「めちゃめちゃ遅くなってる」）。
+    /// 何も出ていないときはすぐ出す。
     private(set) var pendingID: String?
 
     /// 新しい音が来た。
@@ -97,13 +99,16 @@ struct SongRecognitionPolicy {
         }
     }
 
+    /// これより skew が小さい当たりは 1 回で信じる。正しい当たりは ±0.0003 に収まっていた（10-17）。
+    static let trustedSkew: Float = 0.0003
+
     /// 曲に当たった。出す曲が替わったなら true。聞かせ続ける（セッションは捨てない）。
-    mutating func matched(id: String) -> Bool {
+    mutating func matched(id: String, skew: Float = 0) -> Bool {
         if id == lastID {
             pendingID = nil
             return false
         }
-        if lastID == nil || pendingID == id {
+        if lastID == nil || pendingID == id || abs(skew) <= Self.trustedSkew {
             lastID = id
             pendingID = nil
             return true

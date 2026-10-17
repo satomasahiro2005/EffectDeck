@@ -75,9 +75,9 @@ final class SongRecognitionPolicyTests: XCTestCase {
         XCTAssertEqual(p.phase, .listening(since: 0, silentSince: nil))
         XCTAssertEqual(p.audio(now: 9, peak: loud), .feed)
         XCTAssertFalse(p.matched(id: "a"))
-        XCTAssertFalse(p.matched(id: "b"))               // 替わり目の 1 回だけでは替えない
+        XCTAssertFalse(p.matched(id: "b", skew: 0.001))               // 替わり目の 1 回だけでは替えない
         XCTAssertEqual(p.lastID, "a")
-        XCTAssertTrue(p.matched(id: "b"))
+        XCTAssertTrue(p.matched(id: "b", skew: 0.001))
         XCTAssertEqual(p.lastID, "b")
     }
 
@@ -85,13 +85,13 @@ final class SongRecognitionPolicyTests: XCTestCase {
     func testOneOffWrongMatchIsIgnored() {
         var p = started()
         XCTAssertTrue(p.matched(id: "a"))
-        XCTAssertFalse(p.matched(id: "wrong"))
+        XCTAssertFalse(p.matched(id: "wrong", skew: 0.001))
         XCTAssertFalse(p.matched(id: "a"))
         XCTAssertNil(p.pendingID)
-        XCTAssertFalse(p.matched(id: "wrong"))
-        XCTAssertFalse(p.matched(id: "c"))               // 候補が替われば数え直し
+        XCTAssertFalse(p.matched(id: "wrong", skew: 0.001))
+        XCTAssertFalse(p.matched(id: "c", skew: 0.001))               // 候補が替われば数え直し
         XCTAssertEqual(p.lastID, "a")
-        XCTAssertTrue(p.matched(id: "c"))
+        XCTAssertTrue(p.matched(id: "c", skew: 0.001))
     }
 
     func testSilenceDuringErrorRestRearms() {
@@ -118,6 +118,16 @@ final class SongRecognitionPolicyTests: XCTestCase {
         XCTAssertEqual(p.phase, .resting(until: 65, silentSince: nil))
         XCTAssertEqual(p.audio(now: 64, peak: loud), .skip)
         XCTAssertEqual(p.audio(now: 65, peak: loud), .startAndFeed)
+    }
+
+    /// skew がほぼ無い当たりは 1 回で替える（替わるのを 2 秒待たせない）。
+    func testTrustedSkewSwitchesAtOnce() {
+        var p = started()
+        XCTAssertTrue(p.matched(id: "a"))
+        XCTAssertTrue(p.matched(id: "b", skew: -0.00012))
+        XCTAssertEqual(p.lastID, "b")
+        XCTAssertFalse(p.matched(id: "c", skew: 0.0010))
+        XCTAssertEqual(p.lastID, "b")
     }
 
     func testPeerLostClearsID() {

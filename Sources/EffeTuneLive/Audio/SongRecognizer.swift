@@ -12,7 +12,7 @@
 //
 //  **いつ動くか。**Visualizer のシートが（アプリが前にいて）出ているか、Floating Meters が出ているあいだ
 //  （それぞれが setActive を呼ぶ。相手が居なければ読み手は空回りする）。
-//  読み手は読んだ音を 10 秒ぶん溜めておき（history）、聞き始めるときは溜めた分から聞かせる。
+//  読み手は読んだ音を 12 秒ぶん溜めておき（history）、聞き始めるときは溜めた分から聞かせる。
 //  無音やエラーのあとの聞き直しがすぐ当たるように。
 //  聞かせる長さ・休み・無音の扱いは SongRecognitionPolicy（Foundation だけ。そちらに説明）。
 //
@@ -165,8 +165,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         return made
     }()
     private let timer: DispatchSourceTimer
-    /// 溜めておくモノラルの長さ（フレーム）。10 秒。
-    private static let historyFrames = 480_000
+    /// 溜めておくモノラルの長さ（フレーム）。12 秒（伸ばした窓の上限と同じ）。
+    private static let historyFrames = 576_000
     /// 0.5 秒ぶんの interleaved 2ch。一度だけ確保する。
     private var scratch = [Float](repeating: 0, count: 48_000)
     /// 読んだ音のモノラル（輪）。休んでいるあいだも溜める。音が飛んだら捨てる（historyCount = 0）。
@@ -180,6 +180,11 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
     private var fedFrames: Int64 = 0
     /// 1 回に問い合わせる長さ（フレーム）。4 秒。
     private static let queryWindow = 192_000
+    /// 外れが続いたときに伸ばす窓の上限（フレーム）。12 秒（カタログの最長の署名）。
+    /// 4 秒の窓だけだと聞き分けにくい曲が 50 秒外れ続けた（10-17）。外れるたびに 2 秒ずつ伸ばし、当たったら戻す。
+    private static let queryWindowMax = 576_000
+    private static let queryWindowStep = 96_000
+    private var missStreak = 0
     /// 何 tick（250ms）ごとに問い合わせるか。2 秒。
     private static let queryEveryTicks = 8
     /// 返事を待つ上限。これを過ぎたら次を投げる。
@@ -341,6 +346,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             "session=\(session != nil)",
             "fed=\(fedFrames)",
             "queries=\(queries)",
+            "window=\(min(Self.queryWindow + missStreak * Self.queryWindowStep, Self.queryWindowMax) / 48_000)s",
             "latency=\(lastLatency)",
             "sessions=\(sessions)",
             "matches=\(matches)",
@@ -387,7 +393,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
         // 返事を待っているあいだは重ねない（返事が来なければ queryTimeout で諦めて投げ直す）。
         if let sent = inFlightSince, now - sent < Self.queryTimeout { return }
         let n = Self.historyFrames
-        let count = min(historyCount, Self.queryWindow)
+        let window = min(Self.queryWindow + missStreak * Self.queryWindowStep, Self.queryWindowMax)
+        let count = min(historyCount, window)
         guard Double(count) >= minimumQueryFrames,
               let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(count)),
               let channel = buffer.floatChannelData?[0] else { return }
@@ -433,7 +440,8 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             matches += 1
             lastMatch = String(format: "conf=%.2f skew=%.4f offset=%.1fs", item.confidence,
                                item.frequencySkew, item.predictedCurrentMatchOffset)
-            let changed = policy.matched(id: id)
+            missStreak = 0
+            let changed = policy.matched(id: id, skew: item.frequencySkew)
             note("find id=\(id) title=\(title) conf=\(item.confidence) skew=\(item.frequencySkew) matchOffset=\(item.matchOffset) offset=\(item.predictedCurrentMatchOffset) changed=\(changed)")
             guard changed else { return }
             note("matched id=\(id) title=\(title) artist=\(item.artist ?? "-") artwork=\(item.artworkURL?.absoluteString ?? "-")")
@@ -447,6 +455,7 @@ final class ETShazamFeeder: NSObject, SHSessionDelegate, @unchecked Sendable {
             answered(error == nil ? "miss" : "error")
             guard let error else {
                 misses += 1
+                missStreak += 1
                 // 外れても聞かせ続ける（streaming が聞き直す）。ログは 1 セッションに 1 回。
                 if !loggedMiss {
                     loggedMiss = true
