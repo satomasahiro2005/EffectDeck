@@ -577,6 +577,31 @@ final class AddPlacementTests: XCTestCase {
         assertCanonical(r.items)
     }
 
+    /// 左の一覧: 見出しの行の真下。閉じた組（下の行が次の見出し）でも、空の組でも、その組に入る。
+    func testHeadRowGapJoinsThatGroup() {
+        let collapsed = add(chain("A+ X B+ Y"), .head(section: 0, next: 2))
+        XCTAssertEqual(collapsed.items.shape, "A+ N X B+ Y")
+        XCTAssertEqual(owner(collapsed.items, collapsed.new), "A")
+        let empty = add(chain("A+ R Y"), .head(section: 0, next: 1))
+        XCTAssertEqual(empty.items.shape, "A+ N R Y")
+        XCTAssertEqual(owner(empty.items, empty.new), "A")
+        let last = add(chain("X A+"), .head(section: 1, next: nil))
+        XCTAssertEqual(last.items.shape, "X A+ N")
+        XCTAssertEqual(owner(last.items, last.new), "A")
+        assertCanonical(collapsed.items)
+        assertCanonical(empty.items)
+        assertCanonical(last.items)
+    }
+
+    /// 足すのが Section なら、見出しの真下でも今までの .gap と同じ位置。
+    func testHeadRowGapForSectionIsGap() {
+        let items = chain("A+ X B+ Y")
+        XCTAssertEqual(add(items, .head(section: 0, next: 2), role: .section).plan,
+                       add(items, .gap(2), role: .section).plan)
+        XCTAssertEqual(add(items, .head(section: 2, next: nil), role: .section).plan,
+                       add(items, .end, role: .section).plan)
+    }
+
     func testGapBeforeHeaderLeavesPreviousGroup() {
         let r = add(chain("A+ X B+ Y"), .gap(2))
         XCTAssertEqual(r.items.shape, "A+ X R N B+ Y")
@@ -626,6 +651,9 @@ final class AddPlacementTests: XCTestCase {
             let before = items.analysis
             var targets: [ETChainEditing.AddTarget] = [.end]
             for i in 0...items.count { targets += [.card(i), .gap(i)] }
+            for (i, e) in items.enumerated() where e.role == .section {
+                targets += [.head(section: i, next: i + 1 < items.count ? i + 1 : nil)]
+            }
 
             for target in targets {
                 let r = add(items, target)
@@ -637,6 +665,20 @@ final class AddPlacementTests: XCTestCase {
                                    "既存の段の所属が変わった: \(msg)")
                     XCTAssertEqual(after.gate(of: e.id), before.gate(of: e.id),
                                    "既存の段の gate が変わった: \(msg)")
+                }
+                // 例外そのもの: 組のカード（見出し・配下の段）に落としたら、その組に入る。
+                switch target {
+                case .card(let i) where items.indices.contains(i) && items[i].role == .section:
+                    XCTAssertEqual(owner(r.items, r.new), items[i].label, "見出しのカードなのに組に入らない: \(msg)")
+                case .card(let i), .gap(let i):
+                    if items.indices.contains(i), items[i].role == .effect {
+                        XCTAssertEqual(after.owner(of: r.new.id), before.owner(of: items[i].id),
+                                       "配下の段に落としたのに、その段と同じ組でない: \(msg)")
+                    }
+                case .head(let s, _):
+                    XCTAssertEqual(owner(r.items, r.new), items[s].label, "見出しの真下なのに組に入らない: \(msg)")
+                case .end:
+                    break
                 }
                 // 組に入るのは、落とし先が組のカード（配下の段か見出し）のときだけ。
                 guard owner(r.items, r.new) != nil else { continue }
@@ -650,6 +692,8 @@ final class AddPlacementTests: XCTestCase {
                     if !(items.indices.contains(i) && items[i].role == .effect) {
                         XCTFail("配下の段の手前でないのに組に入った: \(msg)")
                     }
+                case .head:
+                    break
                 }
             }
         }

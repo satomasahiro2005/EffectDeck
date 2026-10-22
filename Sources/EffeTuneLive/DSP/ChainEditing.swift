@@ -111,12 +111,16 @@ enum ETChainEditing {
         case end          // ピッカー・末尾の帯・出力補正の行・背面・空の鎖・左の一覧の末尾/出力補正
         case card(Int)    // その段のカードの上（右の鎖。1列も2列も）
         case gap(Int)     // その段の手前の隙間（左の一覧の onInsert）
+        /// Section の見出しの行の真下の隙間（左の一覧の onInsert）。`next` はその下の行の添字（無ければ末尾）。
+        /// 段はその Section のカードに落としたのと同じ（閉じた組・空の組にも入る）。プリセットは `.gap(next)` と同じ。
+        case head(section: Int, next: Int?)
 
         /// プリセットはどこへ落としても組を作るので位置だけ使う（今までと同じ）。
         var presetIndex: Int? {
             switch self {
             case .end: return nil
             case .card(let i), .gap(let i): return i
+            case .head(_, let next): return next
             }
         }
     }
@@ -134,6 +138,7 @@ enum ETChainEditing {
     /// - 配下の段の上・手前: その段の手前へ。組に入ったまま（root の段なら root のまま）
     /// - Section の札の上: その組の頭へ（空の Section にも足せるように）
     /// - Section の手前（隙間）: 前の組に入らないよう組の外へ
+    /// - Section の見出しの真下（`.head`）: Section の札に落としたのと同じ（段だけ。左の一覧）
     /// - 足すのが Section 自身なら位置を寄せるだけ（Section は組の配下にならない）
     ///
     /// 印が指されたら（UIからは来ない）、並べて置かないよう後ろへ送る。
@@ -154,6 +159,11 @@ enum ETChainEditing {
         case .gap(let i):
             index = clamp(i)
             if index < n, roles[index] == .effect { return Addition(index: index, leavesSection: false) }
+        case .head(let s, let next):
+            if role == .effect, roles.indices.contains(s), roles[s] == .section {
+                return Addition(index: s + 1, leavesSection: false)
+            }
+            return addition(roles: roles, adding: role, to: next.map { AddTarget.gap($0) } ?? .end)
         }
         guard role == .effect else { return Addition(index: index, leavesSection: false) }
 
