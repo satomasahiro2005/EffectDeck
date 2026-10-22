@@ -88,7 +88,7 @@ extension ETAudioSnapshot {
             trimFrames: ETLinkReceiver.trimFrames,
             bypass: dsp.bypass,
             // Section は descriptor に入らないので分母から外す。
-            effectCount: dsp.chain.filter { !$0.isSection }.count,
+            effectCount: dsp.chain.filter { $0.role == .effect }.count,
             telemetryDropped: Telemetry.shared.droppedFrames)
     }
 }

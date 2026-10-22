@@ -1677,7 +1677,7 @@ struct PipelineView: View {
 
     /// 帯に出す本数。Section は音を触らないので数に入れない。
     private var effectCount: Int {
-        dsp.chain.filter { !$0.isSection }.count
+        dsp.chain.filter { $0.role == .effect }.count
     }
 
     /// 画面の行番号を鎖の位置へ戻す。

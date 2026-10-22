@@ -68,7 +68,7 @@ struct ChainMinimap: View {
                 .onInsert(of: [.plainText]) { offset, providers in
                     // 落とした行の手前へ。一番下なら末尾。
                     // **Section の見出しの真下は、その Section のカードに落としたのと同じ。**
-                    // 閉じた組・空の組でも、次の行が別の組や root の段になって外へ出ないように。
+                    // 空の組でも、次の行が別の組や root の段になって外へ出ないように（2列では組は畳めない）。
                     let at: ETChainEditing.AddTarget
                     if offset > 0, items.indices.contains(offset - 1), items[offset - 1].isSection {
                         at = .head(section: items[offset - 1].index,

@@ -577,18 +577,20 @@ final class AddPlacementTests: XCTestCase {
         assertCanonical(r.items)
     }
 
-    /// 左の一覧: 見出しの行の真下。閉じた組（下の行が次の見出し）でも、空の組でも、その組に入る。
+    /// 左の一覧: 見出しの行の真下。空の組にも入る。下の行が組の中の段なら `.gap(next)` と同じ。
+    /// （2列では組は畳めないので、下の行が別の見出しになるのは空の組のときだけ。）
     func testHeadRowGapJoinsThatGroup() {
-        let collapsed = add(chain("A+ X B+ Y"), .head(section: 0, next: 2))
-        XCTAssertEqual(collapsed.items.shape, "A+ N X B+ Y")
-        XCTAssertEqual(owner(collapsed.items, collapsed.new), "A")
+        let member = add(chain("A+ X B+ Y"), .head(section: 0, next: 1))
+        XCTAssertEqual(member.items.shape, "A+ N X B+ Y")
+        XCTAssertEqual(owner(member.items, member.new), "A")
+        XCTAssertEqual(member.plan, add(chain("A+ X B+ Y"), .gap(1)).plan)
         let empty = add(chain("A+ R Y"), .head(section: 0, next: 1))
         XCTAssertEqual(empty.items.shape, "A+ N R Y")
         XCTAssertEqual(owner(empty.items, empty.new), "A")
         let last = add(chain("X A+"), .head(section: 1, next: nil))
         XCTAssertEqual(last.items.shape, "X A+ N")
         XCTAssertEqual(owner(last.items, last.new), "A")
-        assertCanonical(collapsed.items)
+        assertCanonical(member.items)
         assertCanonical(empty.items)
         assertCanonical(last.items)
     }

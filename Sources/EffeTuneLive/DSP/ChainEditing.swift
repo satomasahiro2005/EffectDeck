@@ -112,7 +112,7 @@ enum ETChainEditing {
         case card(Int)    // その段のカードの上（右の鎖。1列も2列も）
         case gap(Int)     // その段の手前の隙間（左の一覧の onInsert）
         /// Section の見出しの行の真下の隙間（左の一覧の onInsert）。`next` はその下の行の添字（無ければ末尾）。
-        /// 段はその Section のカードに落としたのと同じ（閉じた組・空の組にも入る）。プリセットは `.gap(next)` と同じ。
+        /// 段はその Section のカードに落としたのと同じ（空の組にも入る。下の行が組の中の段なら `.gap(next)` と同じ）。プリセットは `.gap(next)` と同じ。
         case head(section: Int, next: Int?)
 
         /// プリセットはどこへ落としても組を作るので位置だけ使う（今までと同じ）。

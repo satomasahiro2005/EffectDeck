@@ -1580,14 +1580,14 @@ final class EffeTuneDSP: ObservableObject {
         retire(retiredProbes)
         // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
         // ノードが混ざっている＝画面の本数だけ音が通っていない。
-        // Section は必ず descriptor から外れるので、先に引いて dead と分ける。
+        // Section と rootReset の印は必ず descriptor から外れるので、先に引いて dead と分ける。
         // 分けないと Section を 1 本置くたびに dead が 1 増えて、取りこぼしと見分けが付かない。
         // 探り（enabled 2）は人が置いた段ではないので、どの数にも入れない
         // （入れると PEQ 1 枚ごとに dead が 2 減り、active が 2 増える）。
         // dead と sections は main と補正を合わせて数える（descriptor は両方から作る）。
         let all = self.nodes
         let placed = nodes.filter { $0.enabled != 2 }
-        let sections = all.filter(\.isSection).count
+        let sections = all.filter { $0.role != .effect }.count
         let dead = all.count - sections - placed.count
         let active = placed.filter { $0.enabled != 0 && $0.sectionGate != 0 }.count
         let gated = placed.filter { $0.enabled != 0 && $0.sectionGate == 0 }.count
