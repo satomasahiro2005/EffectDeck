@@ -200,6 +200,8 @@ final class AudioIO: ObservableObject {
     /// 落ち着いた出力先（ヘッドホンなど）。名前が変わったかを見るためだけに持つ。
     /// 画面が見るのは OutputCorrection.device（AudioIO は 3.3Hz で publish するので観測させない）。
     private(set) var outputDevice: ETOutputDevice?
+    /// #17 の測り（VolumeProbe.swift）が読むだけ。test/volume-probe-17 だけ。
+    var engineIsRunning: Bool { engine.isRunning }
     /// 出力先が変わったと決める判断。中身は ETDeviceSwitch（OutputDeviceTests）。
     private var deviceSwitch = ETDeviceSwitch(settled: nil)
     /// 待ちが明けたときに経路を読み直す 1 回きりの Task。tick が回っていなくても切り替える。
@@ -239,6 +241,8 @@ final class AudioIO: ObservableObject {
         // 前に now playing を名乗る。前後の入れ替わりがループバックの原因なら
         // 毎回 rsp=1 になるはず。
         NowPlaying.claimBeforeSession()
+        // #17 の測り。読むだけ（VolumeProbe.swift）。test/volume-probe-17 だけ。
+        VolumeProbe.shared.start(audio: self)
     }
 
     /// 音の経路に関わる設定が変わったら組み直す。一瞬切れる。
