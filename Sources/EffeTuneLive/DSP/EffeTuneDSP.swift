@@ -282,50 +282,64 @@ final class EffeTuneDSP: ObservableObject {
 
     // MARK: - 鎖をいじる
 
-    /// 足す。`at` を渡すとその位置へ差し込む。nil なら末尾。
+    /// 足す。`target` が足した先。省くと末尾。
+    ///
+    /// **足したものは組に入れない**（組のカードへ落としたときだけ入る）。
+    /// 末尾の組が開いたままなら rootReset を挟む。決め方は ETChainEditing.addition。
     ///
     /// **位置は鎖の添字。** 画面の行番号ではない（Section が畳まれていると
     /// 行と鎖はずれる）。呼ぶ側が鎖の添字へ直してから渡すこと。
-    func add(_ spec: ETEffect, at index: Int? = nil) {
+    func add(_ spec: ETEffect, to target: ETChainEditing.AddTarget = .end) {
+        // appendSpec が鎖の末尾へ積む前の並びで決める。
+        let plan = ETChainEditing.addition(roles: chain.map(\.role),
+                                           adding: ETSection.isSection(spec) ? .section : .effect,
+                                           to: target)
         guard appendSpec(spec) else { return }
-        // appendSpec は末尾へ積む。差し込む位置が指定されていれば、そこへ移す。
-        var placed = chain.count - 1
-        if let index, index >= 0, index < placed {
-            let node = chain.removeLast()
-            chain.insert(node, at: index)
-            placed = index
-        }
+        // appendSpec は末尾へ積む。決めた位置へ移す。
+        let placed = insertAdded(chain.removeLast(), plan)
         publish()
         guard chain.indices.contains(placed) else { return }
         let id = chain[placed].id
         expanded.insert(id)
-        // 足す先は必ず鎖の末尾で、その末尾が畳んだ Section の配下に当たることがある。
-        // 隠す範囲は Section の次から次の Section の手前までで、次が無ければ末尾まで
-        // なので、鎖 [A, Section(畳), C] に足すと足したものが配下へ入り、
+        // 畳んだ Section のカードへ落とすと、足したものがその配下に入る。
+        // 隠す範囲は Section の次から次の Section の手前までなので、そのままだと
         // 画面には何も出ない。上の expanded.insert は自分のパラメータを開く印で、
         // 包んでいる Section は畳んだままなので効かない。
         revealHidden([id])
     }
 
+    /// 足す1段を置く。publish はしない。戻り値は段の位置。
+    private func insertAdded(_ node: Node, _ plan: ETChainEditing.Addition) -> Int {
+        var at = min(plan.index, chain.count)
+        if plan.leavesSection {
+            chain.insert(Self.rootResetMarker(), at: at)
+            at += 1
+        }
+        chain.insert(node, at: at)
+        return at
+    }
+
+    private static func rootResetMarker() -> Node {
+        var marker = Node(spec: ETSection.spec, values: [])
+        marker.isRootReset = true
+        return marker
+    }
+
     /// AU/JSFXをEffectDeckの鎖へ追加するための共通入口。
     /// 実行アダプタはexternalIDをキーに別レジストリから解決する。
     func addExternal(id: String, instanceID: String, name: String, category: String,
-                     externalIndex: UInt8, at index: Int? = nil) {
+                     externalIndex: UInt8, to target: ETChainEditing.AddTarget = .end) {
         let spec = ETEffect.external(type: "External:\(id)", name: name, category: category)
         var node = Node(spec: spec, values: [])
         node.externalID = id
         node.externalInstanceID = instanceID
         node.externalIndex = externalIndex
-        let placed: Int
-        if let index, index >= 0, index < chain.count {
-            chain.insert(node, at: index)
-            placed = index
-        } else {
-            chain.append(node)
-            placed = chain.count - 1
-        }
+        let plan = ETChainEditing.addition(roles: chain.map(\.role), adding: .effect, to: target)
+        let placed = insertAdded(node, plan)
         publish()
         expanded.insert(chain[placed].id)
+        // 畳んだ Section のカードへ落としたとき、足したものが隠れないように（add と同じ）。
+        revealHidden([chain[placed].id])
     }
 
     /// 1 本足すだけ。publish はしない。
@@ -473,8 +487,7 @@ final class EffeTuneDSP: ObservableObject {
         guard let at = ETRootResetRule.insertion(roles: list.map(\.role),
                                                  enabled: list.map(\.enabled),
                                                  at: place.local) else { return false }
-        var marker = Node(spec: ETSection.spec, values: [])
-        marker.isRootReset = true
+        let marker = Self.rootResetMarker()
         withPart(place.part) { $0.insert(marker, at: at) }
         publish()
         return true

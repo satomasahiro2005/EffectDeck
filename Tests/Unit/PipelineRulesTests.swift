@@ -486,3 +486,182 @@ final class PipelineFuzzTests: XCTestCase {
         }
     }
 }
+
+// MARK: - 14. 足したものは組の外
+
+final class AddPlacementTests: XCTestCase {
+
+    /// 並びの記法から作る。"A+ X B- R Y" のように空白区切り。
+    /// 名前+ / 名前- が Section、R が rootReset、それ以外は段。
+    private func chain(_ text: String) -> [Item] {
+        text.split(separator: " ").map { token in
+            let t = String(token)
+            if t == "R" { return reset() }
+            if t.hasSuffix("+") || t.hasSuffix("-") {
+                let name = String(t.dropLast())
+                return section(name, name, on: t.hasSuffix("+"))
+            }
+            return effect(t)
+        }
+    }
+
+    /// 計画どおりに足す。印を挿すなら印、そのあとに新しい段 "N"（Section を足すなら "N+"）。
+    private func add(_ items: [Item], _ target: ETChainEditing.AddTarget,
+                     role: ETItemRole = .effect) -> (items: [Item], new: Item, plan: ETChainEditing.Addition) {
+        let plan = ETChainEditing.addition(roles: items.roles, adding: role, to: target)
+        var out = items
+        var at = plan.index
+        if plan.leavesSection { out.insert(reset(), at: at); at += 1 }
+        let new = role == .section ? section("N", "N") : effect("N")
+        out.insert(new, at: at)
+        return (out, new, plan)
+    }
+
+    private func owner(_ items: [Item], _ item: Item) -> String? {
+        guard let id = items.analysis.owner(of: item.id) else { return nil }
+        return items.first { $0.id == id }?.label
+    }
+
+    func testEndAfterOpenGroupLeavesIt() {
+        let r = add(chain("A+ X"), .end)
+        XCTAssertEqual(r.items.shape, "A+ X R N")
+        XCTAssertNil(owner(r.items, r.new))
+        assertCanonical(r.items)
+    }
+
+    func testEndAfterSwitchedOffGroupIsStillOn() {
+        // 切った組の末尾に足したものが鳴らない、という訴え。
+        let r = add(chain("A- X"), .end)
+        XCTAssertEqual(r.items.shape, "A- X R N")
+        XCTAssertEqual(r.items.analysis.gate(of: r.new.id), 1)
+        assertCanonical(r.items)
+    }
+
+    func testEndAtRootNeedsNoMarker() {
+        XCTAssertEqual(add(chain("X"), .end).items.shape, "X N")
+        XCTAssertEqual(add(chain("A+ X R Y"), .end).items.shape, "A+ X R Y N")
+        XCTAssertEqual(add([], .end).items.shape, "N")
+    }
+
+    func testEndAfterEmptySection() {
+        let r = add(chain("A+"), .end)
+        XCTAssertEqual(r.items.shape, "A+ R N")
+        assertCanonical(r.items)
+    }
+
+    func testDropOnMemberCardStaysInGroup() {
+        let r = add(chain("A+ X Y"), .card(2))
+        XCTAssertEqual(r.items.shape, "A+ X N Y")
+        XCTAssertEqual(owner(r.items, r.new), "A")
+        assertCanonical(r.items)
+    }
+
+    func testDropOnRootCardStaysAtRoot() {
+        XCTAssertEqual(add(chain("X"), .card(0)).items.shape, "N X")
+        let r = add(chain("A+ X R Y"), .card(3))
+        XCTAssertEqual(r.items.shape, "A+ X R N Y")
+        XCTAssertNil(owner(r.items, r.new))
+    }
+
+    func testDropOnHeaderCardJoinsThatGroup() {
+        let r = add(chain("A+ X B+ Y"), .card(2))
+        XCTAssertEqual(r.items.shape, "A+ X B+ N Y")
+        XCTAssertEqual(owner(r.items, r.new), "B")
+        assertCanonical(r.items)
+    }
+
+    func testDropOnEmptyHeaderCardFillsIt() {
+        let r = add(chain("A+ R Y"), .card(0))
+        XCTAssertEqual(r.items.shape, "A+ N R Y")
+        XCTAssertEqual(owner(r.items, r.new), "A")
+        assertCanonical(r.items)
+    }
+
+    func testGapBeforeHeaderLeavesPreviousGroup() {
+        let r = add(chain("A+ X B+ Y"), .gap(2))
+        XCTAssertEqual(r.items.shape, "A+ X R N B+ Y")
+        XCTAssertNil(owner(r.items, r.new))
+        assertCanonical(r.items)
+    }
+
+    func testGapBeforeMemberStaysInGroup() {
+        let r = add(chain("A+ X B+ Y"), .gap(3))
+        XCTAssertEqual(r.items.shape, "A+ X B+ N Y")
+        XCTAssertEqual(owner(r.items, r.new), "B")
+    }
+
+    func testAddingASectionNeverGetsAMarker() {
+        let end = add(chain("A+ X"), .end, role: .section)
+        XCTAssertEqual(end.items.shape, "A+ X N+")
+        let card = add(chain("A+ X"), .card(0), role: .section)
+        XCTAssertEqual(card.plan.index, 0)
+        XCTAssertEqual(card.items.shape, "N+ A+ X")
+    }
+
+    func testTargetOnMarkerSkipsPastIt() {
+        let r = add(chain("A+ X R Y"), .gap(2))
+        XCTAssertEqual(r.items.shape, "A+ X R N Y")
+        assertCanonical(r.items)
+    }
+
+    func testTargetIsClamped() {
+        XCTAssertEqual(add(chain("X Y"), .gap(-3)).items.shape, "N X Y")
+        XCTAssertEqual(add(chain("X Y"), .card(99)).items.shape, "X Y N")
+        XCTAssertEqual(add(chain("A+ X"), .card(99)).items.shape, "A+ X R N")
+    }
+
+    /// 乱数の鎖 × 全ての落とし先。正規形が保たれ、既存の段の所属と gate は変わらない。
+    func testFuzzAllTargets() {
+        var rng = Seeded(state: 0x1234_5678_9ABC_DEF1)
+        for round in 1...200 {
+            var items: [Item] = []
+            for k in 0..<Int.random(in: 0...8, using: &rng) {
+                switch Int.random(in: 0..<5, using: &rng) {
+                case 0: items.append(section("S\(k)", "S\(k)", on: Bool.random(using: &rng)))
+                case 1: items.append(reset())
+                default: items.append(effect("X\(k)"))
+                }
+            }
+            items = items.normalized
+            let before = items.analysis
+            var targets: [ETChainEditing.AddTarget] = [.end]
+            for i in 0...items.count { targets += [.card(i), .gap(i)] }
+
+            for target in targets {
+                let r = add(items, target)
+                let msg = "round=\(round) \(items.shape) <- \(target)"
+                assertCanonical(r.items, msg)
+                let after = r.items.analysis
+                for e in items where e.role == .effect {
+                    XCTAssertEqual(after.owner(of: e.id), before.owner(of: e.id),
+                                   "既存の段の所属が変わった: \(msg)")
+                    XCTAssertEqual(after.gate(of: e.id), before.gate(of: e.id),
+                                   "既存の段の gate が変わった: \(msg)")
+                }
+                // 組に入るのは、落とし先が組のカード（配下の段か見出し）のときだけ。
+                guard owner(r.items, r.new) != nil else { continue }
+                switch target {
+                case .end:
+                    XCTFail("末尾なのに組に入った: \(msg)")
+                case .card(let i):
+                    let role = items.indices.contains(i) ? items[i].role : nil
+                    if role != .section && role != .effect { XCTFail("組のカードでないのに組に入った: \(msg)") }
+                case .gap(let i):
+                    if !(items.indices.contains(i) && items[i].role == .effect) {
+                        XCTFail("配下の段の手前でないのに組に入った: \(msg)")
+                    }
+                }
+            }
+        }
+    }
+
+    private struct Seeded: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state ^= state << 13
+            state ^= state >> 7
+            state ^= state << 17
+            return state
+        }
+    }
+}

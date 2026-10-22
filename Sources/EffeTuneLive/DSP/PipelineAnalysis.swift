@@ -22,6 +22,9 @@
 //  区別できない。外のものは必ず普通の Section として読む。自分で作ったものだけ、
 //  書いたときに付けた印（ETSection.rootResetKey）から戻す。**誤って消すより、
 //  見た目の情報を失うほうが安全。**
+//
+//  足したものは組の外へ置く（ETChainEditing.addition）。末尾の組が開いたままなら
+//  足す直前に rootReset を挿す。
 
 import Foundation
 

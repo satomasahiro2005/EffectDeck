@@ -45,6 +45,8 @@
 //  **組の範囲と gate を数えるのは ETPipelineAnalysis（PipelineAnalysis.swift）だけ。**
 //  ここに置くのは綴りと見た目だけ。前はここにも数え方（gates・range(after:)・
 //  redundantUnnamed）があり、どこからも呼ばれないまま残っていたので消した。
+//  **足したものは組の外へ置く**（落とした先が組のカードのときだけ組に入る）。
+//  決めるのは ETChainEditing.addition。
 
 import Foundation
 
