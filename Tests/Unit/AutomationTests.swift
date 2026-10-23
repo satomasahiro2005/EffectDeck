@@ -70,11 +70,11 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(ETAutomation.blend(of: try named("BrickwallLimiterPlugin", "oversampling")), .hold)
         XCTAssertEqual(ETAutomation.blend(of: try named("BrickwallLimiterPlugin", "lookahead")), .hold)
         XCTAssertEqual(ETAutomation.blend(of: try named("AdaptivePredictionEffectPlugin", "resetToken")), .hold)
-        // 下限が0の Hz は対数にできないので直線。
+        // 下限が0の Hz も対数。両端が正でなければ mix が直線に落とす。
         let lfo = ETParam(name: "modulationRate", key: "mr", label: "Mod Rate",
                           kind: .number(min: 0, max: 10, step: 0.1, unit: "Hz", isInteger: false),
                           defaultValue: 1, offset: 0, count: 1)
-        XCTAssertEqual(ETAutomation.blend(of: lfo), .linear)
+        XCTAssertEqual(ETAutomation.blend(of: lfo), .logarithmic)
         // 選択肢は、名前が oversampling でなければ補間しない側ではなく切り替え。
         XCTAssertEqual(ETAutomation.blend(of: try named("TubeSimulatorPlugin", "outputStage")), .step)
     }
@@ -113,6 +113,52 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(sound(100), 0)
         XCTAssertEqual(sound(100.0 + 1), 0)
         XCTAssertEqual(sound(nil), 0)          // 読めていなければ一番上
+    }
+
+    func testZeroMinimumHzBlendsLogarithmically() throws {
+        let s = try spec("DattorroPlateReverbPlugin")
+        let p = try XCTUnwrap(s.params.first { $0.name == "modulationRate" })
+        guard case .number(let lo, _, _, _, _) = p.kind else { return XCTFail("数でない") }
+        XCTAssertEqual(lo, 0)
+        var a = s.defaults, b = s.defaults
+        a[p.offset] = 0.5; b[p.offset] = 5
+        let k = try automation(s, a, b)
+        // 50% と 100% の真ん中は 0.5 Hz と 5 Hz の幾何平均。直線なら 2.75。
+        XCTAssertEqual(k.values(at: 75, spec: s, current: s.defaults)[p.offset], Float(sqrt(2.5)), accuracy: 1e-3)
+        // 片方が0なら直線。
+        a[p.offset] = 0
+        let z = try automation(s, a, b)
+        XCTAssertEqual(z.values(at: 75, spec: s, current: s.defaults)[p.offset], 2.5, accuracy: 1e-5)
+    }
+
+    /// 刻みが粗い数（フィルタの傾きは12 dB/oct 刻み）は、どの位置でも刻みの上に乗る。
+    /// 中間の値はカーネルが受けず、フィルタが切れる。
+    func testSteppedNumbersStayOnGrid() throws {
+        func check(_ type: String, _ key: String, _ from: Float, _ to: Float, step: Float) throws {
+            let s = try spec(type)
+            let p = try XCTUnwrap(s.params.first { $0.key == key }, "\(type).\(key)")
+            var a = s.defaults, b = s.defaults
+            a[p.offset] = from; b[p.offset] = to
+            let k = try automation(s, a, b)
+            for pos in stride(from: 50.0, through: 100.0, by: 5.0) {
+                let v = k.values(at: pos, spec: s, current: s.defaults)[p.offset]
+                XCTAssertEqual(v.truncatingRemainder(dividingBy: step), 0, "\(type).\(key) @\(pos) = \(v)")
+                XCTAssertTrue((min(from, to)...max(from, to)).contains(v), "\(type).\(key) @\(pos) = \(v)")
+            }
+        }
+        try check("HiPassFilterPlugin", "sl", -24, -48, step: 12)
+        try check("LoPassFilterPlugin", "sl", -12, -96, step: 12)
+        try check("BandPassFilterPlugin", "hs", -12, -48, step: 12)
+        try check("BandPassFilterPlugin", "ls", -48, -24, step: 12)
+        try check("ChannelDividerPlugin", "s1", -24, -96, step: 12)
+        try check("ChannelDividerPlugin", "s3", -96, -12, step: 12)
+
+        // 60% の傾きは -28.8 でなく -24 か -36（-29 でなく）。
+        let s = try spec("HiPassFilterPlugin")
+        var a = s.defaults, b = s.defaults
+        a[1] = -24; b[1] = -48
+        let v = try automation(s, a, b).values(at: 60, spec: s, current: s.defaults)[1]
+        XCTAssertEqual(v, -24)
     }
 
     func testSingleKeyframeIsConstant() throws {
@@ -517,6 +563,34 @@ final class AutomationTests: XCTestCase {
         ] as [String: Any]]]
         let (_, longReport) = ETChainText.prepare(long, catalog: ETCatalog)
         XCTAssertTrue(longReport.isEmpty, "\(longReport)")
+    }
+
+    func testPrepareFollowsDecode() throws {
+        let kf: [[String: Any]] = [["at": 50, "p": ["vl": -10]], ["at": 100, "p": ["vl": 0]]]
+        let auto: [String: Any] = ["src": "outputVolume", "kf": kf]
+
+        // 使えないカード（IR Reverb）の automation は外して報告する。decode も読まない。
+        let ir = try spec("IRReverbPlugin")
+        let irEntry: [String: Any] = ["nm": ir.name, "en": true, ETAutomation.key: auto]
+        let (irJSON, irReport) = ETChainText.prepare([irEntry], catalog: ETCatalog)
+        XCTAssertTrue(irReport.ignored.contains("\(ir.name).\(ETAutomation.key)"), "\(irReport)")
+        XCTAssertNil((irJSON as? [[String: Any]])?.first?[ETAutomation.key])
+
+        // 知らない src は外して報告する。
+        let unknown: [String: Any] = ["nm": "Volume", "en": true,
+                                      ETAutomation.key: ["src": "timeOfDay", "kf": kf]]
+        let (unJSON, unReport) = ETChainText.prepare([unknown], catalog: ETCatalog)
+        XCTAssertTrue(unReport.ignored.contains("Volume.\(ETAutomation.key)"), "\(unReport)")
+        XCTAssertNil((unJSON as? [[String: Any]])?.first?[ETAutomation.key])
+
+        // 辞書でない kf の要素があっても、読める要素は残る。
+        let mixed: [String: Any] = ["nm": "Volume", "en": true,
+                                    ETAutomation.key: ["src": "outputVolume",
+                                                       "kf": ["x", ["at": 50, "p": ["vl": -10]] as [String: Any]] as [Any]]]
+        let (mxJSON, mxReport) = ETChainText.prepare([mixed], catalog: ETCatalog)
+        XCTAssertTrue(mxReport.isEmpty, "\(mxReport)")
+        let items = PipelineStore.parse(mxJSON, catalog: ETCatalog)
+        XCTAssertEqual(items.first?.automation?.keyframes.map(\.position), [50])
     }
 
     // MARK: - 段

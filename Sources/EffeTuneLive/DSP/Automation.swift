@@ -11,7 +11,8 @@
 //  段の values は、選んでいるキーフレームの値と常に同じ（ETChainNode.automation）。
 //
 //  補間の規則（元に依らない）:
-//    - dB・リニアの利得は直線、Hz と Q は対数、そのほかの数は直線
+//    - dB・リニアの利得は直線、Hz と Q は対数（下限が0でも、両端が正なら対数）、そのほかの数は直線
+//    - 刻みが1より粗い数（フィルタの傾き12 dB/octなど）は、補間した値を刻みへ丸める（カーネルが中間の値を受けない）
 //    - 入切・選択肢（PEQ のフィルタ種別など）は2つの真ん中で切り替える
 //    - 15Band / 5Band PEQ は、同じ帯でフィルタ種別か入切が違うときだけ切り替えずに0 dBを通って移る
 //    - 範囲の外は端のキーフレームのまま。1つなら全位置でそれ
@@ -201,15 +202,23 @@ struct ETAutomation: Equatable {
         switch p.kind {
         case .toggle, .enumeration:
             return .step
-        case .number(let min, _, _, let unit, _):
+        case .number(_, _, _, let unit, _):
             // 保存しているのが対数の値（Tilt EQ の Pivot は ln(Hz)）なら、保存値の直線が Hz の対数になっている。
             if p.scale != .direct { return .linear }
-            if min > 0 && (unit == "Hz" || unit == "kHz" || unit == "Q"
-                           || p.name == "q" || p.name.hasSuffix("Q")) {
+            // 両端のどちらかが0以下なら mix が直線に落とす。
+            if unit == "Hz" || unit == "kHz" || unit == "Q" || p.name == "q" || p.name.hasSuffix("Q") {
                 return .logarithmic
             }
             return .linear
         }
+    }
+
+    /// 刻みが1より粗い数の格子（下限・刻み・上限）。保存値が画面の値と同じものだけ。
+    /// フィルタの傾き（12 dB/oct 刻み）などは、刻みの外の値をカーネルが受けない。
+    private static func grid(of p: ETParam) -> (min: Float, step: Float, max: Float)? {
+        guard p.scale == .direct, case .number(let lo, let hi, let step, _, _) = p.kind,
+              step > 1, lo.isFinite, hi.isFinite, hi > lo else { return nil }
+        return (lo, step, hi)
     }
 
     /// その位置で鳴らす値。`current` は段の今の値（補間しない設定はそこから取る）。
@@ -240,15 +249,17 @@ struct ETAutomation: Equatable {
             guard blend != .hold else { continue }
             var isInteger = false
             if case .number(_, _, _, _, let integer) = p.kind { isInteger = integer }
+            let grid = Self.grid(of: p)
             for o in p.offset..<(p.offset + p.count) where out.indices.contains(o) {
-                out[o] = Self.mix(a.values[o], b.values[o], t: t, blend: blend, isInteger: isInteger)
+                out[o] = Self.mix(a.values[o], b.values[o], t: t, blend: blend, isInteger: isInteger, grid: grid)
             }
         }
         Self.fadePEQ(&out, a: a.values, b: b.values, t: t, spec: spec)
         return out
     }
 
-    private static func mix(_ a: Float, _ b: Float, t: Float, blend: Blend, isInteger: Bool) -> Float {
+    private static func mix(_ a: Float, _ b: Float, t: Float, blend: Blend, isInteger: Bool,
+                            grid: (min: Float, step: Float, max: Float)?) -> Float {
         if t <= 0 || a == b { return a }
         if t >= 1 { return b }
         var v: Float
@@ -265,7 +276,11 @@ struct ETAutomation: Equatable {
                 v = a + (b - a) * t
             }
         }
-        if isInteger && (blend == .linear || blend == .logarithmic) { v = v.rounded() }
+        guard blend == .linear || blend == .logarithmic else { return v }
+        if isInteger { v = v.rounded() }
+        if let g = grid {
+            v = min(max(g.min + ((v - g.min) / g.step).rounded() * g.step, g.min), g.max)
+        }
         return v
     }
 

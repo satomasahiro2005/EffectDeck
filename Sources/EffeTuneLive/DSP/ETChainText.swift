@@ -500,21 +500,26 @@ enum ETChainText {
     }
 
     /// 音量に追従するカードのキーフレーム（Automation.swift）。段の鍵なのでどちらの形でも entry の直下。
-    /// 形が違えば外してignoredへ。各キーフレームの値（`p`）は段のパラメータと同じ規則で範囲へ寄せる。
+    /// ETAutomation.decode が読まないもの（使えないカード・辞書でない・知らない `src`・`kf` が配列でない）は
+    /// 外してignoredへ。各キーフレームの値（`p`）は段のパラメータと同じ規則で範囲へ寄せる。
     private static func prepareAutomation(_ entry: inout [String: Any], spec: ETEffect,
                                           report: inout Report) {
         guard let raw = entry[ETAutomation.key] else { return }
         let label = "\(spec.name).\(ETAutomation.key)"
-        guard var automation = raw as? [String: Any],
-              var keyframes = automation["kf"] as? [[String: Any]] else {
+        guard ETAutomation.isAutomatable(spec),
+              var automation = raw as? [String: Any],
+              let name = automation["src"] as? String, ETAutomation.Source(rawValue: name) != nil,
+              var keyframes = automation["kf"] as? [Any] else {
             entry.removeValue(forKey: ETAutomation.key)
             report.add(label, to: \.ignored)
             return
         }
         for i in keyframes.indices {
-            guard var params = keyframes[i]["p"] as? [String: Any] else { continue }
+            guard var kf = keyframes[i] as? [String: Any],
+                  var params = kf["p"] as? [String: Any] else { continue }
             prepareParams(&params, spec: spec, skip: [], report: &report)
-            keyframes[i]["p"] = params
+            kf["p"] = params
+            keyframes[i] = kf
         }
         automation["kf"] = keyframes
         entry[ETAutomation.key] = automation
