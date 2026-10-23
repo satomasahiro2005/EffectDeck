@@ -830,7 +830,8 @@ struct PipelineView: View {
                                  indented: !node.isSection && row.block != .alone,
                                  enabled: node.enabled,
                                  muted: node.isMuted,
-                                 levelTap: node.spec.type == "LevelMeterPlugin" ? node.tapId : nil)
+                                 levelTap: node.spec.type == "LevelMeterPlugin" ? node.tapId : nil,
+                                 follows: node.automation != nil)
         }
     }
 

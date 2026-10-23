@@ -96,29 +96,35 @@ struct EffectCardView: View {
                         .allowsHitTesting(false)
                 }
                 if isExpanded && hasBody {
-                    Group {
-                        if node.isExternal {
-                            ExternalProcessorView(externalID: node.externalID ?? "",
-                                                  instanceID: node.externalInstanceID,
-                                                  snapshot: externalSnapshot,
-                                                  isDragPreview: isDragPreview,
-                                                  isProcessing: !node.isMuted && !dsp.bypass)
-                        } else if ETEffectViews.has(node.spec.type) {
-                            // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
-                            // Reset Parameters で作り直す。表示の設定は現れたときにしか
-                            // 読まないので、id を変えないと画面だけ前の見せ方のまま残る。
-                            ETEffectViews.view(index: index, node: node, dsp: dsp)
-                                .id(node.resetCount)
-                                .environment(\.etGraphOnly, false)
-                        } else if let tabs = ETParamTabs.tabs(for: node.spec.type) {
-                            // 上流がタブに分けているもの（AM Radio・TV Audio・Vinyl）。
-                            TabbedParameterList(index: index, node: node, dsp: dsp, tabs: tabs)
-                        } else {
-                            VStack(alignment: .leading, spacing: 12) {
-                                // runtimeOnly（Adaptive Prediction の resetToken）は画面の行を持たない。
-                                ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
-                                    ParameterRow(param: param, nodeIndex: index,
-                                                 values: node.values, dsp: dsp)
+                    VStack(alignment: .leading, spacing: 12) {
+                        // 音量に追従しているとき、頭にキーフレームの切り替え。下の画面は選んだ1つを見せて直す。
+                        if node.automation != nil {
+                            ETKeyframeBar(index: index, node: node, dsp: dsp)
+                        }
+                        Group {
+                            if node.isExternal {
+                                ExternalProcessorView(externalID: node.externalID ?? "",
+                                                      instanceID: node.externalInstanceID,
+                                                      snapshot: externalSnapshot,
+                                                      isDragPreview: isDragPreview,
+                                                      isProcessing: !node.isMuted && !dsp.bypass)
+                            } else if ETEffectViews.has(node.spec.type) {
+                                // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
+                                // Reset Parameters で作り直す。表示の設定は現れたときにしか
+                                // 読まないので、id を変えないと画面だけ前の見せ方のまま残る。
+                                ETEffectViews.view(index: index, node: node, dsp: dsp)
+                                    .id(node.resetCount)
+                                    .environment(\.etGraphOnly, false)
+                            } else if let tabs = ETParamTabs.tabs(for: node.spec.type) {
+                                // 上流がタブに分けているもの（AM Radio・TV Audio・Vinyl）。
+                                TabbedParameterList(index: index, node: node, dsp: dsp, tabs: tabs)
+                            } else {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    // runtimeOnly（Adaptive Prediction の resetToken）は画面の行を持たない。
+                                    ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
+                                        ParameterRow(param: param, nodeIndex: index,
+                                                     values: node.values, dsp: dsp)
+                                    }
                                 }
                             }
                         }
@@ -167,10 +173,19 @@ struct EffectCardView: View {
                     // 折り返さない。幅が足りないときは縮める。
                     // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
                     // 2 行に折れていた。
-                    Text(node.etDisplayName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    HStack(spacing: 4) {
+                        Text(node.etDisplayName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        // 音量に追従している印。畳んでいても出る（頭は共通）。
+                        if node.automation != nil {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Follow Volume")
+                        }
+                    }
                     Text(summary)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -251,6 +266,19 @@ struct EffectCardView: View {
                     }
                     Button { dsp.resetParams(at: index) } label: {
                         Label("Reset Parameters", systemImage: "arrow.counterclockwise")
+                    }
+                    // 音量に追従する。入れると今の音量に最初のキーフレームができ、切ると選んでいるキーフレームの値が残る。
+                    // PC の鎖を編集している間は出さない（そのあいだ追従は動かない）。
+                    if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {
+                        Toggle(isOn: Binding(
+                            get: { node.automation != nil },
+                            set: { on in
+                                dsp.setFollowsVolume(on, at: index)
+                                // 入れたらキーフレームの帯が見えるよう、畳んでいれば開く。
+                                if on && !isExpanded { toggleExpanded() }
+                            })) {
+                            Label("Follow Volume", systemImage: "speaker.wave.2")
+                        }
                     }
                 }
                 Button(action: moveUp) {

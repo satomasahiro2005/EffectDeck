@@ -703,7 +703,7 @@ struct PresetsView: View {
             // EffeTune の Web 版が開き、EffectDeck へはコピーして戻るしかなかった。
             if corrected {
                 correctedShareRows()
-            } else if let deck = ETShareLink.deckURL(for: dsp.chain) {
+            } else if let deck = ETShareLink.deckURL(for: soundingChain(dsp.chain)) {
                 ShareLink(item: deck) {
                     Label("Share this chain", systemImage: "square.and.arrow.up")
                 }
@@ -726,15 +726,21 @@ struct PresetsView: View {
         }
     }
 
+    /// 共有に載せる鎖。音量に追従する段は、上の値を今鳴っている値にする（キーフレームは運ぶ）。
+    /// EffeTune のページ向けの値はこの上の値で、あちらにキーフレームは渡らない（site/src/parse.js）。
+    private func soundingChain(_ nodes: [ETChainNode]) -> [ETChainNode] {
+        ETAutomation.sounding(nodes, at: ETVolumeFollower.shared.position)
+    }
+
     /// 出力補正が入っているときの共有の行。「鎖だけ」と「鎖＋出力補正」の 2 つから選ぶ Menu にする。
     /// 補正込みは main・終端・補正を 1 本の普通の鎖に平らげたもの（ETOutputCorrectionForm.flatten）で、
     /// 受け手には出力先の身元は付かない。
     @ViewBuilder
     private func correctedShareRows() -> some View {
-        let flat = ETOutputCorrectionForm.flatten(main: dsp.chain.map { PipelineStore.Loaded($0) },
-                                                  correction: dsp.correction.map { PipelineStore.Loaded($0) })
+        let flat = ETOutputCorrectionForm.flatten(main: soundingChain(dsp.chain).map { PipelineStore.Loaded($0) },
+                                                  correction: soundingChain(dsp.correction).map { PipelineStore.Loaded($0) })
         Menu {
-            if let deck = ETShareLink.deckURL(for: dsp.chain) {
+            if let deck = ETShareLink.deckURL(for: soundingChain(dsp.chain)) {
                 ShareLink("Chain", item: deck)
             }
             if let deck = ETShareLink.deckURL(for: flat) {

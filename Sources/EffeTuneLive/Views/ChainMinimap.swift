@@ -34,6 +34,8 @@ struct ETMinimapItem: Identifiable, Equatable {
     let muted: Bool
     /// Level Meterのときだけ、棒を読むtap。
     let levelTap: UInt32?
+    /// 音量に追従している。名前の隣にスピーカーの印を出す（カードの頭と同じ）。
+    var follows: Bool = false
 }
 
 /// 左の一覧の行に付ける身元。**右のカードの身元（UUID）と型を分ける。**
@@ -166,9 +168,17 @@ private struct ETMinimapRow: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text(item.name)
-                                .font(.system(size: 15))
-                                .foregroundStyle(.primary)
+                            HStack(spacing: 4) {
+                                Text(item.name)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(.primary)
+                                if item.follows {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .accessibilityLabel("Follow Volume")
+                                }
+                            }
                         }
                     }
                     .lineLimit(1)
