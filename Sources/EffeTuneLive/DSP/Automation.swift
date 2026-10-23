@@ -8,7 +8,9 @@
 //
 //  **保存するのはキーフレームだけ。**補間した値は鳴らすためだけの値で、段の保存値・プリセット・
 //  pipeline.last・iCloud・PC には書かない（EffeTuneDSP.applyAutomation）。
-//  段の values は、選んでいるキーフレームの値と常に同じ（ETChainNode.automation）。
+//  段の values は、一番上（音量が一番大きい）のキーフレームの値と常に同じ（ETChainNode.automation）。
+//  画面はキーフレーム1つにつきカード1枚（Views/KeyframeSheet.swift）で、どれも同時に直せる。
+//  「選んでいるキーフレーム」は持たない。
 //
 //  補間の規則（元に依らない）:
 //    - dB・リニアの利得は直線、Hz と Q は対数（下限が0でも、両端が正なら対数）、そのほかの数は直線
@@ -47,6 +49,17 @@ struct ETAutomation: Equatable {
         func position(fromVolume v: Float) -> Double {
             min(max(Double(v) * 100, range.lowerBound), range.upperBound)
         }
+
+        /// 刻みの位置すべて（0, 5, … 100）。
+        var positions: [Double] {
+            var out: [Double] = []
+            var p = range.lowerBound
+            while p <= range.upperBound + 0.001 {
+                out.append(p)
+                p += step
+            }
+            return out
+        }
     }
 
     struct Keyframe: Equatable {
@@ -60,8 +73,6 @@ struct ETAutomation: Equatable {
     let source: Source
     /// 空でなく、位置は昇順で重ならない。
     private(set) var keyframes: [Keyframe]
-    /// keyframes の有効な添字。
-    private(set) var selected: Int
 
     /// 同じ位置を同じと見る幅。
     private static let epsilon = 0.001
@@ -70,13 +81,12 @@ struct ETAutomation: Equatable {
     init(source: Source, position: Double, values: [Float]) {
         self.source = source
         self.keyframes = [Keyframe(position: source.snapped(position), values: values)]
-        self.selected = 0
     }
 
     /// 整えて作る。位置が有限でないものは捨て、範囲へ収め、昇順にし、同じ位置は先のものを残す。
-    /// 値の数が spec と違うものも捨てる。選択は範囲へ寄せ、遅延に関わる設定は選んでいるものに揃える。
+    /// 値の数が spec と違うものも捨てる。遅延に関わる設定は一番上のものに揃える。
     /// 残るものが無ければ nil。
-    init?(source: Source, keyframes input: [Keyframe], selected sel: Int?, spec: ETEffect) {
+    init?(source: Source, keyframes input: [Keyframe], spec: ETEffect) {
         let kept = input.enumerated().filter {
             $0.element.position.isFinite && $0.element.values.count == spec.floatCount
         }
@@ -94,31 +104,25 @@ struct ETAutomation: Equatable {
         guard !out.isEmpty else { return nil }
         self.source = source
         self.keyframes = out
-        self.selected = min(max(sel ?? out.count - 1, 0), out.count - 1)
-        self.shareHeld(spec: spec)
+        self.shareHeld(from: out.count - 1, spec: spec)
     }
 
     private static func clamp(_ p: Double, _ source: Source) -> Double {
         min(max(p, source.range.lowerBound), source.range.upperBound)
     }
 
-    var selectedValues: [Float] { keyframes[selected].values }
+    /// 一番上のキーフレームの値。段の values はこれと同じ（保存・PC・音量が読めないときの値）。
+    var topValues: [Float] { keyframes[keyframes.count - 1].values }
 
     // MARK: - 操作
 
-    mutating func select(_ k: Int) {
-        selected = min(max(k, 0), keyframes.count - 1)
-    }
-
-    /// その位置にキーフレームを足して選ぶ。もうあれば選ぶだけ。
+    /// その位置にキーフレームを足し、その添字を返す。もうあればそれの添字を返すだけ。いっぱいなら nil。
     /// 新しいものは一番近いキーフレームの写し（同じ近さなら位置の低い方）。
-    mutating func add(at position: Double) {
+    @discardableResult
+    mutating func add(at position: Double) -> Int? {
         let p = source.snapped(position)
-        if let i = keyframes.firstIndex(where: { abs($0.position - p) < Self.epsilon }) {
-            selected = i
-            return
-        }
-        guard keyframes.count < Self.maxKeyframes else { return }
+        if let i = keyframes.firstIndex(where: { abs($0.position - p) < Self.epsilon }) { return i }
+        guard keyframes.count < Self.maxKeyframes else { return nil }
         var nearest = 0
         for i in keyframes.indices
         where abs(keyframes[i].position - p) < abs(keyframes[nearest].position - p) {
@@ -126,34 +130,48 @@ struct ETAutomation: Equatable {
         }
         let at = keyframes.firstIndex(where: { $0.position > p }) ?? keyframes.count
         keyframes.insert(Keyframe(position: p, values: keyframes[nearest].values), at: at)
-        selected = at
+        return at
     }
 
-    /// 選んでいるキーフレームを消す。最後の1つは消さずに false。
+    /// k 番目のキーフレームを消す。最後の1つ・範囲の外は消さずに false。
     @discardableResult
-    mutating func removeSelected() -> Bool {
-        guard keyframes.count > 1 else { return false }
-        keyframes.remove(at: selected)
-        selected = min(selected, keyframes.count - 1)
+    mutating func remove(at k: Int) -> Bool {
+        guard keyframes.count > 1, keyframes.indices.contains(k) else { return false }
+        keyframes.remove(at: k)
         return true
     }
 
-    /// 選んでいるキーフレームの値を差し替える。遅延に関わる設定は全キーフレームへ写す。
-    /// 数が合わない値は受けない。
-    mutating func store(selected values: [Float], spec: ETEffect) {
-        guard values.count == keyframes[selected].values.count else { return }
-        keyframes[selected].values = values
-        shareHeld(spec: spec)
+    /// k 番目のキーフレームの位置を動かし、並べ直したあとの添字を返す。
+    /// 刻みへ丸めて範囲へ収める。k が範囲の外か、動かし先に別のキーフレームが居れば何もせず nil。
+    @discardableResult
+    mutating func move(_ k: Int, to position: Double) -> Int? {
+        guard keyframes.indices.contains(k) else { return nil }
+        let p = source.snapped(position)
+        if abs(keyframes[k].position - p) < Self.epsilon { return k }
+        guard !keyframes.contains(where: { abs($0.position - p) < Self.epsilon }) else { return nil }
+        var kf = keyframes.remove(at: k)
+        kf.position = p
+        let at = keyframes.firstIndex(where: { $0.position > p }) ?? keyframes.count
+        keyframes.insert(kf, at: at)
+        return at
     }
 
-    /// 補間しない設定（held）を選んでいるキーフレームの値に揃える。
-    private mutating func shareHeld(spec: ETEffect) {
+    /// k 番目のキーフレームの値を差し替える。遅延に関わる設定は全キーフレームへ写す。
+    /// 数が合わない値・範囲の外の k は受けない。
+    mutating func store(_ values: [Float], at k: Int, spec: ETEffect) {
+        guard keyframes.indices.contains(k), values.count == keyframes[k].values.count else { return }
+        keyframes[k].values = values
+        shareHeld(from: k, spec: spec)
+    }
+
+    /// 補間しない設定（held）を k 番目のキーフレームの値に揃える。
+    private mutating func shareHeld(from k: Int, spec: ETEffect) {
         let held = Self.heldOffsets(spec)
         guard !held.isEmpty else { return }
-        let source = keyframes[selected].values
-        for k in keyframes.indices where k != selected {
-            for o in held where source.indices.contains(o) && keyframes[k].values.indices.contains(o) {
-                keyframes[k].values[o] = source[o]
+        let source = keyframes[k].values
+        for i in keyframes.indices where i != k {
+            for o in held where source.indices.contains(o) && keyframes[i].values.indices.contains(o) {
+                keyframes[i].values[o] = source[o]
             }
         }
     }
@@ -162,13 +180,9 @@ struct ETAutomation: Equatable {
 
     /// まだキーフレームの無い刻みの位置（昇順）。
     func freePositions() -> [Double] {
-        var out: [Double] = []
-        var p = source.range.lowerBound
-        while p <= source.range.upperBound + Self.epsilon {
-            if !keyframes.contains(where: { abs($0.position - p) < Self.epsilon }) { out.append(p) }
-            p += source.step
+        source.positions.filter { p in
+            !keyframes.contains(where: { abs($0.position - p) < Self.epsilon })
         }
-        return out
     }
 
     /// 足すときの既定の位置。いまの位置（読めなければ上限）の刻みが空いていればそこ、
@@ -181,6 +195,15 @@ struct ETAutomation: Equatable {
             let a = abs($0 - start), b = abs($1 - start)
             return a != b ? a < b : $0 < $1
         }
+    }
+
+    /// 「+」に出す空きの位置と既定。まだ追従していない（a が nil）なら刻みの全部が空き。
+    static func addChoices(_ a: ETAutomation?, source: Source = .outputVolume,
+                           current: Double?) -> (free: [Double], suggested: Double?) {
+        guard let a else {
+            return (source.positions, source.snapped(current ?? source.range.upperBound))
+        }
+        return (a.freePositions(), a.defaultAddPosition(current: current))
     }
 
     // MARK: - 補間
@@ -334,14 +357,14 @@ struct ETAutomation: Equatable {
 
     // MARK: - 保存形式
 
-    /// `{"src":"outputVolume","sel":1,"kf":[{"at":50,"p":{…}}, …]}`。
+    /// `{"src":"outputVolume","kf":[{"at":50,"p":{…}}, …]}`。（以前の `sel` は読まずに捨てる）
     /// `p` は段のパラメータと同じ綴り（ETParamCoding.encode）。
     func encoded(spec: ETEffect) -> [String: Any] {
         let list: [[String: Any]] = keyframes.map { k in
             let at: Any = k.position == k.position.rounded() ? Int(k.position) : k.position
             return ["at": at, "p": ETParamCoding.encode(params: spec.params, values: k.values)]
         }
-        return ["src": source.rawValue, "sel": selected, "kf": list]
+        return ["src": source.rawValue, "kf": list]
     }
 
     /// 読む。**読めないものは捨てて、読めるところだけ使う。**
@@ -362,10 +385,7 @@ struct ETAutomation: Equatable {
             let v = ETParamCoding.decode(params: spec.params, defaults: values, from: p, type: spec.type)
             keyframes.append(Keyframe(position: n.doubleValue, values: v))
         }
-        // Int(_:) は範囲の外で落ちるので、数のまま寄せてから Int にする。
-        let sel = (dict["sel"] as? NSNumber).map { $0.doubleValue }
-            .flatMap { $0.isFinite ? Int(min(max($0, 0), Double(maxKeyframes))) : nil }
-        return ETAutomation(source: source, keyframes: keyframes, selected: sel, spec: spec)
+        return ETAutomation(source: source, keyframes: keyframes, spec: spec)
     }
 
     // MARK: - 鎖
@@ -377,6 +397,38 @@ struct ETAutomation: Equatable {
             var copy = node
             copy.values = a.values(at: position, spec: node.spec, current: node.values)
             return copy
+        }
+    }
+}
+
+/// 段の口（setValue など）へ画面が渡す番号。0以上は今までどおり slot。
+/// 負は音量に追従する段の写し：キーフレーム1つ（書ける）か、鳴っている値（読むだけ）。
+/// 画面の部品は番号をそのまま DSP へ通すだけなので、部品を作り替えずに別の値を見せて直せる。
+/// DSP の段ごとの口は slot の範囲を見ているので、デコードしない口に負の番号が来ても何もしない。
+enum ETSlotAddress: Equatable {
+    case slot(Int)
+    case keyframe(slot: Int, index: Int)
+    case sounding(slot: Int)
+
+    /// 1つの段に割り当てる番号の幅（鳴っている値 + キーフレーム最大数）。
+    private static let stride = ETAutomation.maxKeyframes + 1
+
+    init(_ raw: Int) {
+        if raw >= 0 {
+            self = .slot(raw)
+            return
+        }
+        // -1 - Int.min は溢れない（Int.max）。
+        let n = -1 - raw
+        let (s, r) = n.quotientAndRemainder(dividingBy: Self.stride)
+        self = r == 0 ? .sounding(slot: s) : .keyframe(slot: s, index: r - 1)
+    }
+
+    var raw: Int {
+        switch self {
+        case .slot(let s): return s
+        case .sounding(let s): return -1 - s * Self.stride
+        case .keyframe(let s, let k): return -1 - (s * Self.stride + k + 1)
         }
     }
 }

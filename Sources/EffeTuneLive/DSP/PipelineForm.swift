@@ -51,7 +51,7 @@ enum PipelineStore {
         /// **自分で置いた終端。**Sectionではない（EffeTuneDSP.Node.isRootReset）。
         /// specはETSection.specのまま持ち、書くと`Section(cm: "")`に印を付けたものになる。
         var isRootReset: Bool = false
-        /// 音量に追従するカードのキーフレーム（Automation.swift）。持っていれば values は選んでいる1つと同じ。
+        /// 音量に追従するカードのキーフレーム（Automation.swift）。持っていれば values は一番上のキーフレームと同じ。
         /// 既存の memberwise 呼び出しを壊さないよう、最後に置く。
         var automation: ETAutomation? = nil
     }
@@ -241,10 +241,10 @@ enum PipelineStore {
                 irId: assetID(params, type: spec.type),
                 display: ETDisplayParam.legacyRead(params, type: spec.type),
                 design: ETDesignParam.read(params, type: spec.type))
-            // 段の鍵なので、ショートでもロングでも entry に居る。values は選んでいるキーフレームに合わせる。
+            // 段の鍵なので、ショートでもロングでも entry に居る。values は一番上のキーフレームに合わせる。
             if let a = ETAutomation.decode(entry[ETAutomation.key], spec: spec, values: values) {
                 item.automation = a
-                item.values = a.selectedValues
+                item.values = a.topValues
             }
             out.append(item)
         }

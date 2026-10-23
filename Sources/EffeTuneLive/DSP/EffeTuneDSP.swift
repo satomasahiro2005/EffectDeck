@@ -95,7 +95,26 @@ final class EffeTuneDSP: ObservableObject {
     var nodes: [Node] { chain + correction }
 
     /// その slot の段。範囲の外なら nil。
+    ///
+    /// 負の番号は音量に追従する段の写し（ETSlotAddress）。キーフレームなら、その値を載せた段
+    /// （画面が見せる値。直すのは同じ番号の setValue など）。鳴っている値なら補間した値を載せた段。
+    /// 段そのもの（id・入切・バス・表示の設定）は元の段と同じ。
     func node(at slot: Int) -> Node? {
+        if slot < 0 {
+            switch ETSlotAddress(slot) {
+            case .slot:
+                return nil
+            case .keyframe(let s, let k):
+                guard contains(slot: s), let a = self[slot: s].automation,
+                      a.keyframes.indices.contains(k) else { return nil }
+                var copy = self[slot: s]
+                copy.values = a.keyframes[k].values
+                return copy
+            case .sounding(let s):
+                guard contains(slot: s), self[slot: s].automation != nil else { return nil }
+                return soundingNode(self[slot: s])
+            }
+        }
         guard let at = locate(slot) else { return nil }
         switch at.part {
         case .main: return chain[at.local]
@@ -118,6 +137,15 @@ final class EffeTuneDSP: ObservableObject {
     /// slot が在るか。nodes を作らずに見る（setValue はつまみを動かすたびに来る）。
     private func contains(slot: Int) -> Bool {
         slot >= 0 && slot < chain.count + correction.count
+    }
+
+    /// 画面が渡した番号（ETSlotAddress.raw）の元の slot。キーフレームの写しも元の段を指す。
+    /// 鳴っている値の写しは読むだけなので、書く口（writing）には何も返さない。
+    private func nodeSlot(_ index: Int, writing: Bool) -> Int? {
+        switch ETSlotAddress(index) {
+        case .slot(let s), .keyframe(let s, _): return s
+        case .sounding(let s): return writing ? nil : s
+        }
     }
 
     /// slot で段を読み書きする。**範囲は呼び手が contains(slot:) で見てから。**
@@ -237,7 +265,8 @@ final class EffeTuneDSP: ObservableObject {
     /// ときだけ）。こちらの鎖は graph でなく pipeline 経路（ETPipeline）なので graphOwned にならず、ET_OK で返る。
     /// 送り直すと sequence が 0 から数え直しになるので、枠の番号は単調と思わないこと。
     @discardableResult
-    func resetState(at index: Int) -> Bool {
+    func resetState(at address: Int) -> Bool {
+        guard let index = nodeSlot(address, writing: true) else { return false }
         guard engine != 0, ready, contains(slot: index) else { return false }
         let instance = self[slot: index].instance
         guard instance != 0 else { return false }
@@ -1059,7 +1088,8 @@ final class EffeTuneDSP: ObservableObject {
     /// 上流がプリセットに書いているものだけを持つ（DSP/DisplayParams.swift）。
     /// DSP へは渡さない（descriptor にも instance にも席が無い）が、端末には残す。
     /// 残さないと、アプリを開き直したときに既定へ戻る。
-    func setDisplay(_ raw: String, key: String, at index: Int) {
+    func setDisplay(_ raw: String, key: String, at address: Int) {
+        guard let index = nodeSlot(address, writing: true) else { return }
         guard contains(slot: index), self[slot: index].display[key] != raw else { return }
         self[slot: index].display[key] = raw
         persistSoon()
@@ -1070,7 +1100,8 @@ final class EffeTuneDSP: ObservableObject {
     ///
     /// 画面は .etSaved で現れたときにしか display を読まないので、変わったら作り直させる
     /// （Node.resetCount。resetParams と同じ）。
-    func applyDisplay(from params: [String: Any], at index: Int) {
+    func applyDisplay(from params: [String: Any], at address: Int) {
+        guard let index = nodeSlot(address, writing: true) else { return }
         guard contains(slot: index) else { return }
         let incoming = ETDisplayParam.read(params, type: self[slot: index].spec.type)
         guard !incoming.isEmpty else { return }
@@ -1121,6 +1152,13 @@ final class EffeTuneDSP: ObservableObject {
 
     /// パラメータを 1 つ変える。offset は ETParam.offset（配列なら +i）。
     func setValue(_ value: Float, at index: Int, offset: Int) {
+        // 負の番号: キーフレームの写しなら、そのキーフレームへ。鳴っている値の写しは読むだけ。
+        if index < 0 {
+            if case .keyframe(let s, let k) = ETSlotAddress(index) {
+                setKeyframeValue(value, keyframe: k, at: s, offset: offset)
+            }
+            return
+        }
         guard contains(slot: index),
               self[slot: index].values.indices.contains(offset) else { return }
         self[slot: index].values[offset] = value
@@ -1130,7 +1168,7 @@ final class EffeTuneDSP: ObservableObject {
             self[slot: index].values = ETUpstreamNormalize.sfzCrossRules(params: self[slot: index].spec.params,
                                                                           values: self[slot: index].values)
         }
-        storeSelectedKeyframe(at: index)
+        storeTopKeyframe(at: index)
         let before = instanceLatency(of: self[slot: index])
         pushParams(self[slot: index])
         settleAfterParams(at: index, changed: offset, before: before)
@@ -1174,6 +1212,13 @@ final class EffeTuneDSP: ObservableObject {
     /// その場で送り込まれ（遅延だけの違いはすぐ送り直す）、帯域も違えば続けて本当の設計が
     /// もう1度送り込まれた。送り込むたびに鎖全体が一瞬素通しになる（AssetUploadのholdOffAudioThread）。
     func setValues(_ values: [Float], at index: Int, design params: [String: Any] = [:]) {
+        // 負の番号: キーフレームの写しなら、そのキーフレームへ（designer の型は追従できないので design は使わない）。
+        if index < 0 {
+            if case .keyframe(let s, let k) = ETSlotAddress(index) {
+                setKeyframeValues(values, keyframe: k, at: s)
+            }
+            return
+        }
         guard contains(slot: index),
               values.count == self[slot: index].values.count else { return }
         let before = instanceLatency(of: self[slot: index])
@@ -1182,7 +1227,7 @@ final class EffeTuneDSP: ObservableObject {
                                             type: self[slot: index].spec.type)
         let redesign = design != self[slot: index].design
         self[slot: index].values = values
-        storeSelectedKeyframe(at: index)
+        storeTopKeyframe(at: index)
         if redesign { self[slot: index].design = design }
         pushParams(self[slot: index])
         // IR Reverb の下ごしらえ（dc / co / dt / tr）は材料の側にあるので、変われば送り直す。
@@ -1206,6 +1251,11 @@ final class EffeTuneDSP: ObservableObject {
     }
 
     func resetParams(at index: Int) {
+        // 負の番号: キーフレームの写しなら、そのキーフレームだけ既定へ。
+        if index < 0 {
+            if case .keyframe(let s, let k) = ETSlotAddress(index) { resetKeyframe(k, at: s) }
+            return
+        }
         guard contains(slot: index) else { return }
         let before = instanceLatency(of: self[slot: index])
         self[slot: index].values = self[slot: index].spec.defaults
@@ -1222,7 +1272,7 @@ final class EffeTuneDSP: ObservableObject {
         // 画面は .etSaved で現れたときにしか読まないので、作り直させる（Node.resetCount）。
         self[slot: index].display = [:]
         self[slot: index].resetCount &+= 1
-        storeSelectedKeyframe(at: index)
+        storeTopKeyframe(at: index)
         pushParams(self[slot: index])
         // IR Reverb は ir も既定（''、ir_reverb.js:28）へ戻るので、素材を外して素通しにする。
         // 入れ直すと Reset の後も同じ IR が鳴り続ける。
@@ -1269,12 +1319,12 @@ final class EffeTuneDSP: ObservableObject {
     private var pushedAutomation: [UInt32: [Float]] = [:]
 
     /// 読んだ段のキーフレームを、鎖の段へ移す。使えない段（外部・Section）には付けない。
-    /// 段の values は選んでいるキーフレームと同じにする（ETChainNode.automation）。
+    /// 段の values は一番上のキーフレームと同じにする（ETChainNode.automation）。
     private func adoptAutomation(of item: PipelineStore.Loaded, to node: inout Node) {
         guard let a = item.automation, item.externalID.isEmpty,
               ETAutomation.isAutomatable(item.spec) else { return }
         node.automation = a
-        node.values = a.selectedValues
+        node.values = a.topValues
     }
 
     /// instance へ渡す値。音量に追従する段は、いまの音量でキーフレームを補間したもの。
@@ -1293,52 +1343,36 @@ final class EffeTuneDSP: ObservableObject {
         }
     }
 
-    /// 段の values（選んでいるキーフレームを画面が直した結果）を、キーフレームへ書き戻す。
+    /// 鳴っている値を載せた段の写し（画面が読むだけ。ETSlotAddress.sounding）。
+    /// 実行時だけの値で、保存・PC への送信には通さない。PC の鎖を編集している間は段の値のまま。
+    func soundingNode(_ node: Node) -> Node {
+        var copy = node
+        copy.values = soundingValues(of: node)
+        return copy
+    }
+
+    /// 段の values（画面が普通の口から直した結果）を、一番上のキーフレームへ書き戻す。
     /// 直したあとの pushParams が、いまの音量で補間し直した値を渡す。
-    private func storeSelectedKeyframe(at index: Int) {
+    /// PC からの書き込み（RemoteMirror）もここを通るので、一番上が PC の値に揃う。
+    private func storeTopKeyframe(at index: Int) {
         guard contains(slot: index), var a = self[slot: index].automation else { return }
-        a.store(selected: self[slot: index].values, spec: self[slot: index].spec)
+        a.store(self[slot: index].values, at: a.keyframes.count - 1, spec: self[slot: index].spec)
         self[slot: index].automation = a
     }
 
-    /// 「音量に追従」の入切。入れると、いまの音量（5% 刻み）に最初のキーフレームを、いまの値で作る。
-    /// 切ると、選んでいるキーフレームの値が段の普通の値になり、キーフレームは消える。
+    /// 音量の位置にキーフレームを足す。新しいものは一番近いキーフレームの写し。
+    /// まだ追従していなければ、いまの値で最初のキーフレームを作って追従を始める。
     /// main の段だけ。PC の鎖を編集している間は受けない。
-    func setFollowsVolume(_ on: Bool, at index: Int) {
+    func addKeyframe(position: Double, at index: Int) {
         guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote else { return }
-        if on {
-            guard self[slot: index].automation == nil,
-                  ETAutomation.isAutomatable(self[slot: index]) else { return }
-            let source = ETAutomation.Source.outputVolume
-            let position = source.snapped(ETVolumeFollower.shared.position ?? source.range.upperBound)
-            self[slot: index].automation = ETAutomation(source: source, position: position,
+        guard var a = self[slot: index].automation else {
+            guard ETAutomation.isAutomatable(self[slot: index]) else { return }
+            self[slot: index].automation = ETAutomation(source: .outputVolume, position: position,
                                                         values: self[slot: index].values)
             pushParams(self[slot: index])
-        } else {
-            guard self[slot: index].automation != nil else { return }
-            let before = instanceLatency(of: self[slot: index])
-            self[slot: index].automation = nil
-            pushedAutomation[self[slot: index].instance] = nil
-            pushParams(self[slot: index])
-            if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
+            persistSoon()
+            return
         }
-        persistSoon()
-    }
-
-    /// 画面が見せて直すキーフレームを選ぶ。**鳴らす値は変えない**（鳴るのはいつも今の音量の補間）。
-    /// 画面は .etSaved で現れたときにしか読まないものがあるので、作り直させる（Node.resetCount）。
-    func selectKeyframe(_ k: Int, at index: Int) {
-        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
-              var a = self[slot: index].automation, k != a.selected else { return }
-        a.select(k)
-        adoptEdited(a, at: index)
-        persistSoon()
-    }
-
-    /// 音量の位置にキーフレームを足して選ぶ。新しいものは一番近いキーフレームの写し。
-    func addKeyframe(position: Double, at index: Int) {
-        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
-              var a = self[slot: index].automation else { return }
         let before = instanceLatency(of: self[slot: index])
         a.add(at: position)
         adoptEdited(a, at: index)
@@ -1346,26 +1380,96 @@ final class EffeTuneDSP: ObservableObject {
         persistSoon()
     }
 
-    /// 選んでいるキーフレームを消す。最後の1つなら追従をやめて、その値を普通の値にする。
-    func removeSelectedKeyframe(at index: Int) {
+    /// k 番目のキーフレームの音量の位置を動かす。空いている刻みにだけ動かせる。
+    func moveKeyframe(_ k: Int, to position: Double, at index: Int) {
         guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
               var a = self[slot: index].automation else { return }
-        guard a.keyframes.count > 1 else {
-            setFollowsVolume(false, at: index)
-            return
-        }
         let before = instanceLatency(of: self[slot: index])
-        a.removeSelected()
+        guard a.move(k, to: position) != nil else { return }
         adoptEdited(a, at: index)
         settleAfterKeyframes(at: index, before: before)
         persistSoon()
     }
 
-    /// 直したキーフレームを段へ入れ、values を選んでいるものに合わせて、画面を作り直させる。
+    /// k 番目のキーフレームを消す。最後の1つなら追従をやめて、その値を段の普通の値にする。
+    func removeKeyframe(_ k: Int, at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              var a = self[slot: index].automation, a.keyframes.indices.contains(k) else { return }
+        guard a.keyframes.count > 1 else {
+            stopFollowing(at: index)
+            return
+        }
+        let before = instanceLatency(of: self[slot: index])
+        a.remove(at: k)
+        adoptEdited(a, at: index)
+        settleAfterKeyframes(at: index, before: before)
+        persistSoon()
+    }
+
+    /// 追従をやめる。values はもう一番上（最後の1つ）のキーフレームの値なので、そのまま普通の値になる。
+    private func stopFollowing(at index: Int) {
+        guard self[slot: index].automation != nil else { return }
+        let before = instanceLatency(of: self[slot: index])
+        self[slot: index].automation = nil
+        pushedAutomation[self[slot: index].instance] = nil
+        pushParams(self[slot: index])
+        if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
+        persistSoon()
+    }
+
+    /// キーフレームのカードのつまみ1つ。
+    private func setKeyframeValue(_ value: Float, keyframe k: Int, at index: Int, offset: Int) {
+        guard index >= 0, index < chain.count, let a = self[slot: index].automation,
+              a.keyframes.indices.contains(k) else { return }
+        var values = a.keyframes[k].values
+        guard values.indices.contains(offset) else { return }
+        values[offset] = value
+        storeKeyframe(values, keyframe: k, at: index)
+    }
+
+    /// キーフレームのカードの値をまとめて（エフェクトプリセットの適用）。
+    private func setKeyframeValues(_ values: [Float], keyframe k: Int, at index: Int) {
+        storeKeyframe(values, keyframe: k, at: index)
+    }
+
+    /// キーフレームのカードを既定へ戻す。遅延に関わる設定は今のまま
+    /// （1枚戻しただけで他のキーフレームのオーバーサンプリングや遅延を変えない）。
+    private func resetKeyframe(_ k: Int, at index: Int) {
+        guard index >= 0, index < chain.count, let a = self[slot: index].automation,
+              a.keyframes.indices.contains(k) else { return }
+        var fresh = self[slot: index]
+        fresh.values = fresh.spec.defaults
+        applyConstructorValues(&fresh)
+        let current = a.keyframes[k].values
+        for o in ETAutomation.heldOffsets(fresh.spec)
+        where fresh.values.indices.contains(o) && current.indices.contains(o) {
+            fresh.values[o] = current[o]
+        }
+        storeKeyframe(fresh.values, keyframe: k, at: index)
+        // resetParams と同じ。画面は .etSaved で現れたときにしか読まないので、作り直させる。
+        self[slot: index].resetCount &+= 1
+    }
+
+    /// k 番目のキーフレームの値を差し替える。**鳴らす値は変えない**（鳴るのはいつも今の音量の補間）。
+    /// PC へは送らない（キーフレームは行かない）。resetCount も上げない（つまみを引いている途中で画面を作り直さない）。
+    private func storeKeyframe(_ values: [Float], keyframe k: Int, at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              var a = self[slot: index].automation, a.keyframes.indices.contains(k),
+              values.count == a.keyframes[k].values.count else { return }
+        let before = instanceLatency(of: self[slot: index])
+        a.store(values, at: k, spec: self[slot: index].spec)
+        self[slot: index].automation = a
+        self[slot: index].values = a.topValues
+        pushParams(self[slot: index], onlyIfChanged: true)
+        if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
+        persistSoon()
+    }
+
+    /// 直したキーフレームを段へ入れ、values を一番上のものに合わせる。
+    /// キーフレームごとのカードは値が決まっているので、画面は作り直さない。
     private func adoptEdited(_ a: ETAutomation, at index: Int) {
         self[slot: index].automation = a
-        self[slot: index].values = a.selectedValues
-        self[slot: index].resetCount &+= 1
+        self[slot: index].values = a.topValues
     }
 
     /// キーフレームを足し引きしたあと、鳴らす値を引き直す。遅延が変わったら組み直す。
@@ -1723,7 +1827,8 @@ final class EffeTuneDSP: ObservableObject {
 
     /// その段の実行時の事故が残っているか（et_instance_runtime_event の latched）。
     /// Adaptive Prediction が数値の失敗を起こすと立つ。Reset（resetToken）で下りる。
-    func runtimeFault(at index: Int) -> Bool {
+    func runtimeFault(at address: Int) -> Bool {
+        guard let index = nodeSlot(address, writing: false) else { return false }
         guard engine != 0, contains(slot: index), self[slot: index].instance != 0 else { return false }
         var state = et_runtime_event_state()
         guard Int(et_instance_runtime_event(engine, self[slot: index].instance, &state)) == ET_OK else { return false }
@@ -1753,8 +1858,9 @@ final class EffeTuneDSP: ObservableObject {
     ///
     /// sectionGate は受けるが残らない。Section の入切と鎖の並びから決まる値なので、
     /// この直後の publish() が applySectionGates() で引き直す。
-    func setRouting(at index: Int, inputBus: UInt8? = nil, outputBus: UInt8? = nil,
+    func setRouting(at address: Int, inputBus: UInt8? = nil, outputBus: UInt8? = nil,
                     channelSpec: Int8? = nil, sectionGate: UInt8? = nil) {
+        guard let index = nodeSlot(address, writing: true) else { return }
         guard contains(slot: index) else { return }
         let previousChannels = Self.routedChannels(of: self[slot: index])
         let previousExternalChannels = Self.externalChannels(of: self[slot: index])

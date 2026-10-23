@@ -24,11 +24,10 @@ final class AutomationTests: XCTestCase {
     private let volume = "VolumePlugin"
 
     /// 2つのキーフレーム（50% と 100%）から作る。
-    private func automation(_ spec: ETEffect, _ a: [Float], _ b: [Float],
-                            selected: Int? = nil) throws -> ETAutomation {
+    private func automation(_ spec: ETEffect, _ a: [Float], _ b: [Float]) throws -> ETAutomation {
         try XCTUnwrap(ETAutomation(source: .outputVolume,
                                    keyframes: [.init(position: 50, values: a), .init(position: 100, values: b)],
-                                   selected: selected, spec: spec))
+                                   spec: spec))
     }
 
     private func vol(_ db: Float) throws -> [Float] {
@@ -38,7 +37,7 @@ final class AutomationTests: XCTestCase {
     }
 
     private func node(_ spec: ETEffect, _ a: ETAutomation? = nil) -> ETChainNode {
-        var n = ETChainNode(spec: spec, values: a?.selectedValues ?? spec.defaults)
+        var n = ETChainNode(spec: spec, values: a?.topValues ?? spec.defaults)
         n.automation = a
         return n
     }
@@ -260,12 +259,12 @@ final class AutomationTests: XCTestCase {
         let os = try XCTUnwrap(s.params.first { $0.name == "oversampling" }).offset
         var a = s.defaults, b = s.defaults
         a[os] = 1; b[os] = 4
-        var k = try automation(s, a, b, selected: 0)
-        // store すると、選んでいるものの値が全キーフレームの held になる。
-        XCTAssertEqual(k.keyframes[1].values[os], 1, "読み込みで選んでいるキーフレームに揃う")
-        var cur = k.selectedValues
+        var k = try automation(s, a, b)
+        // store すると、書いたキーフレームの値が全キーフレームの held になる。
+        XCTAssertEqual(k.keyframes[0].values[os], 4, "読み込みで一番上のキーフレームに揃う")
+        var cur = k.keyframes[0].values
         cur[os] = 8
-        k.store(selected: cur, spec: s)
+        k.store(cur, at: 0, spec: s)
         XCTAssertEqual(k.keyframes.map { $0.values[os] }, [8, 8])
         // 鳴らす値は current から。
         var current = s.defaults
@@ -287,49 +286,141 @@ final class AutomationTests: XCTestCase {
 
     func testStoreIgnoresWrongLength() throws {
         let s = try spec(volume)
-        var k = try automation(s, try vol(-10), try vol(0), selected: 0)
-        k.store(selected: [1, 2, 3], spec: s)
-        XCTAssertEqual(k.selectedValues, try vol(-10))
-        k.store(selected: try vol(-3), spec: s)
-        XCTAssertEqual(k.selectedValues, try vol(-3))
+        var k = try automation(s, try vol(-10), try vol(0))
+        k.store([1, 2, 3], at: 0, spec: s)
+        XCTAssertEqual(k.keyframes[0].values, try vol(-10))
+        k.store(try vol(-3), at: 5, spec: s)
+        k.store(try vol(-3), at: -1, spec: s)
+        XCTAssertEqual(k.keyframes.map(\.values), [try vol(-10), try vol(0)], "範囲の外の k は何もしない")
+        k.store(try vol(-3), at: 0, spec: s)
+        XCTAssertEqual(k.keyframes[0].values, try vol(-3))
         XCTAssertEqual(k.keyframes[1].values, try vol(0))
+    }
+
+    func testStoreAtNonTopSharesHeldIncludingTop() throws {
+        let s = try spec("BrickwallLimiterPlugin")
+        let os = try XCTUnwrap(s.params.first { $0.name == "oversampling" }).offset
+        var k = try automation(s, s.defaults, s.defaults)
+        var low = k.keyframes[0].values
+        low[os] = 4
+        k.store(low, at: 0, spec: s)
+        XCTAssertEqual(k.keyframes.map { $0.values[os] }, [4, 4], "下のものを直しても一番上へ写る")
+        XCTAssertEqual(k.topValues[os], 4)
     }
 
     // MARK: - キーフレームの足し引き
 
-    func testAddCopiesNearestAndSelects() throws {
+    func testAddCopiesNearestAndReturnsIndex() throws {
         let s = try spec(volume)
-        var k = try automation(s, try vol(-10), try vol(0), selected: 0)
-        k.add(at: 62)                              // 刻みで 60。50 の方が近い
+        var k = try automation(s, try vol(-10), try vol(0))
+        XCTAssertEqual(k.add(at: 62), 1)           // 刻みで 60。50 の方が近い
         XCTAssertEqual(k.keyframes.map(\.position), [50, 60, 100])
-        XCTAssertEqual(k.selected, 1)
-        XCTAssertEqual(k.selectedValues, try vol(-10))
-        k.add(at: 90)
+        XCTAssertEqual(k.keyframes[1].values, try vol(-10))
+        XCTAssertEqual(k.add(at: 90), 2)
         XCTAssertEqual(k.keyframes.map(\.position), [50, 60, 90, 100])
         XCTAssertEqual(k.keyframes[2].values, try vol(0))
-        XCTAssertEqual(k.selected, 2)
         // 同じ近さなら位置の低い方（75 は 50 と 100 の真ん中）
         var m = try automation(s, try vol(-10), try vol(0))
-        m.add(at: 75)
-        XCTAssertEqual(m.selectedValues, try vol(-10))
-        // あるものを足すと、選ぶだけ
-        k.add(at: 50)
+        XCTAssertEqual(m.add(at: 75), 1)
+        XCTAssertEqual(m.keyframes[1].values, try vol(-10))
+        // あるものを足すと、その添字を返すだけ
+        XCTAssertEqual(k.add(at: 50), 0)
         XCTAssertEqual(k.keyframes.count, 4)
-        XCTAssertEqual(k.selected, 0)
-        k.add(at: 101)                             // 範囲外は 100 に寄る
+        XCTAssertEqual(k.add(at: 101), 3, "範囲外は 100 に寄る")
         XCTAssertEqual(k.keyframes.count, 4)
-        XCTAssertEqual(k.selected, 3)
+        // いっぱいなら nil。ただし、あるものは添字を返す
+        let v = try vol(-1)
+        let many = (0..<100).map { ETAutomation.Keyframe(position: Double($0), values: v) }
+        var full = try XCTUnwrap(ETAutomation(source: .outputVolume, keyframes: many, spec: s))
+        XCTAssertEqual(full.keyframes.count, ETAutomation.maxKeyframes)
+        XCTAssertNil(full.add(at: 100))
+        XCTAssertEqual(full.keyframes.count, ETAutomation.maxKeyframes)
+        XCTAssertEqual(full.add(at: 5), 5)
     }
 
-    func testRemoveSelected() throws {
+    func testRemoveAt() throws {
         let s = try spec(volume)
-        var k = try automation(s, try vol(-10), try vol(0), selected: 1)
-        XCTAssertTrue(k.removeSelected())
+        var k = try automation(s, try vol(-10), try vol(0))
+        XCTAssertFalse(k.remove(at: 5))
+        XCTAssertFalse(k.remove(at: -1))
+        XCTAssertEqual(k.keyframes.count, 2)
+        XCTAssertTrue(k.remove(at: 1))
         XCTAssertEqual(k.keyframes.count, 1)
-        XCTAssertEqual(k.selected, 0)
-        XCTAssertEqual(k.selectedValues, try vol(-10))
-        XCTAssertFalse(k.removeSelected(), "最後の1つは消さない")
+        XCTAssertEqual(k.topValues, try vol(-10))
+        XCTAssertFalse(k.remove(at: 0), "最後の1つは消さない")
         XCTAssertEqual(k.keyframes.count, 1)
+    }
+
+    func testMoveKeyframe() throws {
+        let s = try spec(volume)
+        var k = try automation(s, try vol(-10), try vol(0))
+        k.add(at: 75)
+        XCTAssertEqual(k.keyframes.map(\.position), [50, 75, 100])
+        // 空きへ動かすと並べ直す。値は一緒に動く
+        XCTAssertEqual(k.move(0, to: 90), 1)
+        XCTAssertEqual(k.keyframes.map(\.position), [75, 90, 100])
+        XCTAssertEqual(k.keyframes[1].values, try vol(-10))
+        // 塞がっている所へは動かさない
+        XCTAssertNil(k.move(1, to: 100))
+        XCTAssertEqual(k.keyframes.map(\.position), [75, 90, 100])
+        // 自分の位置は何もせず自分の添字
+        XCTAssertEqual(k.move(1, to: 90), 1)
+        XCTAssertEqual(k.move(1, to: 91), 1, "刻みへ丸めると自分の位置")
+        // 範囲の外の k
+        XCTAssertNil(k.move(9, to: 10))
+        XCTAssertNil(k.move(-1, to: 10))
+        XCTAssertEqual(k.keyframes.map(\.position), [75, 90, 100])
+        // 刻みの外・範囲の外は丸めて収める
+        XCTAssertEqual(k.move(2, to: -40), 0)
+        XCTAssertEqual(k.keyframes.map(\.position), [0, 75, 90])
+        XCTAssertEqual(k.move(0, to: 62), 0)
+        XCTAssertEqual(k.keyframes.map(\.position), [60, 75, 90])
+        XCTAssertEqual(k.move(0, to: 400), 2, "上限へ収まる")
+        XCTAssertEqual(k.keyframes.map(\.position), [75, 90, 100])
+        XCTAssertNil(k.move(0, to: .nan), "有限でない位置は上限へ寄るが、塞がっていれば動かさない")
+        XCTAssertEqual(k.keyframes.map(\.position), [75, 90, 100])
+    }
+
+    func testAddChoices() throws {
+        let none = ETAutomation.addChoices(nil, current: 63)
+        XCTAssertEqual(none.free.count, 21)
+        XCTAssertEqual(none.free.first, 0)
+        XCTAssertEqual(none.free.last, 100)
+        XCTAssertEqual(none.suggested, 65)
+        XCTAssertEqual(ETAutomation.addChoices(nil, current: nil).suggested, 100)
+        XCTAssertEqual(ETAutomation.addChoices(nil, current: 400).suggested, 100)
+
+        let s = try spec(volume)
+        let k = try automation(s, try vol(-10), try vol(0))
+        let c = ETAutomation.addChoices(k, current: 52)
+        XCTAssertEqual(c.free, k.freePositions())
+        XCTAssertEqual(c.suggested, k.defaultAddPosition(current: 52))
+        XCTAssertEqual(c.free.count, 19)
+        XCTAssertEqual(c.suggested, 45, "50 は塞がっているので近い空き（同じ近さなら低い方）")
+    }
+
+    func testSlotAddressRoundTrip() throws {
+        let all: [ETSlotAddress] = [.slot(0), .slot(7), .sounding(slot: 0), .sounding(slot: 3),
+                                    .keyframe(slot: 0, index: 0), .keyframe(slot: 5, index: 63),
+                                    .keyframe(slot: 0, index: 63), .keyframe(slot: 1, index: 0)]
+        for a in all { XCTAssertEqual(ETSlotAddress(a.raw), a, "\(a)") }
+        XCTAssertEqual(Set(all.map(\.raw)).count, all.count, "番号は重ならない")
+        XCTAssertEqual(ETSlotAddress.slot(7).raw, 7)
+        for raw in -5000...(-1) {
+            if case .slot = ETSlotAddress(raw) { XCTFail("負の番号は slot でない: \(raw)") }
+        }
+        // 段ごとの組が重ならない
+        var seen = Set<Int>()
+        for slot in 0..<4 {
+            XCTAssertTrue(seen.insert(ETSlotAddress.sounding(slot: slot).raw).inserted)
+            for k in 0..<ETAutomation.maxKeyframes {
+                XCTAssertTrue(seen.insert(ETSlotAddress.keyframe(slot: slot, index: k).raw).inserted)
+            }
+        }
+        // 端でも落ちない
+        if case .slot = ETSlotAddress(Int.min) { XCTFail("Int.min は slot でない") }
+        if case .slot = ETSlotAddress(-1) { XCTFail("-1 は slot でない") }
+        XCTAssertEqual(ETSlotAddress(Int.max), .slot(Int.max))
     }
 
     func testDefaultAddPositionAndFree() throws {
@@ -360,21 +451,20 @@ final class AutomationTests: XCTestCase {
                                          .init(position: 20, values: try vol(-2)),
                                          .init(position: 40, values: [1, 2]),          // 数が違う
                                          .init(position: 500, values: try vol(-4))],
-                             selected: 99, spec: s)
+                             spec: s)
         let a = try XCTUnwrap(k)
         XCTAssertEqual(a.keyframes.map(\.position), [20, 80, 100])
         XCTAssertEqual(a.keyframes[1].values, try vol(-3), "同じ位置は先のものを残す")
-        XCTAssertEqual(a.selected, 2, "選択は範囲へ寄る")
-        XCTAssertNil(ETAutomation(source: .outputVolume, keyframes: [], selected: nil, spec: s))
+        XCTAssertNil(ETAutomation(source: .outputVolume, keyframes: [], spec: s))
         let many = (0..<100).map { ETAutomation.Keyframe(position: Double($0), values: v) }
-        XCTAssertEqual(ETAutomation(source: .outputVolume, keyframes: many, selected: 0, spec: s)?.keyframes.count,
+        XCTAssertEqual(ETAutomation(source: .outputVolume, keyframes: many, spec: s)?.keyframes.count,
                        ETAutomation.maxKeyframes)
     }
 
     // MARK: - 保存形式の往復
 
     private func loaded(_ s: ETEffect, _ a: ETAutomation) -> PipelineStore.Loaded {
-        PipelineStore.Loaded(spec: s, values: a.selectedValues, enabled: true,
+        PipelineStore.Loaded(spec: s, values: a.topValues, enabled: true,
                              inputBus: 0, outputBus: 0, channelSpec: -1, automation: a)
     }
 
@@ -383,23 +473,24 @@ final class AutomationTests: XCTestCase {
         var a = s.defaults, b = s.defaults
         a[g(s: s, 0)] = 3; b[g(s: s, 0)] = -4
         a[45 + 1] = 0; b[45 + 1] = 3
-        let k = try automation(s, a, b, selected: 0)
+        let k = try automation(s, a, b)
         let item = loaded(s, k)
 
         let short = try roundTrip(PipelineStore.shortForm([item]))
         let fromShort = PipelineStore.parse(short, catalog: ETCatalog)
         XCTAssertEqual(fromShort.count, 1)
         XCTAssertEqual(fromShort[0].automation, k)
-        XCTAssertEqual(fromShort[0].values, k.keyframes[0].values)
+        XCTAssertEqual(fromShort[0].values, k.topValues)
 
         let long = try roundTrip(PipelineStore.longForm([item]))
         let fromLong = PipelineStore.parse(long, catalog: ETCatalog)
         XCTAssertEqual(fromLong[0].automation, k)
-        XCTAssertEqual(fromLong[0].values, k.selectedValues)
+        XCTAssertEqual(fromLong[0].values, k.topValues)
 
         // ロングでは段の鍵として name の隣に置き、parameters の中には入れない。
         let entry = try XCTUnwrap(((long as? [String: Any])?["pipeline"] as? [[String: Any]])?.first)
         XCTAssertNotNil(entry[ETAutomation.key])
+        XCTAssertNil((entry[ETAutomation.key] as? [String: Any])?["sel"], "選んでいるキーフレームは書かない")
         XCTAssertNil((entry["parameters"] as? [String: Any])?[ETAutomation.key])
     }
 
@@ -408,14 +499,14 @@ final class AutomationTests: XCTestCase {
     }
 
     func testTopLevelValuesAreIgnoredOnRead() throws {
-        // 上の値は選んでいるキーフレームと違っていても、読むときはキーフレームを使う。
+        // 上の値は一番上のキーフレームと違っていても、読むときはキーフレームを使う。
         let s = try spec(volume)
-        let k = try automation(s, try vol(-10), try vol(0), selected: 1)
+        let k = try automation(s, try vol(-10), try vol(0))
         var entries = PipelineStore.shortForm([loaded(s, k)])
         entries[0]["vl"] = -33
         let item = try XCTUnwrap(PipelineStore.parse(try roundTrip(entries), catalog: ETCatalog).first)
         XCTAssertEqual(item.values[0], 0)
-        XCTAssertEqual(item.automation?.selected, 1)
+        XCTAssertEqual(item.values, item.automation?.topValues)
     }
 
     func testUnreadableAutomationIsDropped() throws {
@@ -429,7 +520,7 @@ final class AutomationTests: XCTestCase {
 
         let ok = try XCTUnwrap(parse(["src": "outputVolume", "sel": 0, "kf": kf]))
         XCTAssertEqual(ok.automation?.keyframes.count, 2)
-        XCTAssertEqual(ok.values[0], -10)
+        XCTAssertEqual(ok.values[0], 0, "sel は読まない。上の値は一番上のキーフレーム")
 
         // 知らない src（将来の元）・kf が配列でない・空・辞書でない
         XCTAssertNil(parse(["src": "timeOfDay", "sel": 0, "kf": kf])?.automation)
@@ -450,7 +541,6 @@ final class AutomationTests: XCTestCase {
         let dup: [[String: Any]] = [["at": 50, "p": ["vl": -1]], ["at": 50, "p": ["vl": -9]]]
         let d = try XCTUnwrap(parse(["src": "outputVolume", "sel": 9, "kf": dup]))
         XCTAssertEqual(d.automation?.keyframes.count, 1)
-        XCTAssertEqual(d.automation?.selected, 0)
         XCTAssertEqual(d.values[0], -1)
 
         // p に無いパラメータは上の値のまま
@@ -509,7 +599,7 @@ final class AutomationTests: XCTestCase {
 
     func testDeckLinkKeepsKeyframes() throws {
         let s = try spec(volume)
-        let k = try automation(s, try vol(-10), try vol(0), selected: 1)
+        let k = try automation(s, try vol(-10), try vol(0))
         let url = try XCTUnwrap(ETShareLink.deckURL(for: [node(s, k)]))
         let items = ETShareLink.parse(url.absoluteString, catalog: ETCatalog)
         XCTAssertEqual(items.count, 1)
@@ -520,7 +610,7 @@ final class AutomationTests: XCTestCase {
     func testDeckLinkCarriesSoundingValuesAtTheTop() throws {
         // 共有の画面は鳴らしている値に置き換えた鎖で作る。上の値が鳴っている値になり、キーフレームも運ぶ。
         let s = try spec(volume)
-        let k = try automation(s, try vol(-10), try vol(0), selected: 0)
+        let k = try automation(s, try vol(-10), try vol(0))
         let sounding = ETAutomation.sounding([node(s, k)], at: 75)
         XCTAssertEqual(sounding[0].values[0], -5, accuracy: 1e-5)
         XCTAssertEqual(sounding[0].automation, k)
@@ -597,7 +687,7 @@ final class AutomationTests: XCTestCase {
 
     func testSoundingSwapsValuesAndKeepsIdentity() throws {
         let s = try spec(volume)
-        let k = try automation(s, try vol(-10), try vol(0), selected: 0)
+        let k = try automation(s, try vol(-10), try vol(0))
         let n = node(s, k)
         let plain = ETChainNode(spec: s, values: try vol(-3))
         let out = ETAutomation.sounding([n, plain], at: 75)
@@ -605,15 +695,15 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(out[0].values[0], -5, accuracy: 1e-5)
         XCTAssertEqual(out[0].automation, k)
         XCTAssertEqual(out[1].values, plain.values)
-        XCTAssertEqual(n.values[0], -10, "元の段は変えない")
+        XCTAssertEqual(n.values[0], 0, "元の段は変えない（一番上のキーフレームのまま）")
         XCTAssertEqual(PipelineStore.Loaded(n).automation, k)
     }
 
-    func testEffectPresetsStoreOnlySelectedKeyframe() throws {
+    func testEffectPresetsStoreTopKeyframe() throws {
         let s = try spec(volume)
-        let k = try automation(s, try vol(-10), try vol(0), selected: 1)
+        let k = try automation(s, try vol(-10), try vol(0))
         let params = EffectPresetStoreCore.params(for: node(s, k))
         XCTAssertNil(params[ETAutomation.key])
-        XCTAssertEqual((params["vl"] as? NSNumber)?.floatValue, 0)
+        XCTAssertEqual((params["vl"] as? NSNumber)?.floatValue, 0, "一番上のキーフレーム")
     }
 }

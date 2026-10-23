@@ -78,10 +78,12 @@ final class EffectPresetStoreCore {
     /// （plugins/reverb/ir_reverb.js:163 の `ir: this.ir`）。鎖でも同じ扱い
     /// （PipelineForm.swift の irKey）。
     ///
-    /// **音量に追従するカード（ETAutomation）でも、入れるのは選んでいるキーフレームの値だけ。**
+    /// **音量に追従するカード（ETAutomation）でも、入れるのはキーフレーム1つの値だけ。**
+    /// 鎖の段（node.values）なら一番上のキーフレーム。キーフレームのカードは ETSlotAddress.keyframe で
+    /// 保存するので、そのキーフレームの値になる。
     /// この入れ物は上流の形（エフェクト → 名前 → params）のまま使っていて、鍵を足すと上流の
     /// プリセットの照合（`Object.entries(preset.params).every`）が合わなくなる。
-    /// 当てるときは setValues が選んでいるキーフレームへ書くので、保存と当てるが釣り合う。
+    /// 当てるときは setValues が同じキーフレームへ書くので、保存と当てるが釣り合う。
     static func params(for node: ETChainNode) -> [String: Any] {
         var params = ETParamCoding.encode(params: node.spec.params, values: node.values)
         if !node.irId.isEmpty { params[ETChainText.assetKey(forType: node.spec.type)] = node.irId }
