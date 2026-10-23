@@ -146,6 +146,11 @@ enum ETPEQBlend {
             : Pair(main: upper, companion: lower)
     }
 
+    /// キーフレームが from から to へ動いたとき、台の鍵（その位置）を追わせる。ほかの鍵はそのまま。
+    static func rekeyed(_ held: Double?, from: Double, to: Double) -> Double? {
+        held == from ? to : held
+    }
+
     /// 相方が無いとき（バスが違う・枠が足りない・キーフレーム1つ）の1台ぶん。
     /// 真ん中で素通しを通って入れ替わる。
     static func solo(_ a: ETAutomation, at position: Double?) -> Voice {

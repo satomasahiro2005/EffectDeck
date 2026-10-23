@@ -243,6 +243,25 @@ final class PEQBlendTests: XCTestCase {
         XCTAssertEqual(p1.companion.keyframe, 1)
     }
 
+    /// キーフレームを動かしても、鍵を新しい位置へ写せば同じ台に居続ける（付け替えに入らない）。
+    func testAssignmentSurvivesMovingTheHeldKeyframe() throws {
+        let (s, l) = try layout(types[0])
+        let a = keyframeA(s, l), b = keyframeB(s, l), c = keyframeC(s, l)
+        let before = try automation(s, [(50, a), (75, b), (100, c)])
+        let p0 = ETPEQBlend.pair(before, at: 85, mainHeld: 50, companionHeld: 75)
+        // B を 75 から 80 へ動かす。台の鍵も写す。
+        let after = try automation(s, [(50, a), (80, b), (100, c)])
+        let main = ETPEQBlend.rekeyed(50, from: 75, to: 80)
+        let companion = ETPEQBlend.rekeyed(75, from: 75, to: 80)
+        XCTAssertEqual(main, 50)
+        XCTAssertEqual(companion, 80)
+        let p1 = ETPEQBlend.pair(after, at: 85, mainHeld: main, companionHeld: companion)
+        // 位置が動けば重みは変わる。見るのはどの台がどのキーフレームを持つか。
+        XCTAssertEqual([p0.main.keyframe, p0.companion.keyframe], [p1.main.keyframe, p1.companion.keyframe])
+        XCTAssertEqual([p1.main.keyframe, p1.companion.keyframe], [2, 1])
+        XCTAssertNil(ETPEQBlend.rekeyed(nil, from: 75, to: 80))
+    }
+
     func testJumpAcrossSegmentsFallsBackToLowerOnMain() throws {
         let (s, l) = try layout(types[0])
         let a = keyframeA(s, l), b = keyframeB(s, l), c = keyframeC(s, l)

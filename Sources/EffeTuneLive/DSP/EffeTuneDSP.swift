@@ -1368,6 +1368,10 @@ final class EffeTuneDSP: ObservableObject {
         /// 帯ごとの、最後に f・g・q・t・e を変えた手の ProcessCount・時刻（添字 = 帯）。
         /// 切り替える帯の分だけ待つので、ほかの帯の連続の手で待ちが延びない。
         var changedAt: [(count: UInt64, time: ContinuousClock.Instant)?] = []
+        /// 帯ごとの、最後に t・e（付け替えのときは f・q も）を変えた手の ProcessCount・時刻。
+        /// カーネルの受け口は1つで最後の書き込みだけが残るので、この手が読まれる前に利得を戻す手を渡すと
+        /// 2つが1ブロックにまとまり、種別が変わると同時に利得が入って snap する。利得を戻す手もこれで待つ。
+        var topologyAt: [(count: UInt64, time: ContinuousClock.Instant)?] = []
         /// pushed が鳴らしているキーフレームの位置。held と違えば別のキーフレームへの付け替え。
         var pushedHeld: Double?
         /// 付け替え中。全帯を素通しにしてから f・q・t・e を替える（ETPEQBlend.reassignSteps）。
@@ -1421,6 +1425,7 @@ final class EffeTuneDSP: ObservableObject {
             peqDrives[inst] = PEQDrive(spec: node.spec, layout: layout, target: silent, held: nil,
                                        pushed: silent,
                                        changedAt: Array(repeating: stamp, count: layout.bands),
+                                       topologyAt: [],
                                        pushedHeld: nil, reassign: false, waiting: nil)
             changed.append(node.id)
         }
@@ -1472,8 +1477,8 @@ final class EffeTuneDSP: ObservableObject {
                        to target: [Float], held: Double?) {
         guard instance != 0 else { return }
         var d = peqDrives[instance] ?? PEQDrive(spec: spec, layout: layout, target: target, held: held,
-                                                pushed: nil, changedAt: [], pushedHeld: nil,
-                                                reassign: false, waiting: nil)
+                                                pushed: nil, changedAt: [], topologyAt: [],
+                                                pushedHeld: nil, reassign: false, waiting: nil)
         d.target = target
         d.held = held
         // 別のキーフレームへ付け替えるときは、鳴っているうちに f・q・t・e を動かさない。
@@ -1496,7 +1501,13 @@ final class EffeTuneDSP: ObservableObject {
             return
         }
         let switching = ETPEQBlend.switchingBands(from: d.pushed, to: next, layout: d.layout, strict: d.reassign)
-        if !switching.isEmpty, !settled(d, bands: switching) {
+        if !switching.isEmpty, !settled(d.changedAt, bands: switching) {
+            waitThenAdvance(instance)
+            return
+        }
+        // 直前に t・e を変えた帯は、その手が読まれてから次の手（利得を戻す手・音量の手）を渡す。
+        let changing = ETPEQBlend.changedBands(from: d.pushed, to: next, layout: d.layout)
+        if !settled(d.topologyAt, bands: changing) {
             waitThenAdvance(instance)
             return
         }
@@ -1508,6 +1519,12 @@ final class EffeTuneDSP: ObservableObject {
         }
         for i in ETPEQBlend.changedBands(from: d.pushed, to: next, layout: d.layout) where i < d.changedAt.count {
             d.changedAt[i] = stamp
+        }
+        if d.topologyAt.count != d.layout.bands {
+            d.topologyAt = Array(repeating: nil, count: d.layout.bands)
+        }
+        for i in switching where i < d.topologyAt.count {
+            d.topologyAt[i] = stamp
         }
         d.pushed = next
         if plan.count == 1 {
@@ -1537,11 +1554,11 @@ final class EffeTuneDSP: ObservableObject {
     /// 切り替える帯が、前に値を変えた手のならし（約5 ms）を終えたとみてよいか。
     /// 音のスレッドが2ブロック進んで12 ms 経ったら。音が止まっていて進まないなら、300 ms で
     /// 諦める（鳴っていないので切り替えてもプツッとならない）。
-    private func settled(_ d: PEQDrive, bands: [Int]) -> Bool {
+    private func settled(_ stamps: [(count: UInt64, time: ContinuousClock.Instant)?], bands: [Int]) -> Bool {
         let now = ContinuousClock.now
         let count = ETPipeline_ProcessCount()
-        for i in bands where i < d.changedAt.count {
-            guard let at = d.changedAt[i] else { continue }
+        for i in bands where i < stamps.count {
+            guard let at = stamps[i] else { continue }
             let elapsed = now - at.time
             if elapsed >= .milliseconds(300) { continue }
             if !(count >= at.count + 2 && elapsed >= .milliseconds(12)) { return false }
@@ -1661,10 +1678,26 @@ final class EffeTuneDSP: ObservableObject {
               var a = self[slot: index].automation else { return }
         let before = instanceLatency(of: self[slot: index])
         let companion = ETPEQBlend.wantsCompanion(self[slot: index])
-        guard a.move(k, to: position) != nil else { return }
+        guard a.keyframes.indices.contains(k) else { return }
+        let from = a.keyframes[k].position
+        guard let moved = a.move(k, to: position) else { return }
+        // 台の割り当ては位置が鍵。動かしただけで付け替え（全帯を素通しにする段取り）に入らないよう、鍵を写す。
+        rekeyHeld(of: self[slot: index], from: from, to: a.keyframes[moved].position)
         adoptEdited(a, at: index)
         settleAfterKeyframes(at: index, before: before, companion: companion)
         persistSoon()
+    }
+
+    /// 動かしたキーフレームを載せている台の鍵（held・pushedHeld）を新しい位置へ替える。
+    private func rekeyHeld(of node: Node, from: Double, to: Double) {
+        var instances = [node.instance]
+        if let c = companions[node.id] { instances.append(c.instance) }
+        for inst in instances {
+            guard var d = peqDrives[inst] else { continue }
+            d.held = ETPEQBlend.rekeyed(d.held, from: from, to: to)
+            d.pushedHeld = ETPEQBlend.rekeyed(d.pushedHeld, from: from, to: to)
+            peqDrives[inst] = d
+        }
     }
 
     /// k 番目のキーフレームを消す。最後の1つなら追従をやめて、その値を段の普通の値にする。
