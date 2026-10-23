@@ -1363,10 +1363,11 @@ final class EffeTuneDSP: ObservableObject {
         var target: [Float]
         /// この台に載せているキーフレームの位置（2台の割り当てを同じに保つ鍵）。
         var held: Double?
-        /// 最後に渡した値と、そのとき数えた ProcessCount・時刻。
-        /// 時刻は切り替え待ちの帯のならしを始めた手でだけ進める（連続の手で待ちを延ばさない）。
+        /// 最後に渡した値。
         var pushed: [Float]?
-        var pushedAt: (count: UInt64, time: ContinuousClock.Instant)?
+        /// 帯ごとの、最後に f・g・q・t・e を変えた手の ProcessCount・時刻（添字 = 帯）。
+        /// 切り替える帯の分だけ待つので、ほかの帯の連続の手で待ちが延びない。
+        var changedAt: [(count: UInt64, time: ContinuousClock.Instant)?] = []
         /// pushed が鳴らしているキーフレームの位置。held と違えば別のキーフレームへの付け替え。
         var pushedHeld: Double?
         /// 付け替え中。全帯を素通しにしてから f・q・t・e を替える（ETPEQBlend.reassignSteps）。
@@ -1415,9 +1416,11 @@ final class EffeTuneDSP: ObservableObject {
             // まだ descriptor に載っていないので、素通しの値を直に渡す。
             let silent = ETPEQBlend.silenced(node.values, layout: layout)
             setInstanceParams(inst, node.spec, silent)
+            let stamp: (count: UInt64, time: ContinuousClock.Instant)? =
+                (ETPipeline_ProcessCount(), ContinuousClock.now)
             peqDrives[inst] = PEQDrive(spec: node.spec, layout: layout, target: silent, held: nil,
                                        pushed: silent,
-                                       pushedAt: (ETPipeline_ProcessCount(), ContinuousClock.now),
+                                       changedAt: Array(repeating: stamp, count: layout.bands),
                                        pushedHeld: nil, reassign: false, waiting: nil)
             changed.append(node.id)
         }
@@ -1469,7 +1472,7 @@ final class EffeTuneDSP: ObservableObject {
                        to target: [Float], held: Double?) {
         guard instance != 0 else { return }
         var d = peqDrives[instance] ?? PEQDrive(spec: spec, layout: layout, target: target, held: held,
-                                                pushed: nil, pushedAt: nil, pushedHeld: nil,
+                                                pushed: nil, changedAt: [], pushedHeld: nil,
                                                 reassign: false, waiting: nil)
         d.target = target
         d.held = held
@@ -1492,16 +1495,19 @@ final class EffeTuneDSP: ObservableObject {
             peqDrives[instance] = d
             return
         }
-        if ETPEQBlend.changesTopology(from: d.pushed, to: next, layout: d.layout, strict: d.reassign),
-           !settled(d) {
+        let switching = ETPEQBlend.switchingBands(from: d.pushed, to: next, layout: d.layout, strict: d.reassign)
+        if !switching.isEmpty, !settled(d, bands: switching) {
             waitThenAdvance(instance)
             return
         }
         setInstanceParams(instance, d.spec, next)
-        if ETPEQBlend.startsSwitchRamp(from: d.pushed, to: next, target: d.target,
-                                       layout: d.layout, strict: d.reassign)
-            || ETPEQBlend.changesTopology(from: d.pushed, to: next, layout: d.layout, strict: d.reassign) {
-            d.pushedAt = (ETPipeline_ProcessCount(), ContinuousClock.now)
+        // 値が変わる帯の時刻を進める（その帯の次の切り替えは、このならしが終わってから）。
+        let stamp = (count: ETPipeline_ProcessCount(), time: ContinuousClock.now)
+        if d.changedAt.count != d.layout.bands {
+            d.changedAt = Array(repeating: nil, count: d.layout.bands)
+        }
+        for i in ETPEQBlend.changedBands(from: d.pushed, to: next, layout: d.layout) where i < d.changedAt.count {
+            d.changedAt[i] = stamp
         }
         d.pushed = next
         if plan.count == 1 {
@@ -1528,14 +1534,19 @@ final class EffeTuneDSP: ObservableObject {
         peqDrives[instance] = d
     }
 
-    /// 前に渡した値のならし（約5 ms）が終わったとみてよいか。
+    /// 切り替える帯が、前に値を変えた手のならし（約5 ms）を終えたとみてよいか。
     /// 音のスレッドが2ブロック進んで12 ms 経ったら。音が止まっていて進まないなら、300 ms で
     /// 諦める（鳴っていないので切り替えてもプツッとならない）。
-    private func settled(_ d: PEQDrive) -> Bool {
-        guard let at = d.pushedAt else { return true }
-        let elapsed = ContinuousClock.now - at.time
-        if elapsed >= .milliseconds(300) { return true }
-        return ETPipeline_ProcessCount() >= at.count + 2 && elapsed >= .milliseconds(12)
+    private func settled(_ d: PEQDrive, bands: [Int]) -> Bool {
+        let now = ContinuousClock.now
+        let count = ETPipeline_ProcessCount()
+        for i in bands where i < d.changedAt.count {
+            guard let at = d.changedAt[i] else { continue }
+            let elapsed = now - at.time
+            if elapsed >= .milliseconds(300) { continue }
+            if !(count >= at.count + 2 && elapsed >= .milliseconds(12)) { return false }
+        }
+        return true
     }
 
     /// もう居ない instance の段取りを捨てる（外した段の本体。番号は壊したあと使い回されうる）。

@@ -484,8 +484,9 @@ final class PEQBlendTests: XCTestCase {
         XCTAssertEqual(ETPEQBlend.reassignSteps(from: nil, to: target, layout: l), [target])
     }
 
-    /// 切り替え待ちの帯のならしは、新しく始めた手でだけ数える（音量が動き続けても待ちが延びない）。
-    func testContinuousPushesDoNotRestartTheSwitchWait() throws {
+    /// 待つのは切り替える帯だけ。ほかの帯の連続の手は数えない（音量が動き続けても待ちが延びない）。
+    /// 切り替える帯が直前まで連続でならされていたなら、その手は数える（途中で切り替えない）。
+    func testSwitchWaitsOnlyForSwitchingBands() throws {
         for type in types {
             let (s, l) = try layout(type)
             var from = s.defaults, to = s.defaults
@@ -497,30 +498,40 @@ final class PEQBlendTests: XCTestCase {
 
             let plan = ETPEQBlend.steps(from: from, to: to, layout: l)
             XCTAssertEqual(plan.count, 3)
-            // s1: 切り替え待ちの帯を 0 へ下げ始める手。
-            XCTAssertTrue(ETPEQBlend.startsSwitchRamp(from: from, to: plan[0], target: to, layout: l))
+            // s1: 帯0 を 0 へ下げ、帯1 も目標へ。変わるのは両方、切り替えるのは s2 の帯0 だけ。
+            XCTAssertEqual(ETPEQBlend.changedBands(from: from, to: plan[0], layout: l), [0, 1])
+            XCTAssertEqual(ETPEQBlend.switchingBands(from: from, to: plan[0], layout: l), [])
+            XCTAssertEqual(ETPEQBlend.switchingBands(from: plan[0], to: plan[1], layout: l), [0])
+            XCTAssertEqual(ETPEQBlend.changedBands(from: plan[0], to: plan[1], layout: l), [0])
+            XCTAssertEqual(ETPEQBlend.switchingBands(from: plan[1], to: plan[2], layout: l), [])
 
-            // 音量が動いて目標の連続の値だけが変わる。s1' は同じ帯を 0 に保つだけ。
-            var moved = to
+            // 音量が動いて帯1 だけが連続で変わる手は、帯0 の切り替えに関わらない。
+            var moved = plan[0]
             moved[l.gain + 1] = 4
-            moved[l.frequency + 1] = 450
-            let again = ETPEQBlend.steps(from: plan[0], to: moved, layout: l)
-            XCTAssertEqual(again.count, 3)
-            XCTAssertFalse(ETPEQBlend.startsSwitchRamp(from: plan[0], to: again[0], target: moved, layout: l))
-            // 待ち終えて切り替える手と、利得を戻す手も、待ちを始め直さない。
-            XCTAssertFalse(ETPEQBlend.startsSwitchRamp(from: again[0], to: again[1], target: moved, layout: l))
-            XCTAssertFalse(ETPEQBlend.startsSwitchRamp(from: again[1], to: again[2], target: moved, layout: l))
+            XCTAssertEqual(ETPEQBlend.changedBands(from: plan[0], to: moved, layout: l), [1])
+            XCTAssertEqual(ETPEQBlend.switchingBands(from: plan[0], to: moved, layout: l), [])
 
-            // 切り替え待ちの帯が増えたら、その手は待ちを始める。
-            var more = moved
-            put(&more, l, band: 2, f: 100, g: 3, t: 4)
-            var withBand2 = plan[0]
-            put(&withBand2, l, band: 2, f: 100, g: 3, t: 0)
-            let grown = ETPEQBlend.steps(from: withBand2, to: more, layout: l)
-            XCTAssertTrue(ETPEQBlend.startsSwitchRamp(from: withBand2, to: grown[0], target: more, layout: l))
+            // 前の値が無い最初の手は全帯が変わる。
+            XCTAssertEqual(ETPEQBlend.changedBands(from: nil, to: to, layout: l), Array(0..<l.bands))
+            XCTAssertEqual(ETPEQBlend.switchingBands(from: nil, to: to, layout: l), [])
+        }
+    }
 
-            // 前の値が無い最初の手は数える。
-            XCTAssertTrue(ETPEQBlend.startsSwitchRamp(from: nil, to: to, target: to, layout: l))
+    /// 付け替えで、素通しへ連続で下げた直後の帯も切り替える帯に数える（下げた手の時刻を待つ）。
+    func testReassignSwitchingBandIsTheOneRampedToIdentity() throws {
+        for type in types {
+            let (s, l) = try layout(type)
+            var held = s.defaults, target = s.defaults
+            for i in 0..<l.bands { held[l.gain + i] = 0; target[l.gain + i] = 0 }
+            put(&held, l, band: 0, f: 1000, g: 6, t: 0)
+            put(&target, l, band: 0, f: 2000, g: 4, t: 3)
+            var ramped = held                                       // 音量の手でほぼ素通しまで下がった
+            ramped[l.gain] = 0
+            let plan = ETPEQBlend.reassignSteps(from: ramped, to: target, layout: l)
+            XCTAssertFalse(plan.isEmpty)
+            // 下げた手で帯0 は変わっている。次の手が帯0 を切り替える。
+            XCTAssertEqual(ETPEQBlend.changedBands(from: held, to: ramped, layout: l), [0])
+            XCTAssertEqual(ETPEQBlend.switchingBands(from: ramped, to: plan[0], layout: l, strict: true), [0])
         }
     }
 }

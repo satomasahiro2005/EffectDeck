@@ -274,18 +274,19 @@ enum ETPEQBlend {
         return out
     }
 
-    /// その手が、切り替え待ちの帯のならし（約5 ms）を新しく始めるか。
-    /// 連続の手（音量が動き続けて目標だけが変わる）は始めない。待ちを延ばさないため。
-    /// 切り替え待ちの帯 = next と target で t・e（strict なら f・q も）が違う帯。
-    static func startsSwitchRamp(from pushed: [Float]?, to next: [Float], target: [Float],
-                                 layout l: Layout, strict: Bool = false) -> Bool {
-        guard let pushed, pushed.count == next.count, next.count == target.count,
-              l.fits(next) else { return true }
-        for i in 0..<l.bands where swapDiffers(next, target, band: i, l, strict: strict) {
-            for k in [l.frequency, l.gain, l.q, l.type, l.enabled] where pushed[k + i] != next[k + i] {
-                return true
-            }
+    /// 前の値から次の値で、f・g・q・t・e のどれかが変わる帯（カーネルがならし・切り替えを始める帯）。
+    /// 前の値が無い・長さが違うなら全帯。
+    static func changedBands(from pushed: [Float]?, to next: [Float], layout l: Layout) -> [Int] {
+        guard let pushed, pushed.count == next.count, l.fits(next) else { return Array(0..<l.bands) }
+        return (0..<l.bands).filter { i in
+            [l.frequency, l.gain, l.q, l.type, l.enabled].contains { pushed[$0 + i] != next[$0 + i] }
         }
-        return false
+    }
+
+    /// その手が切り替える帯（t・e、strict なら f・q も変わる帯）。待つのはこの帯のならしだけ。
+    static func switchingBands(from pushed: [Float]?, to next: [Float], layout l: Layout,
+                               strict: Bool = false) -> [Int] {
+        guard let pushed, pushed.count == next.count, l.fits(next) else { return [] }
+        return (0..<l.bands).filter { swapDiffers(pushed, next, band: $0, l, strict: strict) }
     }
 }
