@@ -711,6 +711,10 @@ extension EnvironmentValues {
     /// 開いているかどうかはPipelineViewが渡すisExpandedが決めていて、
     /// iPhoneの開閉の覚え（dsp.expanded / dsp.collapsedFully）は書かない。
     @Entry var etCardsPinnedOpen: Bool = false
+
+    /// 音量に追従する PEQ の、もう1台（相方）が鳴らしている値。nil なら無い。
+    /// PEQ の図が2台ぶんを足した曲線を描く（EffeTuneDSP.soundingPEQ）。読むだけの印は薄く出す。
+    @Entry var etPEQCompanionValues: [Float]? = nil
 }
 
 /// 組（Section とその配下）の上と下に引く横線。

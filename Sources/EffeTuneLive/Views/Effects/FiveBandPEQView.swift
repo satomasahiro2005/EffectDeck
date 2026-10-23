@@ -325,6 +325,8 @@ struct FiveBandPEQView: View {
 
     /// カードの頭のボタンで立つ。図だけにして、下のつまみを畳む。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 音量に追従しているとき、もう1台が鳴らしている帯（EffeTuneDSP.soundingPEQ）。曲線に足して薄い印で出す。
+    @Environment(\.etPEQCompanionValues) private var companionValues
 
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
@@ -372,7 +374,7 @@ struct FiveBandPEQView: View {
             spectrumBeforeTap: probeTaps?.before,
             spectrumMode: $spectrumMode,
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
-            onMarkerSelected: { selected = $0 })
+            onMarkerSelected: { if $0 < layout.count { selected = $0 } })
     }
 
     /// 合成した特性と、選んでいるバンド 1 本ぶん。
@@ -382,6 +384,8 @@ struct FiveBandPEQView: View {
             guard let c = PEQ5Math.coefficients(pair.element, sampleRate: rate) else { return nil }
             return (pair.offset, c)
         }
+        // 追従しているときの相方（もう1台）の帯。合成にだけ足す。
+        let other = companionBands.compactMap { PEQ5Math.coefficients($0, sampleRate: rate) }
         var result: [ETFrequencyCurve] = []
         // 選んでいる 1 本。合成が平らでも、いま何を触っているかが見えるように。
         if designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
@@ -395,16 +399,25 @@ struct FiveBandPEQView: View {
             let w = hz * 2 * Double.pi / rate
             var total = 0.0
             for entry in designed { total += PEQ5Math.magnitudeDB(entry.1, w: w) }
+            for c in other { total += PEQ5Math.magnitudeDB(c, w: w) }
             return total
         })
         return result
     }
 
     private var markers: [ETFrequencyMarker] {
-        bands.enumerated().map { i, item in
+        let own = bands.enumerated().map { i, item in
             ETFrequencyMarker(id: i, hz: item.frequency, db: item.gain,
                               label: "\(i + 1)", isActive: item.enabled)
         }
+        // 相方の帯は、音に効いているものだけを薄く（id は本体の帯と重ならない 1000 番台）。
+        let rate = sampleRate
+        let other = companionBands.enumerated().compactMap { i, item -> ETFrequencyMarker? in
+            guard PEQ5Math.coefficients(item, sampleRate: rate) != nil else { return nil }
+            return ETFrequencyMarker(id: 1000 + i, hz: item.frequency, db: item.gain,
+                                     label: "\(i + 1)", isActive: false)
+        }
+        return own + other
     }
 
     /// 印を動かすと、web と同じく周波数とゲインが同時に変わる
@@ -519,6 +532,20 @@ struct FiveBandPEQView: View {
 
     private func value(_ offset: Int) -> Float {
         node.values.indices.contains(offset) ? node.values[offset] : 0
+    }
+
+    /// 相方が鳴らしている帯（無ければ空）。
+    private var companionBands: [PEQ5Band] {
+        guard let values = companionValues else { return [] }
+        let l = layout
+        func at(_ offset: Int) -> Float { values.indices.contains(offset) ? values[offset] : 0 }
+        return (0..<l.count).map { i in
+            PEQ5Band(frequency: Double(at(l.frequency + i)),
+                     gain: Double(at(l.gain + i)),
+                     q: Double(at(l.q + i)),
+                     type: min(max(Int(at(l.type + i).rounded()), 0), PEQ5Math.typeNames.count - 1),
+                     enabled: at(l.enabled + i) >= 0.5)
+        }
     }
 
     /// 音が通るレート。EffeTune は _sampleRate をそのまま曲線に使っている

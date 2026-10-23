@@ -222,6 +222,10 @@ final class EffeTuneDSP: ObservableObject {
         // 探りの番号も一緒に死ぬので、控えを捨てて作り直させる。
         probes.removeAll()
         pushedAutomation.removeAll()
+        // PEQ の相方も instance ごと死ぬ。待っている段取りも捨てる。
+        for drive in peqDrives.values { drive.waiting?.cancel() }
+        peqDrives.removeAll()
+        companions.removeAll()
 
         // ここから先の instance は前の世代と番号が重なりうる（retire が見る）。
         prepareGeneration &+= 1
@@ -271,8 +275,11 @@ final class EffeTuneDSP: ObservableObject {
         let instance = self[slot: index].instance
         guard instance != 0 else { return false }
         var status = Int32(ET_ERR_STATE)
+        // 音量に追従する PEQ の相方（隠しの2台目）も一緒に。
+        let companion = companions[self[slot: index].id]?.instance ?? 0
         AssetUpload.holdOffAudioThread {
             status = Int32(et_instance_reset(engine, instance))
+            if companion != 0 { _ = et_instance_reset(engine, companion) }
         }
         if status != Int32(ET_OK) {
             let type = self[slot: index].spec.type
@@ -1331,6 +1338,207 @@ final class EffeTuneDSP: ObservableObject {
     /// prepare() で捨てる（instance の番号は世代をまたいで使い回されうる）。
     private var pushedAutomation: [UInt32: [Float]] = [:]
 
+    // MARK: - 音量に追従する PEQ（相方の1台）
+
+    /// 音量に追従する PEQ の2台目（隠し）。A の全帯と B の全帯を直列に鳴らすため（ETPEQBlend）。
+    /// 探りと同じ作り: chain には入れず（保存・プリセット・共有・PC・Section の解析・Status の数に出ない）、
+    /// descriptor にだけ enabled 2 で本体の直後に載せる（ETChainEditing.descriptors）。
+    /// 本体の切・Section の OFF は descriptor 側で相方にも効く。
+    /// 出入りするのは keyframes が 1↔2 をまたぐときと、鎖を組み直すときだけ（音量が動いても作り直さない）。
+    private struct PEQCompanion {
+        var instance: UInt32
+        var tapId: UInt32
+    }
+
+    /// 段のid → 相方。
+    private var companions: [UUID: PEQCompanion] = [:]
+
+    /// PEQ の1台（本体も相方も）へ渡す値の段取り。キー = instance。
+    /// カーネルは f・g・q の変化を約5 ms でならし、種別（t）と入切（e）の変化はその場で切り替える。
+    /// 切り替わる帯が音を出したままだとプツッと鳴るので、素通しにしてから切り替える（ETPEQBlend.steps）。
+    private struct PEQDrive {
+        let spec: ETEffect
+        let layout: ETPEQBlend.Layout
+        /// 行き着く値。
+        var target: [Float]
+        /// この台に載せているキーフレームの位置（2台の割り当てを同じに保つ鍵）。
+        var held: Double?
+        /// 最後に渡した値と、そのとき数えた ProcessCount・時刻。
+        var pushed: [Float]?
+        var pushedAt: (count: UInt64, time: ContinuousClock.Instant)?
+        /// 切り替えの前に、ならし終わるのを待っている。
+        var waiting: Task<Void, Never>?
+    }
+
+    private var peqDrives: [UInt32: PEQDrive] = [:]
+
+    /// 要る相方を作り、要らなくなったものを外す。publish のたびに呼ぶ。
+    /// **外した相方はここで壊さない。**探りと同じで、走っている descriptor にはまだ載っているので、
+    /// 番号を返して、呼び手が Publish のあとで retire() へ渡す。
+    /// `changed` へ、出入りした段のid（呼び手が値の割り当てを引き直す）。
+    private func syncCompanions(changed: inout [UUID]) -> [UInt32] {
+        guard engine != 0, ready else { return [] }
+        let all = nodes
+        // 人が置いた段を押し出さない（ETPipeline_Publish は ET_PIPE_MAX_NODES を越えた分を黙って切る）。
+        // 相方は探りより先に枠を取る。
+        let placed = all.filter { $0.instance != 0 || $0.isExternal }.count
+        let budget = max(0, Int(ET_PIPE_MAX_NODES) - placed)
+        let want = Set(all.filter { ETPEQBlend.wantsCompanion($0) }.map(\.id).prefix(budget))
+
+        var doomed: [UInt32] = []
+        for id in Array(companions.keys) where !want.contains(id) {
+            if let c = companions[id] {
+                stopDrive(c.instance)
+                doomed.append(c.instance)
+            }
+            companions[id] = nil
+            changed.append(id)
+        }
+
+        for node in all where want.contains(node.id) && companions[node.id] == nil {
+            guard let layout = ETPEQBlend.Layout(node.spec) else { continue }
+            let inst = node.spec.type.withCString { et_instance_create(engine, $0) }
+            // 作れなければ置かない。その段は相方なしの鳴らし方（solo）になる。
+            guard inst != 0 else { continue }
+            let tap = nextTap
+            nextTap &+= 1
+            guard et_instance_set_tap(engine, inst, tap) == ET_OK else {
+                doomed.append(inst)     // ここで壊さない（probe と同じ）
+                continue
+            }
+            companions[node.id] = PEQCompanion(instance: inst, tapId: tap)
+            // まだ descriptor に載っていないので、素通しの値を直に渡す。
+            let silent = ETPEQBlend.silenced(node.values, layout: layout)
+            setInstanceParams(inst, node.spec, silent)
+            peqDrives[inst] = PEQDrive(spec: node.spec, layout: layout, target: silent, held: nil,
+                                       pushed: silent,
+                                       pushedAt: (ETPipeline_ProcessCount(), ContinuousClock.now),
+                                       waiting: nil)
+            changed.append(node.id)
+        }
+        return doomed
+    }
+
+    /// 追従する PEQ の値を、本体と相方に渡す。
+    ///   - PC の鎖を編集している間: 本体は段の値、相方は素通し
+    ///   - 相方が居るとき: 2台へ割り当てた値（ETPEQBlend.pair）
+    ///   - 居ないとき（バスが違う・枠が足りない・キーフレーム1つ）: 1台ぶん（solo。1つなら全位置でそれ）
+    private func drivePEQ(_ node: Node, layout: ETPEQBlend.Layout) {
+        guard let a = node.automation else { return }
+        let main = node.instance
+        let companion = companions[node.id]?.instance
+        if RemoteMirror.shared.isRemote {
+            drive(main, spec: node.spec, layout: layout, to: node.values, held: nil)
+            if let c = companion {
+                drive(c, spec: node.spec, layout: layout,
+                      to: ETPEQBlend.silenced(node.values, layout: layout), held: nil)
+            }
+            return
+        }
+        let position = ETVolumeFollower.shared.position
+        if let c = companion, a.keyframes.count >= 2 {
+            let pair = ETPEQBlend.pair(a, at: position,
+                                       mainHeld: peqDrives[main]?.held,
+                                       companionHeld: peqDrives[c]?.held)
+            drive(main, spec: node.spec, layout: layout,
+                  to: ETPEQBlend.values(pair.main, in: a, layout: layout),
+                  held: a.keyframes[pair.main.keyframe].position)
+            drive(c, spec: node.spec, layout: layout,
+                  to: ETPEQBlend.values(pair.companion, in: a, layout: layout),
+                  held: a.keyframes[pair.companion.keyframe].position)
+            return
+        }
+        let voice = ETPEQBlend.solo(a, at: position)
+        drive(main, spec: node.spec, layout: layout,
+              to: ETPEQBlend.values(voice, in: a, layout: layout),
+              held: a.keyframes[voice.keyframe].position)
+        // 相方が居るのにキーフレームが1つ（出し直しの途中）なら、素通しにしておく。
+        if let c = companion {
+            drive(c, spec: node.spec, layout: layout,
+                  to: ETPEQBlend.silenced(a.topValues, layout: layout), held: nil)
+        }
+    }
+
+    /// 行き着く値を決めて、渡せるところまで渡す。待っている段取りがあれば、それが最新の値を拾う。
+    private func drive(_ instance: UInt32, spec: ETEffect, layout: ETPEQBlend.Layout,
+                       to target: [Float], held: Double?) {
+        guard instance != 0 else { return }
+        var d = peqDrives[instance] ?? PEQDrive(spec: spec, layout: layout, target: target, held: held,
+                                                pushed: nil, pushedAt: nil, waiting: nil)
+        d.target = target
+        d.held = held
+        peqDrives[instance] = d
+        if d.waiting != nil { return }
+        advancePEQ(instance)
+    }
+
+    /// 段取りの次の一手を渡す。種別・入切が変わる手は、前の手のならしが終わってから。
+    private func advancePEQ(_ instance: UInt32) {
+        guard engine != 0, var d = peqDrives[instance] else { return }
+        let plan = ETPEQBlend.steps(from: d.pushed, to: d.target, layout: d.layout)
+        guard let next = plan.first else { return }
+        if ETPEQBlend.changesTopology(from: d.pushed, to: next, layout: d.layout), !settled(d) {
+            waitThenAdvance(instance)
+            return
+        }
+        setInstanceParams(instance, d.spec, next)
+        d.pushed = next
+        d.pushedAt = (ETPipeline_ProcessCount(), ContinuousClock.now)
+        peqDrives[instance] = d
+        if plan.count > 1 { waitThenAdvance(instance) }
+    }
+
+    /// 少し待って、また次の一手へ。prepare をまたいだら・段取りが捨てられたら何もしない。
+    private func waitThenAdvance(_ instance: UInt32) {
+        guard var d = peqDrives[instance] else { return }
+        d.waiting?.cancel()
+        let generation = prepareGeneration
+        d.waiting = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000)
+            guard !Task.isCancelled, let self,
+                  self.prepareGeneration == generation,
+                  self.peqDrives[instance] != nil else { return }
+            self.peqDrives[instance]?.waiting = nil
+            self.advancePEQ(instance)
+        }
+        peqDrives[instance] = d
+    }
+
+    /// 前に渡した値のならし（約5 ms）が終わったとみてよいか。
+    /// 音のスレッドが2ブロック進んで12 ms 経ったら。音が止まっていて進まないなら、300 ms で
+    /// 諦める（鳴っていないので切り替えてもプツッとならない）。
+    private func settled(_ d: PEQDrive) -> Bool {
+        guard let at = d.pushedAt else { return true }
+        let elapsed = ContinuousClock.now - at.time
+        if elapsed >= .milliseconds(300) { return true }
+        return ETPipeline_ProcessCount() >= at.count + 2 && elapsed >= .milliseconds(12)
+    }
+
+    /// もう居ない instance の段取りを捨てる（外した段の本体。番号は壊したあと使い回されうる）。
+    private func pruneDrives() {
+        guard !peqDrives.isEmpty else { return }
+        var alive = Set(nodes.map(\.instance))
+        alive.formUnion(companions.values.map(\.instance))
+        for instance in Array(peqDrives.keys) where !alive.contains(instance) { stopDrive(instance) }
+    }
+
+    private func stopDrive(_ instance: UInt32) {
+        guard let d = peqDrives[instance] else { return }
+        d.waiting?.cancel()
+        peqDrives[instance] = nil
+    }
+
+    private func setInstanceParams(_ instance: UInt32, _ spec: ETEffect, _ v: [Float]) {
+        guard engine != 0, instance != 0, v.count == spec.floatCount else { return }
+        let st = v.withUnsafeBufferPointer {
+            et_instance_set_params(engine, instance, $0.baseAddress,
+                                   UInt32(spec.floatCount), spec.paramsHash, 0)
+        }
+        if st != ET_OK {
+            log.error("PEQ の set_params が \(st) を返した inst=\(instance)")
+        }
+    }
+
     /// 読んだ段のキーフレームを、鎖の段へ移す。使えない段（外部・Section）には付けない。
     /// 段の values は一番上のキーフレームと同じにする（ETChainNode.automation）。
     private func adoptAutomation(of item: PipelineStore.Loaded, to node: inout Node) {
@@ -1360,8 +1568,26 @@ final class EffeTuneDSP: ObservableObject {
     /// 実行時だけの値で、保存・PC への送信には通さない。PC の鎖を編集している間は段の値のまま。
     func soundingNode(_ node: Node) -> Node {
         var copy = node
-        copy.values = soundingValues(of: node)
+        // PEQ は帯を組にしないので、近い方の組を段の値として映す（もう1組は soundingPEQ の secondary）。
+        copy.values = soundingPEQ(node)?.primary ?? soundingValues(of: node)
         return copy
+    }
+
+    /// 画面に映す、いま鳴っている PEQ の2組。primary は近い方（利得を持たない帯も通す側）、
+    /// secondary は相方の声（無ければ nil）。PEQ でない・追従していない・PC 編集中は nil。
+    func soundingPEQ(_ node: Node) -> (primary: [Float], secondary: [Float]?)? {
+        guard let a = node.automation, !RemoteMirror.shared.isRemote,
+              let l = ETPEQBlend.Layout(node.spec) else { return nil }
+        let position = ETVolumeFollower.shared.position
+        if companions[node.id] != nil, a.keyframes.count >= 2 {
+            let v = ETPEQBlend.voices(a, at: position)
+            let primary = v.lower.gainless ? v.lower : v.upper
+            let secondary = v.lower.gainless ? v.upper : v.lower
+            return (primary: ETPEQBlend.values(primary, in: a, layout: l),
+                    secondary: ETPEQBlend.values(secondary, in: a, layout: l))
+        }
+        return (primary: ETPEQBlend.values(ETPEQBlend.solo(a, at: position), in: a, layout: l),
+                secondary: nil)
     }
 
     /// 段の values（画面が普通の口から直した結果）を、一番上のキーフレームへ書き戻す。
@@ -1387,9 +1613,10 @@ final class EffeTuneDSP: ObservableObject {
             return
         }
         let before = instanceLatency(of: self[slot: index])
+        let companion = ETPEQBlend.wantsCompanion(self[slot: index])
         a.add(at: position)
         adoptEdited(a, at: index)
-        settleAfterKeyframes(at: index, before: before)
+        settleAfterKeyframes(at: index, before: before, companion: companion)
         persistSoon()
     }
 
@@ -1398,9 +1625,10 @@ final class EffeTuneDSP: ObservableObject {
         guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
               var a = self[slot: index].automation else { return }
         let before = instanceLatency(of: self[slot: index])
+        let companion = ETPEQBlend.wantsCompanion(self[slot: index])
         guard a.move(k, to: position) != nil else { return }
         adoptEdited(a, at: index)
-        settleAfterKeyframes(at: index, before: before)
+        settleAfterKeyframes(at: index, before: before, companion: companion)
         persistSoon()
     }
 
@@ -1413,9 +1641,10 @@ final class EffeTuneDSP: ObservableObject {
             return
         }
         let before = instanceLatency(of: self[slot: index])
+        let companion = ETPEQBlend.wantsCompanion(self[slot: index])
         a.remove(at: k)
         adoptEdited(a, at: index)
-        settleAfterKeyframes(at: index, before: before)
+        settleAfterKeyframes(at: index, before: before, companion: companion)
         persistSoon()
     }
 
@@ -1486,7 +1715,10 @@ final class EffeTuneDSP: ObservableObject {
     }
 
     /// キーフレームを足し引きしたあと、鳴らす値を引き直す。遅延が変わったら組み直す。
-    private func settleAfterKeyframes(at index: Int, before: UInt32) {
+    /// PEQ の相方が要る・要らないが変わったとき（キーフレームの数が 1↔2 をまたぐ）だけ鎖を出し直す
+    /// （カードを足すのと同じ形の変化）。音量が動いただけでは来ない。
+    private func settleAfterKeyframes(at index: Int, before: UInt32, companion wasWanted: Bool) {
+        if ETPEQBlend.wantsCompanion(self[slot: index]) != wasWanted { publish() }
         pushParams(self[slot: index], onlyIfChanged: true)
         if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
     }
@@ -1684,7 +1916,8 @@ final class EffeTuneDSP: ObservableObject {
         // （ETPipeline.c:299）。探りは段 1 つに 2 本足すので、残りの枠に収まる数だけ、
         // 鎖の前から順に付ける。
         let placed = all.filter { $0.instance != 0 || $0.isExternal }.count
-        let budget = max(0, (Int(ET_PIPE_MAX_NODES) - placed) / 2)
+        // 相方（PEQ の2台目）が先に枠を取る。探りは残りの枠で。
+        let budget = max(0, (Int(ET_PIPE_MAX_NODES) - placed - companions.count) / 2)
         let want = Set(candidates.prefix(budget))
 
         var doomed: [UInt32] = []
@@ -1740,6 +1973,12 @@ final class EffeTuneDSP: ObservableObject {
 
     private func pushParams(_ node: Node, onlyIfChanged: Bool = false) {
         guard engine != 0, node.instance != 0, node.spec.floatCount > 0 else { return }
+        // 音量に追従する PEQ は、帯を組にせず2台で鳴らす（ETPEQBlend）。渡し方は drivePEQ。
+        if node.automation != nil, let layout = ETPEQBlend.Layout(node.spec) {
+            drivePEQ(node, layout: layout)
+            return
+        }
+        stopDrive(node.instance)       // 追従をやめた PEQ に残った段取りを捨てる
         var v = soundingValues(of: node)
         if node.automation != nil {
             // 音量が動くたびに来るので、前に渡したものと同じなら渡さない。
@@ -1798,13 +2037,20 @@ final class EffeTuneDSP: ObservableObject {
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
         applySectionGates()
+        var companionsChanged: [UUID] = []
+        let retiredCompanions = syncCompanions(changed: &companionsChanged)
+        pruneDrives()
         let retiredProbes = syncProbes()
         // Section は instance を持たないのでここで落ちる。上流も同じく
         // descriptor に入れない（dsp-pipeline-descriptor.js:194-198）。
         let nodes = pipeNodes()
         nodes.withUnsafeBufferPointer { ETPipeline_Publish($0.baseAddress, UInt32($0.count)) }
-        // 外した探りは、探りの無い descriptor を出したあとで壊す。
-        retire(retiredProbes)
+        // 外した相方・探りは、それの無い descriptor を出したあとで壊す。
+        retire(retiredCompanions + retiredProbes)
+        // 相方が出入りした段は、2台への値の割り当てを引き直す。
+        for id in companionsChanged {
+            if let i = slot(of: id) { pushParams(self[slot: i]) }
+        }
         // nodes と chain の両方を出す。食い違っていたら instance を作れなかった
         // ノードが混ざっている＝画面の本数だけ音が通っていない。
         // Section と rootReset の印は必ず descriptor から外れるので、先に引いて dead と分ける。
@@ -1855,7 +2101,8 @@ final class EffeTuneDSP: ObservableObject {
         // main の後ろに補正。境の印は要らない（engine は段ごとの sectionGate しか読まない）。
         ETChainEditing.descriptors(chain: chain + correction,
                                    probes: probes.mapValues(\.before.instance),
-                                   afterProbes: probes.mapValues(\.after.instance)).map { d in
+                                   afterProbes: probes.mapValues(\.after.instance),
+                                   companions: companions.mapValues(\.instance)).map { d in
             ETPipeNode(instance: d.instance,
                        enabled: d.enabled,
                        inputBus: d.inputBus,
