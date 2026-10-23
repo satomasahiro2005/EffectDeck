@@ -8,6 +8,8 @@
 //  **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（直しても試聴にならない）。
 //  カードは音量の低い順。「+」は空いている5%の位置に足す（いまの音量の近くが既定）。
 //  最後の1枚を消すと追従をやめ、その値がパイプラインのカードの普通の値になる。
+//  追従していないカードで開くと、いまの音量に1枚目を作って今の値を載せる（空のシートを出さない）。
+//  その1枚だけで何も直さずに閉じたら、追従をやめて元に戻す（開いただけで追従にしない）。
 //  説明の字は置かない。
 //
 //  **字は英語のまま。**アプリの残りに揃える（String Catalog は作らない。ConnectionTipsView と同じ規則）。
@@ -26,13 +28,15 @@ struct ETKeyframeSheet: View {
     /// PC の鎖を編集している間は触らせない（そのあいだ追従は動かない）。
     @ObservedObject private var remote = RemoteMirror.shared
 
+    /// 開いたときに1枚目を作ったなら、その時の値。閉じるときに、直していなければ追従をやめる。
+    @State private var startedValues: [Float]?
+
     /// 開いている間に直した最新の段。渡された写しは開いた時点のもの。
     private var current: EffeTuneDSP.Node { dsp.node(at: index) ?? node }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                // 追従していないあいだは何も出さず、ツールバーの「+」だけ。
                 if let a = current.automation {
                     // 位置を id にする。消したときに、別のカードへ @State が移らないように。
                     LazyVStack(spacing: 10) {
@@ -49,6 +53,8 @@ struct ETKeyframeSheet: View {
                 }
             }
             .disabled(remote.isRemote)
+            .onAppear(perform: startIfNeeded)
+            .onDisappear(perform: undoIfUntouched)
             .navigationTitle("Follow Volume")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -56,6 +62,20 @@ struct ETKeyframeSheet: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
+    }
+
+    private func startIfNeeded() {
+        guard current.automation == nil, ETAutomation.isAutomatable(current), !remote.isRemote,
+              let position = ETAutomation.addChoices(nil, current: volume.position).suggested
+        else { return }
+        startedValues = current.values
+        dsp.addKeyframe(position: position, at: index)
+    }
+
+    private func undoIfUntouched() {
+        guard let start = startedValues, let a = current.automation,
+              a.keyframes.count == 1, a.keyframes[0].values == start else { return }
+        dsp.removeKeyframe(0, at: index)
     }
 
     private var addMenu: some View {
