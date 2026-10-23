@@ -129,14 +129,16 @@ enum ETPEQBlend {
                 Voice(keyframe: i + 1, weight: t, gainless: t >= 0.5))
     }
 
-    /// 2台への割り当て。前に載せていたキーフレームの値（held）と同じものは同じ台に残す。
+    /// 2台への割り当て。前に載せていたキーフレーム（held＝その位置）と同じものは同じ台に残す。
+    /// 中身でなく位置で見るのは、つまみを動かして値を直している間も同じ台に居続けるため
+    /// （値で見ると直すたびに別物になり、2台が入れ替わって鳴りが途切れる）。位置はキーフレームの鍵。
     /// 同点なら lower を main に。
     static func pair(_ a: ETAutomation, at position: Double?,
-                     mainHeld: [Float]?, companionHeld: [Float]?) -> Pair {
+                     mainHeld: Double?, companionHeld: Double?) -> Pair {
         let (lower, upper) = voices(a, at: position)
-        func base(_ v: Voice) -> [Float] { a.keyframes[v.keyframe].values }
+        func at(_ v: Voice) -> Double { a.keyframes[v.keyframe].position }
         func score(_ m: Voice, _ c: Voice) -> Int {
-            (mainHeld == base(m) ? 1 : 0) + (companionHeld == base(c) ? 1 : 0)
+            (mainHeld == at(m) ? 1 : 0) + (companionHeld == at(c) ? 1 : 0)
         }
         return score(lower, upper) >= score(upper, lower)
             ? Pair(main: lower, companion: upper)

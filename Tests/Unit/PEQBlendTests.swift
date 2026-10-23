@@ -201,17 +201,17 @@ final class PEQBlendTests: XCTestCase {
             XCTAssertEqual([first.main.keyframe, first.companion.keyframe], [0, 1])
 
             // (B,C) の区間へ移る: B を持っている companion はそのまま、A を持っていた main が C へ。
-            let moved = ETPEQBlend.pair(k, at: 85, mainHeld: a, companionHeld: b)
+            let moved = ETPEQBlend.pair(k, at: 85, mainHeld: 50, companionHeld: 75)
             XCTAssertEqual([moved.main.keyframe, moved.companion.keyframe], [2, 1])
             XCTAssertEqual(moved.companion.weight, 1 - moved.main.weight, accuracy: 1e-6)
 
             // 逆（main が B を持っている）なら main はそのまま。
-            let swapped = ETPEQBlend.pair(k, at: 85, mainHeld: b, companionHeld: a)
+            let swapped = ETPEQBlend.pair(k, at: 85, mainHeld: 75, companionHeld: 50)
             XCTAssertEqual([swapped.main.keyframe, swapped.companion.keyframe], [1, 2])
 
             // もう片方が何も持っていなくても B の台は動かさない。
-            XCTAssertEqual(ETPEQBlend.pair(k, at: 85, mainHeld: nil, companionHeld: b).companion.keyframe, 1)
-            XCTAssertEqual(ETPEQBlend.pair(k, at: 85, mainHeld: b, companionHeld: nil).main.keyframe, 1)
+            XCTAssertEqual(ETPEQBlend.pair(k, at: 85, mainHeld: nil, companionHeld: 75).companion.keyframe, 1)
+            XCTAssertEqual(ETPEQBlend.pair(k, at: 85, mainHeld: 75, companionHeld: nil).main.keyframe, 1)
 
             // 付け替わる側（A を持っていた台）は、B の位置（t=1）で全部素通しだった。
             let atB = ETPEQBlend.pair(k, at: 74.999, mainHeld: nil, companionHeld: nil)
@@ -222,11 +222,25 @@ final class PEQBlendTests: XCTestCase {
             XCTAssertEqual(atB.main.weight, 0, accuracy: 1e-3)
 
             // 位置が B ちょうど: B が lower で重み 1、upper(C) は 0。
-            let on = ETPEQBlend.pair(k, at: 75, mainHeld: a, companionHeld: b)
+            let on = ETPEQBlend.pair(k, at: 75, mainHeld: 50, companionHeld: 75)
             XCTAssertEqual([on.main.keyframe, on.companion.keyframe], [2, 1])
             XCTAssertEqual(on.companion.weight, 1)
             XCTAssertEqual(on.main.weight, 0)
         }
+    }
+
+    /// つまみで値を直している間も、同じキーフレームは同じ台に居続ける（位置で見る）。
+    func testAssignmentSurvivesEditingTheHeldKeyframe() throws {
+        let (s, l) = try layout(types[0])
+        let a = keyframeA(s, l), c = keyframeC(s, l)
+        var b = keyframeB(s, l)
+        let before = try automation(s, [(50, a), (75, b), (100, c)])
+        let p0 = ETPEQBlend.pair(before, at: 85, mainHeld: 50, companionHeld: 75)
+        b[l.gain + 0] = 1.5
+        let after = try automation(s, [(50, a), (75, b), (100, c)])
+        let p1 = ETPEQBlend.pair(after, at: 85, mainHeld: 50, companionHeld: 75)
+        XCTAssertEqual(p0, p1)
+        XCTAssertEqual(p1.companion.keyframe, 1)
     }
 
     func testJumpAcrossSegmentsFallsBackToLowerOnMain() throws {
@@ -236,7 +250,7 @@ final class PEQBlendTests: XCTestCase {
         put(&d, l, band: 0, f: 700, g: 3, t: 0)
         let k = try automation(s, [(40, a), (60, b), (80, c), (100, d)])
         // (A,B) を鳴らしていて、(C,D) へ飛ぶ。どの台も C・D を持っていない。
-        let p = ETPEQBlend.pair(k, at: 90, mainHeld: a, companionHeld: b)
+        let p = ETPEQBlend.pair(k, at: 90, mainHeld: 50, companionHeld: 75)
         XCTAssertEqual([p.main.keyframe, p.companion.keyframe], [2, 3])
     }
 
