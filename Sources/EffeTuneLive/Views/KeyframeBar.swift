@@ -59,7 +59,8 @@ struct ETKeyframeBar: View {
                         .contentShape(Rectangle())
                 }
                 .menuOrder(.fixed)
-                .accessibilityLabel("Add Keyframe")
+                // 中に「足す」も「消す」もあるので、VoiceOver には中立の名前を付ける。
+                .accessibilityLabel("Keyframes")
             }
             .disabled(remote.isRemote)
         }
