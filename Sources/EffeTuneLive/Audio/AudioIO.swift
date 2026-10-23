@@ -239,6 +239,8 @@ final class AudioIO: ObservableObject {
         // 前に now playing を名乗る。前後の入れ替わりがループバックの原因なら
         // 毎回 rsp=1 になるはず。
         NowPlaying.claimBeforeSession()
+        // 音量に追従するカードのために、出力の音量を読み始める（読むだけ。VolumeFollower.swift）。
+        ETVolumeFollower.shared.start()
     }
 
     /// 音の経路に関わる設定が変わったら組み直す。一瞬切れる。
@@ -1189,6 +1191,8 @@ final class AudioIO: ObservableObject {
             cancelDeviceRecheck()
             // 紐付けたプリセットを読み直すか外す。main には触らない。記録の 1 行も向こうで出す（uid は出さない）。
             OutputCorrection.shared.deviceSettled(d)
+            // 音量も落ち着いた出力先のものを読み直す（音量に追従するカード）。
+            ETVolumeFollower.shared.deviceSettled()
         }
     }
 

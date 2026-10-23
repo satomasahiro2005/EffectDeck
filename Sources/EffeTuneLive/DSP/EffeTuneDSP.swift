@@ -193,6 +193,7 @@ final class EffeTuneDSP: ObservableObject {
         // Engine::prepare は destroyAllInstances を通る（engine.cpp:221）。
         // 探りの番号も一緒に死ぬので、控えを捨てて作り直させる。
         probes.removeAll()
+        pushedAutomation.removeAll()
 
         // ここから先の instance は前の世代と番号が重なりうる（retire が見る）。
         prepareGeneration &+= 1
@@ -828,6 +829,7 @@ final class EffeTuneDSP: ObservableObject {
             node.irId = item.irId
             node.display = item.display
             node.design = item.design
+            adoptAutomation(of: item, to: &node)
             node.externalID = item.externalID.isEmpty ? nil : item.externalID
             if node.isExternal {
                 // 身元は presetInsertion が新しく付け直してある（同じ AU を 2 枚のカードが取り合わない）。
@@ -979,6 +981,7 @@ final class EffeTuneDSP: ObservableObject {
         node.irId = item.irId
         node.display = item.display
         node.design = item.design
+        adoptAutomation(of: item, to: &node)
         node.externalID = item.externalID.isEmpty ? nil : item.externalID
         if node.isExternal {
             // 空か、既に鎖に居る外部の段と同じ身元なら新しく作る（ETChainEditing.externalInstanceID）。
@@ -1127,6 +1130,7 @@ final class EffeTuneDSP: ObservableObject {
             self[slot: index].values = ETUpstreamNormalize.sfzCrossRules(params: self[slot: index].spec.params,
                                                                           values: self[slot: index].values)
         }
+        storeSelectedKeyframe(at: index)
         let before = instanceLatency(of: self[slot: index])
         pushParams(self[slot: index])
         settleAfterParams(at: index, changed: offset, before: before)
@@ -1178,6 +1182,7 @@ final class EffeTuneDSP: ObservableObject {
                                             type: self[slot: index].spec.type)
         let redesign = design != self[slot: index].design
         self[slot: index].values = values
+        storeSelectedKeyframe(at: index)
         if redesign { self[slot: index].design = design }
         pushParams(self[slot: index])
         // IR Reverb の下ごしらえ（dc / co / dt / tr）は材料の側にあるので、変われば送り直す。
@@ -1217,6 +1222,7 @@ final class EffeTuneDSP: ObservableObject {
         // 画面は .etSaved で現れたときにしか読まないので、作り直させる（Node.resetCount）。
         self[slot: index].display = [:]
         self[slot: index].resetCount &+= 1
+        storeSelectedKeyframe(at: index)
         pushParams(self[slot: index])
         // IR Reverb は ir も既定（''、ir_reverb.js:28）へ戻るので、素材を外して素通しにする。
         // 入れ直すと Reset の後も同じ IR が鳴り続ける。
@@ -1254,6 +1260,118 @@ final class EffeTuneDSP: ObservableObject {
         ETAssetReattach.paramsChanged(self[slot: index])
         if index < chain.count { RemoteMirror.shared.paramsChanged(at: index) }
         persistSoon()
+    }
+
+    // MARK: - 音量に追従（オートメーション）
+
+    /// 音量で動かしている段に、instance へ最後に渡した値。同じ値を渡し直さないための控え。
+    /// prepare() で捨てる（instance の番号は世代をまたいで使い回されうる）。
+    private var pushedAutomation: [UInt32: [Float]] = [:]
+
+    /// 読んだ段のキーフレームを、鎖の段へ移す。使えない段（外部・Section）には付けない。
+    /// 段の values は選んでいるキーフレームと同じにする（ETChainNode.automation）。
+    private func adoptAutomation(of item: PipelineStore.Loaded, to node: inout Node) {
+        guard let a = item.automation, item.externalID.isEmpty,
+              ETAutomation.isAutomatable(item.spec) else { return }
+        node.automation = a
+        node.values = a.selectedValues
+    }
+
+    /// instance へ渡す値。音量に追従する段は、いまの音量でキーフレームを補間したもの。
+    /// PC の鎖を編集している間は補間しない（PC へは段の値だけを送っていて、キーフレームは行かない）。
+    private func soundingValues(of node: Node) -> [Float] {
+        guard let a = node.automation, !RemoteMirror.shared.isRemote else { return node.values }
+        return a.values(at: ETVolumeFollower.shared.position, spec: node.spec, current: node.values)
+    }
+
+    /// 音量が変わった。**鳴らす値を instance へ渡すだけ。**
+    /// 段の values・保存・PC への送信・組み直しは通さない（補間した値は保存しない）。
+    func applyAutomation() {
+        guard engine != 0, ready, !RemoteMirror.shared.isRemote else { return }
+        for slot in 0..<(chain.count + correction.count) where self[slot: slot].automation != nil {
+            pushParams(self[slot: slot], onlyIfChanged: true)
+        }
+    }
+
+    /// 段の values（選んでいるキーフレームを画面が直した結果）を、キーフレームへ書き戻す。
+    /// 直したあとの pushParams が、いまの音量で補間し直した値を渡す。
+    private func storeSelectedKeyframe(at index: Int) {
+        guard contains(slot: index), var a = self[slot: index].automation else { return }
+        a.store(selected: self[slot: index].values, spec: self[slot: index].spec)
+        self[slot: index].automation = a
+    }
+
+    /// 「音量に追従」の入切。入れると、いまの音量（5% 刻み）に最初のキーフレームを、いまの値で作る。
+    /// 切ると、選んでいるキーフレームの値が段の普通の値になり、キーフレームは消える。
+    /// main の段だけ。PC の鎖を編集している間は受けない。
+    func setFollowsVolume(_ on: Bool, at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote else { return }
+        if on {
+            guard self[slot: index].automation == nil,
+                  ETAutomation.isAutomatable(self[slot: index]) else { return }
+            let source = ETAutomation.Source.outputVolume
+            let position = source.snapped(ETVolumeFollower.shared.position ?? source.range.upperBound)
+            self[slot: index].automation = ETAutomation(source: source, position: position,
+                                                        values: self[slot: index].values)
+            pushParams(self[slot: index])
+        } else {
+            guard self[slot: index].automation != nil else { return }
+            let before = instanceLatency(of: self[slot: index])
+            self[slot: index].automation = nil
+            pushedAutomation[self[slot: index].instance] = nil
+            pushParams(self[slot: index])
+            if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
+        }
+        persistSoon()
+    }
+
+    /// 画面が見せて直すキーフレームを選ぶ。**鳴らす値は変えない**（鳴るのはいつも今の音量の補間）。
+    /// 画面は .etSaved で現れたときにしか読まないものがあるので、作り直させる（Node.resetCount）。
+    func selectKeyframe(_ k: Int, at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              var a = self[slot: index].automation, k != a.selected else { return }
+        a.select(k)
+        adoptEdited(a, at: index)
+        persistSoon()
+    }
+
+    /// 音量の位置にキーフレームを足して選ぶ。新しいものは一番近いキーフレームの写し。
+    func addKeyframe(position: Double, at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              var a = self[slot: index].automation else { return }
+        let before = instanceLatency(of: self[slot: index])
+        a.add(at: position)
+        adoptEdited(a, at: index)
+        settleAfterKeyframes(at: index, before: before)
+        persistSoon()
+    }
+
+    /// 選んでいるキーフレームを消す。最後の1つなら追従をやめて、その値を普通の値にする。
+    func removeSelectedKeyframe(at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              var a = self[slot: index].automation else { return }
+        guard a.keyframes.count > 1 else {
+            setFollowsVolume(false, at: index)
+            return
+        }
+        let before = instanceLatency(of: self[slot: index])
+        a.removeSelected()
+        adoptEdited(a, at: index)
+        settleAfterKeyframes(at: index, before: before)
+        persistSoon()
+    }
+
+    /// 直したキーフレームを段へ入れ、values を選んでいるものに合わせて、画面を作り直させる。
+    private func adoptEdited(_ a: ETAutomation, at index: Int) {
+        self[slot: index].automation = a
+        self[slot: index].values = a.selectedValues
+        self[slot: index].resetCount &+= 1
+    }
+
+    /// キーフレームを足し引きしたあと、鳴らす値を引き直す。遅延が変わったら組み直す。
+    private func settleAfterKeyframes(at index: Int, before: UInt32) {
+        pushParams(self[slot: index], onlyIfChanged: true)
+        if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
     }
 
     func clear() {
@@ -1503,9 +1621,14 @@ final class EffeTuneDSP: ObservableObject {
         return Probe(instance: inst, tapId: tap)
     }
 
-    private func pushParams(_ node: Node) {
+    private func pushParams(_ node: Node, onlyIfChanged: Bool = false) {
         guard engine != 0, node.instance != 0, node.spec.floatCount > 0 else { return }
-        var v = node.values
+        var v = soundingValues(of: node)
+        if node.automation != nil {
+            // 音量が動くたびに来るので、前に渡したものと同じなら渡さない。
+            if onlyIfChanged, pushedAutomation[node.instance] == v { return }
+            pushedAutomation[node.instance] = v
+        }
         let st = v.withUnsafeBufferPointer {
             et_instance_set_params(engine, node.instance, $0.baseAddress,
                                    UInt32(node.spec.floatCount), node.spec.paramsHash, 0)

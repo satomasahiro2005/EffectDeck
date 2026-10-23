@@ -603,6 +603,9 @@ final class RemoteMirror: ObservableObject {
         EffeTuneDSP.shared.adoptSeededChain()
         // いまの出力先の補正を戻す。isRemote を下ろした後なので、入れ直しの persist() は PC へ送らない。
         OutputCorrection.shared.setRemote(false)
+        // 戻した鎖は、退避から入れ直したときは補間しない値のまま鳴っている（isRemote が下りる前だった）。
+        // 音量に追従する段へ、いまの音量の値を渡す。
+        EffeTuneDSP.shared.applyAutomation()
     }
 
     /// 退避した鎖を画面へ戻して、退避を消す。いまの鎖と同じなら作り直さない。
