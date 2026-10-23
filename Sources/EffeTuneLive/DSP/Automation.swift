@@ -339,14 +339,17 @@ struct ETAutomation: Equatable {
               let list = dict["kf"] as? [Any] else { return nil }
 
         var keyframes: [Keyframe] = []
-        for item in list {
+        // 貼られた字が極端に長くても、読むのは先頭だけ（整えると maxKeyframes に収まる）。
+        for item in list.prefix(maxKeyframes * 4) {
             guard let kf = item as? [String: Any],
                   let n = kf["at"] as? NSNumber, n.doubleValue.isFinite else { continue }
             let p = kf["p"] as? [String: Any] ?? [:]
             let v = ETParamCoding.decode(params: spec.params, defaults: values, from: p, type: spec.type)
             keyframes.append(Keyframe(position: n.doubleValue, values: v))
         }
-        let sel = (dict["sel"] as? NSNumber).map { $0.intValue }
+        // Int(_:) は範囲の外で落ちるので、数のまま寄せてから Int にする。
+        let sel = (dict["sel"] as? NSNumber).map { $0.doubleValue }
+            .flatMap { $0.isFinite ? Int(min(max($0, 0), Double(maxKeyframes))) : nil }
         return ETAutomation(source: source, keyframes: keyframes, selected: sel, spec: spec)
     }
 

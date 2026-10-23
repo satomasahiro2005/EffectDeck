@@ -36,7 +36,7 @@ final class ETVolumeFollower: ObservableObject {
         started = true
 
         // .initial で今の値を取る。クロージャは主以外で呼ばれうるので、値だけ持って主へ渡す。
-        kvo = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.initial, .new]) { _, change in
+        kvo = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.initial, .new]) { @Sendable _, change in
             let v = change.newValue
             Task { @MainActor in ETVolumeFollower.shared.take(v) }
         }
