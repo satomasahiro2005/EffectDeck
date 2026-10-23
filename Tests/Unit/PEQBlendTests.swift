@@ -424,4 +424,103 @@ final class PEQBlendTests: XCTestCase {
             XCTAssertFalse(ETPEQBlend.changesTopology(from: plan[1], to: plan[2], layout: l))
         }
     }
+
+    // MARK: - 台の付け替え（鳴っているキーフレームを別のものへ）
+
+    /// 鳴らしている台が別のキーフレームを受け取るとき、最初の一手は全帯素通しで、
+    /// 素通しでない帯の f・q・t は動かさない。目標の f・q・t・e が入るのは素通しのうち。
+    func testReassignGoesThroughSilenceBeforeSwappingKeyframe() throws {
+        for type in types {
+            let (s, l) = try layout(type)
+            let a = keyframeA(s, l), b = keyframeB(s, l), c = keyframeC(s, l)
+            var d = c
+            put(&d, l, band: 0, f: 700, g: 3, t: 0)
+            let k = try automation(s, [(40, a), (60, b), (80, c), (100, d)])
+
+            // (A,B) の区間 t=0.3: main は A を 0.7 倍で鳴らしている。(B,C) の中ほど・(C,D) の中ほどへ飛ぶ。
+            for jump in [70.0, 90.0] {
+                let sounding = ETPEQBlend.values(.init(keyframe: 0, weight: 0.7, gainless: true), in: k, layout: l)
+                XCTAssertFalse(ETPEQBlend.isSilent(sounding, layout: l))
+                let pair = ETPEQBlend.pair(k, at: jump, mainHeld: 40, companionHeld: 60)
+                // 受け取るのは main（A を持っていた台）。
+                XCTAssertNotEqual(k.keyframes[pair.main.keyframe].position, 40)
+                let target = ETPEQBlend.values(pair.main, in: k, layout: l)
+
+                let plan = ETPEQBlend.reassignSteps(from: sounding, to: target, layout: l)
+                XCTAssertEqual(plan.count, 3)
+                // 最初の一手: 全帯素通し。f・q・t は前のまま（素通しでない帯が動かない）。
+                XCTAssertTrue(ETPEQBlend.isSilent(plan[0], layout: l))
+                for i in 0..<l.bands {
+                    XCTAssertEqual(plan[0][l.frequency + i], sounding[l.frequency + i], "band \(i)")
+                    XCTAssertEqual(plan[0][l.q + i], sounding[l.q + i], "band \(i)")
+                    XCTAssertEqual(plan[0][l.type + i], sounding[l.type + i], "band \(i)")
+                }
+                // 二手目: 素通しのまま目標の f・q・t を入れる。
+                XCTAssertTrue(ETPEQBlend.isSilent(plan[1], layout: l))
+                for i in 0..<l.bands {
+                    XCTAssertEqual(plan[1][l.frequency + i], target[l.frequency + i])
+                    XCTAssertEqual(plan[1][l.q + i], target[l.q + i])
+                    XCTAssertEqual(plan[1][l.type + i], target[l.type + i])
+                }
+                XCTAssertTrue(ETPEQBlend.changesTopology(from: plan[0], to: plan[1], layout: l, strict: true))
+                XCTAssertEqual(plan[2], target)
+            }
+        }
+    }
+
+    /// 前の値が素通し（ふつうの受け渡し。重み 0）なら、素通しにする手は要らない。
+    func testReassignFromSilentStartsWithTheSwap() throws {
+        let (s, l) = try layout(types[0])
+        let a = keyframeA(s, l), b = keyframeB(s, l), c = keyframeC(s, l)
+        let k = try automation(s, [(50, a), (75, b), (100, c)])
+        let silent = ETPEQBlend.values(.init(keyframe: 0, weight: 0, gainless: false), in: k, layout: l)
+        let target = ETPEQBlend.values(.init(keyframe: 2, weight: 0.4, gainless: false), in: k, layout: l)
+        let plan = ETPEQBlend.reassignSteps(from: silent, to: target, layout: l)
+        XCTAssertEqual(plan.count, 2)
+        XCTAssertTrue(ETPEQBlend.isSilent(plan[0], layout: l))
+        XCTAssertEqual(plan[0][l.frequency], 400)
+        XCTAssertEqual(plan[1], target)
+        XCTAssertEqual(ETPEQBlend.reassignSteps(from: target, to: target, layout: l), [])
+        XCTAssertEqual(ETPEQBlend.reassignSteps(from: nil, to: target, layout: l), [target])
+    }
+
+    /// 切り替え待ちの帯のならしは、新しく始めた手でだけ数える（音量が動き続けても待ちが延びない）。
+    func testContinuousPushesDoNotRestartTheSwitchWait() throws {
+        for type in types {
+            let (s, l) = try layout(type)
+            var from = s.defaults, to = s.defaults
+            for i in 0..<l.bands { from[l.gain + i] = 0; to[l.gain + i] = 0 }
+            put(&from, l, band: 0, f: 1000, g: 6, t: 0)
+            put(&to, l, band: 0, f: 2000, g: 4, t: 3)              // 種別が変わる帯
+            put(&from, l, band: 1, f: 300, g: 2, t: 0)
+            put(&to, l, band: 1, f: 400, g: 5, t: 0)               // 連続の帯
+
+            let plan = ETPEQBlend.steps(from: from, to: to, layout: l)
+            XCTAssertEqual(plan.count, 3)
+            // s1: 切り替え待ちの帯を 0 へ下げ始める手。
+            XCTAssertTrue(ETPEQBlend.startsSwitchRamp(from: from, to: plan[0], target: to, layout: l))
+
+            // 音量が動いて目標の連続の値だけが変わる。s1' は同じ帯を 0 に保つだけ。
+            var moved = to
+            moved[l.gain + 1] = 4
+            moved[l.frequency + 1] = 450
+            let again = ETPEQBlend.steps(from: plan[0], to: moved, layout: l)
+            XCTAssertEqual(again.count, 3)
+            XCTAssertFalse(ETPEQBlend.startsSwitchRamp(from: plan[0], to: again[0], target: moved, layout: l))
+            // 待ち終えて切り替える手と、利得を戻す手も、待ちを始め直さない。
+            XCTAssertFalse(ETPEQBlend.startsSwitchRamp(from: again[0], to: again[1], target: moved, layout: l))
+            XCTAssertFalse(ETPEQBlend.startsSwitchRamp(from: again[1], to: again[2], target: moved, layout: l))
+
+            // 切り替え待ちの帯が増えたら、その手は待ちを始める。
+            var more = moved
+            put(&more, l, band: 2, f: 100, g: 3, t: 4)
+            var withBand2 = plan[0]
+            put(&withBand2, l, band: 2, f: 100, g: 3, t: 0)
+            let grown = ETPEQBlend.steps(from: withBand2, to: more, layout: l)
+            XCTAssertTrue(ETPEQBlend.startsSwitchRamp(from: withBand2, to: grown[0], target: more, layout: l))
+
+            // 前の値が無い最初の手は数える。
+            XCTAssertTrue(ETPEQBlend.startsSwitchRamp(from: nil, to: to, target: to, layout: l))
+        }
+    }
 }

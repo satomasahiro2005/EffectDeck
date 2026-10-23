@@ -149,6 +149,7 @@ struct ETKeyframeTimeline: View {
                                     tap: { handleTap(at: $0, width: w) },
                                     changed: { handleDrag($0, width: w) },
                                     ended: { handleDragEnd() },
+                                    cancelled: { resetDrag() },
                                     feedback: dragging?.to))
         }
     }
@@ -200,12 +201,15 @@ struct ETKeyframeTimeline: View {
         }
     }
 
+    /// 引きの状態を捨てる。離したあとと、離さずに打ち切られたとき（onEnded が呼ばれない）の両方。
+    private func resetDrag() {
+        dragging = nil
+        grabbed = nil
+        dragStarted = false
+    }
+
     private func handleDragEnd() {
-        defer {
-            dragging = nil
-            grabbed = nil
-            dragStarted = false
-        }
+        defer { resetDrag() }
         guard let d = dragging, automation.keyframes.indices.contains(d.keyframe),
               abs(automation.keyframes[d.keyframe].position - d.to) > 0.0005 else { return }
         move?(d.keyframe, d.to)
@@ -219,15 +223,24 @@ private struct SheetGestures: ViewModifier {
     let tap: (CGPoint) -> Void
     let changed: (DragGesture.Value) -> Void
     let ended: () -> Void
+    /// 引きが終わった（離した・打ち切られた）あとの後始末。
+    let cancelled: () -> Void
     let feedback: Double?
+
+    /// 引いている間だけ真。打ち切られても自動で偽に戻るので、そこで状態を捨てる。
+    @GestureState private var active = false
 
     func body(content: Content) -> some View {
         if enabled {
             content
                 .onTapGesture(coordinateSpace: .local, perform: tap)
                 .gesture(DragGesture(minimumDistance: 6)
+                    .updating($active) { _, state, _ in state = true }
                     .onChanged(changed)
                     .onEnded { _ in ended() })
+                .onChange(of: active) { _, now in
+                    if !now { cancelled() }
+                }
                 .sensoryFeedback(.selection, trigger: feedback)
         } else {
             content

@@ -1364,8 +1364,13 @@ final class EffeTuneDSP: ObservableObject {
         /// この台に載せているキーフレームの位置（2台の割り当てを同じに保つ鍵）。
         var held: Double?
         /// 最後に渡した値と、そのとき数えた ProcessCount・時刻。
+        /// 時刻は切り替え待ちの帯のならしを始めた手でだけ進める（連続の手で待ちを延ばさない）。
         var pushed: [Float]?
         var pushedAt: (count: UInt64, time: ContinuousClock.Instant)?
+        /// pushed が鳴らしているキーフレームの位置。held と違えば別のキーフレームへの付け替え。
+        var pushedHeld: Double?
+        /// 付け替え中。全帯を素通しにしてから f・q・t・e を替える（ETPEQBlend.reassignSteps）。
+        var reassign = false
         /// 切り替えの前に、ならし終わるのを待っている。
         var waiting: Task<Void, Never>?
     }
@@ -1413,7 +1418,7 @@ final class EffeTuneDSP: ObservableObject {
             peqDrives[inst] = PEQDrive(spec: node.spec, layout: layout, target: silent, held: nil,
                                        pushed: silent,
                                        pushedAt: (ETPipeline_ProcessCount(), ContinuousClock.now),
-                                       waiting: nil)
+                                       pushedHeld: nil, reassign: false, waiting: nil)
             changed.append(node.id)
         }
         return doomed
@@ -1464,9 +1469,12 @@ final class EffeTuneDSP: ObservableObject {
                        to target: [Float], held: Double?) {
         guard instance != 0 else { return }
         var d = peqDrives[instance] ?? PEQDrive(spec: spec, layout: layout, target: target, held: held,
-                                                pushed: nil, pushedAt: nil, waiting: nil)
+                                                pushed: nil, pushedAt: nil, pushedHeld: nil,
+                                                reassign: false, waiting: nil)
         d.target = target
         d.held = held
+        // 別のキーフレームへ付け替えるときは、鳴っているうちに f・q・t・e を動かさない。
+        if d.pushed != nil, d.pushedHeld != held { d.reassign = true }
         peqDrives[instance] = d
         if d.waiting != nil { return }
         advancePEQ(instance)
@@ -1475,15 +1483,31 @@ final class EffeTuneDSP: ObservableObject {
     /// 段取りの次の一手を渡す。種別・入切が変わる手は、前の手のならしが終わってから。
     private func advancePEQ(_ instance: UInt32) {
         guard engine != 0, var d = peqDrives[instance] else { return }
-        let plan = ETPEQBlend.steps(from: d.pushed, to: d.target, layout: d.layout)
-        guard let next = plan.first else { return }
-        if ETPEQBlend.changesTopology(from: d.pushed, to: next, layout: d.layout), !settled(d) {
+        let plan = d.reassign
+            ? ETPEQBlend.reassignSteps(from: d.pushed, to: d.target, layout: d.layout)
+            : ETPEQBlend.steps(from: d.pushed, to: d.target, layout: d.layout)
+        guard let next = plan.first else {
+            d.reassign = false
+            d.pushedHeld = d.held
+            peqDrives[instance] = d
+            return
+        }
+        if ETPEQBlend.changesTopology(from: d.pushed, to: next, layout: d.layout, strict: d.reassign),
+           !settled(d) {
             waitThenAdvance(instance)
             return
         }
         setInstanceParams(instance, d.spec, next)
+        if ETPEQBlend.startsSwitchRamp(from: d.pushed, to: next, target: d.target,
+                                       layout: d.layout, strict: d.reassign)
+            || ETPEQBlend.changesTopology(from: d.pushed, to: next, layout: d.layout, strict: d.reassign) {
+            d.pushedAt = (ETPipeline_ProcessCount(), ContinuousClock.now)
+        }
         d.pushed = next
-        d.pushedAt = (ETPipeline_ProcessCount(), ContinuousClock.now)
+        if plan.count == 1 {
+            d.reassign = false
+            d.pushedHeld = d.held
+        }
         peqDrives[instance] = d
         if plan.count > 1 { waitThenAdvance(instance) }
     }

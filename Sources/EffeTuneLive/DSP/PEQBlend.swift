@@ -12,6 +12,7 @@
 //  （EffeTuneDSP.syncCompanions。探りと同じ enabled 2 で、鎖・保存・共有には出ない）。
 //  音量が動いても鎖は組み直さず、instance も作り直さない。区間が (A,B)→(B,C) に移るときは、
 //  利得が 0 dB（素通し）の台だけを C に付け替える。
+//  付け替えは、鳴らしている台なら先に全帯を素通しにし、素通しのうちに f・q・t・e を替える（reassignSteps）。
 //
 //  カーネルの挙動（peq_coefficients.h / kernel.cpp）:
 //    - 利得 |g| < 0.01 dB か e < 0.5 の帯は素通しで、計算しない
@@ -232,9 +233,59 @@ enum ETPEQBlend {
     }
 
     /// どれかの帯で t か e（生の Float）が違うか。前の値が無い・長さが違うなら偽（切り替えるものが鳴っていない）。
-    static func changesTopology(from pushed: [Float]?, to next: [Float], layout l: Layout) -> Bool {
+    /// strict なら f・q の違いも数える（付け替えの段取り。素通しでない帯の f・q は動かさないため）。
+    static func changesTopology(from pushed: [Float]?, to next: [Float], layout l: Layout,
+                                strict: Bool = false) -> Bool {
         guard let pushed, pushed.count == next.count, l.fits(next) else { return false }
-        for i in 0..<l.bands where topologyDiffers(pushed, next, band: i, l) { return true }
+        for i in 0..<l.bands where swapDiffers(pushed, next, band: i, l, strict: strict) { return true }
+        return false
+    }
+
+    private static func swapDiffers(_ a: [Float], _ b: [Float], band i: Int, _ l: Layout,
+                                    strict: Bool) -> Bool {
+        topologyDiffers(a, b, band: i, l)
+            || (strict && (a[l.frequency + i] != b[l.frequency + i] || a[l.q + i] != b[l.q + i]))
+    }
+
+    // MARK: - 台に別のキーフレームを付け替える段取り
+
+    /// 全帯が素通しか（付け替えてよい状態）。
+    static func isSilent(_ v: [Float], layout l: Layout) -> Bool {
+        guard l.fits(v) else { return true }
+        for i in 0..<l.bands where !isIdentity(v, band: i, l) { return false }
+        return true
+    }
+
+    /// 台が鳴らしているキーフレームを別のものへ替える段取り（0〜3個）。
+    /// 帯を添字で組にして f・q・g を滑らかに移すと、どちらのキーフレームでもない音を通るので、
+    ///   s1: いまの値の全帯を素通しへ（f・q・t は変えない。利得を持たない帯は切）
+    ///   s2: 目標の f・q・t・e を利得 0 で入れる（素通しのうちに全帯を替える）
+    ///   s3: 目標（利得を戻す）
+    /// 前の値が素通しなら s1 は要らない。前の値が無い・長さが違うなら [target]、同じなら []。
+    static func reassignSteps(from pushed: [Float]?, to target: [Float], layout l: Layout) -> [[Float]] {
+        guard let pushed, pushed.count == target.count, l.fits(target) else { return [target] }
+        if pushed == target { return [] }
+        var out: [[Float]] = []
+        var previous = pushed
+        for s in [silenced(pushed, layout: l), silenced(target, layout: l), target] where s != previous {
+            out.append(s)
+            previous = s
+        }
+        return out
+    }
+
+    /// その手が、切り替え待ちの帯のならし（約5 ms）を新しく始めるか。
+    /// 連続の手（音量が動き続けて目標だけが変わる）は始めない。待ちを延ばさないため。
+    /// 切り替え待ちの帯 = next と target で t・e（strict なら f・q も）が違う帯。
+    static func startsSwitchRamp(from pushed: [Float]?, to next: [Float], target: [Float],
+                                 layout l: Layout, strict: Bool = false) -> Bool {
+        guard let pushed, pushed.count == next.count, next.count == target.count,
+              l.fits(next) else { return true }
+        for i in 0..<l.bands where swapDiffers(next, target, band: i, l, strict: strict) {
+            for k in [l.frequency, l.gain, l.q, l.type, l.enabled] where pushed[k + i] != next[k + i] {
+                return true
+            }
+        }
         return false
     }
 }
