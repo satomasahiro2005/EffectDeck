@@ -89,6 +89,25 @@ final class PipelineStoreTests: XCTestCase {
         XCTAssertEqual(back.map(role), [.section, .effect, .section, .effect])
     }
 
+    /// 足したあとの形（`Drums Section / Volume`の末尾へ Delay を足す）も同じ書き方で往復する。
+    /// 位置と印は ETChainEditing.addition が決める。
+    func testRootResetFromAddingSurvivesRestart() throws {
+        var chain = [section("Drums"), try effect("VolumePlugin")]
+        let plan = ETChainEditing.addition(roles: chain.map(role), adding: .effect, to: .end)
+        XCTAssertTrue(plan.leavesSection)
+        chain.insert(rootReset(), at: plan.index)
+        chain.insert(try effect("DelayPlugin"), at: plan.index + 1)
+
+        let form = PipelineStore.shortForm(chain)
+        XCTAssertEqual(form[2] as NSDictionary,
+                       ["cm": "", "nm": "Section", "en": true, "rr": true] as NSDictionary)
+        let data = try JSONSerialization.data(withJSONObject: form, options: [.sortedKeys])
+        let back = PipelineStore.parse(try JSONSerialization.jsonObject(with: data), catalog: ETCatalog)
+        XCTAssertEqual(back.map(role), [.section, .effect, .rootReset, .effect])
+        // effetune.frieve.com へは印を外す。
+        XCTAssertNil(PipelineStore.upstreamEntry(form[2])[ETSection.rootResetKey])
+    }
+
     // MARK: - 往復
 
     /// 再起動（pipeline.last）。saveLastと同じく鍵を並べてJSONにし、loadLastと同じく読む。

@@ -52,8 +52,8 @@ struct ChainMinimap: View {
     let correction: UUID?
     /// 画面の行番号で動かす。ListのonMoveと同じ数え方。
     let move: (IndexSet, Int) -> Void
-    /// ピッカーから運ばれた文字列と、差し込む鎖の位置（nilなら末尾）。
-    let insert: (String, Int?) -> Void
+    /// ピッカーから運ばれた文字列と、落とした先（鎖の添字）。
+    let insert: (String, ETChainEditing.AddTarget) -> Void
 
     @State private var tracker = ETMinimapTracker()
     /// 末尾の帯の高さ。一覧が画面を埋めていないときは残りを埋める（ETMinimapTail）。
@@ -69,7 +69,17 @@ struct ChainMinimap: View {
                 .onMove(perform: move)
                 .onInsert(of: [.plainText]) { offset, providers in
                     // 落とした行の手前へ。一番下なら末尾。
-                    let at = items.indices.contains(offset) ? items[offset].index : nil
+                    // **Section の見出しの真下は、その Section のカードに落としたのと同じ。**
+                    // 空の組でも、次の行が別の組や root の段になって外へ出ないように（2列では組は畳めない）。
+                    let at: ETChainEditing.AddTarget
+                    if offset > 0, items.indices.contains(offset - 1), items[offset - 1].isSection {
+                        at = .head(section: items[offset - 1].index,
+                                   next: items.indices.contains(offset) ? items[offset].index : nil)
+                    } else if items.indices.contains(offset) {
+                        at = .gap(items[offset].index)
+                    } else {
+                        at = .end
+                    }
                     guard let provider = providers.first else { return }
                     _ = provider.loadObject(ofClass: NSString.self) { object, _ in
                         guard let text = object as? NSString else { return }
@@ -228,7 +238,7 @@ private struct ETMinimapSpace: Equatable {
 /// **contentShapeを必ず付ける。**Color.clearは枠を持っていても当たりを取らない。
 private struct ETMinimapTail: View {
     let height: CGFloat
-    let insert: (String, Int?) -> Void
+    let insert: (String, ETChainEditing.AddTarget) -> Void
 
     var body: some View {
         Color.clear
@@ -236,7 +246,7 @@ private struct ETMinimapTail: View {
             .contentShape(.rect)
             .dropDestination(for: String.self) { items, _ in
                 guard let type = items.first else { return false }
-                insert(type, nil)
+                insert(type, .end)
                 return true
             }
             .accessibilityHidden(true)
@@ -253,7 +263,7 @@ private struct ETMinimapTail: View {
 private struct ETMinimapCorrectionRow: View {
     let id: UUID
     let viewport: ETChainViewport
-    let insert: (String, Int?) -> Void
+    let insert: (String, ETChainEditing.AddTarget) -> Void
 
     @ObservedObject private var oc = OutputCorrection.shared
 
@@ -283,7 +293,7 @@ private struct ETMinimapCorrectionRow: View {
         .contentShape(.rect)
         .dropDestination(for: String.self) { items, _ in
             guard let type = items.first else { return false }
-            insert(type, nil)
+            insert(type, .end)
             return true
         }
         .moveDisabled(true)

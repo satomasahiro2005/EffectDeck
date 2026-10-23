@@ -104,6 +104,80 @@ enum ETChainEditing {
                              sectionName: name)
     }
 
+    // MARK: - 1段を足す
+
+    /// 足したものを落とした先。位置は鎖の添字（行番号ではない）。
+    enum AddTarget: Equatable {
+        case end          // ピッカー・末尾の帯・出力補正の行・背面・空の鎖・左の一覧の末尾/出力補正
+        case card(Int)    // その段のカードの上（右の鎖。1列も2列も）
+        case gap(Int)     // その段の手前の隙間（左の一覧の onInsert）
+        /// Section の見出しの行の真下の隙間（左の一覧の onInsert）。`next` はその下の行の添字（無ければ末尾）。
+        /// 段はその Section のカードに落としたのと同じ（空の組にも入る。下の行が組の中の段なら `.gap(next)` と同じ）。プリセットは `.gap(next)` と同じ。
+        case head(section: Int, next: Int?)
+
+        /// プリセットはどこへ落としても組を作るので位置だけ使う（今までと同じ）。
+        var presetIndex: Int? {
+            switch self {
+            case .end: return nil
+            case .card(let i), .gap(let i): return i
+            case .head(_, let next): return next
+            }
+        }
+    }
+
+    struct Addition: Equatable {
+        /// 差し込む位置（今の並びの添字）。印を挿すなら印がここ、段はその次。
+        let index: Int
+        /// 段の直前に rootReset を挿すか。
+        let leavesSection: Bool
+    }
+
+    /// **足したものは組に入れない。**例外は組のカード（見出しか配下）に落としたときだけ。
+    ///
+    /// - 末尾・組でない段の手前: 末尾の組が開いたままなら rootReset を挟んで組の外へ
+    /// - 配下の段の上・手前: その段の手前へ。組に入ったまま（root の段なら root のまま）
+    /// - Section の札の上: その組の頭へ（空の Section にも足せるように）
+    /// - Section の手前（隙間）: 前の組に入らないよう組の外へ
+    /// - Section の見出しの真下（`.head`）: Section の札に落としたのと同じ（段だけ。左の一覧）
+    /// - 足すのが Section 自身なら位置を寄せるだけ（Section は組の配下にならない）
+    ///
+    /// 印が指されたら（UIからは来ない）、並べて置かないよう後ろへ送る。
+    static func addition(roles: [ETItemRole], adding role: ETItemRole,
+                         to target: AddTarget) -> Addition {
+        let n = roles.count
+        func clamp(_ i: Int) -> Int { min(max(i, 0), n) }
+        var index: Int
+        switch target {
+        case .end:
+            index = n
+        case .card(let i):
+            index = clamp(i)
+            if role == .effect, index < n, roles[index] == .section {
+                return Addition(index: index + 1, leavesSection: false)
+            }
+            if index < n, roles[index] == .effect { return Addition(index: index, leavesSection: false) }
+        case .gap(let i):
+            index = clamp(i)
+            if index < n, roles[index] == .effect { return Addition(index: index, leavesSection: false) }
+        case .head(let s, let next):
+            if role == .effect, roles.indices.contains(s), roles[s] == .section {
+                return Addition(index: s + 1, leavesSection: false)
+            }
+            return addition(roles: roles, adding: role, to: next.map { AddTarget.gap($0) } ?? .end)
+        }
+        guard role == .effect else { return Addition(index: index, leavesSection: false) }
+
+        while index < n, roles[index] == .rootReset { index += 1 }
+        // 印の後ろの段の手前は、もう root。
+        if index < n, roles[index] == .effect { return Addition(index: index, leavesSection: false) }
+        var after = roles
+        after.insert(.effect, at: index)
+        let leaves = ETRootResetRule.insertion(roles: after,
+                                               enabled: Array(repeating: true, count: after.count),
+                                               at: index) != nil
+        return Addition(index: index, leavesSection: leaves)
+    }
+
     // MARK: - 外部の段の身元
 
     /// 保存した鎖・共有リンクから外部の段を戻すときの身元。

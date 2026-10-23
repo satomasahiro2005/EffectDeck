@@ -506,7 +506,7 @@ struct PipelineView: View {
             ChainMinimap(items: minimapItems(visible), dsp: dsp, viewport: viewport,
                          correction: isRemote ? nil : Self.correctionRowID,
                          move: { move($0, to: $1) },
-                         insert: { _ = addDropped($0, at: $1) })
+                         insert: { _ = addDropped($0, to: $1) })
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
             chainConfirmations(chainList(visible, split: true))
@@ -977,7 +977,7 @@ struct PipelineView: View {
                     .contentShape(Rectangle())
                     .dropDestination(for: String.self) { items, _ in
                         guard let type = items.first else { return false }
-                        return addDropped(type, at: nil)
+                        return addDropped(type, to: .end)
                     }
                     // 末尾の帯が空の表示のぶんも引くように測る。鎖が埋まって消えたら外す
                     // （残すと高さの合計が多いままになり、帯が足りなくなる）。
@@ -1082,14 +1082,14 @@ struct PipelineView: View {
                         }
                         // **ピッカーからつまんだものを受ける。**
                         // カードには何も足さない。落ちたときだけ効く。
-                        // 落とした段の手前に入れる（上流の並べ替えと同じ向き）。
+                        // 段のカードならその手前（組はその段と同じ）、Section の札ならその組の頭へ（ETChainEditing.addition）。
                         // **カードの周りの余白（左右の 14・上下の隙間）もこの行の口にする。**
                         // contentShape が無いと透明な余白は当たりを取らず、カードの脇や
                         // カードとカードの間に落としたものがどこにも入らなかった（DropProbe）。
                         .contentShape(Rectangle())
                         .dropDestination(for: String.self) { items, _ in
                             guard let type = items.first else { return false }
-                            return addDropped(type, at: row.index)
+                            return addDropped(type, to: .card(row.index))
                         }
                     if row.block == .bottom { ETGroupRule() }
                     }
@@ -1129,7 +1129,7 @@ struct PipelineView: View {
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
                     guard let type = items.first else { return false }
-                    return addDropped(type, at: nil)
+                    return addDropped(type, to: .end)
                 }
                 .onGeometryChange(for: CGRect.self) {
                     $0.frame(in: .named(Self.chainSpace))
@@ -1151,7 +1151,7 @@ struct PipelineView: View {
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
                     guard let type = items.first else { return false }
-                    return addDropped(type, at: nil)
+                    return addDropped(type, to: .end)
                 }
             }
             .coordinateSpace(name: Self.contentSpace)
@@ -1164,7 +1164,7 @@ struct PipelineView: View {
             .contentShape(Rectangle())
             .dropDestination(for: String.self) { items, _ in
                 guard let type = items.first else { return false }
-                return addDropped(type, at: nil)
+                return addDropped(type, to: .end)
             }
         }
         // 触れたら戻す先の覚えを外す。そこから先は人が読む位置を決める。
@@ -1197,7 +1197,7 @@ struct PipelineView: View {
                     .contentShape(Rectangle())
                     .dropDestination(for: String.self) { items, _ in
                         guard let type = items.first else { return false }
-                        return addDropped(type, at: nil)
+                        return addDropped(type, to: .end)
                     }
                     .onAppear { listHeight = geo.size.height }
                     .onChange(of: geo.size.height) { _, h in listHeight = h }
@@ -1286,9 +1286,9 @@ struct PipelineView: View {
         return nil
     }
 
-    private func addDropped(_ payload: String, at index: Int?) -> Bool {
+    private func addDropped(_ payload: String, to target: ETChainEditing.AddTarget) -> Bool {
         if let preset = presetPayload(payload) {
-            dsp.addPreset(named: preset.0, items: preset.1, at: index)
+            dsp.addPreset(named: preset.0, items: preset.1, at: target.presetIndex)
             sheet = nil
             return true
         }
@@ -1299,7 +1299,7 @@ struct PipelineView: View {
                 instanceID: instanceID) else { return false }
             dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
                             category: "Audio Units", externalIndex: externalIndex,
-                            at: index)
+                            to: target)
             ETAUHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
             return true
@@ -1312,14 +1312,14 @@ struct PipelineView: View {
                 switch result {
                 case .success(let externalIndex):
                     dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
-                                    category: "JSFX", externalIndex: externalIndex, at: index)
+                                    category: "JSFX", externalIndex: externalIndex, to: target)
                 case .failure(let error): pluginError = error.localizedDescription
                 }
             }
             return true
         }
         guard let spec = EffeTuneDSP.spec(forType: payload) else { return false }
-        if let index { dsp.add(spec, at: index) } else { dsp.add(spec) }
+        dsp.add(spec, to: target)
         sheet = nil
         return true
     }
@@ -1678,7 +1678,7 @@ struct PipelineView: View {
 
     /// 帯に出す本数。Section は音を触らないので数に入れない。
     private var effectCount: Int {
-        dsp.chain.filter { !$0.isSection }.count
+        dsp.chain.filter { $0.role == .effect }.count
     }
 
     /// 画面の行番号を鎖の位置へ戻す。
@@ -2191,7 +2191,7 @@ private struct PipelineToolbar: ToolbarContent {
 
 /// ピッカーと、選んだものを鎖へ足す4つの口。**シートでもpopoverでも同じものを出す。**
 ///
-/// 足すのはいつも末尾（落として位置を決めるほうはPipelineView.addDropped）。
+/// 足すのはいつも末尾で、組の外（落として位置を決めるほうはPipelineView.addDropped）。
 /// 閉じるのはこちら。ピッカーの中のdismiss()は、検索が出ている間シートではなく
 /// 検索を閉じる。検索から選んだときだけ閉じない、という形になっていた。
 struct ETPickerHost: View {
@@ -2212,7 +2212,7 @@ struct ETPickerHost: View {
 
     var body: some View {
         EffectPickerView(onPick: { spec in
-            dsp.add(spec, at: nil)
+            dsp.add(spec)
             sheet = nil
         }, onPickAU: { entry in
             let instanceID = UUID().uuidString
@@ -2221,7 +2221,7 @@ struct ETPickerHost: View {
             dsp.addExternal(id: entry.id, instanceID: instanceID,
                             name: entry.name,
                             category: "Audio Units",
-                            externalIndex: externalIndex, at: nil)
+                            externalIndex: externalIndex)
             ETAUHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
         }, onPickJSFX: { entry in
@@ -2232,7 +2232,7 @@ struct ETPickerHost: View {
                 case .success(let externalIndex):
                     dsp.addExternal(id: entry.id, instanceID: instanceID,
                                     name: entry.name, category: "JSFX",
-                                    externalIndex: externalIndex, at: nil)
+                                    externalIndex: externalIndex)
                 case .failure(let error): report(error.localizedDescription)
                 }
             }

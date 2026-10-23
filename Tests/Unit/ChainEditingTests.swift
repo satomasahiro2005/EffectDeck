@@ -407,4 +407,15 @@ final class ChainEditingTests: XCTestCase {
         XCTAssertEqual(PipelineStore.shortForm([r]) .map { $0 as NSDictionary },
                        PipelineStore.shortForm([lr]).map { $0 as NSDictionary })
     }
+
+    // MARK: - 1段を足す
+
+    func testPresetIndexOfTarget() {
+        XCTAssertNil(ETChainEditing.AddTarget.end.presetIndex)
+        XCTAssertEqual(ETChainEditing.AddTarget.card(3).presetIndex, 3)
+        XCTAssertEqual(ETChainEditing.AddTarget.gap(3).presetIndex, 3)
+        // 見出しの真下は、プリセットなら見出しの下の行の手前（今までの .gap と同じ）。
+        XCTAssertEqual(ETChainEditing.AddTarget.head(section: 1, next: 5).presetIndex, 5)
+        XCTAssertNil(ETChainEditing.AddTarget.head(section: 1, next: nil).presetIndex)
+    }
 }
