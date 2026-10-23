@@ -88,7 +88,8 @@ struct EffectCardView: View {
             if follows {
                 // 音量が変わったときだけ引き直す。追従するカードだけが音量を見る。
                 ETVolumeObserving {
-                    card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw)
+                    card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw,
+                         companion: dsp.soundingPEQ(node)?.secondary)
                 }
             } else {
                 card(node, address: index)
@@ -104,12 +105,30 @@ struct EffectCardView: View {
         }
     }
 
+    /// 追従しているカードに、キーフレームの帯（AE のタイムライン）を出すか。
+    /// 開いているときと、畳んで図だけのとき。名前の行だけに畳んだカード（isCollapsedFully）は
+    /// 「1行」の形（頭の余白もそのため）なので出さない。2列は開く↔図だけの2形で、どちらも出る。
+    private var showsTimeline: Bool { follows && (isExpanded || !isCollapsedFully) }
+
     /// カード本体。`shown` は画面に映す値を載せた段、`address` は部品が DSP の口へ渡す番号。
     /// 追従しているときは鳴っている値の写しと、読むだけの番号（書く口は何もしない）。
-    private func card(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
+    /// `companion` は音量に追従する PEQ のもう1台が鳴らしている値（図が足して描く）。
+    private func card(_ shown: EffeTuneDSP.Node, address: Int, companion: [Float]? = nil) -> some View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
+                // キーフレームの帯。押すと Follow Volume のシートが開く（直すのはシートの帯とカード）。
+                if showsTimeline, let a = node.automation {
+                    ETKeyframeTimeline(automation: a,
+                                       position: RemoteMirror.shared.isRemote ? nil : ETVolumeFollower.shared.position,
+                                       style: .card)
+                        .padding(.horizontal, ETMetrics.cardPadding)
+                        .padding(.bottom, isExpanded ? 0 : 8)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if !RemoteMirror.shared.isRemote { sheet = .keyframes } }
+                        .accessibilityAddTraits(.isButton)
+                        .allowsHitTesting(!isDragPreview)
+                }
                 // **畳んでいても図を出すもの。**
                 // Level Meter は畳むと「Analyzer」という字だけが残るが、
                 // この道具は音が来ているかを見るために置くので、
@@ -122,6 +141,7 @@ struct EffectCardView: View {
                     ETEffectViews.view(index: address, node: shown, dsp: dsp)
                         .id(node.resetCount)
                         .environment(\.etGraphOnly, true)
+                        .environment(\.etPEQCompanionValues, companion)
                         .environment(\.etGraphMaxHeight, Self.collapsedGraphHeight)
                         .padding(.horizontal, ETMetrics.cardPadding)
                         .padding(.bottom, ETMetrics.cardPadding)
@@ -143,6 +163,7 @@ struct EffectCardView: View {
                     // 図やUIKitの入力欄のドラッグは当たり判定ごと止める。
                     .disabled(follows)
                     .allowsHitTesting(!follows)
+                    .environment(\.etPEQCompanionValues, companion)
                     .padding(ETMetrics.cardPadding)
                 }
             }

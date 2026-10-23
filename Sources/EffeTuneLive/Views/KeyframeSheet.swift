@@ -10,6 +10,8 @@
 //  最後の1枚を消すと追従をやめ、その値がパイプラインのカードの普通の値になる。
 //  追従していないカードで開くと、いまの音量に1枚目を作って今の値を載せる（空のシートを出さない）。
 //  その1枚だけで何も直さずに閉じたら、追従をやめて元に戻す（開いただけで追従にしない）。
+//  一番上に、キーフレームの帯（AE のタイムライン。Views/KeyframeTimeline.swift）を固定で出す。
+//  菱形を押すとそのキーフレームのカードへ送り、横へ引くと音量の位置を動かす（5% 刻み）。
 //  説明の字は置かない。
 //
 //  **字は英語のまま。**アプリの残りに揃える（String Catalog は作らない。ConnectionTipsView と同じ規則）。
@@ -36,23 +38,28 @@ struct ETKeyframeSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                if let a = current.automation {
-                    // 位置を id にする。消したときに、別のカードへ @State が移らないように。
-                    LazyVStack(spacing: 10) {
-                        ForEach(Array(a.keyframes.enumerated()), id: \.element.position) { item in
-                            ETKeyframeCard(index: index, keyframe: item.offset,
-                                           label: a.source.label(item.element.position),
-                                           node: current, dsp: dsp)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if let a = current.automation {
+                        // 位置を id にする。消したときに、別のカードへ @State が移らないように。
+                        // 帯の菱形を押したとき、同じ位置の id へ送る。
+                        LazyVStack(spacing: 10) {
+                            ForEach(Array(a.keyframes.enumerated()), id: \.element.position) { item in
+                                ETKeyframeCard(index: index, keyframe: item.offset,
+                                               label: a.source.label(item.element.position),
+                                               node: current, dsp: dsp)
+                                    .id(item.element.position)
+                            }
                         }
+                        .frame(maxWidth: ETLayout.detailMaxWidth)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: ETLayout.detailMaxWidth)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity)
                 }
+                .disabled(remote.isRemote)
+                .safeAreaInset(edge: .top, spacing: 0) { timeline(proxy) }
             }
-            .disabled(remote.isRemote)
             .onAppear(perform: startIfNeeded)
             .onDisappear(perform: undoIfUntouched)
             .navigationTitle("Follow Volume")
@@ -61,6 +68,28 @@ struct ETKeyframeSheet: View {
                 ToolbarItem(placement: .primaryAction) { addMenu }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+        }
+    }
+
+    /// 固定の帯。音量が読めていない・PC の鎖を編集している間は針を出さず、触らせない。
+    @ViewBuilder
+    private func timeline(_ proxy: ScrollViewProxy) -> some View {
+        if let a = current.automation {
+            ETKeyframeTimeline(
+                automation: a,
+                position: remote.isRemote ? nil : volume.position,
+                style: .sheet,
+                select: { k in
+                    guard a.keyframes.indices.contains(k) else { return }
+                    withAnimation { proxy.scrollTo(a.keyframes[k].position, anchor: .top) }
+                },
+                move: { k, p in dsp.moveKeyframe(k, to: p, at: index) })
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .frame(maxWidth: ETLayout.detailMaxWidth)
+                .frame(maxWidth: .infinity)
+                .background(.bar)
+                .disabled(remote.isRemote)
         }
     }
 
