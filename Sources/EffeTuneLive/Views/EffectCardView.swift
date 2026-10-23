@@ -53,6 +53,8 @@ struct EffectCardView: View {
         case routing
         /// エフェクト 1 個ぶんのプリセット。
         case presets
+        /// 音量に追従する値。キーフレームごとのカードを並べる（Views/KeyframeSheet.swift）。
+        case keyframes
         case jsfxSource
 
         var id: String { rawValue }
@@ -74,10 +76,40 @@ struct EffectCardView: View {
         }
     }
 
+    /// 音量に追従する段は、カードに**いま鳴っている値**（補間）を映して、直せなくする。
+    /// 直すのは ⋯ の Follow Volume… が開くシートで、キーフレームごとのカード。
+    private var follows: Bool { node.automation != nil }
+
     private var effectCard: some View {
+        // **.sheet は分岐の外、本物の入れ物（Group でない）に付ける。**
+        // シートの中で最初のキーフレームを足す・最後を消すと下の分岐が入れ替わる。
+        // 分岐の中に付けていると、そのときシートごと閉じる。
+        VStack(spacing: 0) {
+            if follows {
+                // 音量が変わったときだけ引き直す。追従するカードだけが音量を見る。
+                ETVolumeObserving {
+                    card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw)
+                }
+            } else {
+                card(node, address: index)
+            }
+        }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
+            case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
+            case .keyframes: ETKeyframeSheet(index: index, node: node, dsp: dsp)
+            case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
+            }
+        }
+    }
+
+    /// カード本体。`shown` は画面に映す値を載せた段、`address` は部品が DSP の口へ渡す番号。
+    /// 追従しているときは鳴っている値の写しと、読むだけの番号（書く口は何もしない）。
+    private func card(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
-                header
+                header(shown, address: address)
                 // **畳んでいても図を出すもの。**
                 // Level Meter は畳むと「Analyzer」という字だけが残るが、
                 // この道具は音が来ているかを見るために置くので、
@@ -87,7 +119,7 @@ struct EffectCardView: View {
                     // 一度 150pt で切ってみたが、横軸の字まで落ちて壊れて見えた。
                     // 高さが要るのは図がそれだけの情報を持っているからで、
                     // 畳んだ状態でも見たいものはそこにある。
-                    ETEffectViews.view(index: index, node: node, dsp: dsp)
+                    ETEffectViews.view(index: address, node: shown, dsp: dsp)
                         .id(node.resetCount)
                         .environment(\.etGraphOnly, true)
                         .environment(\.etGraphMaxHeight, Self.collapsedGraphHeight)
@@ -96,39 +128,21 @@ struct EffectCardView: View {
                         .allowsHitTesting(false)
                 }
                 if isExpanded && hasBody {
-                    VStack(alignment: .leading, spacing: 12) {
-                        // 音量に追従しているとき、頭にキーフレームの切り替え。下の画面は選んだ1つを見せて直す。
-                        if node.automation != nil {
-                            ETKeyframeBar(index: index, node: node, dsp: dsp)
-                        }
-                        Group {
-                            if node.isExternal {
-                                ExternalProcessorView(externalID: node.externalID ?? "",
-                                                      instanceID: node.externalInstanceID,
-                                                      snapshot: externalSnapshot,
-                                                      isDragPreview: isDragPreview,
-                                                      isProcessing: !node.isMuted && !dsp.bypass)
-                            } else if ETEffectViews.has(node.spec.type) {
-                                // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
-                                // Reset Parameters で作り直す。表示の設定は現れたときにしか
-                                // 読まないので、id を変えないと画面だけ前の見せ方のまま残る。
-                                ETEffectViews.view(index: index, node: node, dsp: dsp)
-                                    .id(node.resetCount)
-                                    .environment(\.etGraphOnly, false)
-                            } else if let tabs = ETParamTabs.tabs(for: node.spec.type) {
-                                // 上流がタブに分けているもの（AM Radio・TV Audio・Vinyl）。
-                                TabbedParameterList(index: index, node: node, dsp: dsp, tabs: tabs)
-                            } else {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    // runtimeOnly（Adaptive Prediction の resetToken）は画面の行を持たない。
-                                    ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
-                                        ParameterRow(param: param, nodeIndex: index,
-                                                     values: node.values, dsp: dsp)
-                                    }
-                                }
-                            }
+                    Group {
+                        if node.isExternal {
+                            ExternalProcessorView(externalID: node.externalID ?? "",
+                                                  instanceID: node.externalInstanceID,
+                                                  snapshot: externalSnapshot,
+                                                  isDragPreview: isDragPreview,
+                                                  isProcessing: !node.isMuted && !dsp.bypass)
+                        } else {
+                            ETEffectBody(index: address, node: shown, dsp: dsp)
                         }
                     }
+                    // 追従しているあいだは動くだけ。disabled で沈めて読み上げにも伝え、
+                    // 図やUIKitの入力欄のドラッグは当たり判定ごと止める。
+                    .disabled(follows)
+                    .allowsHitTesting(!follows)
                     .padding(ETMetrics.cardPadding)
                 }
             }
@@ -139,16 +153,9 @@ struct EffectCardView: View {
         .modifier(ETRemoteMeasurementDim(applies: node.spec.isAnalyzer, tap: node.tapId))
         // PoC: PC の EffeTune が持っていない効果の段に、送れないことを出す。
         .modifier(ETRemoteUnsupportedMark(effect: node.spec.name))
-        .sheet(item: $sheet) { which in
-            switch which {
-            case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
-            case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
-            case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
-            }
-        }
     }
 
-    private var header: some View {
+    private func header(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
         HStack(spacing: 6) {
             // Button ではなく Toggle。支援技術に入切が伝わるようにする。
             Toggle("Enabled", isOn: Binding(
@@ -163,7 +170,7 @@ struct EffectCardView: View {
             // これでカードが 1 行になり、鎖の先頭に置いても場所を食わない。
             // 他の analyzer（図が縦に伸びるもの）は下に置く。
             if inlinesGraph {
-                ETEffectViews.view(index: index, node: node, dsp: dsp)
+                ETEffectViews.view(index: address, node: shown, dsp: dsp)
                     .id(node.resetCount)
                     .environment(\.etGraphOnly, true)
                     .allowsHitTesting(false)
@@ -186,7 +193,7 @@ struct EffectCardView: View {
                                 .accessibilityLabel("Follow Volume")
                         }
                     }
-                    Text(summary)
+                    Text(summary(shown))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -261,23 +268,20 @@ struct EffectCardView: View {
                 // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
                 // プリセットの一覧に混ぜない。
                 if !node.isExternal {
+                    // 追従しているあいだはカードを直せない（キーフレームごとのカードで直す）。
                     Button { sheet = .presets } label: {
                         Label("Effect Presets", systemImage: "bookmark")
                     }
+                    .disabled(follows)
                     Button { dsp.resetParams(at: index) } label: {
                         Label("Reset Parameters", systemImage: "arrow.counterclockwise")
                     }
-                    // 音量に追従する。入れると今の音量に最初のキーフレームができ、切ると選んでいるキーフレームの値が残る。
+                    .disabled(follows)
+                    // 音量に追従する値を、キーフレームごとのカードで開く。最初のキーフレームはシートの「+」で作る。
                     // PC の鎖を編集している間は出さない（そのあいだ追従は動かない）。
                     if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {
-                        Toggle(isOn: Binding(
-                            get: { node.automation != nil },
-                            set: { on in
-                                dsp.setFollowsVolume(on, at: index)
-                                // 入れたらキーフレームの帯が見えるよう、畳んでいれば開く。
-                                if on && !isExpanded { toggleExpanded() }
-                            })) {
-                            Label("Follow Volume", systemImage: "speaker.wave.2")
+                        Button { sheet = .keyframes } label: {
+                            Label("Follow Volume…", systemImage: "speaker.wave.2")
                         }
                     }
                 }
@@ -386,7 +390,7 @@ struct EffectCardView: View {
     ///
     /// 開いているときは同じ値がすぐ下に出ているので、分類の方を出す。
     /// そうしないと、どのエフェクトなのかを言う行が頭から消える。
-    private var summary: String {
+    private func summary(_ node: EffeTuneDSP.Node) -> String {
         // 外から来たものは、分類の隣に作者を出す。
         // AU の作者は取れていたのに、名前の接頭辞（"Vendor: Name"）として 1 行目へ
         // 混ざっていた。名前欄は lineLimit(1) なので、長いと肝心のプラグイン名が
@@ -424,6 +428,46 @@ struct EffectCardView: View {
         if case .toggle = param.kind { return v >= 0.5 ? "On" : "Off" }
         return param.format(v)
     }
+}
+
+/// カードの本文（パラメータの画面）。**部品は index と node だけを見て、書くときは index を DSP へ渡す。**
+/// 音量に追従するカードのキーフレームごとの写しは、ETSlotAddress の番号と、その値を載せた段を渡して
+/// 同じ画面を使い回す（キーフレームのシート、追従中のカードの読むだけの画面）。
+/// 外部プロセッサは追従できないので、ここには来ない。
+struct ETEffectBody: View {
+    let index: Int
+    let node: EffeTuneDSP.Node
+    @ObservedObject var dsp: EffeTuneDSP
+
+    var body: some View {
+        if ETEffectViews.has(node.spec.type) {
+            // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
+            // Reset Parameters で作り直す。表示の設定は現れたときにしか
+            // 読まないので、id を変えないと画面だけ前の見せ方のまま残る。
+            ETEffectViews.view(index: index, node: node, dsp: dsp)
+                .id(node.resetCount)
+                .environment(\.etGraphOnly, false)
+        } else if let tabs = ETParamTabs.tabs(for: node.spec.type) {
+            // 上流がタブに分けているもの（AM Radio・TV Audio・Vinyl）。
+            TabbedParameterList(index: index, node: node, dsp: dsp, tabs: tabs)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                // runtimeOnly（Adaptive Prediction の resetToken）は画面の行を持たない。
+                ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
+                    ParameterRow(param: param, nodeIndex: index,
+                                 values: node.values, dsp: dsp)
+                }
+            }
+        }
+    }
+}
+
+/// 音量が変わるたびに中身を描き直す。追従しているカードだけを包む（ほかのカードは音量で描き直さない）。
+private struct ETVolumeObserving<Content: View>: View {
+    @ObservedObject private var volume = ETVolumeFollower.shared
+    @ViewBuilder let content: () -> Content
+
+    var body: some View { content() }
 }
 
 /// カードと左の一覧（ChainMinimap）で同じ名前・同じ薄さを出す。
