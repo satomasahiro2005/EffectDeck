@@ -38,6 +38,11 @@ struct ETChainNode: Identifiable {
     /// カードはこれを画面の id に使い、戻したら作り直させる。
     var resetCount: Int = 0
 
+    /// 音量に追従するカードの、キーフレームの一式（DSP/Automation.swift）。nil なら普通のカード。
+    /// **持っている間は values が選んでいるキーフレームの値と同じ**で、画面が見せて直すのもそれ。
+    /// 鳴らす値（キーフレームを音量で補間したもの）はここに入れない（EffeTuneDSP.pushParams が都度出す）。
+    var automation: ETAutomation? = nil
+
     /// Native EffeTune nodeではない外部processor。instanceは持たず、
     /// publish時にexternal callback nodeへ変換する。
     var externalID: String? = nil

@@ -351,6 +351,7 @@ enum ETChainText {
     private static let stageKeys: Set<String> = [
         "nm", "en", "enabled", "ib", "ob", "ch", "inputBus", "outputBus", "channel",
         "external", "externalInstance", "externalState",
+        ETAutomation.key,
     ]
     /// ロング形式の段の鍵。パラメータは`parameters`の中。ロングでは`name`が勝つので`nm`は読まれない。
     private static let longStageKeys: Set<String> =
@@ -494,7 +495,29 @@ enum ETChainText {
         } else {
             prepareParams(&entry, spec: spec, skip: stageKeys, report: &report)
         }
+        prepareAutomation(&entry, spec: spec, report: &report)
         return entry
+    }
+
+    /// 音量に追従するカードのキーフレーム（Automation.swift）。段の鍵なのでどちらの形でも entry の直下。
+    /// 形が違えば外してignoredへ。各キーフレームの値（`p`）は段のパラメータと同じ規則で範囲へ寄せる。
+    private static func prepareAutomation(_ entry: inout [String: Any], spec: ETEffect,
+                                          report: inout Report) {
+        guard let raw = entry[ETAutomation.key] else { return }
+        let label = "\(spec.name).\(ETAutomation.key)"
+        guard var automation = raw as? [String: Any],
+              var keyframes = automation["kf"] as? [[String: Any]] else {
+            entry.removeValue(forKey: ETAutomation.key)
+            report.add(label, to: \.ignored)
+            return
+        }
+        for i in keyframes.indices {
+            guard var params = keyframes[i]["p"] as? [String: Any] else { continue }
+            prepareParams(&params, spec: spec, skip: [], report: &report)
+            keyframes[i]["p"] = params
+        }
+        automation["kf"] = keyframes
+        entry[ETAutomation.key] = automation
     }
 
     private static func reportUnknownStageKeys(_ entry: [String: Any], label: String,

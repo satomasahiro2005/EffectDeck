@@ -47,7 +47,7 @@ enum ETRemoteProjection {
     /// 鎖ごと送り直す。段の鍵（`nm` / `en` / バス / `ch` / 終端の印）は params の話ではないので数えない。
     static func removedKeys(sent: [String: Any]?, now: [String: Any]) -> [String] {
         guard let sent else { return [] }
-        let structural: Set<String> = ["nm", "en", "ib", "ob", "ch", ETSection.rootResetKey]
+        let structural: Set<String> = ["nm", "en", "ib", "ob", "ch", ETSection.rootResetKey, ETAutomation.key]
         return sent.keys.filter { !structural.contains($0) && now[$0] == nil }.sorted()
     }
 
@@ -104,7 +104,8 @@ enum ETRemoteProjection {
               var o = PipelineStore.shortForm([item]).first else {
             return nil
         }
-        for key in ["nm", "en", "ib", "ob", "ch", ETSection.rootResetKey] {
+        // キーフレームは PC へ送らない。PC へは鳴らしている値だけ（EffeTuneDSP は遠隔の間は補間しない）。
+        for key in ["nm", "en", "ib", "ob", "ch", ETSection.rootResetKey, ETAutomation.key] {
             o.removeValue(forKey: key)
         }
         return o.isEmpty ? nil : o

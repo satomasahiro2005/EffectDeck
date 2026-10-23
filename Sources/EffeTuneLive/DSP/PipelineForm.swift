@@ -51,6 +51,9 @@ enum PipelineStore {
         /// **自分で置いた終端。**Sectionではない（EffeTuneDSP.Node.isRootReset）。
         /// specはETSection.specのまま持ち、書くと`Section(cm: "")`に印を付けたものになる。
         var isRootReset: Bool = false
+        /// 音量に追従するカードのキーフレーム（Automation.swift）。持っていれば values は選んでいる1つと同じ。
+        /// 既存の memberwise 呼び出しを壊さないよう、最後に置く。
+        var automation: ETAutomation? = nil
     }
 
     // MARK: - 書く
@@ -66,6 +69,7 @@ enum PipelineStore {
                     o["externalState"] = state.base64EncodedString()
                 }
             }
+            if let a = automation(of: item) { o[ETAutomation.key] = a }
             o["nm"] = item.spec.name
             o["en"] = item.enabled
             if item.inputBus  != 0 { o["ib"] = Int(item.inputBus) }
@@ -85,6 +89,7 @@ enum PipelineStore {
                 "enabled": item.enabled,
                 "parameters": parameters(of: item),
             ]
+            if let a = automation(of: item) { o[ETAutomation.key] = a }
             if !item.externalID.isEmpty {
                 o["external"] = item.externalID
                 o["externalInstance"] = item.externalInstanceID
@@ -110,7 +115,16 @@ enum PipelineStore {
     static func upstreamEntry(_ entry: [String: Any]) -> [String: Any] {
         var o = entry
         o.removeValue(forKey: ETSection.rootResetKey)
+        // キーフレームは EffectDeck だけのもの。上流へ渡るのは鳴らしている値（呼び手が先に置き換える）。
+        o.removeValue(forKey: ETAutomation.key)
         return o
+    }
+
+    /// 書くオートメーション。使えない段（Section・終端・外部）には書かない。
+    private static func automation(of item: Loaded) -> [String: Any]? {
+        guard let a = item.automation, item.externalID.isEmpty, !item.isRootReset,
+              !ETSection.isSection(item.spec) else { return nil }
+        return a.encoded(spec: item.spec)
     }
 
     /// パラメータを保存形式へ。中身は ETParamCoding が持つ。
@@ -216,7 +230,7 @@ enum PipelineStore {
                                               type: spec.type)
 
             let ch = (entry["channel"] ?? entry["ch"]) as? String
-            out.append(Loaded(
+            var item = Loaded(
                 spec: spec,
                 values: values,
                 enabled: (entry["enabled"] ?? entry["en"]) as? Bool ?? true,
@@ -226,7 +240,13 @@ enum PipelineStore {
                 sectionName: "",
                 irId: assetID(params, type: spec.type),
                 display: ETDisplayParam.legacyRead(params, type: spec.type),
-                design: ETDesignParam.read(params, type: spec.type)))
+                design: ETDesignParam.read(params, type: spec.type))
+            // 段の鍵なので、ショートでもロングでも entry に居る。values は選んでいるキーフレームに合わせる。
+            if let a = ETAutomation.decode(entry[ETAutomation.key], spec: spec, values: values) {
+                item.automation = a
+                item.values = a.selectedValues
+            }
+            out.append(item)
         }
         return out
     }

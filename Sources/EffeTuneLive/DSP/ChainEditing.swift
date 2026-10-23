@@ -303,7 +303,8 @@ extension PipelineStore.Loaded {
                   externalID: node.externalID ?? "",
                   externalInstanceID: node.externalInstanceID,
                   externalState: node.externalState,
-                  isRootReset: node.isRootReset)
+                  isRootReset: node.isRootReset,
+                  automation: node.automation)
     }
 }
 

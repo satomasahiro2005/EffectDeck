@@ -76,7 +76,8 @@ export function effeTuneLink(p) {
         || (typeof o.jsfx === "string" && o.jsfx !== "");
       if (!external) {
         if (typeof o.nm !== "string" || o.nm === "") continue;
-        const { rr, ...rest } = o;
+        // rr（終端の印）と automation（音量に追従するキーフレーム）は EffectDeck だけのもの。
+        const { rr, automation, ...rest } = o;
         out.push(rest);
         continue;
       }

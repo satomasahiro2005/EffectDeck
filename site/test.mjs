@@ -216,7 +216,7 @@ await test("chain page: EffeTune link drops external effects like ETShareLink.ef
     { nm: "Router", en: false, external: "au:aufx:rout:ACME", ib: 2, ob: 0, ch: "L" },
     { jsfx: "Tape Wobble" },
     { nm: "Section", cm: "", en: true, rr: true },
-    { nm: "Delay", en: true },
+    { nm: "Delay", en: true, automation: { src: "outputVolume", sel: 0, kf: [{ at: 50, p: {} }] } },
   ];
   const link = effeTuneLink(b64(chain));
   assert.equal(link.dropped, 3);
