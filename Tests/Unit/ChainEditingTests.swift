@@ -371,6 +371,39 @@ final class ChainEditingTests: XCTestCase {
                        legacyDescriptors(chain, probes: before))
     }
 
+    /// PEQ の相方は本体の直後・出口の探りの前。enabled 2、本体と同じ bus・gate。
+    /// 本体が切・instance 無し・外部のときは載せない。渡さなければ前と同じ並び。
+    func testCompanionsFollowTheirNodeBeforeAfterProbes() throws {
+        let volume = try spec("VolumePlugin")
+        let peq = try spec("FiveBandPEQPlugin")
+        var external = ETChainNode(spec: ETEffect.external(type: "External:au:x", name: "X", category: "Audio Units"),
+                                   values: [])
+        external.externalID = "au:x"
+        let chain = [
+            node(volume, instance: 11),
+            node(peq, instance: 12) { $0.inputBus = 1; $0.outputBus = 1; $0.channelSpec = 3; $0.sectionGate = 0 },
+            node(peq, instance: 13) { $0.enabled = false },
+            node(peq, instance: 0),
+            external,
+            node(peq, instance: 14),
+        ]
+        let companions: [UUID: UInt32] = [chain[1].id: 301, chain[2].id: 302, chain[3].id: 303,
+                                          chain[4].id: 304, chain[5].id: 305]
+        let after: [UUID: UInt32] = [chain[1].id: 201]
+
+        let got = ETChainEditing.descriptors(chain: chain, probes: [:], afterProbes: after,
+                                             companions: companions)
+        XCTAssertEqual(got.map(\.instance), [11, 12, 301, 201, 13, 0, 14, 305])
+        XCTAssertEqual(got.map(\.enabled), [1, 1, 2, 2, 0, 1, 1, 2])
+        XCTAssertEqual([got[2].inputBus, got[2].outputBus], [1, 1])
+        XCTAssertEqual(got[2].channelSpec, 3)
+        XCTAssertEqual(got[2].sectionGate, 0, "Section の OFF は本体と同じ gate で止まる")
+        XCTAssertEqual(got[2].kind, .native)
+
+        XCTAssertEqual(ETChainEditing.descriptors(chain: chain, probes: [:], afterProbes: after),
+                       ETChainEditing.descriptors(chain: chain, probes: [:], afterProbes: after, companions: [:]))
+    }
+
     // MARK: - 鎖の段から渡す形へ
 
     /// Node → Loaded の写しで落とすものが無い。

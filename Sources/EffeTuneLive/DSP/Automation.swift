@@ -16,7 +16,8 @@
 //    - dB・リニアの利得は直線、Hz と Q は対数（下限が0でも、両端が正なら対数）、そのほかの数は直線
 //    - 刻みが1より粗い数（フィルタの傾き12 dB/octなど）は、補間した値を刻みへ丸める（カーネルが中間の値を受けない）
 //    - 入切・選択肢（PEQ のフィルタ種別など）は2つの真ん中で切り替える
-//    - 15Band / 5Band PEQ は、同じ帯でフィルタ種別か入切が違うときだけ切り替えずに0 dBを通って移る
+//    - 15Band / 5Band PEQ は帯を組にしない（values(at:) は近い方のキーフレームの値を返すだけ）。
+//      鳴らすのは ETPEQBlend（A の全帯と B の全帯を2台で直列に。利得だけ (1−t)・t 倍）
 //    - 範囲の外は端のキーフレームのまま。1つなら全位置でそれ
 //    - 遅延を変える設定（オーバーサンプリングなど）は補間せず、全キーフレームで同じ値にする
 
@@ -206,6 +207,42 @@ struct ETAutomation: Equatable {
         return (a.freePositions(), a.defaultAddPosition(current: current))
     }
 
+    // MARK: - 時間軸（キーフレームの帯）
+
+    /// いまの位置を挟む2つのキーフレームと、その間の割合（0〜1）。
+    /// 端ちょうど・外・位置が読めない・キーフレームが1つだけなら nil。
+    func segment(at position: Double?) -> (lower: Int, upper: Int, t: Double)? {
+        guard let pos = position, pos.isFinite, keyframes.count >= 2,
+              pos > keyframes[0].position, pos < keyframes[keyframes.count - 1].position,
+              let i = keyframes.lastIndex(where: { $0.position <= pos }), i + 1 < keyframes.count
+        else { return nil }
+        let lo = keyframes[i].position, hi = keyframes[i + 1].position
+        return (i, i + 1, (pos - lo) / (hi - lo))
+    }
+
+    /// その位置から tolerance 以内で一番近いキーフレーム（同じ近さなら低い方）。
+    func nearestKeyframe(to position: Double, within tolerance: Double) -> Int? {
+        guard position.isFinite else { return nil }
+        var best: Int?
+        for i in keyframes.indices {
+            let d = abs(keyframes[i].position - position)
+            if best == nil || d < abs(keyframes[best!].position - position) { best = i }
+        }
+        guard let b = best, abs(keyframes[b].position - position) <= tolerance else { return nil }
+        return b
+    }
+
+    /// k を raw へ動かす先（刻みへ丸め範囲へ収める）。ほかのキーフレームの位置なら nil。自分の位置は返す。
+    func dragTarget(_ k: Int, to raw: Double) -> Double? {
+        guard keyframes.indices.contains(k), raw.isFinite else { return nil }
+        let p = source.snapped(raw)
+        if abs(keyframes[k].position - p) < Self.epsilon { return p }
+        for i in keyframes.indices where i != k && abs(keyframes[i].position - p) < Self.epsilon {
+            return nil
+        }
+        return p
+    }
+
     // MARK: - 補間
 
     /// 補間しないパラメータ。遅延を変えるもの（鎖を組み直さないと動かない）と実行時の旗。
@@ -267,8 +304,10 @@ struct ETAutomation: Equatable {
         }
 
         var out = current
+        let isPEQ = Self.peqTypes.contains(spec.type)
         for p in spec.params {
-            let blend = Self.blend(of: p)
+            // PEQ の帯は補間しない。真ん中で近い方のキーフレームの値に切り替えるだけ（音は ETPEQBlend）。
+            let blend = isPEQ && Self.peqBandKeys.contains(p.key) ? Blend.step : Self.blend(of: p)
             guard blend != .hold else { continue }
             var isInteger = false
             if case .number(_, _, _, _, let integer) = p.kind { isInteger = integer }
@@ -277,7 +316,6 @@ struct ETAutomation: Equatable {
                 out[o] = Self.mix(a.values[o], b.values[o], t: t, blend: blend, isInteger: isInteger, grid: grid)
             }
         }
-        Self.fadePEQ(&out, a: a.values, b: b.values, t: t, spec: spec)
         return out
     }
 
@@ -311,31 +349,8 @@ struct ETAutomation: Equatable {
 
     static let peqTypes: Set<String> = ["FifteenBandPEQPlugin", "FiveBandPEQPlugin"]
 
-    /// 同じ帯でフィルタ種別か入切が違うときは、切り替えずに0 dBを通って移る。
-    /// 前半は A の帯の利得を0 dBへ向けて絞り、後半は B の帯を0 dBから上げる。
-    /// 0 dB が真ん中なので pk・ls・hs では曲線が途切れない。lp・hp・bp・notch・allpass は
-    /// 利得を見ないので、真ん中で切り替わる。
-    private static func fadePEQ(_ out: inout [Float], a: [Float], b: [Float], t: Float, spec: ETEffect) {
-        guard peqTypes.contains(spec.type) else { return }
-        func offset(_ key: String) -> Int? { spec.params.first { $0.key == key }?.offset }
-        guard let f = offset("f"), let g = offset("g"), let q = offset("q"),
-              let ty = offset("t"), let e = offset("e"),
-              let count = spec.params.first(where: { $0.key == "f" })?.count else { return }
-        for i in 0..<count {
-            let idx = [f + i, g + i, q + i, ty + i, e + i]
-            guard idx.allSatisfy({ out.indices.contains($0) && a.indices.contains($0) && b.indices.contains($0) })
-            else { continue }
-            let enabledA = a[e + i] >= 0.5, enabledB = b[e + i] >= 0.5
-            let typeA = Int(a[ty + i].rounded()), typeB = Int(b[ty + i].rounded())
-            guard (enabledA || enabledB) && (typeA != typeB || enabledA != enabledB) else { continue }
-            let from = t < 0.5 ? a : b
-            out[f + i] = from[f + i]
-            out[q + i] = from[q + i]
-            out[ty + i] = from[ty + i]
-            out[e + i] = from[e + i]
-            out[g + i] = t < 0.5 ? a[g + i] * (1 - 2 * t) : b[g + i] * (2 * t - 1)
-        }
-    }
+    /// 帯のパラメータの鍵（周波数・利得・Q・種別・入切）。
+    static let peqBandKeys: Set<String> = ["f", "g", "q", "t", "e"]
 
     // MARK: - どのカードで使えるか
 

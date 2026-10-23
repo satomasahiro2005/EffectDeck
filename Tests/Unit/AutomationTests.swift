@@ -3,7 +3,8 @@
 //
 //  見ているもの:
 //    - 補間の種類（Hz と Q は対数、dB は直線、選択肢と入切は真ん中で切り替え、遅延の設定は補間しない）
-//    - PEQ の帯でフィルタ種別か入切が違うときは0 dBを通って移る
+//    - PEQ の帯は補間せず、真ん中で近い方のキーフレームの値に切り替わる（音は ETPEQBlend）
+//    - 時間軸の帯の道具（segment・nearestKeyframe・dragTarget）
 //    - キーフレームの足し引きと既定の位置
 //    - 保存形式の往復（ショート・ロング）と、読めないものの扱い
 //    - 上流（EffeTune）・PC・エフェクトのプリセットへはキーフレームを出さず、EffectDeck のリンクには出す
@@ -168,23 +169,6 @@ final class AutomationTests: XCTestCase {
         }
     }
 
-    func testLogarithmicAndStepOnPEQ() throws {
-        let s = try spec(peq15)
-        var a = s.defaults, b = s.defaults
-        a[3] = 100; b[3] = 1000                    // 帯3の周波数
-        a[33] = 0.5; b[33] = 8                     // 帯3の Q: 幾何平均は2
-        a[49] = 0; b[49] = 3                       // 帯4のフィルタ種別は pk と ls（帯3は種別が同じ）
-        let k = try automation(s, a, b)
-        let mid = k.values(at: 75, spec: s, current: s.defaults)
-        XCTAssertEqual(mid[3], 316)                // 整数なので丸め
-        XCTAssertEqual(mid[33], 2, accuracy: 1e-4)
-        // 選択肢は真ん中で切り替わる。0.49 は A、0.5 は B。
-        let before = k.values(at: 50 + 50 * 0.49, spec: s, current: s.defaults)
-        let after = k.values(at: 75, spec: s, current: s.defaults)
-        XCTAssertEqual(before[49], 0)
-        XCTAssertEqual(after[49], 3)
-    }
-
     // MARK: - PEQ の帯
 
     /// 15Band と 5Band で同じ試験をする。(周波数, 利得, Q, 種別, 入切) の位置と帯の数。
@@ -192,64 +176,83 @@ final class AutomationTests: XCTestCase {
         [(try spec(peq15), 0, 15, 30, 45, 60), (try spec(peq5), 0, 5, 10, 15, 20)]
     }
 
-    func testPEQFadesThroughZeroWhenTypeChanges() throws {
+    /// 帯は補間しない。周波数・利得・Q・種別・入切は、真ん中で A から B へまとめて切り替わる。
+    func testPEQValuesAreNearestKeyframe() throws {
         for (s, f, g, q, t, e) in try layouts() {
-            let band = 2
             var a = s.defaults, b = s.defaults
-            a[f + band] = 1000; b[f + band] = 3000
-            a[g + band] = 6; b[g + band] = 4
-            a[t + band] = 0; b[t + band] = 3       // pk → ls
-            a[e + band] = 1; b[e + band] = 1
+            a[f + 2] = 100; b[f + 2] = 1000
+            a[g + 2] = 6; b[g + 2] = -4
+            a[q + 2] = 0.5; b[q + 2] = 8
+            a[t + 2] = 0; b[t + 2] = 3
+            a[e + 1] = 0; b[e + 1] = 1
             let k = try automation(s, a, b)
-            func at(_ t: Double) -> [Float] { k.values(at: 50 + 50 * t, spec: s, current: s.defaults) }
+            func at(_ x: Double) -> [Float] { k.values(at: 50 + 50 * x, spec: s, current: s.defaults) }
 
-            let quarter = at(0.25)
-            XCTAssertEqual(quarter[t + band], 0, "pk のまま")
-            XCTAssertEqual(quarter[g + band], 3, accuracy: 1e-5)
-            XCTAssertEqual(quarter[f + band], 1000)
-            XCTAssertEqual(quarter[q + band], a[q + band])
-
-            let half = at(0.5)
-            XCTAssertEqual(half[t + band], 3, "後半は B の帯")
-            XCTAssertEqual(half[g + band], 0, accuracy: 1e-5)
-            XCTAssertEqual(half[f + band], 3000)
-
-            let late = at(0.75)
-            XCTAssertEqual(late[t + band], 3)
-            XCTAssertEqual(late[g + band], 2, accuracy: 1e-5)
-
-            // 種別が同じ帯は普通に補間する。
-            XCTAssertEqual(quarter[f + 0], s.defaults[f + 0])
+            XCTAssertEqual(at(0.25), a, "0.5 より前は A のまま")
+            XCTAssertEqual(at(0.49), a)
+            XCTAssertEqual(at(0.5), b, "0.5 からは B")
+            XCTAssertEqual(at(0.75), b)
+            XCTAssertEqual(k.values(at: 40, spec: s, current: s.defaults), a)
+            XCTAssertEqual(k.values(at: nil, spec: s, current: s.defaults), b)
         }
     }
 
-    func testPEQFadesWhenEnabledChanges() throws {
-        for (s, f, g, _, t, e) in try layouts() {
-            let band = 1
-            var a = s.defaults, b = s.defaults
-            a[e + band] = 0; b[e + band] = 1
-            a[g + band] = 9; b[g + band] = 6
-            let k = try automation(s, a, b)
-            let early = k.values(at: 62.5, spec: s, current: s.defaults)
-            XCTAssertEqual(early[e + band], 0, "切のまま")
-            let late = k.values(at: 87.5, spec: s, current: s.defaults)
-            XCTAssertEqual(late[e + band], 1)
-            XCTAssertEqual(late[g + band], 3, accuracy: 1e-5)
-            XCTAssertEqual(late[t + band], s.defaults[t + band])
-            _ = f
-        }
+    // MARK: - 時間軸の帯
+
+    func testSegmentAt() throws {
+        let s = try spec(volume)
+        var k = try automation(s, try vol(-10), try vol(0))
+        k.add(at: 75)
+        XCTAssertEqual(k.keyframes.map(\.position), [50, 75, 100])
+        XCTAssertNil(k.segment(at: nil))
+        XCTAssertNil(k.segment(at: .nan))
+        XCTAssertNil(k.segment(at: 30), "下の外")
+        XCTAssertNil(k.segment(at: 50), "端ちょうど")
+        XCTAssertNil(k.segment(at: 100), "端ちょうど")
+        XCTAssertNil(k.segment(at: 120))
+        let low = try XCTUnwrap(k.segment(at: 60))
+        XCTAssertEqual([low.lower, low.upper], [0, 1])
+        XCTAssertEqual(low.t, 0.4, accuracy: 1e-9)
+        let on = try XCTUnwrap(k.segment(at: 75), "真ん中のキーフレームの上は次の区間の頭")
+        XCTAssertEqual([on.lower, on.upper], [1, 2])
+        XCTAssertEqual(on.t, 0, accuracy: 1e-9)
+        let high = try XCTUnwrap(k.segment(at: 90))
+        XCTAssertEqual([high.lower, high.upper], [1, 2])
+        XCTAssertEqual(high.t, 0.6, accuracy: 1e-9)
+        // 1つだけ
+        let single = ETAutomation(source: .outputVolume, position: 50, values: try vol(0))
+        XCTAssertNil(single.segment(at: 50))
+        XCTAssertNil(single.segment(at: 60))
     }
 
-    func testPEQDoesNotFadeWhenBothDisabled() throws {
-        for (s, _, g, _, t, e) in try layouts() {
-            var a = s.defaults, b = s.defaults
-            a[e] = 0; b[e] = 0
-            a[t] = 0; b[t] = 3
-            a[g] = 4; b[g] = 8
-            let k = try automation(s, a, b)
-            let early = k.values(at: 62.5, spec: s, current: s.defaults)
-            XCTAssertEqual(early[g], 5, accuracy: 1e-5, "どちらも切なら普通の直線")
-        }
+    func testNearestKeyframe() throws {
+        let s = try spec(volume)
+        var k = try automation(s, try vol(-10), try vol(0))
+        k.add(at: 60)
+        XCTAssertEqual(k.keyframes.map(\.position), [50, 60, 100])
+        XCTAssertEqual(k.nearestKeyframe(to: 52, within: 5), 0)
+        XCTAssertEqual(k.nearestKeyframe(to: 58, within: 5), 1)
+        XCTAssertEqual(k.nearestKeyframe(to: 55, within: 5), 0, "同じ近さなら低い方")
+        XCTAssertEqual(k.nearestKeyframe(to: 55, within: 4.999), nil, "許す幅の外")
+        XCTAssertEqual(k.nearestKeyframe(to: 105, within: 5), 2, "ちょうど幅の端は入る")
+        XCTAssertNil(k.nearestKeyframe(to: 80, within: 5))
+        XCTAssertNil(k.nearestKeyframe(to: .nan, within: 5))
+    }
+
+    func testDragTarget() throws {
+        let s = try spec(volume)
+        var k = try automation(s, try vol(-10), try vol(0))
+        k.add(at: 75)
+        XCTAssertEqual(k.dragTarget(1, to: 62.4), 60, "刻みへ丸める")
+        XCTAssertEqual(k.dragTarget(1, to: 63), 65)
+        XCTAssertEqual(k.dragTarget(1, to: -30), 0, "範囲へ収める")
+        XCTAssertNil(k.dragTarget(1, to: 400), "上限へ収まると別のキーフレームの位置")
+        XCTAssertNil(k.dragTarget(1, to: 51), "ほかのキーフレームの位置は不可")
+        XCTAssertNil(k.dragTarget(0, to: 100))
+        XCTAssertEqual(k.dragTarget(1, to: 76), 75, "自分の位置は返す")
+        XCTAssertNil(k.dragTarget(9, to: 10))
+        XCTAssertNil(k.dragTarget(-1, to: 10))
+        XCTAssertNil(k.dragTarget(0, to: .nan))
     }
 
     // MARK: - 補間しない設定

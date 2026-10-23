@@ -319,9 +319,12 @@ enum ETChainEditing {
     ///   出た音。上流のオーバーレイが段の前後で横取りするのと同じ位置
     ///   （plugins/audio-processor.js:5142-5157 が入口、:5275-5307 が出口）。出口のbusに置き、
     ///   enabled 2。探りを付けるのは入口と出口が同じbusの段だけ（EffeTuneDSP.syncProbes）
+    /// - PEQ の相方（`companions`、段のid → 相方のinstance）は本体の**直後**・出口の探りの前。
+    ///   enabled 2、本体と同じbus・channelSpec・sectionGate。本体が切・Chで外れているときは載せない
     /// - 上流が受けないChの段は切で渡す（isChannelBypassed）
     static func descriptors(chain: [ETChainNode], probes: [UUID: UInt32],
-                            afterProbes: [UUID: UInt32] = [:]) -> [Descriptor] {
+                            afterProbes: [UUID: UInt32] = [:],
+                            companions: [UUID: UInt32] = [:]) -> [Descriptor] {
         var out: [Descriptor] = []
         out.reserveCapacity(chain.count * 3)
         for n in chain where n.instance != 0 || n.isExternal {
@@ -344,6 +347,19 @@ enum ETChainEditing {
                                   sectionGate: n.sectionGate,
                                   kind: n.isExternal ? .external : .native,
                                   externalIndex: n.externalIndex))
+            // PEQ の相方（音量に追従する PEQ の2台目。ETPEQBlend）。本体の直後・出口の探りの前
+            // （出口の探りに2台を通った音を見せる）。enabled 2 で、本体と同じ bus・Section の gate。
+            // 本体が切・Ch で外されているときは載せない（切で渡すと publish の数え方が狂う）。
+            if let companion = companions[n.id], n.instance != 0, !n.isExternal, n.enabled, !bypassed {
+                out.append(Descriptor(instance: companion,
+                                      enabled: 2,
+                                      inputBus: n.outputBus,
+                                      outputBus: n.outputBus,
+                                      channelSpec: n.channelSpec,
+                                      sectionGate: n.sectionGate,
+                                      kind: .native,
+                                      externalIndex: 0))
+            }
             if let probe = afterProbes[n.id] {
                 out.append(Descriptor(instance: probe,
                                       enabled: 2,
