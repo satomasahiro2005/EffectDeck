@@ -48,17 +48,29 @@ reports 11040 (+6720 samples = 140 ms).
 
 Fix: `ETLatencyWatch` (Foundation-only, `LatencyWatchTests`) remembers a node whose latency did not move
 after a value was set, `AudioIO.tick` compares it with `et_instance_latency` (also in the background), and a
-change calls `republish`. Entries are kept while audio is not running, dropped after 2 s of running without a
-change, and one republish is issued per tick at most. Hooks: one stored property in `EffeTuneDSP`, one call in
-`settleAfterParams`, one line in `AudioIO.tick`, the rest in `EffeTuneDSP+LatencyWatch.swift`.
-Limit: a stage that is disabled or bypassed is not processed, so its pending value is applied later than the
-2 s window; its latency then moves at the next configure that follows the first processed block.
+change calls `republish`. Entries are kept while audio is not running, one republish is issued per tick at
+most, and an entry is dropped after 2 s in which the stage was actually processed without a change.
+
+Every path that changes a value arms the watch when the latency did not move at once: `setValue`
+(`settleAfterParams`), `setValues` (user effect presets, remote follow) and `resetParams` (card Reset; SFZ
+Event back to Classic, a negative Timing back to 0).
+
+"Actually processed" is per stage (`ETLatencyWatch.isProcessed`): not master bypass, stage enabled, not a
+channel the upstream does not accept, Section gate on. `Engine::processPipeline` returns before touching any
+slot with master bypass on and skips `enabled == 0` / `sectionGate == 0` nodes, so the staged values are not
+taken in those cases even though the engine runs. The watch keeps the entry until the stage is processed
+again; the first block after that applies the value and the next tick republishes. (A short bypass that
+`AssetUpload` holds around an asset upload is not seen by the watch; it lasts well under the 2 s window.)
+The first tick after a new entry on an empty watch counts nothing (`lastTick` is reset), so a stale
+`lastTick` no longer eats half of the 2 s in one tick.
+Hooks: one stored property in `EffeTuneDSP`, one call each in `settleAfterParams`, `setValues` and
+`resetParams`, one line in `AudioIO.tick`, the rest in `EffeTuneDSP+LatencyWatch.swift`.
 
 ## Note Spectrogram
 
 Lit black keys get an outline (upstream `outlineTint`): white tinted 0.2 toward the key colour, opacity of the
 key, width 0.1 of `min(rowHeight, blackDepth)` inset by half, back edge left open. EffectDeck keeps its
-note-coloured fill (the fill colour is `band.keyColor(midi:)` rather than upstream's mix by confidence).
+note-coloured fill (the fill colour is `band.keyColor(midi:)` rather than upstream's mix by confidence; the outline tint is taken from the pure key colour, not the confidence-blended fill, a negligible difference).
 `ETNoteRollFrame` rotates like upstream, so the formulas are the same.
 
 ## Matrix
@@ -78,7 +90,9 @@ battery issue (#5). Watch the load on the iPhone 16 with Event on.
 ## Compatibility
 
 - The current store build ignores `dt`: Event links open as Classic there, and a chain text containing `dt`
-  reports "Ignored: SFZ Note Player.dt".
+  reports "Ignored: SFZ Note Player.dt". `PipelineStore.shortForm` always writes `dt` (Classic by default, like
+  upstream `getParameters`), so this also holds for a Classic chain text made by this build. Small impact:
+  SFZ is marked "Not for chains".
 - A 2.13.0 PC also ignores `dt` and the 2.14.0 keys. Remote checks (the mismatch line, `dt` round trip) need
   the PC on 2.15.0; the PC here is on 2.13.0 (not updated).
 
@@ -93,8 +107,8 @@ readout is a fixed row above the graph, not a tooltip at the pointer. Volume hal
 
 All of this was run on 2026-10-26 on Windows / WSL. Nothing on the Mac or the device.
 
-- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): 1057 tests, 0 failures, 1 skipped (2.14.0 baseline 1041).
-  New: `Upstream215Tests` (6), `LatencyWatchTests` (7), one in `ParamGateTests`.
+- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): 1057 tests, 0 failures, 1 skipped (2.14.0 baseline 1041; before the latency follow-up, which adds 4 `LatencyWatchTests` and a Linux run of 157 on the filtered set).
+  New: `Upstream215Tests` (6), `LatencyWatchTests` (12 in all), one in `ParamGateTests`.
 - Python `Tests/Tools`: 251 tests OK (9 skipped). `node --test Tools/*.test.mjs`: 5 pass.
   `check_repo.py --version-guard`: ok.
 - Generated-files drift (`setup.sh` + every `Tools/golden/*_golden.mjs` and `ir_prepare_golden.mjs` against the

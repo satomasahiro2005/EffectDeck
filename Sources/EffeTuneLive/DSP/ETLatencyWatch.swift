@@ -9,6 +9,9 @@
 //
 //  やること: 空振りした段を覚えておき、tick ごとに見直す。変わっていたら呼び手が組み直す（republish）。
 //    - 音を処理していないあいだは覚えたまま（止めていても値は並んだままで、回り出したら変わる）。
+//    - **段ごとに、その段が処理されているあいだだけ数える**（isProcessed）。engine は、マスターのバイパス・
+//      段の切・Section の OFF のときその段に触らない（engine.cpp processPipeline）ので、
+//      エンジンが回っていても並んだ値は受け取られない。
 //    - 処理している時間が giveUpAfter を超えても変わらなければ諦める（本当に変わらない値）。
 //    - 1 回の見直しで組み直しを返すのは 1 度だけ。変わった段の記録はその時に全部消す。
 
@@ -28,11 +31,22 @@ struct ETLatencyWatch {
     private var lastTick: TimeInterval?
 
     var isEmpty: Bool { entries.isEmpty }
+
+    /// engine がその段を処理するか（engine.cpp processPipeline の飛ばす条件の裏）。
+    /// マスターのバイパス中は先頭で全部返る。段の切（enabled 0）と Section の OFF（sectionGate 0）は段ごとに飛ばす。
+    /// 上流が受けない Ch の段は descriptor で切になる（ETChainEditing.descriptors）。
+    static func isProcessed(masterBypass: Bool, enabled: Bool, channelBypassed: Bool,
+                            sectionGate: UInt8) -> Bool {
+        !masterBypass && enabled && !channelBypassed && sectionGate != 0
+    }
     var watched: Set<UUID> { Set(entries.keys) }
 
     /// 値を渡した直後の遅れが変わらなかった段を覚える。すでに居る段は、数えた時間だけ 0 に戻す
     /// （もとの遅れは変えない。まだカーネルに届いていないので、古い値のまま）。
     mutating func expect(id: UUID, latency: UInt32) {
+        // 空のあいだは tick が呼ばれず lastTick が古いまま。そのまま使うと最初の見直しが
+        // 1 秒（上限）として数えられ、giveUpAfter の半分が 1 回で消える。
+        if entries.isEmpty { lastTick = nil }
         if var e = entries[id] {
             e.renderedFor = 0
             entries[id] = e
@@ -41,8 +55,10 @@ struct ETLatencyWatch {
         }
     }
 
-    /// 見直し。`latency(id)` はいまの遅れ（段が無ければ nil）。**組み直すべきなら true。**
-    mutating func tick(now: TimeInterval, rendering: Bool, latency: (UUID) -> UInt32?) -> Bool {
+    /// 見直し。`latency(id)` はいまの遅れ（段が無ければ nil）。`processing(id)` はその段を engine が
+    /// 処理しているか（isProcessed）。**組み直すべきなら true。**
+    mutating func tick(now: TimeInterval, rendering: Bool, processing: (UUID) -> Bool,
+                       latency: (UUID) -> UInt32?) -> Bool {
         defer { lastTick = now }
         guard !entries.isEmpty else { return false }
         // 前の見直しからの経過。間が空きすぎたとき（背景から戻った・止めていた）は数えない。
@@ -55,7 +71,7 @@ struct ETLatencyWatch {
             }
             if current != entry.latency {
                 changed = true
-            } else if rendering {
+            } else if rendering && processing(id) {
                 var e = entry
                 e.renderedFor += elapsed
                 if e.renderedFor >= Self.giveUpAfter {
