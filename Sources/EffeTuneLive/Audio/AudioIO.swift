@@ -810,6 +810,8 @@ final class AudioIO: ObservableObject {
         ticks += 1
         let uptime = ProcessInfo.processInfo.systemUptime
         followPeer()
+        // 値を渡したあとにだけ動く遅れ（SFZ の Detection・Timing）。背景でも見る。
+        EffeTuneDSP.shared.watchLatency(now: uptime, rendering: running)
 
         let plan = ETTickPlan.make(
             background: background, tick: ticks, now: uptime, watchUntil: watchUntil,

@@ -786,6 +786,10 @@ final class EffeTuneDSP: ObservableObject {
             reloadAsset(at: index)
         } else if instanceLatency(of: self[slot: index]) != before {
             republish(reason: "遅延が変わった")
+        } else {
+            // 渡した値はまだ並んでいるだけで、カーネルが受け取るのは次の処理（SFZ の dt・tm）。
+            // 変わるのを tick で見る（EffeTuneDSP+LatencyWatch.swift）。
+            expectLatencyChange(of: self[slot: index], before: before)
         }
     }
 
@@ -1112,6 +1116,9 @@ final class EffeTuneDSP: ObservableObject {
             self.reloadAsset(at: i)
         }
     }
+
+    /// 値を渡したのにまだ動かない遅れの見張り（EffeTuneDSP+LatencyWatch.swift）。
+    var latencyWatch = ETLatencyWatch()
 
     /// 待っている IR の下ごしらえのやり直し。段の id ごとに 1 本。
     private var pendingIRPreparation: [UUID: Task<Void, Never>] = [:]
