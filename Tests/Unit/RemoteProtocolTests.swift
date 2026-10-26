@@ -267,12 +267,12 @@ final class RemoteProtocolTests: XCTestCase {
     }
 
     func testOfficial213HasNoMismatchAgainstTheLocalCatalog() {
-        // 公式 2.13.0 の効果の一覧は 113 個（カタログの 112 と Section）。2.14.0 も同じ 112 種。
+        // 公式 2.13.0 の効果の一覧は 113 個（カタログの 112 と Section）。2.14.0・2.15.0 も同じ 112 種。
         XCTAssertEqual(ETRemoteHostInfo.localEffectNames.count, 113)
         XCTAssertNil(official().mismatch(localDSP: ETUpstreamVersion,
                                          localEffects: ETRemoteHostInfo.localEffectNames,
                                          localApp: "2.13.0"))
-        XCTAssertEqual(ETUpstreamAppVersion, "2.14.0", "Vendor/effetune/package.json の版")
+        XCTAssertEqual(ETUpstreamAppVersion, "2.15.0", "Vendor/effetune/package.json の版")
     }
 
     func testOfficialHostOfAnotherAppVersionSaysSo() throws {

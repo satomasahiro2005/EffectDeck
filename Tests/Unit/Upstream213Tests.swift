@@ -27,7 +27,7 @@ final class Upstream213Tests: XCTestCase {
 
     // MARK: カタログ
 
-    // 版は Upstream214Tests が見る。
+    // 版は Upstream215Tests が見る。
 
     func testNewEffectsAreInTheCatalog() throws {
         XCTAssertEqual(ETCatalog.count, 112)
@@ -57,11 +57,12 @@ final class Upstream213Tests: XCTestCase {
         XCTAssertEqual(sfz.category, "others")
         // 2.14.0 で ss（Sample Shift）と試し弾きの pm / pv が増えた（Upstream214Tests）。
         // 並びと名前は createUI の表。保存しない pm / pv を除くと 2.13.0 の並びに ss が入っただけ。
+        // 2.15.0 で先頭に dt（Detection）が増えた（Upstream215Tests）。
         XCTAssertEqual(sfz.params.filter { !$0.runtimeOnly }.map(\.key),
-                       ["hi", "md", "lo", "th", "rd", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm",
+                       ["dt", "hi", "md", "lo", "th", "rd", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm",
                         "mn", "mx"])
         XCTAssertEqual(sfz.params.filter { !$0.runtimeOnly }.map(\.label),
-                       ["Highest", "Middle", "Lowest", "Threshold", "Retrigger Drop", "Note Hold",
+                       ["Detection", "Highest", "Middle", "Lowest", "Threshold", "Retrigger Drop", "Note Hold",
                         "Velocity 1 Level", "Velocity 127 Level", "Max Voices", "Dry", "Wet", "Octave",
                         "Sample Shift", "Output Gain", "Timing", "Lowest Note", "Highest Note"])
         if case .number(let lo, let hi, let step, let unit, _) = try param(sfz, "rd").kind {
