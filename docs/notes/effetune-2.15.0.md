@@ -88,3 +88,22 @@ Built-in browser, video playback, ALAC, Visualizer Video / Counter / HDR and the
 MCP 0.14.0, dialog Escape / positioning, locales. Note Spectrogram hover anchor (`at: {x, y}`): EffectDeck's
 readout is a fixed row above the graph, not a tooltip at the pointer. Volume half-disc opacity: EffectDeck has no
 `_drawVolumeMeters`. The Linux multichannel and CI commits after the tag.
+
+## Verification
+
+All of this was run on 2026-10-26 on Windows / WSL. Nothing on the Mac or the device.
+
+- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): 1057 tests, 0 failures, 1 skipped (2.14.0 baseline 1041).
+  New: `Upstream215Tests` (6), `LatencyWatchTests` (7), one in `ParamGateTests`.
+- Python `Tests/Tools`: 251 tests OK (9 skipped). `node --test Tools/*.test.mjs`: 5 pass.
+  `check_repo.py --version-guard`: ok.
+- Generated-files drift (`setup.sh` + every `Tools/golden/*_golden.mjs` and `ir_prepare_golden.mjs` against the
+  HEAD pin): no difference after the first commit.
+- `Tests/Native` engine preset with the four patches (gcc, ASan + UBSan, `lsan.supp`): 121 of 121 pass.
+- Upstream native tests on the patched `c506bbab` (ASan + UBSan): `sfz_note_player`, `basics_topology`
+  (the Matrix reset), `note_spectrogram` all pass.
+- Native probe of the staged-params finding: see Latency.
+- **Not run:** the Xcode build (SwiftUI changes in `SFZNotePlayerView`, `NoteSpectrogramView`, the `AudioIO`
+  hook), install on the iPhone 16, CI result. The Mac (`s-macbook-pro`, Tailscale) was offline, so the Mac build is
+  pending: `~/work/effectdeck-2150`, `~/gui_build_2150.sh` (copy of `~/gui_build_2140.sh`, tree path only).
+  Check if the segmented Detection labels truncate on an iPhone; if they do, use `.menu` style and keep upstream's labels.
