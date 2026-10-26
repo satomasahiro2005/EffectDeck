@@ -2,6 +2,7 @@
 //  音量に追従するカードのキーフレームを、横の帯で見せる（AE のタイムラインのように）。
 //
 //  横軸は音量 0〜100%。キーフレームの位置に菱形（◆）、いまの音量に縦の針（アクセント色）。
+//  Hold のキーフレームは AE の保持キーフレームの形（菱形の左半分に、右半分を四角にしたもの）。
 //  いまの音量を挟む2つのキーフレームの間は薄く塗る。字は目盛りの数字だけ。
 //
 //  出す場所:
@@ -81,7 +82,9 @@ struct ETKeyframeTimeline: View {
     }
 
     private var accessibilityText: String {
-        var text = automation.keyframes.map { automation.source.label($0.position) }.joined(separator: ", ")
+        var text = automation.keyframes.map {
+            automation.source.label($0.position) + ($0.hold ? " Hold" : "")
+        }.joined(separator: ", ")
         if let position {
             text += ", Volume \(automation.source.label(position))"
         }
@@ -127,12 +130,12 @@ struct ETKeyframeTimeline: View {
                 // 菱形。引いているものは最後に描いて、色を変える。
                 ForEach(automation.keyframes.indices, id: \.self) { k in
                     if dragging?.keyframe != k {
-                        diamondView(tinted: false)
+                        diamondView(tinted: false, hold: automation.keyframes[k].hold)
                             .position(x: x(automation.keyframes[k].position, w), y: trackY)
                     }
                 }
-                if let d = dragging {
-                    diamondView(tinted: true)
+                if let d = dragging, automation.keyframes.indices.contains(d.keyframe) {
+                    diamondView(tinted: true, hold: automation.keyframes[d.keyframe].hold)
                         .position(x: x(d.to, w), y: trackY)
                 }
                 // 針
@@ -154,13 +157,22 @@ struct ETKeyframeTimeline: View {
         }
     }
 
-    private func diamondView(tinted: Bool) -> some View {
-        Image(systemName: "diamond.fill")
-            .resizable()
-            .scaledToFit()
-            .frame(width: diamond, height: diamond)
-            .foregroundStyle(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
-            .allowsHitTesting(false)
+    @ViewBuilder
+    private func diamondView(tinted: Bool, hold: Bool) -> some View {
+        let style = tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
+        if hold {
+            HoldKeyframeShape()
+                .fill(style)
+                .frame(width: diamond, height: diamond)
+                .allowsHitTesting(false)
+        } else {
+            Image(systemName: "diamond.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: diamond, height: diamond)
+                .foregroundStyle(style)
+                .allowsHitTesting(false)
+        }
     }
 
     // MARK: 位置と x
@@ -213,6 +225,20 @@ struct ETKeyframeTimeline: View {
         guard let d = dragging, automation.keyframes.indices.contains(d.keyframe),
               abs(automation.keyframes[d.keyframe].position - d.to) > 0.0005 else { return }
         move?(d.keyframe, d.to)
+    }
+}
+
+/// Hold のキーフレーム。菱形の左半分と、右半分を四角にしたもの（同じ枠の中）。
+private struct HoldKeyframeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 

@@ -66,6 +66,9 @@ struct ETAutomation: Equatable {
     struct Keyframe: Equatable {
         var position: Double
         var values: [Float]
+        /// true なら、このキーフレームの値を次のキーフレームまで保ち、次のキーフレームの位置で一度に切り替える。
+        /// 一番上のキーフレームは常に false（次が無い）。
+        var hold = false
     }
 
     /// 補間のしかた。
@@ -99,13 +102,21 @@ struct ETAutomation: Equatable {
         for (_, k) in sorted {
             let p = Self.clamp(k.position, source)
             if let last = out.last, abs(last.position - p) < Self.epsilon { continue }
-            out.append(Keyframe(position: p, values: k.values))
+            var kf = k
+            kf.position = p
+            out.append(kf)
             if out.count == Self.maxKeyframes { break }
         }
         guard !out.isEmpty else { return nil }
         self.source = source
         self.keyframes = out
         self.shareHeld(from: out.count - 1, spec: spec)
+        self.normalizeHold()
+    }
+
+    /// 一番上のキーフレームは次が無いので、保つ設定を持たせない。
+    private mutating func normalizeHold() {
+        keyframes[keyframes.count - 1].hold = false
     }
 
     private static func clamp(_ p: Double, _ source: Source) -> Double {
@@ -130,7 +141,10 @@ struct ETAutomation: Equatable {
             nearest = i
         }
         let at = keyframes.firstIndex(where: { $0.position > p }) ?? keyframes.count
-        keyframes.insert(Keyframe(position: p, values: keyframes[nearest].values), at: at)
+        // 分けるキーフレーム間の保つ設定は、分けた両側が引き継ぐ。
+        let splitHold = at > 0 && keyframes[at - 1].hold
+        keyframes.insert(Keyframe(position: p, values: keyframes[nearest].values, hold: splitHold), at: at)
+        normalizeHold()
         return at
     }
 
@@ -139,6 +153,16 @@ struct ETAutomation: Equatable {
     mutating func remove(at k: Int) -> Bool {
         guard keyframes.count > 1, keyframes.indices.contains(k) else { return false }
         keyframes.remove(at: k)
+        normalizeHold()
+        return true
+    }
+
+    /// k 番目のキーフレームの保つ設定を変える。範囲の外・一番上（次が無い）は何もせず false。変わったときだけ true。
+    @discardableResult
+    mutating func setHold(_ hold: Bool, at k: Int) -> Bool {
+        guard keyframes.indices.contains(k), k < keyframes.count - 1,
+              keyframes[k].hold != hold else { return false }
+        keyframes[k].hold = hold
         return true
     }
 
@@ -154,6 +178,7 @@ struct ETAutomation: Equatable {
         kf.position = p
         let at = keyframes.firstIndex(where: { $0.position > p }) ?? keyframes.count
         keyframes.insert(kf, at: at)
+        normalizeHold()
         return at
     }
 
@@ -287,7 +312,8 @@ struct ETAutomation: Equatable {
     func values(at position: Double?, spec: ETEffect, current: [Float]) -> [Float] {
         guard keyframes.allSatisfy({ $0.values.count == current.count }) else { return current }
 
-        let a: Keyframe, b: Keyframe
+        let a: Keyframe
+        var b: Keyframe
         var t: Float = 0
         if let pos = position, pos.isFinite {
             if pos <= keyframes[0].position {
@@ -297,7 +323,12 @@ struct ETAutomation: Equatable {
             } else {
                 let i = keyframes.lastIndex(where: { $0.position <= pos }) ?? 0
                 a = keyframes[i]; b = keyframes[i + 1]
-                t = Float((pos - a.position) / (b.position - a.position))
+                if a.hold {
+                    // 次のキーフレームの位置までは a の値のまま。その位置では上の分岐が b を選ぶ。
+                    b = a
+                } else {
+                    t = Float((pos - a.position) / (b.position - a.position))
+                }
             }
         } else {
             a = keyframes[keyframes.count - 1]; b = a
@@ -372,12 +403,15 @@ struct ETAutomation: Equatable {
 
     // MARK: - 保存形式
 
-    /// `{"src":"outputVolume","kf":[{"at":50,"p":{…}}, …]}`。（以前の `sel` は読まずに捨てる）
+    /// `{"src":"outputVolume","kf":[{"at":50,"hold":true,"p":{…}}, …]}`。（以前の `sel` は読まずに捨てる）
+    /// `hold` は保つ設定のキーフレームにだけ書く。
     /// `p` は段のパラメータと同じ綴り（ETParamCoding.encode）。
     func encoded(spec: ETEffect) -> [String: Any] {
         let list: [[String: Any]] = keyframes.map { k in
             let at: Any = k.position == k.position.rounded() ? Int(k.position) : k.position
-            return ["at": at, "p": ETParamCoding.encode(params: spec.params, values: k.values)]
+            var out: [String: Any] = ["at": at, "p": ETParamCoding.encode(params: spec.params, values: k.values)]
+            if k.hold { out["hold"] = true }
+            return out
         }
         return ["src": source.rawValue, "kf": list]
     }
@@ -398,7 +432,8 @@ struct ETAutomation: Equatable {
                   let n = kf["at"] as? NSNumber, n.doubleValue.isFinite else { continue }
             let p = kf["p"] as? [String: Any] ?? [:]
             let v = ETParamCoding.decode(params: spec.params, defaults: values, from: p, type: spec.type)
-            keyframes.append(Keyframe(position: n.doubleValue, values: v))
+            let hold = kf["hold"] as? Bool ?? false
+            keyframes.append(Keyframe(position: n.doubleValue, values: v, hold: hold))
         }
         return ETAutomation(source: source, keyframes: keyframes, spec: spec)
     }

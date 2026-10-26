@@ -333,6 +333,50 @@ final class PEQBlendTests: XCTestCase {
         XCTAssertFalse(ETPEQBlend.wantsCompanion(external))
     }
 
+    // MARK: - Hold
+
+    func testHoldSegmentKeepsLowerVoiceUntilNextKeyframe() throws {
+        for type in types {
+            let (s, l) = try layout(type)
+            let a = keyframeA(s, l), b = keyframeB(s, l), c = keyframeC(s, l)
+            var k = try automation(s, [(50, a), (75, b), (100, c)])
+            XCTAssertTrue(k.setHold(true, at: 0))
+
+            // 区間の中: 下が重み1・上が重み0（相方には上のキーフレームを載せたまま）。
+            let v = ETPEQBlend.voices(k, at: 72)
+            XCTAssertEqual(v.lower, ETPEQBlend.Voice(keyframe: 0, weight: 1, gainless: true))
+            XCTAssertEqual(v.upper, ETPEQBlend.Voice(keyframe: 1, weight: 0, gainless: false))
+            XCTAssertEqual(ETPEQBlend.solo(k, at: 72), ETPEQBlend.Voice(keyframe: 0, weight: 1, gainless: true))
+            XCTAssertEqual(ETPEQBlend.solo(k, at: 62.5), ETPEQBlend.Voice(keyframe: 0, weight: 1, gainless: true),
+                           "真ん中でも素通しを通らない")
+
+            // Hold でない区間は今までどおり。
+            let linear = ETPEQBlend.voices(k, at: 87.5)
+            XCTAssertEqual(linear.lower.weight, 0.5, accuracy: 1e-6)
+            XCTAssertEqual(linear.upper.weight, 0.5, accuracy: 1e-6)
+
+            // 割り当て: 区間の中は main=0・companion=1、次のキーフレームに着くと台はそのまま重みだけ入れ替わる。
+            let inside = ETPEQBlend.pair(k, at: 72, mainHeld: 50, companionHeld: 75)
+            XCTAssertEqual([inside.main.keyframe, inside.companion.keyframe], [0, 1])
+            XCTAssertEqual(inside.main.weight, 1)
+            XCTAssertEqual(inside.companion.weight, 0)
+            let on = ETPEQBlend.pair(k, at: 75, mainHeld: 50, companionHeld: 75)
+            XCTAssertEqual([on.main.keyframe, on.companion.keyframe], [2, 1])
+            XCTAssertEqual(on.companion.weight, 1)
+            XCTAssertEqual(on.main.weight, 0)
+        }
+    }
+
+    func testWantsCompanionIgnoresHold() throws {
+        for type in types {
+            let (s, l) = try layout(type)
+            var k = try automation(s, [(50, keyframeA(s, l)), (75, keyframeB(s, l)), (100, keyframeC(s, l))])
+            XCTAssertTrue(k.setHold(true, at: 0))
+            XCTAssertTrue(k.setHold(true, at: 1))
+            XCTAssertTrue(ETPEQBlend.wantsCompanion(node(s, k)), "全部 Hold でも相方は残す（切り替えで台を組み直さない）")
+        }
+    }
+
     // MARK: - 切り替えの段取り
 
     func testStepsWithoutTopologyChangeIsOneStep() throws {

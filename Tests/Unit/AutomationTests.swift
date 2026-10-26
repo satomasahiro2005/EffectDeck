@@ -686,6 +686,218 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(items.first?.automation?.keyframes.map(\.position), [50])
     }
 
+    // MARK: - Hold（次のキーフレームまで保って、そこで一度に切り替える）
+
+    /// 50 / 75 / 100% の3つ。50% だけ Hold。
+    private func holdAutomation(_ s: ETEffect, _ a: [Float], _ b: [Float], _ c: [Float]) throws -> ETAutomation {
+        var k = try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                           keyframes: [.init(position: 50, values: a),
+                                                       .init(position: 75, values: b),
+                                                       .init(position: 100, values: c)],
+                                           spec: s))
+        XCTAssertTrue(k.setHold(true, at: 0))
+        return k
+    }
+
+    func testHoldStepsAtNextKeyframe() throws {
+        let s = try spec(volume)
+        let k = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        func sound(_ p: Double?) -> Float { k.values(at: p, spec: s, current: s.defaults)[0] }
+        XCTAssertEqual(sound(50), -12)
+        XCTAssertEqual(sound(55), -12)
+        XCTAssertEqual(sound(70), -12, "Hold の区間は下のキーフレームのまま")
+        XCTAssertEqual(sound(75), -6, "次のキーフレームの位置で一度に切り替わる")
+        // 75→100 は Hold でないので今までどおり直線。
+        XCTAssertEqual(sound(90), -2.4, accuracy: 1e-4)
+        XCTAssertEqual(sound(100), 0)
+
+        // Hold を外すと直線に戻る。
+        var linear = k
+        XCTAssertTrue(linear.setHold(false, at: 0))
+        XCTAssertEqual(linear.values(at: 70, spec: s, current: s.defaults)[0], -8.4, accuracy: 1e-4)
+    }
+
+    func testHoldAppliesToToggleAndPEQBandsAtNextKeyframeNotMidpoint() throws {
+        for (s, f, g, q, t, e) in try layouts() {
+            var a = s.defaults, b = s.defaults
+            a[f + 2] = 100; b[f + 2] = 1000
+            a[g + 2] = 6; b[g + 2] = -4
+            a[q + 2] = 0.5; b[q + 2] = 8
+            a[t + 2] = 0; b[t + 2] = 3
+            a[e + 1] = 0; b[e + 1] = 1
+            var k = try automation(s, a, b)
+            XCTAssertTrue(k.setHold(true, at: 0))
+            func at(_ x: Double) -> [Float] { k.values(at: 50 + 50 * x, spec: s, current: s.defaults) }
+            XCTAssertEqual(at(0.1), a)
+            XCTAssertEqual(at(0.5), a, "真ん中を過ぎても切り替わらない")
+            XCTAssertEqual(at(0.9), a)
+            XCTAssertEqual(at(1), b, "次のキーフレームで切り替わる")
+        }
+    }
+
+    func testHoldKeepsHzUnchangedInsideTheSegment() throws {
+        let s = try spec("DattorroPlateReverbPlugin")
+        let p = try XCTUnwrap(s.params.first { $0.name == "modulationRate" })
+        var a = s.defaults, b = s.defaults
+        a[p.offset] = 0.5; b[p.offset] = 5
+        var k = try automation(s, a, b)
+        XCTAssertTrue(k.setHold(true, at: 0))
+        XCTAssertEqual(k.values(at: 75, spec: s, current: s.defaults)[p.offset], 0.5)
+        XCTAssertEqual(k.values(at: 100, spec: s, current: s.defaults)[p.offset], 5)
+    }
+
+    func testTopKeyframeNeverHolds() throws {
+        let s = try spec(volume)
+        var k = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        XCTAssertFalse(k.setHold(true, at: 2), "一番上には付けない")
+        XCTAssertFalse(k.setHold(true, at: 3), "範囲の外")
+        XCTAssertFalse(k.setHold(true, at: -1))
+        XCTAssertFalse(k.setHold(true, at: 0), "変わらないなら false")
+        XCTAssertEqual(k.keyframes.map(\.hold), [true, false, false])
+
+        // 消して一番上になったものは外れる。
+        XCTAssertTrue(k.remove(at: 2))
+        XCTAssertEqual(k.keyframes.map(\.hold), [true, false])
+
+        // Hold のキーフレームを一番上へ動かすと外れる。
+        XCTAssertEqual(k.move(0, to: 100), 1)
+        XCTAssertEqual(k.keyframes.map(\.hold), [false, false])
+
+        // 整えて作るときも、一番上の旗は外す。
+        let made = try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                              keyframes: [.init(position: 50, values: try vol(-5), hold: true),
+                                                          .init(position: 100, values: try vol(0), hold: true)],
+                                              spec: s))
+        XCTAssertEqual(made.keyframes.map(\.hold), [true, false])
+    }
+
+    func testRemovingTopClearsTheNewTop() throws {
+        let s = try spec(volume)
+        var k = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        XCTAssertTrue(k.setHold(true, at: 1))
+        XCTAssertTrue(k.remove(at: 2))
+        XCTAssertEqual(k.keyframes.map(\.hold), [true, false])
+    }
+
+    func testInitPreservesHold() throws {
+        let s = try spec(volume)
+        let made = try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                              keyframes: [.init(position: 80, values: try vol(-3), hold: true),
+                                                          .init(position: 20, values: try vol(-2), hold: true),
+                                                          .init(position: 90, values: try vol(-1))],
+                                              spec: s))
+        XCTAssertEqual(made.keyframes.map(\.position), [20, 80, 90])
+        XCTAssertEqual(made.keyframes.map(\.hold), [true, true, false])
+    }
+
+    func testAddInheritsHoldOfSplitSegment() throws {
+        let s = try spec(volume)
+        // Hold の区間の中: 両側とも Hold のまま。
+        var inside = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        XCTAssertEqual(inside.add(at: 60), 1)
+        XCTAssertEqual(inside.keyframes.map(\.hold), [true, true, false, false])
+        // 直線の区間の中: 直線。
+        var linear = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        XCTAssertEqual(linear.add(at: 85), 2)
+        XCTAssertEqual(linear.keyframes.map(\.hold), [true, false, false, false])
+        // 一番下より下: 直線。
+        var below = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        XCTAssertEqual(below.add(at: 20), 0)
+        XCTAssertEqual(below.keyframes.map(\.hold), [false, true, false, false])
+        // 一番上より上: 直線（新しい一番上は Hold にならない）。
+        var above = try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                               keyframes: [.init(position: 40, values: try vol(-12)),
+                                                           .init(position: 60, values: try vol(-6))],
+                                               spec: s))
+        XCTAssertTrue(above.setHold(true, at: 0))
+        XCTAssertEqual(above.add(at: 90), 2)
+        XCTAssertEqual(above.keyframes.map(\.hold), [true, false, false])
+    }
+
+    func testRemoveAndMoveKeepHold() throws {
+        let s = try spec(volume)
+        var k = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        XCTAssertTrue(k.setHold(true, at: 1))
+        // 真ん中を消すと、つないだ区間は下のキーフレームの設定に従う。
+        var r = k
+        XCTAssertTrue(r.remove(at: 1))
+        XCTAssertEqual(r.keyframes.map(\.position), [50, 100])
+        XCTAssertEqual(r.keyframes.map(\.hold), [true, false])
+        // 一番下を消す。
+        var r0 = k
+        XCTAssertTrue(r0.remove(at: 0))
+        XCTAssertEqual(r0.keyframes.map(\.hold), [true, false])
+        // 動かすと旗も一緒に動く。
+        var m = k
+        XCTAssertEqual(m.move(0, to: 80), 1)
+        XCTAssertEqual(m.keyframes.map(\.position), [75, 80, 100])
+        XCTAssertEqual(m.keyframes.map(\.hold), [true, true, false])
+        XCTAssertEqual(m.move(1, to: 60), 0)
+        XCTAssertEqual(m.keyframes.map(\.position), [60, 75, 100])
+        XCTAssertEqual(m.keyframes.map(\.hold), [true, true, false])
+    }
+
+    func testHoldRoundTrip() throws {
+        let s = try spec(volume)
+        let k = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        let item = loaded(s, k)
+
+        let forms: [Any] = [PipelineStore.shortForm([item]), PipelineStore.longForm([item])]
+        for form in forms {
+            let back = PipelineStore.parse(try roundTrip(form), catalog: ETCatalog)
+            XCTAssertEqual(back.count, 1)
+            XCTAssertEqual(back[0].automation, k)
+            XCTAssertEqual(back[0].automation?.keyframes.map(\.hold), [true, false, false])
+        }
+
+        // 書くのは Hold のキーフレームだけ。
+        let list = try XCTUnwrap(k.encoded(spec: s)["kf"] as? [[String: Any]])
+        XCTAssertEqual(list.map { $0["hold"] as? Bool }, [true, nil, nil])
+
+        // Hold が無ければ今までと同じ形。
+        let plain = try automation(s, try vol(-10), try vol(0))
+        for kf in try XCTUnwrap(plain.encoded(spec: s)["kf"] as? [[String: Any]]) {
+            XCTAssertEqual(Set(kf.keys), ["at", "p"])
+        }
+
+        // 読めない hold は直線として読み、automation は捨てない。
+        let p: [String: Any] = ["vl": -10]
+        let garbage: [[String: Any]] = [
+            ["at": 25, "hold": "yes", "p": p],
+            ["at": 50, "hold": 2, "p": p],
+            ["at": 75, "hold": [String: Any](), "p": p],
+            ["at": 100, "hold": true, "p": p],
+        ]
+        let raw: [String: Any] = ["src": "outputVolume", "kf": garbage]
+        let a = try XCTUnwrap(ETAutomation.decode(raw, spec: s, values: s.defaults))
+        XCTAssertEqual(a.keyframes.map(\.position), [25, 50, 75, 100])
+        XCTAssertEqual(a.keyframes.map(\.hold), [false, false, false, false], "一番上の true も外れる")
+        let noHold: [[String: Any]] = [["at": 50, "p": p]]
+        let none: [String: Any] = ["src": "outputVolume", "kf": noHold]
+        let missing = try XCTUnwrap(ETAutomation.decode(none, spec: s, values: s.defaults))
+        XCTAssertEqual(missing.keyframes.map(\.hold), [false])
+    }
+
+    func testPrepareKeepsHold() throws {
+        let kf: [[String: Any]] = [["at": 50, "hold": true, "p": ["vl": -10]], ["at": 100, "p": ["vl": 0]]]
+        let entry: [String: Any] = ["nm": "Volume", "en": true,
+                                    ETAutomation.key: ["src": "outputVolume", "kf": kf]]
+        let (json, report) = ETChainText.prepare([entry], catalog: ETCatalog)
+        XCTAssertTrue(report.isEmpty, "\(report)")
+        let items = PipelineStore.parse(json, catalog: ETCatalog)
+        XCTAssertEqual(items.first?.automation?.keyframes.map(\.hold), [true, false])
+    }
+
+    func testSoundingAtHoldPositionIsLowerKeyframe() throws {
+        let s = try spec(volume)
+        let k = try holdAutomation(s, try vol(-12), try vol(-6), try vol(0))
+        let held = ETAutomation.sounding([node(s, k)], at: 70)
+        XCTAssertEqual(held[0].values[0], -12)
+        XCTAssertEqual(held[0].automation, k)
+        let switched = ETAutomation.sounding([node(s, k)], at: 75)
+        XCTAssertEqual(switched[0].values[0], -6)
+    }
+
     // MARK: - 段
 
     func testSoundingSwapsValuesAndKeepsIdentity() throws {

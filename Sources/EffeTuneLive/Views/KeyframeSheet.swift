@@ -15,7 +15,7 @@
 //  説明の字は置かない。
 //
 //  **字は英語のまま。**アプリの残りに揃える（String Catalog は作らない。ConnectionTipsView と同じ規則）。
-//  日本語の用意: 音量に追従 / キーフレームを追加 / 音量 / 削除（カタログを入れる時まで保留）。
+//  日本語の用意: 音量に追従 / キーフレームを追加 / 音量 / 補間 / 直線 / ホールド / 削除（カタログを入れる時まで保留）。
 
 import SwiftUI
 
@@ -132,7 +132,7 @@ struct ETKeyframeSheet: View {
     }
 }
 
-/// キーフレーム1つぶんのカード。題は音量（"75%"）、⋯ に音量の変更・プリセット・既定へ戻す・削除。
+/// キーフレーム1つぶんのカード。題は音量（"75%"）、⋯ に音量の変更・補間（直線／ホールド）・プリセット・既定へ戻す・削除。
 private struct ETKeyframeCard: View {
     let index: Int
     let keyframe: Int
@@ -167,6 +167,7 @@ private struct ETKeyframeCard: View {
             Spacer(minLength: 4)
             Menu {
                 volumeMenu
+                holdMenu
                 Button { presets = true } label: {
                     Label("Effect Presets", systemImage: "bookmark")
                 }
@@ -206,6 +207,24 @@ private struct ETKeyframeCard: View {
                 Label("Volume", systemImage: "speaker.wave.2")
             }
             .pickerStyle(.menu)
+        }
+    }
+
+    /// 次のキーフレームまでの補間。Linear は間を滑らかに、Hold はこのキーフレームの値を保って次の位置で一度に切り替える。
+    /// 一番上は次が無いので選べない（Move Up / Move Down と同じく隠さず灰色にする）。
+    @ViewBuilder
+    private var holdMenu: some View {
+        if let a = node.automation, a.keyframes.indices.contains(keyframe) {
+            Picker(selection: Binding(
+                get: { a.keyframes[keyframe].hold },
+                set: { dsp.setKeyframeHold($0, keyframe: keyframe, at: index) })) {
+                Text("Linear").tag(false)
+                Text("Hold").tag(true)
+            } label: {
+                Label("Interpolation", systemImage: "chart.line.uptrend.xyaxis")
+            }
+            .pickerStyle(.menu)
+            .disabled(keyframe == a.keyframes.count - 1)
         }
     }
 }

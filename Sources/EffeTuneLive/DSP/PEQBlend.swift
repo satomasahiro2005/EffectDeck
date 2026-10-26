@@ -125,7 +125,8 @@ enum ETPEQBlend {
         }
         let i = a.keyframes.lastIndex(where: { $0.position <= pos }) ?? 0
         let lo = a.keyframes[i].position, hi = a.keyframes[i + 1].position
-        let t = Float(min(max((pos - lo) / (hi - lo), 0), 1))
+        // 保つ設定の区間は次のキーフレームまで下の1組のまま（上は重み0で載せたまま、位置に着いたら重みだけ入れ替わる）。
+        let t: Float = a.keyframes[i].hold ? 0 : Float(min(max((pos - lo) / (hi - lo), 0), 1))
         return (Voice(keyframe: i, weight: 1 - t, gainless: t < 0.5),
                 Voice(keyframe: i + 1, weight: t, gainless: t >= 0.5))
     }
@@ -163,7 +164,8 @@ enum ETPEQBlend {
         if pos <= a.keyframes[0].position { return Voice(keyframe: 0, weight: 1, gainless: true) }
         let i = a.keyframes.lastIndex(where: { $0.position <= pos }) ?? 0
         let lo = a.keyframes[i].position, hi = a.keyframes[i + 1].position
-        let t = Float(min(max((pos - lo) / (hi - lo), 0), 1))
+        // 保つ設定の区間は次のキーフレームまで下の1組のまま（上は重み0で載せたまま、位置に着いたら重みだけ入れ替わる）。
+        let t: Float = a.keyframes[i].hold ? 0 : Float(min(max((pos - lo) / (hi - lo), 0), 1))
         return t < 0.5
             ? Voice(keyframe: i, weight: 1 - 2 * t, gainless: true)
             : Voice(keyframe: i + 1, weight: 2 * t - 1, gainless: true)

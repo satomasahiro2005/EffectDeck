@@ -1688,6 +1688,19 @@ final class EffeTuneDSP: ObservableObject {
         persistSoon()
     }
 
+    /// k 番目のキーフレームの保つ設定を変える。次のキーフレームまでその値のまま、そこで一度に切り替える。
+    /// 一番上のキーフレーム（次が無い）は変えない。main の段だけ。
+    func setKeyframeHold(_ hold: Bool, keyframe k: Int, at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              var a = self[slot: index].automation else { return }
+        let before = instanceLatency(of: self[slot: index])
+        let companion = ETPEQBlend.wantsCompanion(self[slot: index])
+        guard a.setHold(hold, at: k) else { return }
+        adoptEdited(a, at: index)
+        settleAfterKeyframes(at: index, before: before, companion: companion)
+        persistSoon()
+    }
+
     /// 動かしたキーフレームを載せている台の鍵（held・pushedHeld）を新しい位置へ替える。
     private func rekeyHeld(of node: Node, from: Double, to: Double) {
         var instances = [node.instance]
