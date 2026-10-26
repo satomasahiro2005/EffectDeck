@@ -16,7 +16,7 @@ extension EffeTuneDSP {
     func watchLatency(now: TimeInterval, rendering: Bool) {
         guard !latencyWatch.isEmpty else { return }
         let changed = latencyWatch.tick(now: now, rendering: rendering) { [self] id in
-            guard let slot = slot(of: id), let node = node(at: slot), node.instance != 0, engine != 0 else {
+            guard let at = slot(of: id), let node = node(at: at), node.instance != 0, engine != 0 else {
                 return nil
             }
             return et_instance_latency(engine, node.instance)

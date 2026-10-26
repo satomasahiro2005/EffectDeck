@@ -114,10 +114,7 @@ struct SFZNotePlayerView: View {
                 title: "Detection",
                 options: [(0, "Classic (Low Latency)"), (1, "Event (+140 ms)")],
                 selection: Binding(
-                    get: {
-                        let raw = node.values.indices.contains(dt.offset) ? Int(node.values[dt.offset].rounded()) : 0
-                        return raw == 1 ? 1 : 0
-                    },
+                    get: { node.values.indices.contains(dt.offset) && node.values[dt.offset] >= 0.5 ? 1 : 0 },
                     set: { dsp.setValue(Float($0), at: index, offset: dt.offset) }))
         }
     }
