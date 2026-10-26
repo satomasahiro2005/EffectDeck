@@ -41,6 +41,14 @@ struct ETLatencyWatch {
     }
     var watched: Set<UUID> { Set(entries.keys) }
 
+    /// tick の `rendering` に渡す値。**カーネルに処理が届いているときだけ真。**
+    /// PowerGate が休んでいるあいだは、IO が回っていても ETPipeline_Process を呼ばない（AudioIO の render は
+    /// `if awake` の内側）ので、並んだ値は受け取られない。回っているだけで数えると、音を止めたまま
+    /// Detection を変えたとき 2 秒で諦めてしまい、再開後に遅れが動いても組み直されない。
+    static func isRendering(running: Bool, resting: Bool) -> Bool {
+        running && !resting
+    }
+
     /// 値を渡した直後の遅れが変わらなかった段を覚える。すでに居る段は、数えた時間だけ 0 に戻す
     /// （もとの遅れは変えない。まだカーネルに届いていないので、古い値のまま）。
     mutating func expect(id: UUID, latency: UInt32) {

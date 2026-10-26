@@ -39,6 +39,26 @@ final class LatencyWatchTests: XCTestCase {
         XCTAssertTrue(watch.tick(now: now + 0.3, rendering: true, processing: { _ in true }) { _ in 6_900 }, "回り出したら変わる")
     }
 
+    func testRenderingIsFalseWhileRestingOrStopped() {
+        XCTAssertTrue(ETLatencyWatch.isRendering(running: true, resting: false))
+        XCTAssertFalse(ETLatencyWatch.isRendering(running: true, resting: true), "PowerGate が休むと Process は呼ばれない")
+        XCTAssertFalse(ETLatencyWatch.isRendering(running: false, resting: false))
+        XCTAssertFalse(ETLatencyWatch.isRendering(running: false, resting: true))
+    }
+
+    func testNeverExpiresWhilePowerGateRests() {
+        var watch = ETLatencyWatch()
+        watch.expect(id: a, latency: 100)
+        let rendering = ETLatencyWatch.isRendering(running: true, resting: true)
+        var now = 0.0
+        for _ in 0..<40 {
+            now += 0.3
+            XCTAssertFalse(watch.tick(now: now, rendering: rendering, processing: { _ in true }) { _ in 100 })
+        }
+        XCTAssertFalse(watch.isEmpty, "休んでいるあいだは 2 秒を超えても諦めない")
+        XCTAssertTrue(watch.tick(now: now + 0.3, rendering: true, processing: { _ in true }) { _ in 6_900 })
+    }
+
     func testGivesUpAfterRenderingWithoutAChange() {
         var watch = ETLatencyWatch()
         watch.expect(id: a, latency: 100)

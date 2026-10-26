@@ -144,6 +144,8 @@ final class ParamGateTests: XCTestCase {
             XCTAssertTrue(disabled(sfz, key, ["dt": 1]), key)
             XCTAssertFalse(disabled(sfz, key, ["dt": 0]), key)
             XCTAssertFalse(disabled(sfz, key, [:]), "dt が無い鎖は Classic と同じ: \(key)")
+            // カーネルは dt == 1 だけを Event と読む。範囲の外・小数は Classic（行を止めない）。
+            for stray: Float in [2, 0.7, 0.5, -1] { XCTAssertFalse(disabled(sfz, key, ["dt": stray]), "\(stray): \(key)") }
         }
         for key in ["dt", "hi", "md", "lo", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm", "mn", "mx"] {
             XCTAssertFalse(disabled(sfz, key, ["dt": 1]), key)

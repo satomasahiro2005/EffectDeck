@@ -101,6 +101,7 @@ enum ETParamGate {
     /// dt が無い（古い鎖）ときは Classic と同じで、何も止めない。
     private static func sfzDisabled(key: String, value: (String) -> Float?) -> Bool {
         guard key == "th" || key == "rd" else { return false }
-        return Int((value("dt") ?? SFZDetection.classic).rounded()) == Int(SFZDetection.event)
+        // カーネルは `params_.detection == 1.0F` で比べる。丸めない（0.7 や 2 は Classic）。
+        return (value("dt") ?? SFZDetection.classic) == SFZDetection.event
     }
 }

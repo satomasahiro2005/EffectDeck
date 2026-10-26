@@ -48,7 +48,7 @@ reports 11040 (+6720 samples = 140 ms).
 
 Fix: `ETLatencyWatch` (Foundation-only, `LatencyWatchTests`) remembers a node whose latency did not move
 after a value was set, `AudioIO.tick` compares it with `et_instance_latency` (also in the background), and a
-change calls `republish`. Entries are kept while audio is not running, one republish is issued per tick at
+change calls `republish`. Entries are kept while the kernel is not processing (IO stopped, or PowerGate resting: `ETLatencyWatch.isRendering`), one republish is issued per tick at
 most, and an entry is dropped after 2 s in which the stage was actually processed without a change.
 
 Every path that changes a value arms the watch when the latency did not move at once: `setValue`

@@ -106,7 +106,7 @@ struct SFZNotePlayerView: View {
 
     private var detectionParam: ETParam? { node.spec.params.first { $0.key == "dt" } }
 
-    /// 上流の createRadioGroup('Detection', …)。値は DSP の dt（0 = Classic・1 = Event）。範囲の外は Classic。
+    /// 上流の createRadioGroup('Detection', …)。値は DSP の dt（0 = Classic・1 = Event）。カーネルは 1 だけを Event と読む（範囲の外・小数は Classic）。
     @ViewBuilder
     private var detectionRow: some View {
         if let dt = detectionParam {
@@ -114,7 +114,7 @@ struct SFZNotePlayerView: View {
                 title: "Detection",
                 options: [(0, "Classic (Low Latency)"), (1, "Event (+140 ms)")],
                 selection: Binding(
-                    get: { node.values.indices.contains(dt.offset) && node.values[dt.offset] >= 0.5 ? 1 : 0 },
+                    get: { node.values.indices.contains(dt.offset) && node.values[dt.offset] == 1 ? 1 : 0 },
                     set: { dsp.setValue(Float($0), at: index, offset: dt.offset) }))
         }
     }
