@@ -11,6 +11,7 @@ final class ParamGateTests: XCTestCase {
 
     private let cassette = "CassetteArtifactsPlugin"
     private let ape = "AdaptivePredictionEffectPlugin"
+    private let sfz = "SFZNotePlayerPlugin"
 
     private func disabled(_ type: String, _ key: String, _ values: [String: Float]) -> Bool {
         ETParamGate.isDisabled(type: type, key: key) { values[$0] }
@@ -133,5 +134,19 @@ final class ParamGateTests: XCTestCase {
         let other = try XCTUnwrap(ETCatalog.first { $0.type == "CompressorPlugin" })
         XCTAssertFalse(ETChainEditing.chainMustProcess([ETChainNode(spec: other, values: other.defaults)]))
         XCTAssertFalse(ETChainEditing.chainMustProcess([]))
+    }
+
+    // MARK: SFZ Note Player
+
+    /// Event（dt=1）のときだけ Threshold と Retrigger Drop が止まる。ほかの行は止めない。
+    func testSFZEventStopsThresholdAndRetriggerDrop() {
+        for key in ["th", "rd"] {
+            XCTAssertTrue(disabled(sfz, key, ["dt": 1]), key)
+            XCTAssertFalse(disabled(sfz, key, ["dt": 0]), key)
+            XCTAssertFalse(disabled(sfz, key, [:]), "dt が無い鎖は Classic と同じ: \(key)")
+        }
+        for key in ["dt", "hi", "md", "lo", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm", "mn", "mx"] {
+            XCTAssertFalse(disabled(sfz, key, ["dt": 1]), key)
+        }
     }
 }

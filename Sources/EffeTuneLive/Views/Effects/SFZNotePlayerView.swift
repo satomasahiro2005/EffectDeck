@@ -1,15 +1,18 @@
 //  SFZNotePlayerView.swift
 //  SFZ Note Player（SFZNotePlayerPlugin。検出した音の高さで SFZ の楽器を鳴らす）。
 //
-//  上流 plugins/others/sfz_note_player.js（2.14.0）の createUI。並びは
+//  上流 plugins/others/sfz_note_player.js（2.15.0）の createUI。並びは
 //    SFZ: [SFZ Library…] 選んでいる名前 [Clear]
 //    赤い状態行
+//    Detection（Classic / Event）
 //    Color（Normal / Note Colors）
 //    Highest / Middle / Lowest（音域の帯）→ Threshold → Retrigger Drop → Note Hold → Velocity 1 Level →
 //    Velocity 127 Level → Max Voices → Dry → Wet → Octave → Sample Shift → Output Gain → Timing →
 //    Lowest Note → Highest Note
 //    声の図（SFZVoiceGraph。触ると鳴る）
 //  つまみは汎用の ParameterRow、Lowest / Highest Note だけ音名で読ませる（Note Spectrogram と同じ ETNoteRangeRow）。
+//  Detection（dt）は音の拾い方。Event は PC 側の値なので etLocalAudioOnly にしない。Event の間は
+//  Threshold と Retrigger Drop を止める（ETParamGate。値は残す）。Event は約 140 ms 遅れる。
 //  試し弾きの Preview Midi / Velocity は保存しない値なので行を出さない（runtimeOnly）。
 //
 //  バンクの出し入れは SFZ Library（SFZLibraryView）。2.13.0 の選択欄・Import Folder…・Remove はそこへ移った。
@@ -63,13 +66,14 @@ struct SFZNotePlayerView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                detectionRow
                 ETDisplayChoiceRow(title: "Color",
                                    options: [("Normal", "Normal"), ("Rainbow", "Note Colors")],
                                    selection: Binding(get: { color }, set: { value in
                                        color = value
                                        dsp.setDisplay(value, key: "cl", at: index)
                                    }))
-                ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
+                ForEach(node.spec.params.filter { !$0.runtimeOnly && $0.key != "dt" }) { param in
                     if param.key == "mn" || param.key == "mx" {
                         ETNoteRangeRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
                     } else {
@@ -96,6 +100,26 @@ struct SFZNotePlayerView: View {
 
     private func graph(canPreview: Bool) -> some View {
         SFZVoiceGraph(index: index, node: node, dsp: dsp, canPreview: canPreview)
+    }
+
+    // MARK: Detection
+
+    private var detectionParam: ETParam? { node.spec.params.first { $0.key == "dt" } }
+
+    /// 上流の createRadioGroup('Detection', …)。値は DSP の dt（0 = Classic・1 = Event）。範囲の外は Classic。
+    @ViewBuilder
+    private var detectionRow: some View {
+        if let dt = detectionParam {
+            ETDisplayChoiceRow(
+                title: "Detection",
+                options: [(0, "Classic (Low Latency)"), (1, "Event (+140 ms)")],
+                selection: Binding(
+                    get: {
+                        let raw = node.values.indices.contains(dt.offset) ? Int(node.values[dt.offset].rounded()) : 0
+                        return raw == 1 ? 1 : 0
+                    },
+                    set: { dsp.setValue(Float($0), at: index, offset: dt.offset) }))
+        }
     }
 
     // MARK: 選択欄
