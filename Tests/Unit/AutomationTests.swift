@@ -714,7 +714,26 @@ final class AutomationTests: XCTestCase {
         // Hold を外すと直線に戻る。
         var linear = k
         XCTAssertTrue(linear.setHold(false, at: 0))
-        XCTAssertEqual(linear.values(at: 70, spec: s, current: s.defaults)[0], -8.4, accuracy: 1e-4)
+        XCTAssertEqual(linear.values(at: 70, spec: s, current: s.defaults)[0], -7.2, accuracy: 1e-4)
+    }
+
+    func testHoldJumpsAtFloatVolumeStepsThatFallJustBelowTheGrid() throws {
+        let s = try spec(volume)
+        // 70% の Float は 69.9999988 になる。Hold の切り替えは 70% ちょうどで起きる。
+        var k = try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                           keyframes: [.init(position: 50, values: try vol(-12)),
+                                                       .init(position: 70, values: try vol(-6)),
+                                                       .init(position: 100, values: try vol(0))],
+                                           spec: s))
+        XCTAssertTrue(k.setHold(true, at: 0))
+        let raw = Double(Float(0.70)) * 100
+        XCTAssertLessThan(raw, 70, "前提 Float(0.70) は 70 を下回る")
+        let pos = ETAutomation.Source.outputVolume.position(fromVolume: 0.70)
+        XCTAssertEqual(pos, 70)
+        XCTAssertEqual(k.values(at: pos, spec: s, current: s.defaults)[0], -6)
+        for pct in [35, 45, 65, 90, 95] {
+            XCTAssertEqual(ETAutomation.Source.outputVolume.position(fromVolume: Float(pct) / 100), Double(pct))
+        }
     }
 
     func testHoldAppliesToToggleAndPEQBandsAtNextKeyframeNotMidpoint() throws {

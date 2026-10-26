@@ -48,7 +48,9 @@ struct ETAutomation: Equatable {
 
         /// AVAudioSession.outputVolume（0〜1）→ 位置。
         func position(fromVolume v: Float) -> Double {
-            min(max(Double(v) * 100, range.lowerBound), range.upperBound)
+            // Float(0.35) などは 34.9999994 になり、Hold の切り替えが1刻み遅れるので 1e-4 に丸める。
+            let snapped = (Double(v) * 100 * 1e4).rounded() / 1e4
+            return min(max(snapped, range.lowerBound), range.upperBound)
         }
 
         /// 刻みの位置すべて（0, 5, … 100）。
