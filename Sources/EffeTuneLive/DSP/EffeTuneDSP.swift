@@ -139,12 +139,11 @@ final class EffeTuneDSP: ObservableObject {
         slot >= 0 && slot < chain.count + correction.count
     }
 
-    /// 画面が渡した番号（ETSlotAddress.raw）の元の slot。キーフレームの写しも元の段を指す。
-    /// 鳴っている値の写しは読むだけなので、書く口（writing）には何も返さない。
+    /// 画面が渡した番号（ETSlotAddress.raw）の元の slot。キーフレームの写しも鳴っている値の写しも元の段を指す。
+    /// ここを通るのは段そのもの（表示・Routing・状態）の口だけ。値は setValue などが写しを見て振り分ける。
     private func nodeSlot(_ index: Int, writing: Bool) -> Int? {
         switch ETSlotAddress(index) {
-        case .slot(let s), .keyframe(let s, _): return s
-        case .sounding(let s): return writing ? nil : s
+        case .slot(let s), .keyframe(let s, _), .sounding(let s): return s
         }
     }
 
@@ -1179,10 +1178,16 @@ final class EffeTuneDSP: ObservableObject {
 
     /// パラメータを 1 つ変える。offset は ETParam.offset（配列なら +i）。
     func setValue(_ value: Float, at index: Int, offset: Int) {
-        // 負の番号: キーフレームの写しなら、そのキーフレームへ。鳴っている値の写しは読むだけ。
+        // 負の番号: キーフレームの写しなら、そのキーフレームへ。鳴っている値の写しなら、
+        // いまの音量の位置のキーフレームへ（無ければ鳴っている値で作る。soundingKeyframe）。
         if index < 0 {
-            if case .keyframe(let s, let k) = ETSlotAddress(index) {
+            switch ETSlotAddress(index) {
+            case .keyframe(let s, let k):
                 setKeyframeValue(value, keyframe: k, at: s, offset: offset)
+            case .sounding(let s):
+                if let k = soundingKeyframe(at: s) { setKeyframeValue(value, keyframe: k, at: s, offset: offset) }
+            case .slot:
+                break
             }
             return
         }
@@ -1240,9 +1245,15 @@ final class EffeTuneDSP: ObservableObject {
     /// もう1度送り込まれた。送り込むたびに鎖全体が一瞬素通しになる（AssetUploadのholdOffAudioThread）。
     func setValues(_ values: [Float], at index: Int, design params: [String: Any] = [:]) {
         // 負の番号: キーフレームの写しなら、そのキーフレームへ（designer の型は追従できないので design は使わない）。
+        // 鳴っている値の写しは setValue と同じく、いまの音量の位置のキーフレームへ。
         if index < 0 {
-            if case .keyframe(let s, let k) = ETSlotAddress(index) {
+            switch ETSlotAddress(index) {
+            case .keyframe(let s, let k):
                 setKeyframeValues(values, keyframe: k, at: s)
+            case .sounding(let s):
+                if let k = soundingKeyframe(at: s) { setKeyframeValues(values, keyframe: k, at: s) }
+            case .slot:
+                break
             }
             return
         }
@@ -1282,9 +1293,14 @@ final class EffeTuneDSP: ObservableObject {
     }
 
     func resetParams(at index: Int) {
-        // 負の番号: キーフレームの写しなら、そのキーフレームだけ既定へ。
+        // 負の番号: キーフレームの写しなら、そのキーフレームだけ既定へ。鳴っている値の写しは
+        // いまの音量の位置のキーフレームだけ。
         if index < 0 {
-            if case .keyframe(let s, let k) = ETSlotAddress(index) { resetKeyframe(k, at: s) }
+            switch ETSlotAddress(index) {
+            case .keyframe(let s, let k): resetKeyframe(k, at: s)
+            case .sounding(let s): if let k = soundingKeyframe(at: s) { resetKeyframe(k, at: s) }
+            case .slot: break
+            }
             return
         }
         guard contains(slot: index) else { return }
@@ -1755,6 +1771,25 @@ final class EffeTuneDSP: ObservableObject {
         pushParams(self[slot: index])
         if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
         persistSoon()
+    }
+
+    /// 鳴っている値を直したときに書くキーフレーム（AE と同じく、キーフレームの間で直したらそこに作る）。
+    /// いまの音量の刻みにあればそれ、無ければ鳴っている値で足す。PEQ は2台で鳴らしていて1組に写せないので
+    /// 作らない（画面も間では直させない）。PC 編集中・音量が読めない・足せないなら nil。
+    private func soundingKeyframe(at index: Int) -> Int? {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              let a = self[slot: index].automation, let volume = ETVolumeFollower.shared.position else { return nil }
+        let p = a.source.snapped(volume)
+        func existing(_ a: ETAutomation) -> Int? {
+            a.keyframes.firstIndex { abs($0.position - p) < 0.001 }
+        }
+        if let k = existing(a) { return k }
+        guard ETPEQBlend.Layout(self[slot: index].spec) == nil else { return nil }
+        let values = soundingValues(of: self[slot: index])
+        addKeyframe(position: p, at: index)
+        guard let added = self[slot: index].automation, let k = existing(added) else { return nil }
+        storeKeyframe(values, keyframe: k, at: index)
+        return k
     }
 
     /// キーフレームのカードのつまみ1つ。

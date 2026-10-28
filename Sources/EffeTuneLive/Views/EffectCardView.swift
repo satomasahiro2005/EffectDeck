@@ -77,28 +77,54 @@ struct EffectCardView: View {
         }
     }
 
-    /// 音量に追従する段は、カードの本文が選んでいるキーフレームの値になって直せる。
-    /// 押して選んでいなければ、いまの音量に一番近いキーフレーム（音量が読めなければ一番上）。
-    /// **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（直しても試聴にならない）。
-    /// PC の鎖を編集している間だけは、いま鳴っている値を映して直せなくする。
+    /// 音量に追従する段で、カードが見せて直すもの。
+    private enum EditTarget: Equatable {
+        /// そのキーフレーム（値もそのキーフレーム）。
+        case keyframe(Int)
+        /// いま鳴っている値。editable なら、直したときに DSP がいまの音量の位置にキーフレームを作ってそこへ書く。
+        case sounding(editable: Bool)
+    }
+
+    /// 音量に追従する段は、帯の菱形を押して選んだキーフレームを見せて直す。
+    /// 選んでいなければ、いまの音量で鳴っている値を見せる:
+    ///   - いまの音量がキーフレームの位置・両端の外・Hold の間なら、鳴っているのはそのキーフレームの値なので、それを直す
+    ///   - Smooth の間なら、鳴っている値を見せ、直したらそこにキーフレームを作る（AE と同じ）
+    ///   - ただし PEQ の Smooth の間は2台で鳴らしていて1組に写せないので、見せるだけ（ETPEQBlend）
+    /// **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（キーフレームを直しても試聴にならない）。
+    /// PC の鎖を編集している間は、いま鳴っている値を映して直せなくする。
     private var follows: Bool { node.automation != nil }
 
-    /// 選んでいるキーフレームの添字。押して選んだものが無ければ（消えた・外した）いまの音量に一番近いもの。
-    /// 追従していない・PC 編集中は nil。
-    private var selectedKeyframe: Int? {
-        guard let a = node.automation, !a.keyframes.isEmpty, !RemoteMirror.shared.isRemote else { return nil }
-        if let p = selectedPosition, let k = a.keyframes.firstIndex(where: { abs($0.position - p) < 0.0005 }) {
-            return k
-        }
-        let current = ETVolumeFollower.shared.position ?? a.source.range.upperBound
-        return a.nearestKeyframe(to: current, within: .infinity) ?? a.keyframes.count - 1
+    private var editTarget: EditTarget? {
+        guard let a = node.automation, !a.keyframes.isEmpty else { return nil }
+        guard !RemoteMirror.shared.isRemote else { return .sounding(editable: false) }
+        func at(_ p: Double) -> Int? { a.keyframes.firstIndex { abs($0.position - p) < 0.0005 } }
+        if let p = selectedPosition, let k = at(p) { return .keyframe(k) }
+        guard let volume = ETVolumeFollower.shared.position else { return .keyframe(a.keyframes.count - 1) }
+        let snapped = a.source.snapped(volume)
+        if abs(volume - snapped) < 0.01, let k = at(snapped) { return .keyframe(k) }
+        if volume <= a.keyframes[0].position { return .keyframe(0) }
+        if volume >= a.keyframes[a.keyframes.count - 1].position { return .keyframe(a.keyframes.count - 1) }
+        if let s = a.segment(at: volume), a.keyframes[s.lower].hold { return .keyframe(s.lower) }
+        return .sounding(editable: ETPEQBlend.Layout(node.spec) == nil)
     }
 
-    /// 直すときの口。選んでいるキーフレームの写しか、普通の段。
-    private var editAddress: Int {
-        if let k = selectedKeyframe { return ETSlotAddress.keyframe(slot: index, index: k).raw }
-        return index
+    /// 見せて直しているキーフレームの添字（帯で色を変える・⋯ の補間と削除）。
+    private var selectedKeyframe: Int? {
+        if case .keyframe(let k) = editTarget { return k }
+        return nil
     }
+
+    /// プリセット・Reset Parameters が書く口。
+    private var editAddress: Int {
+        switch editTarget {
+        case .keyframe(let k): return ETSlotAddress.keyframe(slot: index, index: k).raw
+        case .sounding: return ETSlotAddress.sounding(slot: index).raw
+        case nil: return index
+        }
+    }
+
+    /// 本文を直せるか。
+    private var canEdit: Bool { editTarget != .sounding(editable: false) }
 
     private var effectCard: some View {
         // **.sheet は分岐の外、本物の入れ物（Group でない）に付ける。**
@@ -113,7 +139,7 @@ struct EffectCardView: View {
                         card(shown, address: ETSlotAddress.keyframe(slot: index, index: k).raw, editable: true)
                     } else {
                         card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw,
-                             editable: false, companion: dsp.soundingPEQ(node)?.secondary)
+                             editable: canEdit, companion: dsp.soundingPEQ(node)?.secondary)
                     }
                 }
             } else {
@@ -392,15 +418,15 @@ struct EffectCardView: View {
                 // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
                 // プリセットの一覧に混ぜない。
                 if !node.isExternal {
-                    // 追従しているあいだは、選んでいるキーフレームへ効く。選んでいなければ直せない。
+                    // 追従しているあいだは、カードが見せているもの（キーフレームか、いまの音量の位置）へ効く。
                     Button { sheet = .presets } label: {
                         Label("Effect Presets", systemImage: "bookmark")
                     }
-                    .disabled(follows && selectedKeyframe == nil)
+                    .disabled(!canEdit)
                     Button { dsp.resetParams(at: editAddress) } label: {
                         Label("Reset Parameters", systemImage: "arrow.counterclockwise")
                     }
-                    .disabled(follows && selectedKeyframe == nil)
+                    .disabled(!canEdit)
                     keyframeMenuItems
                 }
                 Button(action: moveUp) {
