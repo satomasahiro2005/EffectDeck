@@ -1537,16 +1537,12 @@ final class ETNoteBand: ObservableObject {
         return Double(value) / 255
     }
 
-    /// 時間の幅から、横幅いっぱいに並べる列の数。
-    /// 列の間隔は一定ではないので、溜まっている列の平均で割る。
+    /// 時間の幅から、横幅いっぱいに並べる列の数（ETNoteColumns。直近の間隔の中央値で割る）。
     func slots(forSpan span: Double) -> Int {
         guard count > 1 else { return Self.columns }
-        let oldest = times[(head - count + Self.columns) % Self.columns]
-        let newest = times[(head - 1 + Self.columns) % Self.columns]
-        guard oldest.isFinite, newest.isFinite, newest > oldest else { return Self.columns }
-        let period = (newest - oldest) / Double(count - 1)
-        guard period > 0 else { return Self.columns }
-        return min(Self.columns, max(1, Int((span / period).rounded())))
+        let recent = min(count, 65)
+        let ordered = (0..<recent).map { times[(head - recent + $0 + Self.columns) % Self.columns] }
+        return ETNoteColumns.slots(forSpan: span, times: ordered, maxColumns: Self.columns)
     }
 
     /// いま出している列が何秒ぶんか。

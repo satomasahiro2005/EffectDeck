@@ -263,3 +263,28 @@ enum ETNoteTimbre {
         return Double(p[index])
     }
 }
+
+// MARK: - 時間幅と列の数
+
+enum ETNoteColumns {
+    /// 時間の幅から、横幅いっぱいに並べる列の数。times は古い順の列の時刻（秒）。
+    ///
+    /// 列の間隔は一定ではないので、直近の間隔の**中央値**で割る。以前は溜まっている列全体の平均で割っていて、
+    /// 背景に回した・再生を止めたなどで枠が届かなかった空白が平均に入り、間隔が大きく見えて列の数が減った
+    /// （「N col」が短くなり、空白の列が流れ去るまで戻らなかった）。中央値なら空白が1つ入っても動かない。
+    static func slots(forSpan span: Double, times: [Double], maxColumns: Int, window: Int = 64) -> Int {
+        guard times.count > 1, span > 0 else { return maxColumns }
+        var intervals: [Double] = []
+        intervals.reserveCapacity(min(window, times.count - 1))
+        var i = times.count - 1
+        while i > 0 && intervals.count < window {
+            let d = times[i] - times[i - 1]
+            if d.isFinite && d > 0 { intervals.append(d) }
+            i -= 1
+        }
+        guard !intervals.isEmpty else { return maxColumns }
+        intervals.sort()
+        let period = intervals[intervals.count / 2]
+        return min(maxColumns, max(1, Int((span / period).rounded())))
+    }
+}

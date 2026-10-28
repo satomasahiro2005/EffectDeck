@@ -255,6 +255,29 @@ final class Upstream214Tests: XCTestCase {
         XCTAssertEqual(ETDisplayParam.table(for: "AnalogMeterPlugin")["dc"], .number)
         XCTAssertEqual(ETDisplayParam.defaults(for: "AnalogMeterPlugin")["dc"], "0.0")
     }
+
+    // MARK: - Note Spectrogram の列の数
+
+    func testNoteColumnsUseMedianIntervalSoAGapDoesNotShrinkThem() {
+        // 20ms ごとの列が 50 本、途中に 5 秒の空白（背景に回したなど）。
+        var times: [Double] = []
+        var t = 0.0
+        for i in 0..<50 {
+            times.append(t)
+            t += i == 25 ? 5 : 0.02
+        }
+        // 2 秒 / 20ms = 100 列。平均で割ると約 2 秒 / 0.12 秒 ≈ 17 列に縮んでいた。
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 2, times: times, maxColumns: 512), 100)
+    }
+
+    func testNoteColumnsEdgeCases() {
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 2, times: [], maxColumns: 512), 512)
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 2, times: [1], maxColumns: 512), 512)
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 2, times: [1, 1, 1], maxColumns: 512), 512, "間隔が 0 だけなら全部")
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 100, times: [0, 0.01, 0.02], maxColumns: 512), 512, "上限で止める")
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 0.001, times: [0, 0.02, 0.04], maxColumns: 512), 1, "1 列は残す")
+        XCTAssertEqual(ETNoteColumns.slots(forSpan: 1, times: [0, .nan, 0.04, 0.06], maxColumns: 512), 50, "読めない時刻は飛ばす")
+    }
 }
 
 private extension Array where Element == Float {
@@ -267,4 +290,5 @@ private extension Array where Element == Float {
         }
         return out
     }
+
 }
