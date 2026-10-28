@@ -413,14 +413,13 @@ struct ETKeyframeTimeline: View {
 }
 
 /// キーフレームの印。左右の半分を、滑らかな側は菱形の半分、平らな側は四角の半分で描く。
-/// 平らな側の半分も菱形の半分と同じ幅にする（外形が正方形にそろい、混ぜた形も傾いて見えない）。
+/// 四角の半分は菱形の半分より細くして、矩形が菱形より大きく見えないようにする。
 private struct KeyframeShape: Shape {
     let leftFlat: Bool
     let rightFlat: Bool
 
     func path(in rect: CGRect) -> Path {
-        // 平らな側の半分も、菱形の半分と同じ幅（外形が正方形にそろう）。細くしていたときは左右で幅が違って傾いて見えた。
-        let flat = rect.width / 2
+        let flat = rect.width / 2 * 0.7
         var path = Path()
         path.move(to: CGPoint(x: rect.midX, y: rect.minY))
         if leftFlat {
