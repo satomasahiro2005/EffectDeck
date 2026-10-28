@@ -374,7 +374,7 @@ enum ETEffectSearch {
         // リバーブ
         "DattorroPlateReverbPlugin": ["verb"],
         "FDNReverbPlugin": ["verb", "hall reverb", "algorithmic reverb"],
-        "IRReverbPlugin": ["verb", "convolution", "convolver", "impulse response"],
+        "IRReverbPlugin": ["verb", "convolution", "convolver", "impulse response", "brir", "hrir", "binaural", "cabinet ir"],
         "RSReverbPlugin": ["verb", "algorithmic reverb"],
 
         // サチュレーション

@@ -94,6 +94,9 @@ final class EffectSearchTests: XCTestCase {
         XCTAssertEqual(names("transient designer").first, "Transient Shaper")
         XCTAssertEqual(names("echo").first, "Delay")
         XCTAssertEqual(names("gain").first, "Volume")
+        // BRIR / HRIR を読み込んで鳴らすのは IR Reverb。
+        XCTAssertEqual(names("brir").first, "IR Reverb")
+        XCTAssertEqual(names("hrir").first, "IR Reverb")
     }
 
     func testAliasesAreEnglishOnly() {
