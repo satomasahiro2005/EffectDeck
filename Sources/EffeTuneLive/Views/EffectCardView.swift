@@ -152,6 +152,10 @@ struct EffectCardView: View {
                 card(node, address: index)
             }
         }
+        // 菱形を選んだあとに音量が変わったら選択を外し、いまの音量で鳴っている値に戻す。
+        .onReceive(ETVolumeFollower.shared.$position.removeDuplicates().dropFirst()) { _ in
+            selectedPosition = nil
+        }
         .sheet(item: $sheet) { which in
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
