@@ -386,6 +386,8 @@ targets:
       - path: Sources/EffeTuneLive/DSP/ETChainNode.swift
       # 音量に追従するカードのキーフレームと補間。Foundationだけ（AutomationTests）。ETChainNode・PipelineForm・ETChainTextが引く。
       - path: Sources/EffeTuneLive/DSP/Automation.swift
+      # ピッカーの検索の順位（定番の表と別名）。Foundationだけ（EffectSearchTests）。
+      - path: Sources/EffeTuneLive/DSP/EffectSearch.swift
       # 音量に追従する PEQ の鳴らし方（帯を組にせず2台で直列）。Foundationだけ（PEQBlendTests）。
       - path: Sources/EffeTuneLive/DSP/PEQBlend.swift
       # PC の EffeTune を LAN から操る PoC の、通信に触らない部分（RemoteProtocolTests）。Foundationだけ。

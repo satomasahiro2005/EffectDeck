@@ -157,36 +157,9 @@ struct EffectPickerView: View {
     // **当たり方で並べる。**ただ contains で拾うと、打った字を含むだけのものが
     // 名前そのものより上に来る。当たり方に順位を付けて、同じ順位の中では名前順。
 
-    /// 当たり方。**強い順**。生の値の小ささがそのまま強さになる。
-    private enum Hit: Int, Comparable {
-        /// 名前がそのもの。
-        case exact = 0
-        /// 名前の頭から。
-        case prefix = 1
-        /// 名前の中の、語の頭から（"Band" が "Five Band PEQ" に当たる）。
-        case word = 2
-        /// 名前のどこか。
-        case inside = 3
-        /// 名前ではない所（作者・分類・説明）。
-        case elsewhere = 4
-
-        static func < (a: Hit, b: Hit) -> Bool { a.rawValue < b.rawValue }
-    }
-
-    /// 名前に対する当たり方。当たらなければ nil。
-    private static func hit(_ name: String, _ q: String) -> Hit? {
-        let n = name.lowercased()
-        guard !q.isEmpty else { return .inside }
-        if n == q { return .exact }
-        if n.hasPrefix(q) { return .prefix }
-        guard n.contains(q) else { return nil }
-        // 語の頭か。区切りは空白と、括弧・ハイフンなど名前に出るもの。
-        let separators = CharacterSet(charactersIn: " -_/()[]")
-        for word in n.components(separatedBy: separators) where word.hasPrefix(q) {
-            return .word
-        }
-        return .inside
-    }
+    // 当たり方・定番の順・別名は DSP/EffectSearch.swift（ETEffectSearch）。
+    // 名前順だけだと "EQ" で 15Band PEQ より Dynamic EQ が上に出たので、手で決めた表で並べる。
+    private typealias Hit = ETEffectSearch.Hit
 
     /// 探した結果の 1 件。どの段のものかを持ったまま並べる。
     private enum Found: Identifiable {
@@ -219,39 +192,35 @@ struct EffectPickerView: View {
     }
 
     private var searchResults: [Found] {
-        let q = query.lowercased()
-        var out: [(Hit, Found)] = []
+        let q = ETEffectSearch.normalize(query)
+        var out: [(ETEffectSearch.Key, Found)] = []
+        /// 組み込みエフェクトだけ type を渡す（定番の順位が付く）。他は nil で、同じ当たり方の中では後ろ。
+        func add(_ h: Hit, _ f: Found, type: String? = nil) {
+            out.append((ETEffectSearch.key(hit: h, type: type, name: f.sortName, query: q), f))
+        }
 
         for e in catalog {
-            if let h = Self.hit(e.name, q) { out.append((h, .effect(e))); continue }
-            if e.about.lowercased().contains(q) || e.category.lowercased().contains(q) {
-                out.append((.elsewhere, .effect(e)))
-            }
+            if let h = ETEffectSearch.effectHit(e, q) { add(h, .effect(e), type: e.type) }
         }
         for a in au.entries where !remote.isRemote {
-            if let h = Self.hit(a.name, q) { out.append((h, .au(a))); continue }
-            if a.manufacturer.lowercased().contains(q) { out.append((.elsewhere, .au(a))) }
+            if let h = ETEffectSearch.nameHit(a.name, q) { add(h, .au(a)); continue }
+            if a.manufacturer.lowercased().contains(q) { add(.elsewhere, .au(a)) }
         }
         for j in jsfx.entries where !remote.isRemote {
-            if let h = Self.hit(j.name, q) { out.append((h, .jsfx(j))); continue }
-            if j.author.lowercased().contains(q) { out.append((.elsewhere, .jsfx(j))) }
+            if let h = ETEffectSearch.nameHit(j.name, q) { add(h, .jsfx(j)); continue }
+            if j.author.lowercased().contains(q) { add(.elsewhere, .jsfx(j)) }
         }
         for n in presets.names {
             // フォルダ名でも当たる。`Rock/Heavy` は "rock" でも "heavy" でも出す。
-            if let h = Self.hit(ETUserPresetName.leaf(n), q) { out.append((h, .user(n))); continue }
-            if ETUserPresetName.folder(n).lowercased().contains(q) {
-                out.append((.elsewhere, .user(n)))
-            }
+            if let h = ETEffectSearch.nameHit(ETUserPresetName.leaf(n), q) { add(h, .user(n)); continue }
+            if ETUserPresetName.folder(n).lowercased().contains(q) { add(.elsewhere, .user(n)) }
         }
         for p in ETSystemPresets {
-            if let h = Self.hit(p.name, q) { out.append((h, .system(p))); continue }
-            if p.category.lowercased().contains(q) { out.append((.elsewhere, .system(p))) }
+            if let h = ETEffectSearch.nameHit(p.name, q) { add(h, .system(p)); continue }
+            if p.category.lowercased().contains(q) { add(.elsewhere, .system(p)) }
         }
 
-        return out.sorted {
-            $0.0 == $1.0 ? $0.1.sortName.localizedCaseInsensitiveCompare($1.1.sortName) == .orderedAscending
-                         : $0.0 < $1.0
-        }.map(\.1)
+        return out.sorted { $0.0 < $1.0 }.map(\.1)
     }
 
     var body: some View {

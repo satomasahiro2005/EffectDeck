@@ -1,0 +1,293 @@
+//  EffectSearch.swift
+//  エフェクトピッカーの検索の順位。Foundationだけ（EffectSearchTests）。
+//
+//  以前は「名前への当たり方 → 名前順」だけだった。すると "EQ" で
+//  5Band Dynamic EQ や Group Delay EQ が 15Band PEQ より上に出た。
+//  名前順は「よく使われる順」とは関係が無い。
+//
+//  **よく使われる順は計算で出さず、手で決めた表（curated）で持つ。**
+//  使用回数を取る手もあるが、このアプリは計測を持たない方針で、
+//  初めて使う人にこそ定番が上に要る。
+//  あわせて、名前に無い呼び名（"snail"・"verb"・"echo"）でも見つかるよう、
+//  エフェクトごとの別名（aliases）も手で持つ。
+//
+//  どちらも鍵は ETEffect.type。カタログに無い型を書いても落ちないが、
+//  EffectSearchTests が「全部カタログに居ること」を見るので、
+//  上流で型が消えたり名前が替わったら、そこで気づく。
+
+import Foundation
+
+enum ETEffectSearch {
+
+    // MARK: - 当たり方
+
+    /// 当たり方。**強い順**。生の値の小ささがそのまま強さになる。
+    enum Hit: Int, Comparable {
+        /// 名前がそのもの。
+        case exact = 0
+        /// 名前の頭から。
+        case prefix = 1
+        /// 名前の中の、語の頭から（"Band" が "5Band PEQ" に当たる）。
+        /// "EQ" が "PEQ"・"GEQ" に当たるのもここ（略語の規則）。
+        case word = 2
+        /// 別名から。名前の語の頭と同じくらい確かなので、名前の「どこか」より上に置く。
+        case alias = 3
+        /// 名前のどこか。
+        case inside = 4
+        /// 名前ではない所（作者・分類・説明）。
+        case elsewhere = 5
+
+        static func < (a: Hit, b: Hit) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// 打った字の整え方。前後の空白を落として小文字にする。
+    /// 空白が付いたままだと "eq " が何にも当たらなくなる。
+    static func normalize(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// 名前を語に割る。区切りは空白と括弧・ハイフンなど名前に出るもの。
+    /// **数字から字に変わる所でも割る**（"15Band" の Band を語の頭にする）。
+    /// 大文字小文字は残す（略語の判定が要る）。
+    static func words(_ name: String) -> [String] {
+        let separators = CharacterSet(charactersIn: " -_/()[]")
+        var out: [String] = []
+        var cur = ""
+        var prevDigit = false
+        for ch in name {
+            let scalarIsSeparator = ch.unicodeScalars.allSatisfy { separators.contains($0) }
+            if scalarIsSeparator {
+                if !cur.isEmpty { out.append(cur); cur = "" }
+                prevDigit = false
+                continue
+            }
+            let isDigit = ch.isNumber
+            if prevDigit && !isDigit && !cur.isEmpty {
+                out.append(cur); cur = ""
+            }
+            cur.append(ch)
+            prevDigit = isDigit
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out
+    }
+
+    /// 略語の語が、打った字で終わるか。"PEQ"・"GEQ" に "eq" が当たる。
+    /// **余る頭が 1 字のときだけ**。"GSM" に "sm" が当たるような偶然を入れない。
+    /// 略語は全部大文字の 3 字以上の語（"FIR"・"PEQ"）。
+    private static func acronymEnds(_ word: String, with q: String) -> Bool {
+        guard q.count >= 2, word.count == q.count + 1, word.count >= 3 else { return false }
+        guard word.unicodeScalars.allSatisfy({ $0.value >= 65 && $0.value <= 90 }) else { return false }
+        return word.lowercased().hasSuffix(q)
+    }
+
+    /// 名前に対する当たり方。当たらなければ nil。q は normalize 済み。
+    /// 別名は見ない（エフェクト以外にも使うため）。
+    static func nameHit(_ name: String, _ q: String) -> Hit? {
+        let n = name.lowercased()
+        guard !q.isEmpty else { return .inside }
+        if n == q { return .exact }
+        if n.hasPrefix(q) { return .prefix }
+
+        let ws = words(name)
+        // 語の頭か。打った字が複数の語にまたがっても（"band peq"）当たるよう、
+        // 語を 1 つの空白で繋ぎ直した形に対して、頭か「空白の直後」を見る。
+        let joined = ws.map { $0.lowercased() }.joined(separator: " ")
+        let qJoined = words(q).joined(separator: " ")
+        if !qJoined.isEmpty, joined.hasPrefix(qJoined) || joined.contains(" " + qJoined) {
+            return .word
+        }
+        if ws.contains(where: { acronymEnds($0, with: q) }) { return .word }
+        return n.contains(q) ? .inside : nil
+    }
+
+    /// エフェクトへの当たり方。名前・別名・説明と分類を見て、一番強いもの。
+    static func effectHit(_ e: ETEffect, _ q: String) -> Hit? {
+        let byName = nameHit(e.name, q)
+        // 別名は名前より強いときだけ採る。名前が語の頭以上で当たっていれば名前のまま。
+        if !q.isEmpty, let byAlias = aliasHit(e.type, q), byName.map({ byAlias < $0 }) ?? true {
+            return byAlias
+        }
+        if let byName { return byName }
+        if e.about.lowercased().contains(q) || e.category.lowercased().contains(q) {
+            return .elsewhere
+        }
+        return nil
+    }
+
+    /// 別名への当たり方。別名の「どこか」には当てない（ノイズになる）。
+    /// - 別名そのもの、または別名の 1 語と一致（"pan"・"noise" が "noise gate" に）: .word。
+    ///   同義語を打った人は、名前の一部がたまたま似た別のエフェクト
+    ///   （"pan" に "Panel"）より、その同義語の持ち主を探している。
+    /// - 別名の頭・語の頭から: .alias。
+    private static func aliasHit(_ type: String, _ q: String) -> Hit? {
+        var best: Hit?
+        for a in aliases[type] ?? [] {
+            if a == q || words(a).contains(q) { return .word }
+            if let h = nameHit(a, q), h <= .word { best = .alias }
+        }
+        return best
+    }
+
+    // MARK: - 順位
+
+    /// 並べ替えの鍵。当たり方 → 定番の順 → 名前順。
+    struct Key: Comparable {
+        let hit: Hit
+        let rank: Int
+        let name: String
+
+        static func < (a: Key, b: Key) -> Bool {
+            if a.hit != b.hit { return a.hit < b.hit }
+            if a.rank != b.rank { return a.rank < b.rank }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+
+        static func == (a: Key, b: Key) -> Bool {
+            a.hit == b.hit && a.rank == b.rank
+                && a.name.localizedCaseInsensitiveCompare(b.name) == .orderedSame
+        }
+    }
+
+    /// 並べ替えの鍵を作る。
+    /// - type: 組み込みエフェクトなら ETEffect.type。AU・JSFX・プリセットは nil。
+    ///   同じ当たり方の中では、定番 → 定番でない組み込み → それ以外（名前順）の順。
+    ///   組み込みを先にするのは、探しているのがこのアプリの標準のエフェクトであることが多いため。
+    /// - q: 空のときは順位を付けない（全部 .inside で、名前順のまま）。
+    static func key(hit: Hit, type: String?, name: String, query q: String) -> Key {
+        Key(hit: hit, rank: q.isEmpty ? 0 : rank(of: type), name: name)
+    }
+
+    /// 定番の順位。小さいほど上。
+    static func rank(of type: String?) -> Int {
+        guard let type else { return curated.count + 1 }
+        return curatedIndex[type] ?? curated.count
+    }
+
+    /// 組み込みエフェクトだけを探して並べる（テストと、他の画面で使うとき用）。
+    static func search(_ effects: [ETEffect], query: String) -> [ETEffect] {
+        let q = normalize(query)
+        return effects
+            .compactMap { e in effectHit(e, q).map { (key(hit: $0, type: e.type, name: e.name, query: q), e) } }
+            .sorted { $0.0 < $1.0 }
+            .map(\.1)
+    }
+
+    // MARK: - 手で決めた表
+
+    /// **定番の組み込みエフェクト。上ほど先に出す。**
+    /// 「EQ を探す人はまず 15 バンドの PEQ」のように、使う人の多い順に手で並べる。
+    /// 載せていないものは、当たり方が同じなら名前順でこの後ろに続く。
+    static let curated: [String] = [
+        // EQ。"eq" で最初に見たいのは、細かく詰められる PEQ とグラフィック EQ。
+        "FifteenBandPEQPlugin",
+        "FifteenBandGEQPlugin",
+        "FiveBandPEQPlugin",
+        "ToneControlPlugin",
+        // ダイナミクス
+        "CompressorPlugin",
+        "BrickwallLimiterPlugin",
+        // 空間系
+        "DattorroPlateReverbPlugin",
+        "FDNReverbPlugin",
+        "IRReverbPlugin",
+        "DelayPlugin",
+        // 基本
+        "VolumePlugin",
+        "HiPassFilterPlugin",
+        "LoPassFilterPlugin",
+        // 定番の次。使う人は多いが、まず名前を知っている人が探す。
+        "FiveBandDynamicEQ",
+        "MultibandCompressorPlugin",
+        "GatePlugin",
+        "ChorusPlugin",
+        "PhaserPlugin",
+        "SaturationPlugin",
+        // ステレオ・ヘッドホン
+        "StereoBalancePlugin",
+        "CrossfeedFilterPlugin",
+        "PitchShifterPlugin",
+        // 見る道具
+        "LevelMeterPlugin",
+        "SpectrumAnalyzerPlugin",
+    ]
+
+    private static let curatedIndex: [String: Int] = {
+        var m: [String: Int] = [:]
+        for (i, t) in curated.enumerated() where m[t] == nil { m[t] = i }
+        return m
+    }()
+
+    /// **別名。**名前に無い呼び名・略称・綴りの揺れ。小文字で書く。
+    /// 名前にすでに入っている語は書かない（探せるので）。
+    static let aliases: [String: [String]] = [
+        // EQ
+        "FifteenBandPEQPlugin": ["parametric eq", "parametric equalizer", "equalizer"],
+        "FifteenBandGEQPlugin": ["graphic eq", "graphic equalizer", "equalizer"],
+        "FiveBandPEQPlugin": ["parametric eq", "parametric equalizer", "equalizer"],
+        "FiveBandFIRPEQPlugin": ["linear phase eq", "fir eq", "parametric eq"],
+        "FiveBandDynamicEQ": ["dyn eq", "dynamic equalizer"],
+        "ToneControlPlugin": ["bass treble", "treble", "bass and treble"],
+        "LoudnessEqualizerPlugin": ["equal loudness", "fletcher munson"],
+        "RoomEqPlugin": ["room correction", "acoustic correction"],
+        "HiPassFilterPlugin": ["high pass", "highpass", "hpf", "low cut"],
+        "LoPassFilterPlugin": ["low pass", "lowpass", "lpf", "high cut"],
+        "BandPassFilterPlugin": ["bandpass"],
+        // ダイナミクス
+        "CompressorPlugin": ["compression"],
+        "MultibandCompressorPlugin": ["mb comp", "compression"],
+        "BrickwallLimiterPlugin": ["maximizer", "peak limiter"],
+        "GatePlugin": ["noise gate"],
+        "AutoLevelerPlugin": ["agc", "leveller"],
+        "TransientShaperPlugin": ["attack sustain"],
+        // 空間系
+        "DattorroPlateReverbPlugin": ["verb"],
+        "FDNReverbPlugin": ["verb", "hall"],
+        "IRReverbPlugin": ["verb", "convolution", "convolver"],
+        "RSReverbPlugin": ["verb"],
+        "DelayPlugin": ["echo"],
+        // モジュレーション
+        "PhaserPlugin": ["phase shifter"],
+        "RotarySpeakerPlugin": ["leslie"],
+        "PitchShifterPlugin": ["transpose", "key change"],
+        "PitchShifterHQPlugin": ["transpose", "key change"],
+        // 歪み
+        "SaturationPlugin": ["drive", "overdrive", "distortion"],
+        "HardClippingPlugin": ["clipper", "distortion"],
+        "TubeSimulatorPlugin": ["valve", "tube amp"],
+        "BitCrusherPlugin": ["bitcrush", "lofi", "lo-fi"],
+        "ExciterPlugin": ["enhancer"],
+        // 基本・ステレオ
+        "VolumePlugin": ["gain", "fader"],
+        "MutePlugin": ["silence"],
+        "PolarityInversionPlugin": ["phase invert", "invert", "phase flip"],
+        "StereoBalancePlugin": ["pan", "panning"],
+        "StereoBlendPlugin": ["stereo width", "width"],
+        "MSMatrixPlugin": ["mid side", "mid-side", "mid/side"],
+        "CrossfeedFilterPlugin": ["headphone", "headphones", "bs2b"],
+        "CrosstalkCancellationPlugin": ["xtc"],
+        "BassManagementPlugin": ["subwoofer", "sub", "crossover"],
+        "DCOffsetPlugin": ["dc blocker"],
+        // 修復
+        "NoiseReductionPlugin": ["denoise", "denoiser"],
+        "ClickRemoverPlugin": ["declick", "crackle"],
+        "HumRemoverPlugin": ["dehum", "mains"],
+        "ClipRestorerPlugin": ["declip", "declipper"],
+        // 見る道具
+        "SpectrumAnalyzerPlugin": ["fft", "analyser", "rta"],
+        "LevelMeterPlugin": ["peak meter"],
+        "AnalogMeterPlugin": ["vu meter", "needle meter", "ppm"],
+        "StereoMeterPlugin": ["goniometer", "vectorscope", "phase scope", "correlation"],
+        "OscilloscopePlugin": ["scope", "waveform"],
+        "SpectrogramPlugin": ["sonogram", "waterfall"],
+        "PitchMeterPlugin": ["tuner"],
+        "ChromaSpiralPlugin": ["snail", "chromagram", "pitch class"],
+        // その他
+        "OscillatorPlugin": ["signal generator", "tone generator", "sine", "test tone"],
+        "NoiseBlenderPlugin": ["white noise", "pink noise"],
+        "VinylSimulatorPlugin": ["record", "turntable", "phono"],
+        "SFZNotePlayerPlugin": ["sampler"],
+        "BluetoothSBCSimulatorPlugin": ["bluetooth", "a2dp"],
+        "TimeAlignmentPlugin": ["speaker alignment"],
+    ]
+}
