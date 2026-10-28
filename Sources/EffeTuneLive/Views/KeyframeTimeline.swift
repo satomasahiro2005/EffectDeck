@@ -2,15 +2,14 @@
 //  音量に追従するカードのキーフレームを、横の帯で見せる（AE のタイムラインのように）。
 //
 //  横軸は音量 0〜100%。キーフレームの位置に菱形（◆）、いまの音量に縦の針（アクセント色）。
-//  Hold のキーフレームは AE の保持キーフレームの形（菱形の左半分に、右半分を四角にしたもの）。
+//  印は AE と同じく左右の半分でその側の変わり方を見せる。滑らかに変わる側は菱形の半分、
+//  平らな側（その側にキーフレームが無い・Hold で保つ）は四角の半分。両側とも平らなら矩形。
 //  いまの音量を挟む2つのキーフレームの間は薄く塗る。字は目盛りの数字だけ。
 //
-//  出す場所:
-//    - Follow Volume のシートの一番上（style .sheet）。菱形を押すとそのキーフレームのカードへ送り、
-//      横へ引くと音量の位置を動かす（5% 刻み。ほかのキーフレームの位置には置けない）。
-//    - 追従しているカードの頭の下（style .card）。読むだけ。押すとシートが開く（呼び手の onTapGesture）。
-//      カードの長押し（並べ替え）・横に払う（削除）と取り合わないよう、ここは単純な押す・引くだけ
-//      （引くのはシートの帯だけで、最小の距離を置く）。
+//  出す場所は追従しているカードの頭の下。
+//  菱形を押すとそのキーフレームを選び（カードの本文がその値になって直せる）、同じ菱形か空いた所を押すと外す。
+//  横へ引くと音量の位置を動かす（5% 刻み。ほかのキーフレームの位置には置けない）。選んでいる菱形はアクセント色。
+//  カードの長押し（並べ替え）と取り合わないよう、引くのは最小の距離を置いた横の引きだけ。
 //  音量が読めていなければ針は出さない。
 //
 //  Foundation 以外に触るのは SwiftUI だけ。位置・刻み・近さの判断は ETAutomation にある（AutomationTests）。
@@ -18,16 +17,17 @@
 import SwiftUI
 
 struct ETKeyframeTimeline: View {
-    enum Style { case sheet, card }
-
     let automation: ETAutomation
     /// いまの音量。nil なら針を出さない（読めていない・PC 編集中）。
     let position: Double?
-    var style: Style = .card
-    /// シート: 菱形を押した（キーフレームの添字）。
-    var select: ((Int) -> Void)? = nil
-    /// シート: 菱形を離した先（刻みへ丸めた位置）。
+    /// 選んでいるキーフレームの添字。
+    var selected: Int? = nil
+    /// 押した。菱形ならその添字、外したなら nil。
+    var select: ((Int?) -> Void)? = nil
+    /// 菱形を離した先（刻みへ丸めた位置）。
     var move: ((Int, Double) -> Void)? = nil
+    /// 押す・引くを受けるか（並べ替えの浮いたカード・PC 編集中は受けない）。
+    var interactive = true
 
     /// 引いている途中の菱形。離すまで DSP へは渡さない。
     private struct Drag: Equatable {
@@ -42,13 +42,11 @@ struct ETKeyframeTimeline: View {
 
     // MARK: 寸法
 
-    private var isSheet: Bool { style == .sheet }
-    private var diamond: CGFloat { isSheet ? 16 : 12 }
+    private let diamond: CGFloat = 14
     /// 菱形が端でも欠けないよう、軸の両端を菱形の半分だけ内側に取る。
     private var inset: CGFloat { diamond / 2 }
-    private var height: CGFloat { isSheet ? 48 : 20 }
-    /// 軸の縦の位置（シートは下に目盛りの字を置く）。
-    private var trackY: CGFloat { isSheet ? 18 : 10 }
+    private let height: CGFloat = 30
+    private var trackY: CGFloat { height / 2 }
     /// 押して菱形を掴める距離。
     private let grabDistance: CGFloat = 22
 
@@ -57,18 +55,12 @@ struct ETKeyframeTimeline: View {
     // MARK: 本体
 
     var body: some View {
-        Group {
-            if isSheet {
-                strip.frame(height: height)
-            } else {
-                HStack(spacing: 4) {
-                    edgeLabel("0")
-                    strip
-                    edgeLabel("100")
-                }
-                .frame(height: height)
-            }
+        HStack(spacing: 4) {
+            edgeLabel("0")
+            strip
+            edgeLabel("100")
         }
+        .frame(height: height)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Keyframes")
         .accessibilityValue(accessibilityText)
@@ -105,7 +97,7 @@ struct ETKeyframeTimeline: View {
                 ForEach(Self.ticks, id: \.self) { p in
                     Rectangle()
                         .fill(.tertiary)
-                        .frame(width: 1, height: isSheet ? 10 : 8)
+                        .frame(width: 1, height: 8)
                         .position(x: x(p, w), y: trackY)
                 }
                 // いまの音量を挟む2つのキーフレームの間
@@ -117,25 +109,15 @@ struct ETKeyframeTimeline: View {
                         .frame(width: max(x1 - x0, 0), height: 4)
                         .position(x: (x0 + x1) / 2, y: trackY)
                 }
-                // 目盛りの数字（シートだけ。カードは両脇に 0 と 100）
-                if isSheet {
-                    ForEach(Self.ticks, id: \.self) { p in
-                        Text("\(Int(p))")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                            .position(x: x(p, w), y: h - 8)
-                    }
-                }
-                // 菱形。引いているものは最後に描いて、色を変える。
+                // 菱形。選んでいるものは色を変え、引いているものは最後に描く。
                 ForEach(automation.keyframes.indices, id: \.self) { k in
                     if dragging?.keyframe != k {
-                        diamondView(tinted: false, hold: automation.keyframes[k].hold)
+                        diamondView(tinted: k == selected, sides: sides(k))
                             .position(x: x(automation.keyframes[k].position, w), y: trackY)
                     }
                 }
                 if let d = dragging, automation.keyframes.indices.contains(d.keyframe) {
-                    diamondView(tinted: true, hold: automation.keyframes[d.keyframe].hold)
+                    diamondView(tinted: true, sides: sides(d.keyframe))
                         .position(x: x(d.to, w), y: trackY)
                 }
                 // 針
@@ -148,7 +130,7 @@ struct ETKeyframeTimeline: View {
             }
             .frame(width: w, height: h, alignment: .topLeading)
             .contentShape(Rectangle())
-            .modifier(SheetGestures(enabled: isSheet,
+            .modifier(StripGestures(enabled: interactive,
                                     tap: { handleTap(at: $0, width: w) },
                                     changed: { handleDrag($0, width: w) },
                                     ended: { handleDragEnd() },
@@ -157,22 +139,17 @@ struct ETKeyframeTimeline: View {
         }
     }
 
-    @ViewBuilder
-    private func diamondView(tinted: Bool, hold: Bool) -> some View {
-        let style = tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
-        if hold {
-            HoldKeyframeShape()
-                .fill(style)
-                .frame(width: diamond, height: diamond)
-                .allowsHitTesting(false)
-        } else {
-            Image(systemName: "diamond.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: diamond, height: diamond)
-                .foregroundStyle(style)
-                .allowsHitTesting(false)
-        }
+    /// k 番目の印の左右が平らか。左は左隣が無いか左隣が Hold、右は右隣が無いか自分が Hold。
+    private func sides(_ k: Int) -> (leftFlat: Bool, rightFlat: Bool) {
+        let keys = automation.keyframes
+        return (k == 0 || keys[k - 1].hold, k == keys.count - 1 || keys[k].hold)
+    }
+
+    private func diamondView(tinted: Bool, sides: (leftFlat: Bool, rightFlat: Bool)) -> some View {
+        KeyframeShape(leftFlat: sides.leftFlat, rightFlat: sides.rightFlat)
+            .fill(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+            .frame(width: diamond, height: diamond)
+            .allowsHitTesting(false)
     }
 
     // MARK: 位置と x
@@ -192,12 +169,12 @@ struct ETKeyframeTimeline: View {
         Double(grabDistance / max(width - 2 * inset, 1)) * 100
     }
 
-    // MARK: 操作（シートだけ）
+    // MARK: 操作
 
     private func handleTap(at location: CGPoint, width: CGFloat) {
         let p = volume(forX: location.x, width: width)
-        guard let k = automation.nearestKeyframe(to: p, within: tolerance(width: width)) else { return }
-        select?(k)
+        let k = automation.nearestKeyframe(to: p, within: tolerance(width: width))
+        select?(k == selected ? nil : k)
     }
 
     private func handleDrag(_ value: DragGesture.Value, width: CGFloat) {
@@ -228,23 +205,36 @@ struct ETKeyframeTimeline: View {
     }
 }
 
-/// Hold のキーフレーム。菱形の左半分と、右半分を四角にしたもの（同じ枠の中）。
-private struct HoldKeyframeShape: Shape {
+/// キーフレームの印。左右の半分を、滑らかな側は菱形の半分、平らな側は四角の半分で描く。
+/// 四角の半分は菱形の半分より細くして、矩形が菱形より大きく見えないようにする。
+private struct KeyframeShape: Shape {
+    let leftFlat: Bool
+    let rightFlat: Bool
+
     func path(in rect: CGRect) -> Path {
+        let flat = rect.width / 2 * 0.7
         var path = Path()
         path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+        if leftFlat {
+            path.addLine(to: CGPoint(x: rect.midX - flat, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.midX - flat, y: rect.maxY))
+        } else {
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+        }
         path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        if rightFlat {
+            path.addLine(to: CGPoint(x: rect.midX + flat, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.midX + flat, y: rect.minY))
+        } else {
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        }
         path.closeSubpath()
         return path
     }
 }
 
-/// シートの帯だけに付ける、押す・引く。カードの帯には何も付けない
-/// （カードは呼び手が押すだけを付け、並べ替えの長押しや横に払う削除と取り合わない）。
-private struct SheetGestures: ViewModifier {
+/// 帯の押す・引く。並べ替えの浮いたカードと PC 編集中は付けない。
+private struct StripGestures: ViewModifier {
     let enabled: Bool
     let tap: (CGPoint) -> Void
     let changed: (DragGesture.Value) -> Void

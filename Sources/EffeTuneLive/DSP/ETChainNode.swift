@@ -40,7 +40,7 @@ struct ETChainNode: Identifiable {
 
     /// 音量に追従するカードの、キーフレームの一式（DSP/Automation.swift）。nil なら普通のカード。
     /// **持っている間は values が一番上（音量が一番大きい）のキーフレームの値と同じ**。
-    /// 画面はキーフレーム1つにつきカード1枚で見せて直す（Views/KeyframeSheet.swift）。
+    /// 画面はカードの帯でキーフレームを選び、そのカードで直す（Views/EffectCardView.swift）。
     /// 鳴らす値（キーフレームを音量で補間したもの）はここに入れない（EffeTuneDSP.pushParams が都度出す）。
     var automation: ETAutomation? = nil
 

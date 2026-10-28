@@ -53,14 +53,15 @@ struct EffectCardView: View {
         case routing
         /// エフェクト 1 個ぶんのプリセット。
         case presets
-        /// 音量に追従する値。キーフレームごとのカードを並べる（Views/KeyframeSheet.swift）。
-        case keyframes
         case jsfxSource
 
         var id: String { rawValue }
     }
 
     @State private var sheet: Sheet?
+    /// 音量に追従する段で、帯で選んでいるキーフレームの位置（画面の上だけで持ち、保存しない）。
+    /// 添字でなく位置で持つ。足す・消すで添字はずれるが、位置は1つのキーフレームに1つ。
+    @State private var selectedPosition: Double?
     /// 2列のとき。開閉の印を出さない（Components.swiftのetCardsPinnedOpen）。
     @Environment(\.etCardsPinnedOpen) private var pinnedOpen
     /// IR Reverb の図が出来たか（showsCollapsedGraph）。IR を入れ替えたときだけ変わる。
@@ -76,20 +77,38 @@ struct EffectCardView: View {
         }
     }
 
-    /// 音量に追従する段は、カードに**いま鳴っている値**（補間）を映して、直せなくする。
-    /// 直すのは ⋯ の Follow Volume… が開くシートで、キーフレームごとのカード。
+    /// 音量に追従する段は、帯でキーフレームを選んでいる間だけ、カードの本文がそのキーフレームの値になって直せる。
+    /// 選んでいないときは**いま鳴っている値**（補間）を映して、直せなくする。
+    /// **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（直しても試聴にならない）。
     private var follows: Bool { node.automation != nil }
+
+    /// 選んでいるキーフレームの添字。消えた・動いた・追従をやめたら nil。
+    private var selectedKeyframe: Int? {
+        guard let p = selectedPosition, let a = node.automation else { return nil }
+        return a.keyframes.firstIndex { abs($0.position - p) < 0.0005 }
+    }
+
+    /// 直すときの口。選んでいるキーフレームの写しか、普通の段。
+    private var editAddress: Int {
+        if let k = selectedKeyframe { return ETSlotAddress.keyframe(slot: index, index: k).raw }
+        return index
+    }
 
     private var effectCard: some View {
         // **.sheet は分岐の外、本物の入れ物（Group でない）に付ける。**
-        // シートの中で最初のキーフレームを足す・最後を消すと下の分岐が入れ替わる。
+        // 最初のキーフレームを足す・最後を消すと下の分岐が入れ替わる。
         // 分岐の中に付けていると、そのときシートごと閉じる。
         VStack(spacing: 0) {
             if follows {
-                // 音量が変わったときだけ引き直す。追従するカードだけが音量を見る。
+                // 音量が変わったときだけ引き直す。追従するカードだけが音量を見る（帯の針も）。
                 ETVolumeObserving {
-                    card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw,
-                         companion: dsp.soundingPEQ(node)?.secondary)
+                    if let k = selectedKeyframe,
+                       let shown = dsp.node(at: ETSlotAddress.keyframe(slot: index, index: k).raw) {
+                        card(shown, address: ETSlotAddress.keyframe(slot: index, index: k).raw, editable: true)
+                    } else {
+                        card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw,
+                             editable: false, companion: dsp.soundingPEQ(node)?.secondary)
+                    }
                 }
             } else {
                 card(node, address: index)
@@ -98,8 +117,7 @@ struct EffectCardView: View {
         .sheet(item: $sheet) { which in
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
-            case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
-            case .keyframes: ETKeyframeSheet(index: index, node: node, dsp: dsp)
+            case .presets: EffectPresetsView(index: editAddress, spec: node.spec, dsp: dsp)
             case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
             }
         }
@@ -111,23 +129,19 @@ struct EffectCardView: View {
     private var showsTimeline: Bool { follows && (isExpanded || !isCollapsedFully) }
 
     /// カード本体。`shown` は画面に映す値を載せた段、`address` は部品が DSP の口へ渡す番号。
-    /// 追従しているときは鳴っている値の写しと、読むだけの番号（書く口は何もしない）。
+    /// 追従しているときは、選んだキーフレームの写し（書ける）か、鳴っている値の写しと読むだけの番号。
     /// `companion` は音量に追従する PEQ のもう1台が鳴らしている値（図が足して描く）。
-    private func card(_ shown: EffeTuneDSP.Node, address: Int, companion: [Float]? = nil) -> some View {
+    private func card(_ shown: EffeTuneDSP.Node, address: Int, editable: Bool = true,
+                      companion: [Float]? = nil) -> some View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
-                // キーフレームの帯。押すと Follow Volume のシートが開く（直すのはシートの帯とカード）。
+                // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す。
                 if showsTimeline, let a = node.automation {
-                    ETKeyframeTimeline(automation: a,
-                                       position: RemoteMirror.shared.isRemote ? nil : ETVolumeFollower.shared.position,
-                                       style: .card)
-                        .padding(.horizontal, ETMetrics.cardPadding)
+                    keyframeStrip(a)
+                        .padding(.leading, ETMetrics.cardPadding)
+                        .padding(.trailing, 4)
                         .padding(.bottom, isExpanded ? 0 : 8)
-                        .contentShape(Rectangle())
-                        .onTapGesture { if !RemoteMirror.shared.isRemote { sheet = .keyframes } }
-                        .accessibilityAddTraits(.isButton)
-                        .allowsHitTesting(!isDragPreview)
                 }
                 // **畳んでいても図を出すもの。**
                 // Level Meter は畳むと「Analyzer」という字だけが残るが、
@@ -159,10 +173,10 @@ struct EffectCardView: View {
                             ETEffectBody(index: address, node: shown, dsp: dsp)
                         }
                     }
-                    // 追従しているあいだは動くだけ。disabled で沈めて読み上げにも伝え、
+                    // 追従していてキーフレームを選んでいないあいだは動くだけ。disabled で沈めて読み上げにも伝え、
                     // 図やUIKitの入力欄のドラッグは当たり判定ごと止める。
-                    .disabled(follows)
-                    .allowsHitTesting(!follows)
+                    .disabled(!editable)
+                    .allowsHitTesting(editable)
                     .environment(\.etPEQCompanionValues, companion)
                     .padding(ETMetrics.cardPadding)
                 }
@@ -174,6 +188,89 @@ struct EffectCardView: View {
         .modifier(ETRemoteMeasurementDim(applies: node.spec.isAnalyzer, tap: node.tapId))
         // PoC: PC の EffeTune が持っていない効果の段に、送れないことを出す。
         .modifier(ETRemoteUnsupportedMark(effect: node.spec.name))
+    }
+
+    /// キーフレームの帯と、右の「+」。
+    private func keyframeStrip(_ a: ETAutomation) -> some View {
+        let remote = RemoteMirror.shared.isRemote
+        return HStack(spacing: 6) {
+            ETKeyframeTimeline(
+                automation: a,
+                position: remote ? nil : ETVolumeFollower.shared.position,
+                selected: selectedKeyframe,
+                select: { k in selectedPosition = k.map { a.keyframes[$0].position } },
+                move: { k, p in
+                    dsp.moveKeyframe(k, to: p, at: index)
+                    // 動かしたものを選ぶ（位置で持っているので付け替える）。
+                    selectedPosition = a.source.snapped(p)
+                },
+                interactive: !remote && !isDragPreview)
+            addKeyframeMenu(a)
+        }
+    }
+
+    /// 帯の右の「+」。空いている5%の位置に足して、足したものを選ぶ（いまの音量の近くにスピーカーの印）。
+    private func addKeyframeMenu(_ a: ETAutomation) -> some View {
+        let choices = ETAutomation.addChoices(a, current: ETVolumeFollower.shared.position)
+        return Menu {
+            ForEach(choices.free, id: \.self) { position in
+                Button {
+                    dsp.addKeyframe(position: position, at: index)
+                    selectedPosition = position
+                } label: {
+                    if position == choices.suggested {
+                        Label(a.source.label(position), systemImage: "speaker.wave.2.fill")
+                    } else {
+                        Text(a.source.label(position))
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 34, height: 30)
+                .contentShape(Rectangle())
+        }
+        .menuOrder(.fixed)
+        .accessibilityLabel("Add Keyframe")
+        .disabled(choices.free.isEmpty || RemoteMirror.shared.isRemote || isDragPreview)
+    }
+
+    /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）。
+    /// 選んでいる間は、そのキーフレームの補間と削除。PC の鎖を編集している間は出さない（追従は動かない）。
+    @ViewBuilder
+    private var keyframeMenuItems: some View {
+        if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {
+            if let a = node.automation {
+                if let k = selectedKeyframe {
+                    // 一番上は次が無いので選べない（Move Up / Move Down と同じく隠さず灰色にする）。
+                    Picker(selection: Binding(
+                        get: { a.keyframes[k].hold },
+                        set: { dsp.setKeyframeHold($0, keyframe: k, at: index) })) {
+                        Text("Smooth").tag(false)
+                        Text("Hold").tag(true)
+                    } label: {
+                        Label("Interpolation", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(k == a.keyframes.count - 1)
+                    // 最後の1つを消すと追従をやめ、その値が普通の値になる。
+                    Button(role: .destructive) {
+                        dsp.removeKeyframe(k, at: index)
+                        selectedPosition = nil
+                    } label: {
+                        Label("Remove Keyframe", systemImage: "minus.diamond")
+                    }
+                }
+            } else if let position = ETAutomation.addChoices(nil, current: ETVolumeFollower.shared.position).suggested {
+                Button {
+                    dsp.addKeyframe(position: position, at: index)
+                    selectedPosition = position
+                } label: {
+                    Label("Follow Volume", systemImage: "speaker.wave.2")
+                }
+            }
+        }
     }
 
     private func header(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
@@ -289,22 +386,16 @@ struct EffectCardView: View {
                 // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
                 // プリセットの一覧に混ぜない。
                 if !node.isExternal {
-                    // 追従しているあいだはカードを直せない（キーフレームごとのカードで直す）。
+                    // 追従しているあいだは、選んでいるキーフレームへ効く。選んでいなければ直せない。
                     Button { sheet = .presets } label: {
                         Label("Effect Presets", systemImage: "bookmark")
                     }
-                    .disabled(follows)
-                    Button { dsp.resetParams(at: index) } label: {
+                    .disabled(follows && selectedKeyframe == nil)
+                    Button { dsp.resetParams(at: editAddress) } label: {
                         Label("Reset Parameters", systemImage: "arrow.counterclockwise")
                     }
-                    .disabled(follows)
-                    // 音量に追従する値を、キーフレームごとのカードで開く。最初のキーフレームはシートの「+」で作る。
-                    // PC の鎖を編集している間は出さない（そのあいだ追従は動かない）。
-                    if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {
-                        Button { sheet = .keyframes } label: {
-                            Label("Follow Volume…", systemImage: "speaker.wave.2")
-                        }
-                    }
+                    .disabled(follows && selectedKeyframe == nil)
+                    keyframeMenuItems
                 }
                 Button(action: moveUp) {
                     Label("Move Up", systemImage: "arrow.up")

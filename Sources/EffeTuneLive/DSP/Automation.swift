@@ -9,7 +9,7 @@
 //  **保存するのはキーフレームだけ。**補間した値は鳴らすためだけの値で、段の保存値・プリセット・
 //  pipeline.last・iCloud・PC には書かない（EffeTuneDSP.applyAutomation）。
 //  段の values は、一番上（音量が一番大きい）のキーフレームの値と常に同じ（ETChainNode.automation）。
-//  画面はキーフレーム1つにつきカード1枚（Views/KeyframeSheet.swift）で、どれも同時に直せる。
+//  画面はカードの帯（Views/KeyframeTimeline.swift）でキーフレームを選び、そのカードで直す。
 //  「選んでいるキーフレーム」は持たない。
 //
 //  補間の規則（元に依らない）:
