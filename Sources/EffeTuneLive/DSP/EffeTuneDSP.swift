@@ -1777,6 +1777,18 @@ final class EffeTuneDSP: ObservableObject {
     /// いまの音量の刻みにあればそれ、無ければ鳴っている値で足す。PEQ は2台で鳴らしていて1組に写せないので
     /// 作らない（画面も間では直させない）。PC 編集中・音量が読めない・足せないなら nil。
     private func soundingKeyframe(at index: Int) -> Int? {
+        keyframeAtVolume(at: index, copyingForPEQ: false)
+    }
+
+    /// カードの「+」。いまの音量の刻みにキーフレームを足し、その位置を返す（もうあれば足さずにその位置）。
+    /// 値は鳴っている値。PEQ だけは1組に写せないので、一番近いキーフレームの写し（addKeyframe と同じ）。
+    @discardableResult
+    func addKeyframeAtVolume(at index: Int) -> Double? {
+        guard let k = keyframeAtVolume(at: index, copyingForPEQ: true) else { return nil }
+        return self[slot: index].automation?.keyframes[k].position
+    }
+
+    private func keyframeAtVolume(at index: Int, copyingForPEQ: Bool) -> Int? {
         guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
               let a = self[slot: index].automation, let volume = ETVolumeFollower.shared.position else { return nil }
         let p = a.source.snapped(volume)
@@ -1784,11 +1796,12 @@ final class EffeTuneDSP: ObservableObject {
             a.keyframes.firstIndex { abs($0.position - p) < 0.001 }
         }
         if let k = existing(a) { return k }
-        guard ETPEQBlend.Layout(self[slot: index].spec) == nil else { return nil }
+        let peq = ETPEQBlend.Layout(self[slot: index].spec) != nil
+        guard !peq || copyingForPEQ else { return nil }
         let values = soundingValues(of: self[slot: index])
         addKeyframe(position: p, at: index)
         guard let added = self[slot: index].automation, let k = existing(added) else { return nil }
-        storeKeyframe(values, keyframe: k, at: index)
+        if !peq { storeKeyframe(values, keyframe: k, at: index) }
         return k
     }
 

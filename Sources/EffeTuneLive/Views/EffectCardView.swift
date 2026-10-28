@@ -222,7 +222,7 @@ struct EffectCardView: View {
         .modifier(ETRemoteUnsupportedMark(effect: node.spec.name))
     }
 
-    /// キーフレームの帯と、右の「+」。
+    /// キーフレームの帯と、右の「+」（いまの音量の位置に足す）。
     private func keyframeStrip(_ a: ETAutomation) -> some View {
         let remote = RemoteMirror.shared.isRemote
         return HStack(spacing: 6) {
@@ -237,35 +237,29 @@ struct EffectCardView: View {
                     selectedPosition = a.source.snapped(p)
                 },
                 interactive: !remote && !isDragPreview)
-            addKeyframeMenu(a)
+            addKeyframeButton(a)
         }
     }
 
-    /// 帯の右の「+」。空いている5%の位置に足して、足したものを選ぶ（いまの音量の近くにスピーカーの印）。
-    private func addKeyframeMenu(_ a: ETAutomation) -> some View {
-        let choices = ETAutomation.addChoices(a, current: ETVolumeFollower.shared.position)
-        return Menu {
-            ForEach(choices.free, id: \.self) { position in
-                Button {
-                    dsp.addKeyframe(position: position, at: index)
-                    selectedPosition = position
-                } label: {
-                    if position == choices.suggested {
-                        Label(a.source.label(position), systemImage: "speaker.wave.2.fill")
-                    } else {
-                        Text(a.source.label(position))
-                    }
-                }
-            }
+    /// 帯の右の「+」。いまの音量の位置に足して、足したものを選ぶ。
+    /// その位置にもうある・音量が読めない・PC 編集中・空きが無いなら押せない。
+    private func addKeyframeButton(_ a: ETAutomation) -> some View {
+        let volume = ETVolumeFollower.shared.position
+        let taken = volume.map { v in
+            let p = a.source.snapped(v)
+            return a.keyframes.contains { abs($0.position - p) < 0.0005 }
+        } ?? true
+        return Button {
+            if let p = dsp.addKeyframeAtVolume(at: index) { selectedPosition = p }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 14, weight: .semibold))
                 .frame(width: 34, height: 30)
                 .contentShape(Rectangle())
         }
-        .menuOrder(.fixed)
+        .buttonStyle(.borderless)
         .accessibilityLabel("Add Keyframe")
-        .disabled(choices.free.isEmpty || RemoteMirror.shared.isRemote || isDragPreview)
+        .disabled(taken || a.freePositions().isEmpty || RemoteMirror.shared.isRemote || isDragPreview)
     }
 
     /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）。
