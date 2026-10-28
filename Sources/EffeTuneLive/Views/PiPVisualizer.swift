@@ -51,6 +51,8 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     private var meters: ETMiniMeters?
     private var pool: CVPixelBufferPool?
     private var format: CMVideoFormatDescription?
+    /// 毎回作らない。MiniMeters が器の色空間を見て、写す道に入れるか決める。
+    private let deviceRGB = CGColorSpaceCreateDeviceRGB()
     /// 器の形。iPad も iPhone と同じ横長の 1 段（本人「ipadでもiphoneと揃えてくれ」）。
     private let layout: ETMiniMeters.Layout = .strip
     /// 最後に前に来た時刻。前に来た直後に止められたのは、離れたアプリの PiP に奪われたもの。
@@ -268,7 +270,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
         guard let context = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
             bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: deviceRGB,
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
                 | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
         // 上を 0 にする（UIKit の字の描き方に合わせる）。

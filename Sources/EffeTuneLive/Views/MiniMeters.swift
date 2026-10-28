@@ -14,6 +14,10 @@
 //
 //  **SwiftUI を通さない。**PiP は背景でも 30 回/秒描くので、音の輪（ETMeterTap）から読んだ標本を
 //  自分で計り、CoreGraphics でピクセルの器へ直に描く。UIKit にも頼らない（Mac の試し描きで同じ物を動かす）。
+//
+//  **動かない部分とスペクトログラムは描かず、毎回写す。**背景・スペアナの周波数線・ステレオの格子・
+//  レベルの溝は最初に 1 度だけ別の器へ描いておき、スペクトログラムは持っている並びをそのまま、
+//  どちらも 1 行ずつ器へ写す。見た目は全部 CoreGraphics で描いた時と同じ（draw の direct: false が基準）。
 
 import Accelerate
 import CoreGraphics
@@ -75,6 +79,16 @@ final class ETMiniMeters {
     private var monoHead = 0
     private let fftSetup: FFTSetup? = vDSP_create_fftsetup(vDSP_Length(fftLog2), FFTRadix(kFFTRadix2))
     private var window = [Float](repeating: 0, count: fftSize)
+    /// FFT の作業場。毎回作り直さず使い回す（毎回全部書き直すので前の値は残らない）。
+    private var fftFrame = [Float](repeating: 0, count: fftSize)
+    private var fftReal = [Float](repeating: 0, count: fftSize / 2)
+    private var fftImag = [Float](repeating: 0, count: fftSize / 2)
+    private var fftPower = [Float](repeating: 0, count: fftSize / 2)
+    /// 1 行（1 列）が見る FFT の bin の範囲と、1kHz 軸の傾き。レートが決まれば変わらないので
+    /// 毎回 pow / log2 を呼ばず configure で表にしておく。
+    private struct Band { let b0: Int; let b1: Int; let tilt: Float }
+    private var rowBands: [Band] = []
+    private var columnBands: [Band] = []
     /// 区画ぶんのピクセル（RGBA、上が 0）。1 回描くごとに左へ送り、右端に新しい列を足す。
     private var spectrogram: [UInt32]
     /// 1 回で足す列の幅。30 回/秒で 300 ピクセルなら 5 秒。
@@ -127,6 +141,26 @@ final class ETMiniMeters {
         blocks.removeAll()
         blockFill = 0
         blockSum = 0
+
+        let binHz = rate / Double(Self.fftSize)
+        let height = spectrogramHeight
+        // 下が 20Hz、上が 20kHz の対数。
+        rowBands = (0..<height).map { y in
+            Self.band(Double(height - 1 - y) / Double(height), Double(height - y) / Double(height), binHz: binHz)
+        }
+        let columns = spectrumDB.count
+        columnBands = (0..<columns).map { c in
+            Self.band(Double(c) / Double(columns), Double(c + 1) / Double(columns), binHz: binHz)
+        }
+    }
+
+    /// 20Hz〜20kHz の対数軸の t0〜t1 が当たる bin の範囲と、1kHz を軸にした 3dB/oct の傾き。
+    private static func band(_ t0: Double, _ t1: Double, binHz: Double) -> Band {
+        let n = fftSize
+        let b0 = max(1, Int(20 * pow(1000, t0) / binHz))
+        let b1 = min(n / 2 - 1, max(b0, Int(20 * pow(1000, t1) / binHz)))
+        let center = 20 * pow(1000, (t0 + t1) / 2)
+        return Band(b0: b0, b1: b1, tilt: Float(3 * log2(center / 1000)))
     }
 
     /// 読み始める位置を今にする（前に溜まっていたものを流さない）。
@@ -145,13 +179,13 @@ final class ETMiniMeters {
         let dt = Float(now - lastTick)
         lastTick = now
 
-        var blockPeak: [Float] = [0, 0]
+        var peakL: Float = 0, peakR: Float = 0
         let hop = max(1, Int(sampleRate / 100))
         let blockLength = max(1, Int(sampleRate / 10))
         for i in 0..<n {
             let l = scratch[2 * i], r = scratch[2 * i + 1]
-            blockPeak[0] = max(blockPeak[0], abs(l))
-            blockPeak[1] = max(blockPeak[1], abs(r))
+            peakL = max(peakL, abs(l))
+            peakR = max(peakR, abs(r))
             let m = 0.5 * (l + r)
 
             // 波形の桶。帯は 200Hz と 2kHz で切る（MiniMeters の RGB のモードと同じ）。
@@ -194,7 +228,8 @@ final class ETMiniMeters {
         }
 
         for ch in 0..<2 {
-            let db = blockPeak[ch] > 0 ? 20 * log10(blockPeak[ch]) : -120
+            let p = ch == 0 ? peakL : peakR
+            let db = p > 0 ? 20 * log10(p) : -120
             peakDB[ch] = max(db, peakDB[ch] - 24 * dt, -120)
             if db >= holdDB[ch] || now > holdUntil[ch] {
                 holdDB[ch] = max(db, peakDB[ch])
@@ -219,23 +254,29 @@ final class ETMiniMeters {
     private func advanceSpectrogram() {
         guard let fftSetup else { return }
         let n = Self.fftSize
-        var frame = [Float](repeating: 0, count: n)
-        for i in 0..<n { frame[i] = mono[(monoHead + i) & (n - 1)] * window[i] }
-        var real = [Float](repeating: 0, count: n / 2)
-        var imag = [Float](repeating: 0, count: n / 2)
-        var power = [Float](repeating: 0, count: n / 2)
-        real.withUnsafeMutableBufferPointer { re in
-            imag.withUnsafeMutableBufferPointer { im in
-                var split = DSPSplitComplex(realp: re.baseAddress!, imagp: im.baseAddress!)
-                frame.withUnsafeBufferPointer { src in
-                    src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: n / 2) {
-                        vDSP_ctoz($0, 2, &split, 1, vDSP_Length(n / 2))
-                    }
+        let head = monoHead
+        fftFrame.withUnsafeMutableBufferPointer { f in
+            mono.withUnsafeBufferPointer { m in
+                window.withUnsafeBufferPointer { w in
+                    for i in 0..<n { f[i] = m[(head + i) & (n - 1)] * w[i] }
                 }
-                vDSP_fft_zrip(fftSetup, &split, 1, vDSP_Length(Self.fftLog2), FFTDirection(FFT_FORWARD))
-                vDSP_zvmags(&split, 1, &power, 1, vDSP_Length(n / 2))
             }
         }
+        fftReal.withUnsafeMutableBufferPointer { re in
+            fftImag.withUnsafeMutableBufferPointer { im in
+                fftPower.withUnsafeMutableBufferPointer { pw in
+                    var split = DSPSplitComplex(realp: re.baseAddress!, imagp: im.baseAddress!)
+                    fftFrame.withUnsafeBufferPointer { src in
+                        src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: n / 2) {
+                            vDSP_ctoz($0, 2, &split, 1, vDSP_Length(n / 2))
+                        }
+                    }
+                    vDSP_fft_zrip(fftSetup, &split, 1, vDSP_Length(Self.fftLog2), FFTDirection(FFT_FORWARD))
+                    vDSP_zvmags(&split, 1, pw.baseAddress!, 1, vDSP_Length(n / 2))
+                }
+            }
+        }
+        let power = fftPower
         let scale = 1 / Float(n * n)
         let width = spectrogramWidth, height = spectrogramHeight, step = Self.spectrogramStep
         // 左へ送る。
@@ -245,31 +286,23 @@ final class ETMiniMeters {
                 memmove(row, row + step, (width - step) * MemoryLayout<UInt32>.size)
             }
         }
-        let binHz = sampleRate / Double(n)
         for y in 0..<height {
-            // 下が 20Hz、上が 20kHz の対数。
-            let t0 = Double(height - 1 - y) / Double(height)
-            let t1 = Double(height - y) / Double(height)
-            let b0 = max(1, Int(20 * pow(1000, t0) / binHz))
-            let b1 = min(n / 2 - 1, max(b0, Int(20 * pow(1000, t1) / binHz)))
+            let band = rowBands[y]
             var peak: Float = 0
-            for b in b0...b1 { peak = max(peak, power[b]) }
+            for b in band.b0...band.b1 { peak = max(peak, power[b]) }
             // 1kHz を軸に 3dB/oct 持ち上げる（音楽は高いほど小さいので、そのままだと下だけ明るい）。
-            let center = 20 * pow(1000, (t0 + t1) / 2)
-            let db = peak > 0 ? 10 * log10(peak * scale) + 6 + Float(3 * log2(center / 1000)) : -120
+            // 傾きは 6 に先に足さない（Float の足し算は順を変えると 1 つ違うことがあり、色の 1 段が変わる）。
+            let db = peak > 0 ? 10 * log10(peak * scale) + 6 + band.tilt : -120
             let pixel = Self.heat(db)
             for x in (width - step)..<width { spectrogram[y * width + x] = pixel }
         }
         // スペアナも同じ FFT から。
         let columns = spectrumDB.count
         for c in 0..<columns {
-            let t0 = Double(c) / Double(columns), t1 = Double(c + 1) / Double(columns)
-            let b0 = max(1, Int(20 * pow(1000, t0) / binHz))
-            let b1 = min(n / 2 - 1, max(b0, Int(20 * pow(1000, t1) / binHz)))
+            let band = columnBands[c]
             var peak: Float = 0
-            for b in b0...b1 { peak = max(peak, power[b]) }
-            let center = 20 * pow(1000, (t0 + t1) / 2)
-            let db = peak > 0 ? 10 * log10(peak * scale) + 6 + Float(3 * log2(center / 1000)) : -120
+            for b in band.b0...band.b1 { peak = max(peak, power[b]) }
+            let db = peak > 0 ? 10 * log10(peak * scale) + 6 + band.tilt : -120
             spectrumDB[c] = db > spectrumDB[c] ? db : max(db, spectrumDB[c] - 1.5)
         }
     }
@@ -306,18 +339,87 @@ final class ETMiniMeters {
     private static let grid = CGColor(red: 70 / 255, green: 74 / 255, blue: 82 / 255, alpha: 1)
     private static let meter = CGColor(red: 172 / 255, green: 192 / 255, blue: 222 / 255, alpha: 1)
     private static let groove = CGColor(red: 24 / 255, green: 26 / 255, blue: 30 / 255, alpha: 1)
+    private static let deviceRGB = CGColorSpaceCreateDeviceRGB()
+    /// 器と同じ並び（BGRA、premultipliedFirst・little endian）。
+    private static let bitmapInfo: UInt32 = CGImageAlphaInfo.premultipliedFirst.rawValue
+        | CGBitmapInfo.byteOrder32Little.rawValue
+
+    /// 動かない部分（背景・周波数線・ステレオの格子・レベルの溝）を描いた器。最初に 1 度だけ作る。
+    /// 格子の斜めの線と溝の縁はアンチエイリアスがかかって描くのがいちばん重いので、毎回描かず写す。
+    private var backdrop: CGContext?
 
     /// `context` は上が 0 の向き（呼び手が反転してある）。器は BGRA（premultipliedFirst・little endian）。
-    func draw(in context: CGContext) {
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: CGFloat(layout.width), height: CGFloat(layout.height)))
-        drawSpectrogram(context, layout.spectrogram)
+    /// `direct` が false なら、動かない部分もスペクトログラムも毎回 CoreGraphics で描く
+    /// （写す道の結果を比べるときの基準）。
+    /// 戻り値は写す道を通ったか。器が想定の形でないと黙って全部描く道に落ちて遅くなるので、
+    /// 試験（MiniMetersTests）がこの値で「PiP の器で写す道を通る」ことを見張る。
+    @discardableResult
+    func draw(in context: CGContext, direct: Bool = true) -> Bool {
+        let copied = direct && copyBackdrop(into: context)
+        if !copied {
+            drawBackdrop(context)
+            drawSpectrogram(context, layout.spectrogram)
+        }
         drawWaveform(context, layout.waveform)
         drawSpectrum(context, layout.spectrum)
         drawStereo(context, layout.stereo)
         drawLevels(context, layout.level)
+        return copied
     }
 
+    /// 動かない部分を、黒の下地 → 周波数線 → ステレオの格子 → 溝の順に描く。
+    /// 区画どうしは重ならないので、あとから描く動く部分との順は見た目に響かない。
+    private func drawBackdrop(_ context: CGContext) {
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: CGFloat(layout.width), height: CGFloat(layout.height)))
+        drawSpectrumGrid(context, layout.spectrum)
+        drawStereoGrid(context, layout.stereo)
+        drawLevelGrooves(context, layout.level)
+    }
+
+    private func makeBackdrop() -> CGContext? {
+        guard let made = CGContext(data: nil, width: layout.width, height: layout.height,
+                                   bitsPerComponent: 8, bytesPerRow: layout.width * 4,
+                                   space: Self.deviceRGB, bitmapInfo: Self.bitmapInfo) else { return nil }
+        // 呼び手と同じ向き（上を 0 に）にして描く。
+        made.translateBy(x: 0, y: CGFloat(layout.height))
+        made.scaleBy(x: 1, y: -1)
+        drawBackdrop(made)
+        return made
+    }
+
+    /// 動かない部分とスペクトログラムを器へ 1 行ずつ写す。器が想定の形（BGRA・反転済み・同じ大きさ）で
+    /// なければ何もせず false を返す（呼び手は全部描く）。**器へ何か描く前に呼ぶ。**
+    private func copyBackdrop(into context: CGContext) -> Bool {
+        guard let base = context.data,
+              context.width == layout.width, context.height == layout.height,
+              context.bitsPerComponent == 8, context.bitsPerPixel == 32,
+              context.alphaInfo == .premultipliedFirst,
+              context.bitmapInfo.intersection(.byteOrderMask) == .byteOrder32Little,
+              let space = context.colorSpace, CFEqual(space, Self.deviceRGB),
+              context.ctm == CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(layout.height)),
+              layout.spectrogram == layout.spectrogram.integral else { return false }
+        let x0 = Int(layout.spectrogram.minX), y0 = Int(layout.spectrogram.minY)
+        guard x0 >= 0, y0 >= 0,
+              x0 + spectrogramWidth <= layout.width, y0 + spectrogramHeight <= layout.height else { return false }
+        if backdrop == nil { backdrop = makeBackdrop() }
+        guard let made = backdrop, let from = made.data else { return false }
+        // 器の行は詰め物が入ることがあるので、行の長さは器のものを使う。
+        let dstRow = context.bytesPerRow, srcRow = made.bytesPerRow
+        for y in 0..<layout.height {
+            memcpy(base + y * dstRow, from + y * srcRow, layout.width * 4)
+        }
+        // 反転した向きでは、スペクトログラムの行 0 が器の上の行に来る（描いた時と同じ）。並びは最初から BGRA。
+        let width = spectrogramWidth
+        spectrogram.withUnsafeBytes { px in
+            for y in 0..<spectrogramHeight {
+                memcpy(base + (y0 + y) * dstRow + x0 * 4, px.baseAddress! + y * width * 4, width * 4)
+            }
+        }
+        return true
+    }
+
+    /// 全部 CoreGraphics で描く道だけが使う。写す道では copyBackdrop が代わりをする。
     private func drawSpectrogram(_ context: CGContext, _ rect: CGRect) {
         let width = spectrogramWidth, height = spectrogramHeight
         let image: CGImage? = spectrogram.withUnsafeBytes { bytes in
@@ -338,9 +440,8 @@ final class ETMiniMeters {
         context.restoreGState()
     }
 
-    /// MiniMeters の Both の形。塗りは列ごとに量の色（スペクトログラムと同じ並び）、上に 172,192,222 の線。
-    /// 後ろに 10 刻みの周波数の細い線。
-    private func drawSpectrum(_ context: CGContext, _ rect: CGRect) {
+    /// スペアナの後ろの 10 刻みの周波数の細い線。
+    private func drawSpectrumGrid(_ context: CGContext, _ rect: CGRect) {
         context.saveGState()
         context.clip(to: rect)
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.07))
@@ -354,6 +455,13 @@ final class ETMiniMeters {
             }
             decade *= 10
         }
+        context.restoreGState()
+    }
+
+    /// MiniMeters の Both の形。塗りは列ごとに量の色（スペクトログラムと同じ並び）、上に 172,192,222 の線。
+    private func drawSpectrum(_ context: CGContext, _ rect: CGRect) {
+        context.saveGState()
+        context.clip(to: rect)
         func y(_ db: Float) -> CGFloat {
             let t = CGFloat((min(max(db, -84), -6) + 84) / 78)
             return rect.maxY - t * rect.height
@@ -363,11 +471,14 @@ final class ETMiniMeters {
         for c in 0..<columns {
             let top = y(spectrumDB[c])
             let x = rect.minX + CGFloat(c) * 2
-            let color = Self.heat(spectrumDB[c])
-            context.setFillColor(red: CGFloat((color >> 16) & 0xFF) / 255,
-                                 green: CGFloat((color >> 8) & 0xFF) / 255,
-                                 blue: CGFloat(color & 0xFF) / 255, alpha: 1)
-            context.fill(CGRect(x: x, y: top, width: 2, height: rect.maxY - top))
+            // 高さ 0 の塗りは何も描かない。
+            if top < rect.maxY {
+                let color = Self.heat(spectrumDB[c])
+                context.setFillColor(red: CGFloat((color >> 16) & 0xFF) / 255,
+                                     green: CGFloat((color >> 8) & 0xFF) / 255,
+                                     blue: CGFloat(color & 0xFF) / 255, alpha: 1)
+                context.fill(CGRect(x: x, y: top, width: 2, height: rect.maxY - top))
+            }
             let p = CGPoint(x: x + 1, y: top)
             if c == 0 { line.move(to: p) } else { line.addLine(to: p) }
         }
@@ -394,10 +505,11 @@ final class ETMiniMeters {
         }
     }
 
-    private func drawStereo(_ context: CGContext, _ rect: CGRect) {
+    /// 菱形が 2 重と、縦横の線と、L・R の向きの線（MiniMeters の格子）。
+    private func drawStereoGrid(_ context: CGContext, _ rect: CGRect) {
         let c = CGPoint(x: rect.midX, y: rect.midY)
         let radius = min(rect.width, rect.height) / 2 - 4
-        // 菱形が 2 重と、縦横の線と、L・R の向きの線（MiniMeters の格子）。
+        context.saveGState()
         context.setStrokeColor(Self.grid)
         context.setLineWidth(2)
         for scale in [1.0, 0.5] as [CGFloat] {
@@ -417,47 +529,73 @@ final class ETMiniMeters {
         context.move(to: CGPoint(x: c.x + radius / 2, y: c.y - radius / 2))
         context.addLine(to: CGPoint(x: c.x - radius / 2, y: c.y + radius / 2))
         context.strokePath()
+        context.restoreGState()
+    }
 
+    private func drawStereo(_ context: CGContext, _ rect: CGRect) {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2 - 4
         context.saveGState()
         context.clip(to: rect)
+        // 直前と同じ色なら塗りの色を入れ直さない（NaN から始めて最初は必ず入れる）。
+        var lastR = Float.nan, lastG = Float.nan, lastB = Float.nan
         for i in 0..<Self.scopeCount {
             let l = CGFloat(scopeL[i]), r = CGFloat(scopeR[i])
             let px = c.x + (r - l) * 0.7071 * radius
             let py = c.y - (l + r) * 0.7071 * radius
+            // 切り取りの外に丸ごと出た点は何も描かない（縁のぼかしが届く 1 ピクセルぶんは余裕を見る）。
+            if px + 3 < rect.minX || px - 3 > rect.maxX || py + 3 < rect.minY || py - 3 > rect.maxY { continue }
             let color = scopeColor[i]
-            context.setFillColor(red: CGFloat(color.r), green: CGFloat(color.g), blue: CGFloat(color.b), alpha: 1)
+            if color.r != lastR || color.g != lastG || color.b != lastB {
+                context.setFillColor(red: CGFloat(color.r), green: CGFloat(color.g), blue: CGFloat(color.b), alpha: 1)
+                lastR = color.r; lastG = color.g; lastB = color.b
+            }
             context.fillEllipse(in: CGRect(x: px - 2, y: py - 2, width: 4, height: 4))
         }
         context.restoreGState()
     }
 
-    private func drawLevels(_ context: CGContext, _ rect: CGRect) {
-        // L・R のピーク（細い 2 本）と LUFS（太い 1 本）。MiniMeters の Peak/LUFS と同じ並び。
-        // 幅は 64 ピクセルの区画のときの大きさ。区画が広ければ同じ割合で太くする。
+    /// 溝と棒の置き場（x）。浮動小数の足し順を変えると 1 ピクセルずれることがあるので、この順のまま。
+    /// 幅は 64 ピクセルの区画のときの大きさ。区画が広ければ同じ割合で太くする。
+    private func levelSlots(_ rect: CGRect)
+        -> (thin: CGFloat, wide: CGFloat, left: CGFloat, right: CGFloat, lufs: CGFloat) {
         let k = max(1, rect.width / 64)
         let thin = 10 * k, wide = 16 * k, gap = 3 * k, apart = 8 * k
         let total = 2 * thin + gap + apart + wide
         var x = rect.midX - total / 2
+        let left = x
+        x += thin + gap
+        let right = x
+        x += thin + gap
+        x += apart - gap
+        return (thin, wide, left, right, x)
+    }
+
+    private func drawLevelGrooves(_ context: CGContext, _ rect: CGRect) {
+        let slots = levelSlots(rect)
+        context.setFillColor(Self.groove)
+        context.fill(CGRect(x: slots.left, y: rect.minY, width: slots.thin, height: rect.height))
+        context.fill(CGRect(x: slots.right, y: rect.minY, width: slots.thin, height: rect.height))
+        context.fill(CGRect(x: slots.lufs, y: rect.minY, width: slots.wide, height: rect.height))
+    }
+
+    private func drawLevels(_ context: CGContext, _ rect: CGRect) {
+        // L・R のピーク（細い 2 本）と LUFS（太い 1 本）。MiniMeters の Peak/LUFS と同じ並び。溝は背景に描いてある。
+        let slots = levelSlots(rect)
         func y(_ db: Double) -> CGFloat {
             let t = CGFloat((min(max(db, -60), 0) + 60) / 60)
             return rect.maxY - t * rect.height
         }
+        context.setFillColor(Self.meter)
         for ch in 0..<2 {
-            context.setFillColor(Self.groove)
-            context.fill(CGRect(x: x, y: rect.minY, width: thin, height: rect.height))
+            let x = ch == 0 ? slots.left : slots.right
             let top = y(Double(peakDB[ch]))
-            context.setFillColor(Self.meter)
-            context.fill(CGRect(x: x, y: top, width: thin, height: rect.maxY - top))
-            context.fill(CGRect(x: x, y: y(Double(holdDB[ch])) - 1, width: thin, height: 2))
-            x += thin + gap
+            context.fill(CGRect(x: x, y: top, width: slots.thin, height: rect.maxY - top))
+            context.fill(CGRect(x: x, y: y(Double(holdDB[ch])) - 1, width: slots.thin, height: 2))
         }
-        x += apart - gap
-        context.setFillColor(Self.groove)
-        context.fill(CGRect(x: x, y: rect.minY, width: wide, height: rect.height))
         if momentary.isFinite {
             let top = y(momentary)
-            context.setFillColor(Self.meter)
-            context.fill(CGRect(x: x, y: top, width: wide, height: rect.maxY - top))
+            context.fill(CGRect(x: slots.lufs, y: top, width: slots.wide, height: rect.maxY - top))
         }
     }
 }

@@ -474,6 +474,12 @@ targets:
       - path: Sources/EffeTuneLive/DSP/IRLibraryFiles.swift
       - path: Tests/Fixtures/IR/ir-library-id-golden.json
         buildPhase: resources
+      # PiP の帯（Floating Meters）の描き方。CoreGraphics と Accelerate だけで、音の輪（ETMeterTap）から読む。
+      # 器へ写す道と全部 CoreGraphics で描く道が同じピクセルになるかを見る（MiniMetersTests）。
+      # 実機の器と同じ作りの CGContext をメモリに作って描くので、シミュレータで走る。LinuxではCoreGraphicsが無いので入らない。
+      - path: Sources/EffeTuneLive/Views/MiniMeters.swift
+      - path: Sources/Shared/ETMeterTap.c
+      - path: Sources/Shared/ETMeterTap.h
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests

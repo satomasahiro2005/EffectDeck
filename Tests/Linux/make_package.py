@@ -27,7 +27,8 @@ import sys
 
 TARGET = "EffeTuneLiveUnitTests"
 DROP_EXT = {".cpp", ".mm", ".h", ".c", ".m", ".hpp"}
-DROP_NAMES = ["JSFX*Tests.swift", "JSFXHostSupport.swift"]
+# MiniMeters はCoreGraphicsで描くのでLinuxに無い（絵の照合はMacのシミュレータだけ）。
+DROP_NAMES = ["JSFX*Tests.swift", "JSFXHostSupport.swift", "MiniMeters.swift", "MiniMetersTests.swift"]
 # Linux用の代役。モジュールごとのフォルダで、名前がそのままimportの名前になる。
 SHIM_MODULES = {
     "os": [],
