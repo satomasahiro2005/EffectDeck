@@ -126,6 +126,11 @@ struct EffectCardView: View {
     /// 本文を直せるか。
     private var canEdit: Bool { editTarget != .sounding(editable: false) }
 
+    /// PEQ の Smooth の間。帯の部品は隠して図だけを出す（グレーにして並べない）。
+    private var graphOnlyBetween: Bool {
+        editTarget == .sounding(editable: false) && !RemoteMirror.shared.isRemote
+    }
+
     private var effectCard: some View {
         // **.sheet は分岐の外、本物の入れ物（Group でない）に付ける。**
         // 最初のキーフレームを足す・最後を消すと下の分岐が入れ替わる。
@@ -139,7 +144,8 @@ struct EffectCardView: View {
                         card(shown, address: ETSlotAddress.keyframe(slot: index, index: k).raw, editable: true)
                     } else {
                         card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw,
-                             editable: canEdit, companion: dsp.soundingPEQ(node)?.secondary)
+                             editable: canEdit, graphOnly: graphOnlyBetween,
+                             companion: dsp.soundingPEQ(node)?.secondary)
                     }
                 }
             } else {
@@ -163,8 +169,9 @@ struct EffectCardView: View {
     /// カード本体。`shown` は画面に映す値を載せた段、`address` は部品が DSP の口へ渡す番号。
     /// 追従しているときは、選んだキーフレームの写し（書ける）か、鳴っている値の写しと読むだけの番号。
     /// `companion` は音量に追従する PEQ のもう1台が鳴らしている値（図が足して描く）。
+    /// `graphOnly` は本文を図だけにする（PEQ の Smooth の間）。
     private func card(_ shown: EffeTuneDSP.Node, address: Int, editable: Bool = true,
-                      companion: [Float]? = nil) -> some View {
+                      graphOnly: Bool = false, companion: [Float]? = nil) -> some View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
@@ -201,6 +208,10 @@ struct EffectCardView: View {
                                                   snapshot: externalSnapshot,
                                                   isDragPreview: isDragPreview,
                                                   isProcessing: !node.isMuted && !dsp.bypass)
+                        } else if graphOnly {
+                            ETEffectViews.view(index: address, node: shown, dsp: dsp)
+                                .id(node.resetCount)
+                                .environment(\.etGraphOnly, true)
                         } else {
                             ETEffectBody(index: address, node: shown, dsp: dsp)
                         }
