@@ -45,7 +45,7 @@ struct RemoteToolbarButton: View {
     var body: some View {
         styled(Button("Remote Control", systemImage: "dot.radiowaves.left.and.right", action: open))
             // つなぎたいのにつながっていない（つないでいる途中・つなぎ直しを待っている・応答が無い）あいだ脈を打つ。
-            .symbolEffect(.pulse, isActive: indicator == .connecting)
+            .symbolEffect(.pulse, isActive: indicator == .connecting && !ETScreenshotSeed.freezeLive)
             .accessibilityValue(mirror.statusText)
     }
 

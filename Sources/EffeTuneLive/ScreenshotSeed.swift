@@ -163,6 +163,21 @@ enum ETScreenshotSeed {
         UserDefaults.standard.bool(forKey: "ETDebugBlocks")
     }
 
+    /// 画面の自動更新を止める。`-ETFreezeLive 1` で立つ。**アクセシビリティの監査のためだけのもの。**
+    ///
+    /// 図・メーター・帯の数字が動き続けると、読み上げの木が毎フレーム変わり、
+    /// performAccessibilityAudit が落ち着くのを待ちきれない（-56 "Audit failed to complete in time"）。
+    /// 立てると、起動してしばらく（freezeWarmup / freezeWarmupTicks）だけ普通に動かして
+    /// 図に最初の絵を描かせ、そのあとは汲むのも publish もやめる。音は鳴らしたまま（ETMock）。
+    /// 実機では引数が付かないので false で、何も変わらない。毎 tick 読むので一度だけ引く。
+    static let freezeLive: Bool = UserDefaults.standard.bool(forKey: "ETFreezeLive")
+
+    /// freezeLive のとき、図を汲み続ける秒数（最初の絵を描くまで）。
+    static let freezeWarmup: TimeInterval = 1.5
+
+    /// freezeLive のとき、AudioIO.tick が帯の数字を更新し続ける回数（0.3 秒ごと。約 3 秒）。
+    static let freezeWarmupTicks = 10
+
     /// 並べ替えの切り分け用。段階を画面の上のセグメントで切り替える。
     static var probe: Bool {
         UserDefaults.standard.bool(forKey: "ETProbe")

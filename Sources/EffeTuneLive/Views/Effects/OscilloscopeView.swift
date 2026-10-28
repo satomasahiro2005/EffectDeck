@@ -166,7 +166,7 @@ private struct OscilloscopeGraph: View {
         let sequence = telemetry.frame(tap: tapId, type: .scopeSnapshot)?.sequence
         Group {
             if trace?.envelope?.rolling == true {
-                TimelineView(.animation) { timeline in
+                TimelineView(.animation(paused: ETScreenshotSeed.freezeLive)) { timeline in
                     graph(now: timeline.date.timeIntervalSinceReferenceDate)
                 }
             } else {

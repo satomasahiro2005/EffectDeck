@@ -222,7 +222,7 @@ final class ETPiPVisualizer: NSObject, ObservableObject {
     // MARK: - 描く
 
     private func startTimer() {
-        guard timer == nil else { return }
+        guard timer == nil, !ETScreenshotSeed.freezeLive else { return }
         let made = DispatchSource.makeTimerSource(queue: .main)
         made.schedule(deadline: .now(), repeating: .milliseconds(1000 / Self.framesPerSecond))
         made.setEventHandler { MainActor.assumeIsolated { ETPiPVisualizer.shared.tick() } }

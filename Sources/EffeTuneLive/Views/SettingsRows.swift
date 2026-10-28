@@ -157,8 +157,9 @@ struct ETNoticeRow: View {
         // 記号そのものが動くので、一覧の中で目に刺さる。
         // 層を順に光らせる variableColor だけにする。indefinite なので
         // 引き金を渡さなくても回り続ける。
-        case .active:  base.symbolEffect(.variableColor.iterative.reversing)
-        case .normal:  base.symbolEffect(.variableColor.iterative)
+        // -ETFreezeLive（監査用）では動かさない。回り続ける記号は読み上げの木を毎回揺らす。
+        case .active:  base.symbolEffect(.variableColor.iterative.reversing, isActive: !ETScreenshotSeed.freezeLive)
+        case .normal:  base.symbolEffect(.variableColor.iterative, isActive: !ETScreenshotSeed.freezeLive)
         case .warning: base
         }
     }

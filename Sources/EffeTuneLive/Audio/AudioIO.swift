@@ -892,7 +892,10 @@ final class AudioIO: ObservableObject {
 
         // ここから先の publish は画面のためだけ。背景では誰も見ないので飛ばす。
         // 前面へ戻ったとき setBackground が tick を 1 回撃って、まとめて読み直す。
-        if plan.display {
+        // -ETFreezeLive では、数字が落ち着いたところで publish をやめる（帯と Settings の木を静かにする）。
+        // 上の followPeer・hasPeer・applied は変わったときだけ publish なので、そのまま通す。
+        let frozenDisplay = ETScreenshotSeed.freezeLive && ticks > ETScreenshotSeed.freezeWarmupTicks
+        if plan.display && !frozenDisplay {
             // level は publish しないので、そのまま書いてよい。
             level = render?.meter ?? 0
 

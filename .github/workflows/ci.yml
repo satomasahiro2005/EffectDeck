@@ -399,6 +399,9 @@ jobs:
       # アクセシビリティの監査（performAccessibilityAudit）と、画面の絵の書き出し。
       # Tests/UI/AccessibilityAudit.swift は「名前が無い要素」だけで落とし、ほかの指摘は添付の文面に残す。
       # AccessibilityGallery は何も判定しない（絵を作れなかったときだけ落ちる）。
+      # 監査の試験は -ETFreezeLive 1 で起動する（図・メーター・帯の数字の更新を止める）。動き続ける木だと
+      # 監査が落ち着かず -56 "Audit failed to complete in time" になる。時間切れだけは試験の中で 1 回取り直し、
+      # 2 回目も切れたら落とす。指摘は A11Y-ISSUE の行に要素（id・label・type・frame）つきで残る。
       # **取り直し（-retry-tests-on-failure）はかけない。**名前が無い、は毎回同じ結果で、取り直すと
       # 監査の時間が倍になって job の 60 分に当たり、添付を書き出す段まで届かなくなる。
       # 段にも上限を付ける：段の時間切れなら後ろの段（添付の書き出し）は走る。job の時間切れは走らない。

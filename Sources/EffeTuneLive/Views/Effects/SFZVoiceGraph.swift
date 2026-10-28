@@ -40,7 +40,7 @@ struct SFZVoiceGraph: View {
         let height = (width * (width < 500 ? 1.0 / 3.0 : 1.0 / 5.0)).rounded()
         let frame = telemetry.frame(tap: node.tapId, type: .sfzVoices)
         let now = CACurrentMediaTime()
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !display.isAnimating(now: now))) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !display.isAnimating(now: now) || ETScreenshotSeed.freezeLive)) { _ in
             Canvas { context, size in
                 draw(&context, size: size, now: CACurrentMediaTime())
             }

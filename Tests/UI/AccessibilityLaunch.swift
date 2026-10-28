@@ -45,13 +45,17 @@ enum A11yLaunch {
 
     /// 起動して、本画面（ナビゲーションバー）が出るまで待つ。
     /// **ボタンの名前では待たない。**文字を大きくするとツールバーが畳まれて名前が変わりうる。
+    ///
+    /// `freezeLive` は監査用。図・メーター・帯の数字の更新を止めて起動する（-ETFreezeLive）。
+    /// 絵を撮るほう（Gallery）は動いている図を撮りたいので既定は false。
     static func launch(seed: String, sheet: String? = nil, variant: A11yVariant,
-                       settle: TimeInterval = 6) -> XCUIApplication {
+                       settle: TimeInterval = 6, freezeLive: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         var args = ["-ETMock", "1", "-ETMockMode", "music", "-ETSeed", seed]
         args += ["-ETWidth", variant.wide ? "0" : "393"]
         if variant.wide { args += ["-ETLayout", "wide"] }
         if let sheet { args += ["-ETSheet", sheet] }
+        if freezeLive { args += ["-ETFreezeLive", "1"] }
         if let size = variant.size { args += ["-UIPreferredContentSizeCategoryName", size] }
         app.launchArguments = args
         // **外観は起動の引数でなくシミュレータ本体に設定する。**-AppleInterfaceStyle は macOS の設定で、

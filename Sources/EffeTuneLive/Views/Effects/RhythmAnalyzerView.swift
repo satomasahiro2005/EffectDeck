@@ -264,7 +264,7 @@ private struct RhythmFigure: View {
         // 枠が来たら入れる。入れたあとの知らせで描き直す（tracker の objectWillChange）。
         let sequence = telemetry.frame(tap: tapId, type: .rhythmAnalyzer)?.sequence
         VStack(alignment: .leading, spacing: 8) {
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animates)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animates || ETScreenshotSeed.freezeLive)) { _ in
             GraphCanvas(
                 x: .blank(), y: .blank(),
                 height: height,

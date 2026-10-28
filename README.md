@@ -266,6 +266,7 @@ XCUITest `launchArguments`. The icon on the home screen passes none.
 | `-ETCollapsed 1` | With `-ETSeed`, starts with every card closed. A card with a graph still shows the graph |
 | `-ETSheet <name>` | Opens a sheet at launch: `picker`, `settings`, `routing`, `presets`, `ir`, `tips` |
 | `-ETAutoExpand 1`, `-ETAutoExpandIndex <n>` | Taps an effect once, 4 seconds after launch, to record the animation. A tap moves the card one step (open → graph only → folded → open), so it opens only a folded card, and a card that `-ETSeed` opened keeps only its graph. The first effect by default; `n` counts from 0 and skips Sections |
+| `-ETFreezeLive 1` | For the accessibility audit. Stops live updates after about 3 seconds (graph telemetry, the status strip numbers, TimelineViews, looping symbol effects), so the accessibility tree stays still. Audio is not stopped |
 | `-ETDebugBlocks 1` | Tints each Section block to check grouping |
 | `-ETDiag 1` | Adds a hidden `diag` text with the active node count and chain length, for UI tests |
 | `-ETConsole 1` | Also prints the diagnostic log to stdout, for `devicectl ... --console` |

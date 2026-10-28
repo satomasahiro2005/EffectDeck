@@ -27,6 +27,10 @@ final class ETDisplayPump: NSObject {
 
     private var link: CADisplayLink?
     private var body: (() -> Void)?
+    /// -ETFreezeLive のとき、汲むのをやめる時刻。立てていなければ nil のまま（何も変わらない）。
+    private var warmupEnd: CFTimeInterval?
+    /// -ETFreezeLive で汲むのをやめたあと。以後 start が来ても動かさない。
+    private var frozen = false
 
     private override init() { super.init() }
 
@@ -37,7 +41,12 @@ final class ETDisplayPump: NSObject {
     /// 画面に何も描いていないのだから、出す必要が無い。
     @MainActor
     func start(_ body: @escaping () -> Void) {
+        // 止めたあと（画面の出入りや前面への復帰）で動かし直すと、監査の最中に木が動く。
+        guard !frozen else { return }
         self.body = body
+        if ETScreenshotSeed.freezeLive, warmupEnd == nil {
+            warmupEnd = CACurrentMediaTime() + ETScreenshotSeed.freezeWarmup
+        }
         EffeTuneDSP.shared.setTelemetryRate(EffeTuneDSP.telemetryHz)
         guard link == nil else { return }
         let made = CADisplayLink(target: self, selector: #selector(fire))
@@ -57,5 +66,12 @@ final class ETDisplayPump: NSObject {
 
     @objc private func fire() {
         body?()
+        // 最初の絵を描いたら止める。link は main の runloop に載せているので assumeIsolated でよい。
+        if let end = warmupEnd, CACurrentMediaTime() >= end {
+            MainActor.assumeIsolated {
+                frozen = true
+                stop()
+            }
+        }
     }
 }
