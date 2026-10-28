@@ -59,6 +59,30 @@ struct EffeTuneLiveApp: App {
             // iOS の最小の設定に合わせてさらに縮めると読めなくなった（本人の設定で確かめた）。
             // 大きくする側はそのまま効かせる。
             .dynamicTypeSize(.large...)
+            // ナビゲーションバーの題やメニューは UIKit が描くので、上の指定が届かない。窓ごと下限を掛ける。
+            .onAppear { ETContentSizeFloor.apply() }
+            .onReceive(NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification)) { _ in
+                ETContentSizeFloor.apply()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+                ETContentSizeFloor.apply()
+            }
+        }
+    }
+}
+
+/// 標準より小さい文字サイズを、UIKit が描く所（ナビゲーションバーの題・メニュー・検索欄）にも効かせない。
+/// SwiftUI の .dynamicTypeSize は SwiftUI の中にしか効かず、「Available Effects」の題は iOS の最小の設定のまま縮んでいた。
+/// 窓の traitOverrides で文字サイズの下限を Large にする。iOS の設定が Large 以上なら、その値をそのまま使う。
+@MainActor
+enum ETContentSizeFloor {
+    static func apply() {
+        let system = UIApplication.shared.preferredContentSizeCategory
+        let floor: UIContentSizeCategory = system < .large ? .large : system
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows where window.traitOverrides.preferredContentSizeCategory != floor {
+                window.traitOverrides.preferredContentSizeCategory = floor
+            }
         }
     }
 }
