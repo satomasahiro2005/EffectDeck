@@ -66,6 +66,16 @@ final class AccessibilityAudit: XCTestCase {
             + "frame=\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height)))"
     }
 
+    /// 要素の木（debugDescription）の頭。**名前も ID も無い要素（SwiftUI.AccessibilityNode）は
+    /// 1 行の文面では枠しか分からず、どの view か当てられなかった。**子と祖先の並びがあれば絞れる。
+    /// 長い木はログを埋めるので頭の 1500 字だけ。消えた要素に触ると失敗が足されるので、在るときだけ読む。
+    private func subtree(_ element: XCUIElement?) -> String {
+        guard let element, element.exists else { return "" }
+        let text = element.debugDescription
+        let head = text.count > 1500 ? String(text.prefix(1500)) + "…" : text
+        return " | subtree:\n" + head
+    }
+
     /// 監査を 1 回かける。指摘は全部ここで文面にし、落とす分（strict の種類）は別に返す。
     /// ハンドラは常に true（処理した）を返す。落とすのは呼び出し側が要素つきの文面で XCTFail する
     /// （ハンドラで false を返すと、失敗の文面に要素が入らず CI のログで特定できなかった）。
@@ -78,7 +88,8 @@ final class AccessibilityAudit: XCTestCase {
             let line = "[\(kind)] \(issue.compactDescription) | \(self.describe(issue.element)) | \(issue.detailedDescription)"
             lines.append(line)
             print("A11Y-ISSUE[\(tag)] \(line)")
-            if strict.contains(issue.auditType) { failures.append(line) }
+            // 木を読むのは落とす分だけ。全部の指摘で読むと遅く、添付も膨らむ。
+            if strict.contains(issue.auditType) { failures.append(line + self.subtree(issue.element)) }
             return true
         }
         return (lines, failures)

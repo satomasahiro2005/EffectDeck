@@ -1247,6 +1247,12 @@ struct PipelineView: View {
             // **contentShape を必ず付ける。**Color.clear は描くものが無いので、
             // 枠を持っていても当たりを取らない。帯が在っても落ちなかったのはこれで、
             // 高さの問題ではなかった。
+            //
+            // **VoiceOver からは隠す。**dropDestination を付けた Color.clear は、名前の無い
+            // 要素（SwiftUI.AccessibilityNode）として木に出る。PEQ だけの鎖ではカードの下の空き全部が
+            // 名前の無い要素になり、監査（sufficientElementDescription）で落ちた。中身は空きで
+            // 読むものが無い。末尾へ足す口は出力補正の行と中身の全面にもあり、指での落とし先は変わらない
+            // （accessibilityHidden は当たりの判定に効かない）。左の一覧の帯（ETMinimapTail）と同じ。
             Color.clear
                 .frame(height: tailHeight)
                 .contentShape(Rectangle())
@@ -1254,6 +1260,7 @@ struct PipelineView: View {
                     guard let type = items.first else { return false }
                     return addDropped(type, to: .end)
                 }
+                .accessibilityHidden(true)
             }
             .coordinateSpace(name: Self.contentSpace)
             .modifier(ETDetailColumn(split: split, brake: brake,
@@ -1304,6 +1311,10 @@ struct PipelineView: View {
                     .onAppear { listHeight = geo.size.height }
                     .onChange(of: geo.size.height) { _, h in listHeight = h }
             }
+            // **VoiceOver からは隠す。**口を持つ Color.clear は名前の無い要素として木に出て、
+            // 鎖の列の全面（器と同じ枠）を覆う。どの画面でも監査の sufficientElementDescription で落ちた。
+            // 中身の後ろの空きなので読むものは無く、指での落とし先は変わらない。
+            .accessibilityHidden(true)
         }
         .coordinateSpace(name: Self.chainSpace)
         // **掴んだものは別の層に描く。**行の中に重ねると、はみ出したぶんが
