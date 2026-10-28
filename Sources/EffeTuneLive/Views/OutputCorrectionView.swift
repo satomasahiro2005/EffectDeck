@@ -124,21 +124,21 @@ struct OutputCorrectionList: View {
             VStack(alignment: .leading, spacing: 2) {
                 if let preset {
                     Text(ETUserPresetName.leaf(preset))
-                        .etFont(size: 15)
+                        .font(.body)
                         .foregroundStyle(.primary)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 } else {
                     Text("None")
-                        .etFont(size: 15)
+                        .font(.body)
                         .foregroundStyle(.secondary)
                 }
                 Text(d.name)
-                    .etFont(size: 12)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 if !summary.isEmpty {
                     Text(summary)
-                        .etFont(size: 11)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
@@ -149,7 +149,7 @@ struct OutputCorrectionList: View {
             // 状態の札。説明ではなく、どの行がいま鳴っている出力先かを示す。
             if isCurrent {
                 Text("In use")
-                    .etFont(size: 12)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
@@ -187,7 +187,7 @@ private struct OutputCorrectionChooser: View {
             if removable && selected != nil {
                 Section {
                     Button("Remove", role: .destructive) { pick(nil) }
-                        .etFont(size: 15)
+                        .font(.body)
                 }
             }
         }
@@ -201,7 +201,7 @@ private struct OutputCorrectionChooser: View {
         Button(action: action) {
             HStack {
                 Text(title)
-                    .etFont(size: 15)
+                    .font(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer(minLength: 8)

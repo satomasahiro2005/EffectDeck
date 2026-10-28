@@ -106,7 +106,7 @@ struct SettingsView: View {
         Section {
             // 行の字は 15（ETNoticeRow の題と同じ）。指定しないと本文の 17 で、同じ Form の中で浮く。
             Toggle("Sync Visuals to Audio", isOn: $prefs.syncVisualsToAudio)
-                .etFont(size: 15)
+                .font(.body)
         } header: {
             Text("Graphs")
         }
@@ -170,7 +170,7 @@ struct SettingsView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            .etFont(size: 15)
+            .font(.body)
             // **遅れの大半はここ。**選ばせるものではないので操作子は無いが、
             // 出さないと 21.3 ms がどこから来たのか辿れない。枯れて 2048 へ
             // 逃げたときに、それが見えるのもこの行だけ。
@@ -222,10 +222,10 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .etFont(size: 15)
+            .font(.body)
             .disabled(prefs.powerMode == .continuous)
             Toggle("Keep the screen on", isOn: $prefs.keepScreenAwake)
-                .etFont(size: 15)
+                .font(.body)
         } header: {
             Text("Power")
         }
@@ -239,12 +239,12 @@ struct SettingsView: View {
         Section {
             // 下の行と並ぶので、どちらの版かを名前で言い切る。
             LabeledContent("App version", value: ETAppInfo.display)
-                .etFont(size: 15)
+                .font(.body)
             // 積んでいる EffeTune の版。いまは上のアプリの版と同じ数字に
             // 揃えてあるが（Tools/gen_version.py）、指しているものが違う。
             // 効果の本数は出さない。増えても減っても使う人の判断は変わらない。
             LabeledContent("EffeTune DSP", value: ETUpstreamVersion)
-                .etFont(size: 15)
+                .font(.body)
             // **Special Thanks はまだ置かない。**一度 4 件（EffeTune / ysfx /
             // JSFX・WDL・EEL2 / PFFFT）を並べたが、全部ライブラリで、下の
             // Licenses が作者名つきで既に出しているものだった。EffeTune は
@@ -259,9 +259,9 @@ struct SettingsView: View {
             // Status の中には入れない。あちらは 3.3Hz で作り直されるので、
             // 押して進む行を置くと提示の途中で作り直すことになる。
             NavigationLink("Known limitations") { ConnectionTipsView() }
-                .etFont(size: 15)
+                .font(.body)
             NavigationLink("Licenses") { LicensesView() }
-                .etFont(size: 15)
+                .font(.body)
         } header: {
             Text("About")
         } footer: {
@@ -298,7 +298,7 @@ struct SettingsView: View {
             NavigationLink("Report a problem") {
                 ETReportView(io: io, dsp: dsp, prefs: prefs)
             }
-            .etFont(size: 15)
+            .font(.body)
             // **軽いほうの口。**GitHub の口座を持っていない人と、
             // 「なんか変」までしか言えない段階の話はここへ来る。
             //
@@ -347,7 +347,7 @@ private struct ETResetAllDataSection: View {
     var body: some View {
         Section {
             Button("Reset All Data", role: .destructive) { confirming = true }
-                .etFont(size: 15)
+                .font(.body)
                 .alert("Reset All Data?", isPresented: $confirming) {
                     Button("Reset", role: .destructive) {
                         if ETFactoryReset.run() { done() } else { cloudFailed = true }
@@ -502,7 +502,7 @@ private struct ProcessingTimeRow: View {
             }
             .foregroundStyle(reading.map { style($0.level) } ?? AnyShapeStyle(.secondary))
         }
-        .etFont(size: 15)
+        .font(.body)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(reading?.accessibility ?? "CPU")
     }
@@ -533,7 +533,7 @@ private struct InputBufferRow: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
-        .etFont(size: 15)
+        .font(.body)
     }
 }
 
@@ -546,7 +546,7 @@ private struct DelayRow: View {
         // 同じ値が 2 度並ぶ。合計と足し算を 1 行にまとめる。
         if let d = ETDelayReading(io: io) {
             Text(d.summary)
-                .etFont(size: 12)
+                .font(.footnote)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
@@ -568,7 +568,7 @@ private struct DetailsSection: View {
             DisclosureGroup(isExpanded: $open) {
                 if open { DetailsRows(io: io, dsp: dsp, prefs: prefs) }
             } label: {
-                Text("Details").etFont(size: 15)
+                Text("Details").font(.body)
             }
         }
     }
@@ -593,7 +593,7 @@ private struct DetailsRows: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            .etFont(size: 13)
+            .font(.footnote)
         }
 
         // 貼るほうには端末と iOS と設定も入れる。報告を 1 回で受け取るため。
@@ -614,7 +614,7 @@ private struct ETReportDestinationButton: View {
             if let url = make() { UIApplication.shared.open(url) }
         } label: {
             LabeledContent(title, value: detail)
-                .etFont(size: 15)
+                .font(.body)
         }
     }
 }
@@ -723,7 +723,7 @@ private struct ETShareLogButton: View {
                 }
             } label: {
                 LabeledContent("Attach log", value: Self.size(ETLogTap.byteCount))
-                    .etFont(size: 15)
+                    .font(.body)
             }
             .sheet(item: $sharing) { attachment in
                 ETActivityView(items: attachment.items) { sharing = nil }
@@ -790,7 +790,7 @@ private struct ETCopyDiagnosticsButton: View {
                 copied = false
             }
         } label: {
-            Text(copied ? "Copied" : "Copy details").etFont(size: 15)
+            Text(copied ? "Copied" : "Copy details").font(.body)
         }
     }
 }

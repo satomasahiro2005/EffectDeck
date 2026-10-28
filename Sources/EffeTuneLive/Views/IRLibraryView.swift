@@ -42,11 +42,11 @@ struct IRLibraryView: View {
                         picking = true
                     } label: {
                         Label("Import audio file", systemImage: "square.and.arrow.down")
-                            .etFont(size: 15)
+                            .font(.body)
                     }
                     if let importReport {
                         Text(importReport)
-                            .etFont(size: 13)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -54,7 +54,7 @@ struct IRLibraryView: View {
                 if library.entries.isEmpty {
                     Section {
                         Text("No impulse responses yet")
-                            .etFont(size: 13)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -62,7 +62,7 @@ struct IRLibraryView: View {
                         ForEach(library.entries) { entry in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.name)
-                                    .etFont(size: 15)
+                                    .font(.body)
                                     .lineLimit(2)
                                 // 鍵は web 版と突き合わせるためのもの。
                                 // 24 桁を裸で出しても何の数か読めないので名前を付ける。

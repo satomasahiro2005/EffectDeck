@@ -43,14 +43,14 @@ struct ConnectionTipsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         // 題は ETNoticeRow と同じ字の大きさ。
                         Text(verbatim: c.title)
-                            .etFont(size: 15, weight: .semibold)
+                            .font(.headline)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
                         Text(verbatim: c.act)
-                            .etFont(size: 15)
+                            .font(.body)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(verbatim: c.why)
-                            .etFont(size: 13)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -58,7 +58,7 @@ struct ConnectionTipsView: View {
                     Link(destination: tip.url) {
                         Text(verbatim: ja ? ETTips.linkLabel.ja : ETTips.linkLabel.en)
                     }
-                    .etFont(size: 13)
+                    .font(.footnote)
                     // **読み上げでは題を付ける。**見た目の字だけでは同じリンクが 3 本並ぶ。
                     // 見た目の字も残す（音声コントロールはその字で押す）。
                     .accessibilityLabel(Text(verbatim: ja ? "\(c.title)。\(ETTips.linkLabel.ja)"
@@ -71,11 +71,11 @@ struct ConnectionTipsView: View {
                 let p = ja ? ETTips.procedure.ja : ETTips.procedure.en
                 VStack(alignment: .leading, spacing: 6) {
                     Text(verbatim: p.title)
-                        .etFont(size: 15, weight: .semibold)
+                        .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
                     Text(verbatim: p.intro)
-                        .etFont(size: 15)
+                        .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(Array(p.steps.enumerated()), id: \.offset) { i, step in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -84,7 +84,7 @@ struct ConnectionTipsView: View {
                             Text(verbatim: step)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        .etFont(size: 15)
+                        .font(.body)
                         // 番号と本文を 1 回で読ませる。
                         .accessibilityElement(children: .combine)
                     }

@@ -59,30 +59,30 @@ struct SFZLibraryView: View {
                     } label: {
                         Label(loader.libraryImport == nil ? "Import Folder…" : "Importing…",
                               systemImage: "square.and.arrow.down")
-                            .etFont(size: 15)
+                            .font(.body)
                     }
                     .disabled(loader.libraryImport != nil)
                     if let progress = loader.libraryImport {
                         ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1))) {
-                            Text("\(progress.done) / \(progress.total)").etFont(size: 13).monospacedDigit()
+                            Text("\(progress.done) / \(progress.total)").font(.footnote).monospacedDigit()
                         }
                     } else if let report {
-                        Text(report).etFont(size: 13).foregroundStyle(.secondary)
+                        Text(report).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section {
                     if entries.isEmpty {
                         Text("No matching SFZ instruments.")
-                            .etFont(size: 13)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                     ForEach(entries) { entry in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.name)
-                                .etFont(size: 15)
+                                .font(.body)
                                 .lineLimit(2)
                             Text(badge(entry))
-                                .etFont(size: 11)
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }

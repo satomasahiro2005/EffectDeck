@@ -41,11 +41,11 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
             layout {
                 // 題 15・実測 13 は ETNoticeRow と同じ（指定しないと本文の 17 になる）。
                 Text(title)
-                    .etFont(size: 15)
+                    .font(.body)
                 if let detail {
                     if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                     Text(detail)
-                        .etFont(size: 13)
+                        .font(.footnote)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
@@ -78,10 +78,10 @@ struct ETChoiceRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     // 題も note も etFont（文字サイズに追従）。ETNoticeRow と同じ 15 / 13。
                     Text(title)
-                        .etFont(size: 15)
+                        .font(.body)
                         .foregroundStyle(.primary)
                     Text(note)
-                        .etFont(size: 13)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -121,11 +121,11 @@ struct ETNoticeRow: View {
                 // 題・detail・mono・ボタンはどれも etFont（文字サイズに追従）。
                 // ConnectionTipsView の題と同じ 15 semibold で、2 つは揃えておくこと。
                 Text(title)
-                    .etFont(size: 15, weight: .semibold)
+                    .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
-                        .etFont(size: 13)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -138,7 +138,7 @@ struct ETNoticeRow: View {
                 }
                 if let actionTitle, let action {
                     Button(actionTitle, action: action)
-                        .etFont(size: 13)
+                        .font(.footnote)
                         .buttonStyle(.bordered)
                         .padding(.top, 2)
                 }
@@ -152,7 +152,7 @@ struct ETNoticeRow: View {
     @ViewBuilder
     private var icon: some View {
         let base = Image(systemName: systemImage)
-            .etFont(size: 15)
+            .font(.body)
             .foregroundStyle(iconStyle)
             .modifier(ETNoticeIconWidth())
         switch tone {
