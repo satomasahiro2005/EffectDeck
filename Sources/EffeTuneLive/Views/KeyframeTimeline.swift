@@ -62,6 +62,8 @@ struct ETKeyframeTimeline: View {
     @State private var dragStarted = false
     /// 長押しで吹き出しを開いたあとの指の動きは、菱形を動かさない。指を離すまで真。
     @State private var pressConsumed = false
+    /// 帯の縦の真ん中（画面の座標）。吹き出しを上下どちらに開くかに使う。
+    @State private var stripMidY: CGFloat = 0
 
     // MARK: 寸法
 
@@ -176,8 +178,9 @@ struct ETKeyframeTimeline: View {
                 Color.clear
                     .frame(width: diamond, height: diamond)
                     .allowsHitTesting(false)
-                    // 矢印の向きは固定せずシステムに任せる（画面の上端に近い菱形でも収まる側を選ぶ）。
-                    .popover(isPresented: popoverBinding, attachmentAnchor: .rect(.bounds)) {
+                    // 左右には開かない（菱形の横に出ると帯と針が隠れ、どの菱形の話か分かりにくい）。
+                    // 上下は帯の位置で決める（画面の下半分なら上へ、上半分なら下へ。収まる側に開く）。
+                    .popover(isPresented: popoverBinding, attachmentAnchor: .rect(.bounds), arrowEdge: popoverArrowEdge) {
                         if let k = popoverTarget { popoverContent(at: k) }
                     }
                     .position(x: x(popoverTarget.map { automation.keyframes[$0].position } ?? popoverPosition ?? 0, w),
@@ -185,6 +188,7 @@ struct ETKeyframeTimeline: View {
                     .accessibilityHidden(true)
             }
             .frame(width: w, height: h, alignment: .topLeading)
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).midY } action: { stripMidY = $0 }
             .contentShape(Rectangle())
             .modifier(StripGestures(enabled: interactive,
                                     tap: { handleTap(at: $0, width: w) },
@@ -267,6 +271,14 @@ struct ETKeyframeTimeline: View {
 
     /// 吹き出しを開いている菱形の添字。位置から引き直す。
     /// 菱形がもう無い・押して選んだ菱形でなくなった（音量が変わって選びが外れた）・触れないときは nil で、吹き出しは閉じる。
+    /// 矢印を付ける出し口の辺。.top なら吹き出しは菱形の上、.bottom なら下に出る。
+    private var popoverArrowEdge: Edge {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        let height = scene?.screen.bounds.height ?? 0
+        return height > 0 && stripMidY > height / 2 ? .top : .bottom
+    }
+
     private var popoverTarget: Int? {
         guard interactive, let p = popoverPosition,
               let k = automation.keyframeIndex(at: p), k == explicit else { return nil }
