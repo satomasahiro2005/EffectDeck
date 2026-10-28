@@ -62,6 +62,9 @@ struct EffectCardView: View {
     /// 音量に追従する段で、帯で選んでいるキーフレームの位置（画面の上だけで持ち、保存しない）。
     /// 添字でなく位置で持つ。足す・消すで添字はずれるが、位置は1つのキーフレームに1つ。
     @State private var selectedPosition: Double?
+    /// 帯の吹き出しを開いている菱形の位置。帯の外で持つ。
+    /// 選ぶとカードの分岐（下の effectCard）が替わって帯が作り直されるので、帯の中の状態では長押しで開いた吹き出しが消える。
+    @State private var popoverPosition: Double?
     /// 2列のとき。開閉の印を出さない（Components.swiftのetCardsPinnedOpen）。
     @Environment(\.etCardsPinnedOpen) private var pinnedOpen
     /// IR Reverb の図が出来たか（showsCollapsedGraph）。IR を入れ替えたときだけ変わる。
@@ -142,6 +145,13 @@ struct EffectCardView: View {
         .onReceive(ETVolumeFollower.shared.$position.removeDuplicates().dropFirst()) { _ in
             selectedPosition = nil
         }
+        // 開いている菱形から選びが移った・外れたら、吹き出しの位置も捨てる（帯が無いと帯側の掃除が走らない）。
+        .onChange(of: selectedPosition) { _, now in
+            if now != popoverPosition { popoverPosition = nil }
+        }
+        .onChange(of: showsTimeline) { _, now in
+            if !now { popoverPosition = nil }
+        }
         .sheet(item: $sheet) { which in
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
@@ -165,7 +175,7 @@ struct EffectCardView: View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
-                // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す・選んだ菱形の押し直しか長押しでメニュー。
+                // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す・選んだ菱形の押し直しか長押しで吹き出し。
                 if showsTimeline, let a = node.automation {
                     keyframeStrip(a)
                         .padding(.leading, ETMetrics.cardPadding)
@@ -230,6 +240,7 @@ struct EffectCardView: View {
             ETKeyframeTimeline(
                 automation: a,
                 position: remote ? nil : ETVolumeFollower.shared.position,
+                popoverPosition: $popoverPosition,
                 selected: selectedKeyframe,
                 explicit: a.explicitKeyframe(selected: selectedPosition, remote: remote),
                 select: { k in selectedPosition = k.map { a.keyframes[$0].position } },
@@ -238,7 +249,7 @@ struct EffectCardView: View {
                     // 動かしたものを選ぶ（位置で持っているので付け替える）。
                     selectedPosition = a.source.snapped(p)
                 },
-                // メニューが開いている間に添字がずれても当たるよう、位置で受けて動作の時に引き直す。
+                // 吹き出しが開いている間に添字がずれても当たるよう、位置で受けて動作の時に引き直す。
                 setHold: { p, hold in
                     if let k = node.automation?.keyframeIndex(at: p) {
                         dsp.setKeyframeHold(hold, keyframe: k, at: index)
@@ -274,7 +285,7 @@ struct EffectCardView: View {
 
     /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）、
     /// 追従していれば Stop Following Volume（キーフレームを捨て、一番上のキーフレームの値が普通の値になる）。
-    /// キーフレームごとの補間と削除は、帯の菱形のメニュー。PC の鎖を編集している間は出さない（追従は動かない）。
+    /// キーフレームごとの補間と削除は、帯の菱形の吹き出し。PC の鎖を編集している間は出さない（追従は動かない）。
     @ViewBuilder
     private var keyframeMenuItems: some View {
         if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {

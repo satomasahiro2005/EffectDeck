@@ -8,7 +8,7 @@
 //
 //  出す場所は追従しているカードの頭の下。
 //  菱形を押すとそのキーフレームを選ぶ（カードの本文がその値になって直せる。左の数もその位置になる）。
-//  選んでいる菱形をもう一度押すか、どの菱形でも長押しすると、そのキーフレームのメニュー（Smooth / Hold / Delete）が開く。
+//  選んでいる菱形をもう一度押すか、どの菱形でも長押しすると、その菱形を指す吹き出し（Smooth / Hold / Delete）が開く。
 //  選びを外すのは、空いた所を押したときと、音量が変わったとき（カード側）だけ。
 //  外すと、カードはいまの音量に一番近いキーフレームを選ぶ。
 //  横へ引くと音量の位置を動かす（5% 刻み。ほかのキーフレームの位置には置けない）。選んでいる菱形はアクセント色。
@@ -16,13 +16,13 @@
 //  最小の距離を置いても、鎖の長押しと払いは SwiftUI のジェスチャが見えないので、印が無いと取り合う。
 //  音量が読めていなければ針は出さない。
 //
-//  UIKit を使うのは2か所だけ。
-//    - メニューの出し口: SwiftUI の Menu は押した指でしか開かず、2度目の押しや長押しの結果としてコードから開けない。
-//      標準の UIButton（showsMenuAsPrimaryAction）を対象の菱形に重ね、performPrimaryAction() で開く。
-//      この出し口は触りを取らない（hitTest が nil）ので、菱形を横へ引く操作は今までどおり SwiftUI の引きに届く。
-//    - 長押し: 押した所の菱形を知り、引きと同時に認識するため、UIKit の長押しを足す。
+//  吹き出しは標準の popover。見えない出し口を対象の菱形に重ね、そこへ矢印を向ける。
+//  出し口は触りを取らない（allowsHitTesting(false)）ので、菱形を横へ引く操作は今までどおり SwiftUI の引きに届く。
+//  iPhone でも .presentationCompactAdaptation(.popover) でシートにせず吹き出しのまま出す。
 //
-//  Foundation 以外に触るのは SwiftUI と UIKit（上の2か所）だけ。位置・刻み・近さ・押し方の判断は ETAutomation にある（AutomationTests）。
+//  UIKit を使うのは長押しだけ。押した所の菱形を知り、引きと同時に認識するため、UIKit の長押しを足す。
+//
+//  Foundation 以外に触るのは SwiftUI と UIKit（長押しだけ）。位置・刻み・近さ・押し方の判断は ETAutomation にある（AutomationTests）。
 
 import SwiftUI
 import UIKit
@@ -31,17 +31,21 @@ struct ETKeyframeTimeline: View {
     let automation: ETAutomation
     /// いまの音量。nil なら針を出さない（読めていない・PC 編集中）。
     let position: Double?
+    /// 吹き出しを開いている菱形の位置。添字でなく位置で持つ（開いている間に添字がずれてもよい）。
+    /// 持ち主はカード側。選ぶと帯の作り直しが起こることがあり（カードの分岐が替わる）、
+    /// 帯の中で持つと長押しで置いた位置が作り直しで消えて何も開かない。
+    @Binding var popoverPosition: Double?
     /// 色を変えて見せているキーフレームの添字（押して選んだものと、いまの音量で鳴っているもの）。
     var selected: Int? = nil
-    /// 押して選んだキーフレームの添字。左の数はこの位置になり、2度目の押しでメニューが開く。
+    /// 押して選んだキーフレームの添字。左の数はこの位置になり、2度目の押しで吹き出しが開く。
     var explicit: Int? = nil
     /// 押した。菱形ならその添字、外したなら nil。
     var select: ((Int?) -> Void)? = nil
     /// 菱形を離した先（刻みへ丸めた位置）。
     var move: ((Int, Double) -> Void)? = nil
-    /// メニューの Smooth / Hold。メニューが開いている間に添字がずれても当たるよう、位置で渡す。
+    /// 吹き出しの Smooth / Hold。開いている間に添字がずれても当たるよう、位置で渡す。
     var setHold: ((Double, Bool) -> Void)? = nil
-    /// メニューの Delete。同じく位置で渡す。
+    /// 吹き出しの Delete。同じく位置で渡す。
     var delete: ((Double) -> Void)? = nil
     /// 押す・引くを受けるか（並べ替えの浮いたカード・PC 編集中は受けない）。
     var interactive = true
@@ -56,10 +60,7 @@ struct ETKeyframeTimeline: View {
     /// 引き始めに掴んだ菱形。掴めなかった引きは無視する。
     @State private var grabbed: Int?
     @State private var dragStarted = false
-    /// メニューを開く合図（増やすたびに出し口が開く）と、開く菱形の位置。
-    @State private var menuRequest = 0
-    @State private var menuPosition: Double?
-    /// 長押しでメニューを開いたあとの指の動きは、菱形を動かさない。指を離すまで真。
+    /// 長押しで吹き出しを開いたあとの指の動きは、菱形を動かさない。指を離すまで真。
     @State private var pressConsumed = false
 
     // MARK: 寸法
@@ -82,10 +83,15 @@ struct ETKeyframeTimeline: View {
             strip
         }
         .frame(height: height)
+        // 開いている菱形が消えた・選びが外れた・触れなくなったら、覚えている位置も捨てる。
+        // 捨てないと、同じ位置にキーフレームを作り直して選んだとき勝手に開き直る。
+        .onChange(of: popoverTarget) { _, now in
+            if now == nil { popoverPosition = nil }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Keyframes")
         .accessibilityValue(accessibilityText)
-        // 菱形のメニューは触りでしか開かない。⋯ から消えた Hold と削除の代わりに、読み上げ操作で渡す。
+        // 菱形の吹き出しは触りでしか開かない。⋯ から消えた Hold と削除の代わりに、読み上げ操作で渡す。
         .accessibilityActions {
             if interactive, let k = selected, automation.keyframes.indices.contains(k) {
                 let p = automation.keyframes[k].position
@@ -165,13 +171,18 @@ struct ETKeyframeTimeline: View {
                         .frame(width: 2, height: h)
                         .position(x: x(min(max(position, 0), 100), w), y: h / 2)
                 }
-                // メニューの出し口。常に置いておく（合図の数を取りこぼさない）。触りは取らない。
-                if interactive {
-                    KeyframeMenuAnchor(request: menuRequest, makeMenu: { menu(at: menuPosition) })
-                        .frame(width: diamond, height: diamond)
-                        .position(x: x(menuPosition ?? 0, w), y: trackY)
-                        .accessibilityHidden(true)
-                }
+                // 吹き出しの出し口。見えないまま対象の菱形の上に置く。触りは取らない。
+                // **いつも置いておく。**開くのと同じ回で出し口を作ると、出し元がまだ無くて開かないことがある。
+                Color.clear
+                    .frame(width: diamond, height: diamond)
+                    .allowsHitTesting(false)
+                    // 矢印の向きは固定せずシステムに任せる（画面の上端に近い菱形でも収まる側を選ぶ）。
+                    .popover(isPresented: popoverBinding, attachmentAnchor: .rect(.bounds)) {
+                        if let k = popoverTarget { popoverContent(at: k) }
+                    }
+                    .position(x: x(popoverTarget.map { automation.keyframes[$0].position } ?? popoverPosition ?? 0, w),
+                              y: trackY)
+                    .accessibilityHidden(true)
             }
             .frame(width: w, height: h, alignment: .topLeading)
             .contentShape(Rectangle())
@@ -240,38 +251,73 @@ struct ETKeyframeTimeline: View {
             select?(nil)
         case .openMenu(let k):
             guard automation.keyframes.indices.contains(k) else { return }
-            // 長押しは選んでいない菱形にも来る。選んでからメニューを開く（左の数もその位置になる）。
-            if k != explicit { select?(k) }
-            menuPosition = automation.keyframes[k].position
-            menuRequest += 1
+            // 長押しは選んでいない菱形にも来る。選んでから吹き出しを開く（左の数もその位置になる）。
+            let p = automation.keyframes[k].position
+            guard k != explicit else {
+                popoverPosition = p
+                return
+            }
+            select?(k)
+            // 選ぶとカードの分岐が替わって帯ごと作り直されることがある。作り直した帯の出し口が
+            // 置かれてから開くよう、1回遅らせる（出し口ができる回に開くと開かないことがある）。
+            let binding = $popoverPosition
+            DispatchQueue.main.async { binding.wrappedValue = p }
         }
     }
 
-    /// 開く瞬間の自動から組む。動作は位置を持ち、実行時に添字を引き直す（開いている間に添字がずれてもよい）。
-    private func menu(at position: Double?) -> UIMenu? {
-        guard let position, let k = automation.keyframeIndex(at: position) else { return nil }
-        let hold = automation.keyframes[k].hold
-        let setHold = setHold, delete = delete
-        let smooth = UIAction(title: "Smooth", state: hold ? .off : .on) { _ in
-            setHold?(position, false)
+    /// 吹き出しを開いている菱形の添字。位置から引き直す。
+    /// 菱形がもう無い・押して選んだ菱形でなくなった（音量が変わって選びが外れた）・触れないときは nil で、吹き出しは閉じる。
+    private var popoverTarget: Int? {
+        guard interactive, let p = popoverPosition,
+              let k = automation.keyframeIndex(at: p), k == explicit else { return nil }
+        return k
+    }
+
+    /// 閉じる操作（外を押す・Delete）で位置を捨てる。開く側は popoverPosition を置くだけ。
+    private var popoverBinding: Binding<Bool> {
+        Binding(get: { popoverTarget != nil },
+                set: { if !$0 { popoverPosition = nil } })
+    }
+
+    /// 吹き出しの中身。見出しは音量、Smooth / Hold は押した瞬間に効いて開いたまま、Delete は効かせて閉じる。
+    /// 動作は位置を持ち、実行時に添字を引き直す。
+    @ViewBuilder
+    private func popoverContent(at k: Int) -> some View {
+        if automation.keyframes.indices.contains(k) {
+            let p = automation.keyframes[k].position
+            VStack(spacing: 12) {
+                Text(automation.source.label(p))
+                    .font(.headline.monospacedDigit())
+                    .accessibilityAddTraits(.isHeader)
+                Picker("Interpolation", selection: Binding(
+                    get: { automation.keyframes.indices.contains(k) && automation.keyframes[k].hold },
+                    set: { setHold?(p, $0) })) {
+                    Text("Smooth").tag(false)
+                    Text("Hold").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                // 一番上は次が無いので Hold を選べない。分節ごとの無効化は標準の Picker に無いので、
+                // 隠さず部品ごと灰色にする（Smooth のまま動かない）。
+                .disabled(!automation.canHold(k))
+                Button(role: .destructive) {
+                    delete?(p)
+                    popoverPosition = nil
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(16)
+            .frame(width: 240)
+            // iPhone でもシートにせず、矢印つきの吹き出しのまま出す。
+            .presentationCompactAdaptation(.popover)
         }
-        // 一番上は次が無いので選べない（隠さず灰色にする）。
-        let holding = UIAction(title: "Hold", attributes: automation.canHold(k) ? [] : .disabled,
-                               state: hold ? .on : .off) { _ in
-            setHold?(position, true)
-        }
-        let remove = UIAction(title: "Delete", image: UIImage(systemName: "trash"),
-                              attributes: .destructive) { _ in
-            delete?(position)
-        }
-        return UIMenu(title: automation.source.label(position), children: [
-            UIMenu(options: [.displayInline, .singleSelection], children: [smooth, holding]),
-            remove,
-        ])
     }
 
     private func handleDrag(_ value: DragGesture.Value, width: CGFloat) {
-        // 長押しでメニューを開いたあとの動きは菱形を動かさない。
+        // 長押しで吹き出しを開いたあとの動きは菱形を動かさない。
         guard !pressConsumed else { return }
         if !dragStarted {
             dragStarted = true
@@ -398,65 +444,6 @@ private struct KeyframeLongPress: UIGestureRecognizerRepresentable {
             finished()
         default:
             break
-        }
-    }
-}
-
-/// メニューの出し口。標準の UIButton（showsMenuAsPrimaryAction）で、コードから開く。
-/// **触りは取らない。**押した指を UIKit の追跡に取られると、選んだ菱形を横へ引く操作が始まらなくなる。
-private struct KeyframeMenuAnchor: UIViewRepresentable {
-    /// 増えたら開く。
-    let request: Int
-    /// 開く瞬間に作る（nil なら開かない）。
-    let makeMenu: () -> UIMenu?
-
-    final class Coordinator {
-        var last: Int
-        init(last: Int) { self.last = last }
-    }
-
-    /// 最初の描画で開かないよう、最初の合図の値を覚える。
-    func makeCoordinator() -> Coordinator { Coordinator(last: request) }
-
-    func makeUIView(context: Context) -> AnchorButton {
-        let button = AnchorButton(type: .system)
-        button.showsMenuAsPrimaryAction = true
-        return button
-    }
-
-    func updateUIView(_ button: AnchorButton, context: Context) {
-        button.makeMenu = makeMenu
-        guard request != context.coordinator.last else { return }
-        context.coordinator.last = request
-        // 出し口が新しい菱形へ動いてから開く。
-        DispatchQueue.main.async { [weak button] in button?.present() }
-    }
-
-    final class AnchorButton: UIButton {
-        var makeMenu: (() -> UIMenu?)?
-        /// 開いている間は、次の合図を受けない（長押しのあとに来る押しで開き直さない）。
-        private var showing = false
-
-        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
-
-        func present() {
-            guard !showing, window != nil, let menu = makeMenu?() else { return }
-            self.menu = menu
-            performPrimaryAction()
-        }
-
-        override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-                                             willDisplayMenuFor configuration: UIContextMenuConfiguration,
-                                             animator: (any UIContextMenuInteractionAnimating)?) {
-            super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
-            showing = true
-        }
-
-        override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-                                             willEndFor configuration: UIContextMenuConfiguration,
-                                             animator: (any UIContextMenuInteractionAnimating)?) {
-            super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
-            showing = false
         }
     }
 }

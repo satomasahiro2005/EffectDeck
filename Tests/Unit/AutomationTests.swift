@@ -267,7 +267,7 @@ final class AutomationTests: XCTestCase {
                        "色づけだけの菱形は選んでいないのと同じ")
         XCTAssertEqual(ETAutomation.stripAction(hit: 0, explicit: 1, longPress: false), .select(0))
         XCTAssertEqual(ETAutomation.stripAction(hit: 1, explicit: 1, longPress: false), .openMenu(1),
-                       "選んでいる菱形をもう一度押すとメニュー")
+                       "選んでいる菱形をもう一度押すと吹き出し")
         // 長押し
         XCTAssertEqual(ETAutomation.stripAction(hit: 2, explicit: nil, longPress: true), .openMenu(2))
         XCTAssertEqual(ETAutomation.stripAction(hit: 0, explicit: 1, longPress: true), .openMenu(0))

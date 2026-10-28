@@ -276,13 +276,13 @@ struct ETAutomation: Equatable {
     enum StripAction: Equatable {
         case select(Int)
         case deselect
-        /// そのキーフレームのメニュー（Smooth / Hold / Delete）を開く。
+        /// そのキーフレームの吹き出し（Smooth / Hold / Delete）を開く。
         case openMenu(Int)
     }
 
     /// 帯の押しを、すること1つに決める。hit は押した所の菱形（無ければ nil）、explicit は押して選んでいる菱形。
-    /// 短い押し: 空いた所は選びを外す・選んでいない菱形は選ぶ・選んでいる菱形をもう一度押したらメニュー。
-    /// 長押し: 菱形ならどれでもメニュー、空いた所は何もしない（選びも外さない。外すのは短い押しだけ）。
+    /// 短い押し: 空いた所は選びを外す・選んでいない菱形は選ぶ・選んでいる菱形をもう一度押したら吹き出し。
+    /// 長押し: 菱形ならどれでも吹き出し、空いた所は何もしない（選びも外さない。外すのは短い押しだけ）。
     /// editTarget の色づけだけで選ばれている菱形は「選んでいない」ので、explicit には入らない。
     static func stripAction(hit: Int?, explicit: Int?, longPress: Bool) -> StripAction? {
         guard let hit else { return longPress ? nil : .deselect }
@@ -303,7 +303,7 @@ struct ETAutomation: Equatable {
         return min(max(volume, source.range.lowerBound), source.range.upperBound)
     }
 
-    /// Hold を選べるか。一番上は次が無いので選べない（メニューでは隠さず灰色にする。setHold も同じ線引き）。
+    /// Hold を選べるか。一番上は次が無いので選べない（吹き出しでは隠さず Picker ごと灰色にする。setHold も同じ線引き）。
     func canHold(_ k: Int) -> Bool {
         keyframes.indices.contains(k) && k < keyframes.count - 1
     }
