@@ -697,7 +697,7 @@ private struct NoteSpectrogramGraph: View {
                 // 字は回さない。上流も Horizontal では 90 度戻している（:1222-1227）。
                 drawOctaveLabels(&context, frame: frame, rollWidth: rollWidth,
                                  gutter: gutter, rowHeight: rowHeight)
-                drawLegend(&context, in: plot.rect)
+                drawLegend(&context, in: plot.rect, palette: palette)
             },
             overlay: { plot in
                 // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
@@ -1053,7 +1053,9 @@ private struct NoteSpectrogramGraph: View {
     }
 
     /// 音色の凡例（上流 _drawTimbreLegend）。左上から並べ、入らなければ折り返す。
-    private func drawLegend(_ context: inout GraphicsContext, in rect: CGRect) {
+    /// 地は図の地（graph-bg-deep）、字は graph-label（#666）で上流と同じ。外観に依らず黒い地に .secondary の字だと、
+    /// 明るい外観で暗い地に濃い灰色が乗って読めなかった。
+    private func drawLegend(_ context: inout GraphicsContext, in rect: CGRect, palette: ETNotePalette) {
         var labels: [String] = []
         switch display.color {
         case .instrument3: labels = ["Vocal", "Bass", "Other"]
@@ -1066,12 +1068,12 @@ private struct NoteSpectrogramGraph: View {
         var x = rect.minX + padding, y = rect.minY + padding
         for label in labels {
             let index = ETNoteTimbre.classes.firstIndex(of: label)
-            let text = context.resolve(Text(label).font(.system(size: 12)).foregroundStyle(.secondary))
+            let text = context.resolve(Text(label).font(.system(size: 12)).foregroundStyle(ETNotePalette.line))
             let width = text.measure(in: CGSize(width: 1000, height: line)).width + (index == nil ? 0 : swatch)
                 + 2 * padding
             if x > rect.minX + padding && x + width > rect.maxX - padding { x = rect.minX + padding; y += line }
             guard y + line <= rect.maxY else { break }
-            context.fill(Path(CGRect(x: x, y: y, width: width, height: line)), with: .color(.black.opacity(0.55)))
+            context.fill(Path(CGRect(x: x, y: y, width: width, height: line)), with: .color(palette.background))
             if let index {
                 let c = ETNoteTimbre.colors[index]
                 context.fill(Path(CGRect(x: x + padding, y: y + 5, width: 10, height: 10)),
