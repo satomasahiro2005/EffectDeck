@@ -77,6 +77,9 @@ struct GraphCanvas<Overlay: View>: View {
     @Environment(\.scenePhase) private var scenePhase
     /// PoC: PC の鎖を編集しているあいだの Analyzer（Views/RemoteScannerView.swift の ETRemoteMeasurementDim）。
     @Environment(\.etMeasurementDimmed) private var measurementDimmed
+    /// 格子の層の鍵（ETGraphGrid）。外観とコントラストで線と字の色が変わる。
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @GestureState private var previewActive = false
     var insets: ETGraphInsets
     /// 掴んでいる値。空なら caption を出す。
@@ -132,18 +135,29 @@ struct GraphCanvas<Overlay: View>: View {
             if showsHeader { header }
             GeometryReader { geo in
                 ZStack {
-                    Canvas { context, size in
-                        let plot = ETPlot(size: size, x: x, y: y, insets: insets)
-                        Self.drawGrid(&context, plot)
-                        if clipsContent {
-                            context.drawLayer { layer in
-                                layer.clip(to: Path(plot.rect.insetBy(dx: -0.5, dy: -0.5)))
-                                draw(&layer, plot)
+                    // 格子は軸・余白・大きさが同じあいだ描き直さない（下の ETGraphGrid）。
+                    // 以前は格子と中身が 1 枚の Canvas で、沈めるときの不透明度（0.3）は
+                    // 合わさった絵に掛かっていた。Canvas が 2 枚だと 1 枚ずつに掛かり、
+                    // Spectrogram の不透明な絵から格子が透けてしまう。
+                    // compositingGroup で 1 枚の絵に戻して、掛かり方を前と同じにする。
+                    // overlay は前から別の View だったので、グループの外に置く。
+                    ZStack {
+                        ETGraphGrid(x: x, y: y, insets: insets, size: geo.size,
+                                    colorScheme: colorScheme, contrast: colorSchemeContrast)
+                            .equatable()
+                        Canvas { context, size in
+                            let plot = ETPlot(size: size, x: x, y: y, insets: insets)
+                            if clipsContent {
+                                context.drawLayer { layer in
+                                    layer.clip(to: Path(plot.rect.insetBy(dx: -0.5, dy: -0.5)))
+                                    draw(&layer, plot)
+                                }
+                            } else {
+                                draw(&context, plot)
                             }
-                        } else {
-                            draw(&context, plot)
                         }
                     }
+                    .compositingGroup()
                     overlay(ETPlot(size: geo.size, x: x, y: y, insets: insets))
                 }
                 .simultaneousGesture(DragGesture(minimumDistance: 0)
@@ -226,6 +240,29 @@ struct GraphCanvas<Overlay: View>: View {
         .frame(height: ETGraphMetrics.readoutHeight, alignment: .leading)
         .lineLimit(1)
         .minimumScaleFactor(0.8)
+    }
+}
+
+/// 格子と目盛りの字だけを描く層。
+/// 中身（draw）は毎フレーム変わるが、格子は軸・余白・大きさが同じあいだ描き直さなくてよい。
+/// 別の層にして .equatable() で飛ばす（計測では drawGrid が canvas の 672 サンプル中 489 だった）。
+private struct ETGraphGrid: View, Equatable {
+    let x: ETAxis
+    let y: ETAxis
+    let insets: ETGraphInsets
+    /// size / colorScheme / contrast は比べるための鍵にだけ使う。
+    /// 線と字の色（.quaternary / .tertiary / .secondary）は外観とコントラストで変わるので、
+    /// Canvas が環境の変化で自分から描き直すかどうかに頼らず鍵に入れてある。
+    /// body は読まないが、消してはいけない。
+    let size: CGSize
+    let colorScheme: ColorScheme
+    let contrast: ColorSchemeContrast
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            Self.drawGrid(&context, ETPlot(size: canvasSize, x: x, y: y, insets: insets))
+        }
+        .accessibilityHidden(true)
     }
 
     // MARK: 格子

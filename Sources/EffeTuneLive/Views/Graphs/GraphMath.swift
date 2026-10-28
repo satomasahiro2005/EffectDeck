@@ -44,7 +44,7 @@ enum ETAxisScale {
     case logarithmic
 }
 
-struct ETAxisTick {
+struct ETAxisTick: Equatable {
     let value: Double
     /// nil なら線だけ引いて字は出さない。
     let label: String?
@@ -58,7 +58,8 @@ struct ETAxisTick {
     }
 }
 
-struct ETAxis {
+/// Equatable は GraphCanvas の格子の層が「前と同じ軸か」を比べるため。同じなら格子を描き直さない。
+struct ETAxis: Equatable {
     var scale: ETAxisScale
     var lower: Double
     var upper: Double
