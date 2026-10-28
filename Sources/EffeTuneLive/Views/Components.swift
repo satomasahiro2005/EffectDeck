@@ -34,8 +34,12 @@ enum ETMetrics {
     /// 文字サイズに追従させた数値欄の高さ（UIKit 側で測るとき用）。
     /// SwiftUI の中では ETValueFrame の @ScaledMetric を使い、これは ETTapOutside のように
     /// View の外から当たりを測る所だけが読む。既定の文字サイズでは controlHeight と同じ。
+    /// アプリは標準より小さい文字サイズでは縮めない（EffeTuneLiveApp の .dynamicTypeSize(.large...)）ので、ここも揃える。
     static var scaledControlHeight: CGFloat {
-        UIFontMetrics(forTextStyle: .footnote).scaledValue(for: controlHeight)
+        let current = UITraitCollection.current.preferredContentSizeCategory
+        let category = current < .large ? .large : current
+        return UIFontMetrics(forTextStyle: .footnote)
+            .scaledValue(for: controlHeight, compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
     }
 }
 

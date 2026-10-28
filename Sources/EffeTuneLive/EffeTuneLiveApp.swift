@@ -46,13 +46,19 @@ struct EffeTuneLiveApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // -ETProbe 1 のときは並べ替えの切り分け用の画面
-            // （ReorderProbeView.swift の頭）。
-            if ETScreenshotSeed.probe {
-                ETReorderProbeView()
-            } else {
-                PipelineView()
+            Group {
+                // -ETProbe 1 のときは並べ替えの切り分け用の画面
+                // （ReorderProbeView.swift の頭）。
+                if ETScreenshotSeed.probe {
+                    ETReorderProbeView()
+                } else {
+                    PipelineView()
+                }
             }
+            // **標準より小さい文字サイズでは縮めない。**図の目盛りや補足は標準で 9〜11pt と小さく作ってあり、
+            // iOS の最小の設定に合わせてさらに縮めると読めなくなった（本人の設定で確かめた）。
+            // 大きくする側はそのまま効かせる。
+            .dynamicTypeSize(.large...)
         }
     }
 }
