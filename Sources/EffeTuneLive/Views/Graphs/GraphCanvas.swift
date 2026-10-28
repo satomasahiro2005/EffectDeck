@@ -160,6 +160,7 @@ struct GraphCanvas<Overlay: View>: View {
                     .compositingGroup()
                     overlay(ETPlot(size: geo.size, x: x, y: y, insets: insets))
                 }
+                // etOwnsDrag-exempt: 解析の図の試聴の音を出すだけで何も動かさない。畳んだ図の払いと長押しを止めないため印を付けない（印は印を掴む子の面が付ける）
                 .simultaneousGesture(DragGesture(minimumDistance: 0)
                     .updating($previewActive) { _, active, _ in active = x.isFrequency || y.isFrequency }
                     .onChanged { touch in

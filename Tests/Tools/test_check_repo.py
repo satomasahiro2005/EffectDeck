@@ -283,6 +283,191 @@ class CheckRepoTests(unittest.TestCase):
             write(tmp / "NOTICE.md", "# What is bundled\n\n## EffeTune\n")
             self.assertProblem(tmp, "NOTICE.md に WDL / LICE", "--only", "notice")
 
+    # ---- drag（etOwnsDrag の印）
+
+    VIEW = "Sources/EffeTuneLive/Views/Effects/X.swift"
+
+    def drag_result(self, swift, rel=VIEW):
+        with TempDir() as tmp:
+            build(tmp)
+            write(tmp / rel, swift)
+            return self.run_check(tmp, "--only", "drag")
+
+    def test_drag_unmarked_gesture_flagged_with_line(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        Color.clear\n"
+            "            .gesture(DragGesture(minimumDistance: 6)\n"
+            "                .onChanged { _ in })\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 1, out)
+        self.assertIn("Sources/EffeTuneLive/Views/Effects/X.swift:4 の DragGesture(", out)
+        self.assertIn("etOwnsDrag-exempt", out)
+
+    def test_drag_mark_after_gesture_passes(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        Color.clear\n"
+            "            .gesture(DragGesture(minimumDistance: 6)\n"
+            "                .onChanged { _ in })\n"
+            "            .onChange(of: a) { _, _ in }\n"
+            "            .etOwnsDrag()\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 0, out)
+
+    def test_drag_mark_on_ancestor_passes(self):
+        # JSFX の面のように、ジェスチャは GeometryReader の中、印は GeometryReader の後ろ。
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        GeometryReader { g in\n"
+            "            Color.black\n"
+            "                .gesture(DragGesture(minimumDistance: 0))\n"
+            "                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in }\n"
+            "        }\n"
+            "        .modifier(Layout(a: x ? 1 : nil))\n"
+            "        .clipped()\n"
+            "        .etOwnsDrag()\n"
+            "        .onDisappear { }\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 0, out)
+
+    def test_drag_mark_on_sibling_does_not_cover(self):
+        # 同じファイルに印が在るだけでは足りない。1 か所ごとに見る。
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        ZStack {\n"
+            "            Color.clear\n"
+            "                .gesture(DragGesture(minimumDistance: 0))\n"
+            "                .etOwnsDrag()\n"
+            "            Color.red\n"
+            "                .gesture(DragGesture(minimumDistance: 1))\n"
+            "        }\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 1, out)
+        self.assertIn("X.swift:8 の DragGesture(", out)
+        self.assertNotIn("X.swift:5", out)
+
+    def test_drag_exempt_comment_above_modifier_passes(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        // 読むだけ。\n"
+            "        Color.clear\n"
+            "            // etOwnsDrag-exempt: 読むだけで何も動かさない\n"
+            "            // （理由の続き）\n"
+            "            .simultaneousGesture(\n"
+            "                DragGesture(minimumDistance: 0)\n"
+            "                    .onChanged { _ in })\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 0, out)
+
+    def test_drag_exempt_trailing_comment_passes(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        Color.clear.gesture(DragGesture()) // etOwnsDrag-exempt: 診断用\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 0, out)
+
+    def test_drag_exempt_needs_reason(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        // etOwnsDrag-exempt:\n"
+            "        Color.clear.gesture(DragGesture())\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 1, out)
+        self.assertIn("X.swift:4 の DragGesture(", out)
+
+    def test_drag_exempt_far_above_does_not_count(self):
+        # 離れた別の文の免除は、このジェスチャのものではない。
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        // etOwnsDrag-exempt: 上のぶん\n"
+            "        Color.clear.gesture(DragGesture())\n"
+            "            .etOwnsDrag()\n"
+            "        Color.red\n"
+            "            .frame(width: 1)\n"
+            "            .gesture(DragGesture())\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 1, out)
+        self.assertIn("X.swift:8 の DragGesture(", out)
+
+    def test_drag_gesture_returning_func_follows_use_site(self):
+        marked = (
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        Color.clear\n"
+            "            .gesture(drag(in: plot))\n"
+            "            .etOwnsDrag()\n"
+            "    }\n"
+            "    private func drag(in plot: P) -> some Gesture {\n"
+            "        DragGesture(minimumDistance: 0)\n"
+            "            .onChanged { _ in }\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(self.drag_result(marked)[0], 0)
+        code, out = self.drag_result(marked.replace("            .etOwnsDrag()\n", ""))
+        self.assertEqual(code, 1, out)
+        self.assertIn("X.swift:7 の DragGesture(", out)
+        self.assertIn("使う側", out)
+
+    def test_drag_gesture_returning_func_unused_flagged(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    private func drag() -> some Gesture {\n"
+            "        DragGesture()\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 1, out)
+
+    def test_drag_gesture_returning_func_exempt_above_decl(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    // etOwnsDrag-exempt: 鎖の外の画面\n"
+            "    private func drag() -> some Gesture {\n"
+            "        LongPressGesture().sequenced(before: DragGesture())\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 0, out)
+
+    def test_drag_ignores_comments_strings_taps_and_other_folders(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    // DragGesture( を使わない\n"
+            "    var body: some View {\n"
+            "        Text(\"DragGesture(\\(x)\")\n"
+            "            .onTapGesture { }\n"
+            "            .onDrag { NSItemProvider() }\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 0, out)
+        code, out = self.drag_result("let g = DragGesture()\n", rel="Sources/EffeTuneLive/Audio/Y.swift")
+        self.assertEqual(code, 0, out)
+
+    def test_drag_magnification_gesture_flagged(self):
+        code, out = self.drag_result(
+            "struct V: View {\n"
+            "    var body: some View {\n"
+            "        Color.clear.gesture(MagnificationGesture())\n"
+            "    }\n"
+            "}\n")
+        self.assertEqual(code, 1, out)
+        self.assertIn("MagnificationGesture(", out)
+
     # ---- paths
 
     def test_dead_path_flagged(self):

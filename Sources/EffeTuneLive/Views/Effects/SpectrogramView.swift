@@ -320,6 +320,7 @@ private struct SpectrogramGraph: View {
                 // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
                 Color.clear
                     .contentShape(Rectangle())
+                    // etOwnsDrag-exempt: 読むだけで何も動かさない。行の掴みと払いは止めず、縦スクロールと同時に効かせる
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { touch in probe = sample(at: touch.location, plot: plot) }

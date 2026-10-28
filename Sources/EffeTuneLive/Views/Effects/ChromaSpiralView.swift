@@ -270,6 +270,7 @@ private struct ChromaSpiralFigure: View {
                 // GraphCanvas の試聴は直交軸しか扱えないので自前で持つ（PitchMeterView と同じ形）。
                 Color.clear
                     .contentShape(Rectangle())
+                    // etOwnsDrag-exempt: 試聴の音と目印を出すだけで何も動かさない。行の掴みと払いは止めず、縦スクロールと同時に効かせる
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .updating($previewActive) { _, active, _ in active = true }

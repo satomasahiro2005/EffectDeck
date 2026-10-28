@@ -185,6 +185,7 @@ private struct PitchMeterGraph: View {
             .overlay {
                 GeometryReader { geometry in
                     Color.clear.contentShape(Rectangle())
+                        // etOwnsDrag-exempt: 試聴の音を出すだけで何も動かさない。行の掴みと払いは止めず、縦スクロールと同時に効かせる
                         .simultaneousGesture(DragGesture(minimumDistance: 0)
                             .updating($previewActive) { _, active, _ in active = true }
                             .onChanged { touch in

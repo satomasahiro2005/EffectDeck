@@ -388,6 +388,17 @@ extension View {
     /// SwiftUIのジェスチャで指を受ける面（JSFXのcanvas、EQの印を掴む面）と、
     /// 中身が自前で触りを読むかもしれない面（AUのUI）に付ける。
     /// UISliderのようなUIControlや入れ子のUIScrollViewはownsDragが自分で見つけるので要らない。
+    ///
+    /// **規則（Tools/check_repo.py の drag）。**Views の下で `DragGesture(` などを使う所は、
+    /// そのジェスチャを付けた View か祖先に続けて `.etOwnsDrag()` を書く。付けない所は
+    /// ジェスチャの行か、その上の `//` のかたまりに
+    ///
+    ///     // etOwnsDrag-exempt: 理由
+    ///
+    /// と書く（理由は必須）。指を置く面が行の掴みと払いと取り合ってよい理由を書く:
+    /// 読むだけで何も動かさない図、鎖の外の画面など。印を付けると、その面の上では
+    /// 払いも長押しも立たなくなるので、掴む取っ手が無い面（畳んだ図）には付けない。
+    /// タップだけの面は対象外（onTapGesture は見ない）。
     func etOwnsDrag() -> some View {
         background(ETDragOwnerAnchor())
     }

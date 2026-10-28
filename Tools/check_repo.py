@@ -20,6 +20,8 @@
               github の EffectDeck/blob/main/<path> は <path> が在る
   names       ETNames.h の ET_ROUTE_NAME と ET_DRIVER_NAME が ET_NAME_STEM を含む。Swift に写しがあれば同じ字
   notice      gen_licenses.py の ITEMS が全部 NOTICE.md に書いてある
+  drag        Views の SwiftUI のドラッグ系ジェスチャ（DragGesture( など）が etOwnsDrag() で覆われている。
+              覆わない面は `// etOwnsDrag-exempt: 理由` を書く（DragHandle.swift の etOwnsDrag の説明）
   paths       ドキュメントとコメントが挙げているリポジトリの中のパスが在る
               （.gitignore に当たるもの＝手元のログや生成物は在るものとして扱う）。
               消せない引用は Tools/check_repo_allow.txt に理由つきで書く
@@ -572,6 +574,226 @@ def check_paths(repo, args):
     return bad
 
 
+# ---------------------------------------------------------------- ドラッグの印
+
+# 指の動きを受ける SwiftUI のジェスチャ。onTapGesture・LongPressGesture 単独は動かさないので見ない
+# （長押し→ドラッグの組は DragGesture( が当たる）。onDrag（並べ替えの取っ手）もこの規則の外。
+DRAG_GESTURE = re.compile(r"\b(?:DragGesture|MagnificationGesture|MagnifyGesture|RotateGesture|RotationGesture)\s*\(")
+DRAG_EXEMPT = re.compile(r"etOwnsDrag-exempt:[ \t]*(\S[^\n]*)")
+DRAG_VIEWS_PREFIX = "Sources/EffeTuneLive/Views/"
+# `{` の頭がこれなら宣言（View や関数の本体）。印を探して祖先を遡るのはここまで。
+DRAG_DECL_HEAD = re.compile(r"\b(?:func|var|let|struct|class|enum|extension|init|subscript|protocol)\b|->[^{}]*$")
+
+
+def swift_code_only(text):
+    """コメントと文字列の中身を空白に置き換えた同じ長さの文。括弧の数えを狂わせないため。"""
+    out = list(text)
+    n = len(text)
+
+    def blank(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    i = 0
+    while i < n:
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(i, j)
+            i = j
+        elif text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            blank(i, j)
+            i = j
+        elif text.startswith('"""', i):
+            j = text.find('"""', i + 3)
+            end = n if j < 0 else j
+            blank(i + 3, end)
+            i = end + 3
+        elif text[i] == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\n':
+                if text.startswith("\\(", j):
+                    depth, j = 1, j + 2    # 文字列の中の式。中の括弧も閉じまで飛ばす
+                    while j < n and depth:
+                        depth += {"(": 1, ")": -1}.get(text[j], 0)
+                        j += 1
+                else:
+                    j += 2 if text[j] == "\\" else 1
+            blank(i + 1, j)
+            i = j + 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+_PAIRS = {")": "(", "]": "[", "}": "{"}
+
+
+def _enclosing_open(code, pos):
+    """pos を囲む、閉じていない開き括弧の位置。無ければ -1。"""
+    depth = {"(": 0, "[": 0, "{": 0}
+    for k in range(pos - 1, -1, -1):
+        c = code[k]
+        if c in _PAIRS:
+            depth[_PAIRS[c]] += 1
+        elif c in depth:
+            if depth[c]:
+                depth[c] -= 1
+            else:
+                return k
+    return -1
+
+
+def _match_close(code, op):
+    """開き括弧 op に対応する閉じ括弧の位置。無ければ -1。"""
+    stack = []
+    for k in range(op, len(code)):
+        c = code[k]
+        if c in "([{":
+            stack.append(c)
+        elif c in _PAIRS:
+            if not stack:
+                return -1
+            stack.pop()
+            if not stack:
+                return k
+    return -1
+
+
+_MODIFIER = re.compile(r"\s*\.\s*(\w+)")
+_CLOSURE = re.compile(r"[ \t]*\{")
+_LABELED_CLOSURE = re.compile(r"\s*\w+\s*:\s*\{")
+
+
+def _chain_has_mark(code, close):
+    """閉じ括弧 close の直後に続く .modifier の連なりに .etOwnsDrag() が在るか。"""
+    pos = close + 1
+    while True:
+        m = _MODIFIER.match(code, pos)
+        if not m:
+            return False
+        name, pos = m.group(1), m.end()
+        if code[pos:pos + 1] == "(":
+            if name == "etOwnsDrag":
+                return True
+            end = _match_close(code, pos)
+            if end < 0:
+                return False
+            pos = end + 1
+        m = _CLOSURE.match(code, pos)
+        while m:    # 後ろ付きの閉じ（onGeometryChange(...) { } action: { } も）
+            end = _match_close(code, m.end() - 1)
+            if end < 0:
+                return False
+            pos = end + 1
+            m = _LABELED_CLOSURE.match(code, pos)
+
+
+def _drag_covered(code, pos):
+    """pos の位置の式が .etOwnsDrag() に覆われているか。
+
+    返すのは (覆われている, 遡りが止まった宣言の `{` の位置または -1)。
+    式の後ろに続く .modifier と、それを囲む括弧・閉じの後ろに続く .modifier を、
+    宣言（var body・func）の本体に着くまで見る。"""
+    cur = pos
+    while True:
+        op = _enclosing_open(code, cur)
+        if op < 0:
+            return False, -1
+        if code[op] == "{":
+            head = code[code.rfind("\n", 0, op) + 1:op]
+            if DRAG_DECL_HEAD.search(head):
+                return False, op
+        end = _match_close(code, op)
+        if end >= 0 and _chain_has_mark(code, end):
+            return True, -1
+        cur = op
+
+
+def _line_of(text, pos):
+    return text.count("\n", 0, pos) + 1
+
+
+def _drag_exempt(lines, numbers):
+    """numbers（1 始まり）の行の末尾か、その真上の // のかたまりに理由つきの免除が在るか。
+    理由の無い `etOwnsDrag-exempt:` は免除にしない。"""
+    for ln in numbers:
+        if not 1 <= ln <= len(lines):
+            continue
+        m = DRAG_EXEMPT.search(lines[ln - 1])
+        if m and "//" in lines[ln - 1][:m.start()]:
+            return True
+        i = ln - 2
+        while i >= 0 and lines[i].lstrip().startswith("//"):
+            if DRAG_EXEMPT.search(lines[i]):
+                return True
+            i -= 1
+    return False
+
+
+def drag_problems(text):
+    """1 つの Swift ファイルの、印も免除も無いドラッグ系ジェスチャの (行, 名前, func 経由か)。"""
+    code = swift_code_only(text)
+    lines = text.split("\n")
+    bad = []
+    for m in DRAG_GESTURE.finditer(code):
+        name = m.group(0).rstrip("( \t\n")
+        ln = _line_of(text, m.start())
+        covered, decl = _drag_covered(code, m.start())
+        heads = [ln]
+        first = _enclosing_open(code, m.start())
+        if first >= 0 and code[first] == "(":
+            heads.append(_line_of(text, first))    # .gesture( を開いた行
+        via_func = False
+        if not covered and decl >= 0:
+            # `some Gesture` を返す func / var の中。印は使う側（.gesture(drag(...))）に付く。
+            decl_m = None
+            for decl_m in re.finditer(r"\b(func|var)\s+(\w+)", code[:decl]):
+                pass
+            if decl_m and re.search(r"\bGesture\b", code[decl_m.start():decl]):
+                via_func = True
+                heads.append(_line_of(text, decl_m.start()))
+                kind, ident = decl_m.group(1), decl_m.group(2)
+                use = re.compile(r"\b%s\s*\(" % ident if kind == "func" else r"\b%s\b" % ident)
+                uses = [u for u in use.finditer(code)
+                        if not (decl_m.start() <= u.start() < decl)]
+                covered = bool(uses) and all(_drag_covered(code, u.start())[0] for u in uses)
+        if covered or _drag_exempt(lines, heads):
+            continue
+        bad.append((ln, name, via_func))
+    return bad
+
+
+def check_drag(repo, args):
+    """カードの中の面が指の動きを SwiftUI のジェスチャで受けるなら、その面は etOwnsDrag() の印を敷く。
+
+    鎖の長押し（並べ替え）と横の払い（削除）は UIScrollView の認識器で、UIKit の部品は当たりで
+    見つかるが、SwiftUI のジェスチャは見えない。印が無いと指が行の掴みや払いにも渡る。
+    ファイルごとでなく 1 か所ごとに見る。"""
+    bad = []
+    for rel in repo.files:
+        if not rel.startswith(DRAG_VIEWS_PREFIX) or not rel.endswith(".swift"):
+            continue
+        try:
+            text = repo.read(rel).replace("\r\n", "\n")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for ln, name, via_func in drag_problems(text):
+            bad.append("%s:%d の %s( に .etOwnsDrag() が続いていない%s。印を付けるか、"
+                       "その行かすぐ上の // に `// etOwnsDrag-exempt: 理由` を書く"
+                       % (rel, ln, name, "（使う側の .gesture(...) を見た）" if via_func else ""))
+    return bad
+
+
 CHECKS = [
     ("chain", check_chain),
     ("versions", check_versions),
@@ -579,6 +801,7 @@ CHECKS = [
     ("urls", check_urls),
     ("names", check_names),
     ("notice", check_notice),
+    ("drag", check_drag),
     ("paths", check_paths),
 ]
 
