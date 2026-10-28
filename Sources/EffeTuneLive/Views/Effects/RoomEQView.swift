@@ -336,6 +336,7 @@ struct RoomEQView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .etFont(size: 14)
         }
     }
 

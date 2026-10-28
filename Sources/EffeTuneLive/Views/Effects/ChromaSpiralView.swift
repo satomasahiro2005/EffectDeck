@@ -178,6 +178,7 @@ struct ChromaSpiralView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .etFont(size: 14)
         }
         .padding(.vertical, 2)
     }

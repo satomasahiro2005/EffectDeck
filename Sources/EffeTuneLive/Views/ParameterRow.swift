@@ -200,6 +200,8 @@ struct ParameterRow: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+                // 隣の題（14）と揃える。指定しないと本文の 17 になる。
+                .etFont(size: 14)
             }
 
         case .number:

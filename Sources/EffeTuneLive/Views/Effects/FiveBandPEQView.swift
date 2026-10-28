@@ -474,6 +474,7 @@ struct FiveBandPEQView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .etFont(size: 14)
             } trailing: {
                 Toggle("Enabled", isOn: Binding(
                     get: { current.enabled },

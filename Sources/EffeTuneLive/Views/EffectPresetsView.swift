@@ -123,7 +123,7 @@ struct EffectPresetsView: View {
                 // グループ名が空なら見出しを出さない（上流 :273-278 の `if (group.label)`）。
                 if !group.id.isEmpty {
                     Text(group.id)
-                        .etFont(size: 12, weight: .semibold)
+                        .etFont(size: 13, weight: .semibold)
                         .foregroundStyle(.secondary)
                 }
                 ForEach(group.presets) { preset in
@@ -131,7 +131,7 @@ struct EffectPresetsView: View {
                         apply(preset.params)
                     } label: {
                         HStack {
-                            Text(preset.label).foregroundStyle(.primary)
+                            Text(preset.label).etFont(size: 15).foregroundStyle(.primary)
                             Spacer(minLength: 8)
                             if preset.presetId == active {
                                 Image(systemName: "checkmark")
@@ -151,25 +151,27 @@ struct EffectPresetsView: View {
         Section {
             HStack {
                 TextField("Preset name", text: $newName)
+                    .etFont(size: 15)
                     .textInputAutocapitalization(.words)
                 Button("Save") {
                     if let node = node { store.save(trimmedName, of: node) }
                     newName = ""
                 }
+                .etFont(size: 15)
                 .disabled(!canSave)
             }
 
             if names.isEmpty {
                 // 空でも 1 行出す。上流も空のときに言う（ui.pluginPresets.noUserPresets）。
                 Text("No saved presets")
-                    .font(.footnote)
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(names, id: \.self) { name in
                     Button {
                         applyUser(name)
                     } label: {
-                        Text(name).foregroundStyle(.primary)
+                        Text(name).etFont(size: 15).foregroundStyle(.primary)
                     }
                     // **.onDelete を使わない。** 位置で消すと、続けて払ったときに
                     // 別の行が消える。理由は PresetsView.swift:206-213 に書いてある。

@@ -119,7 +119,7 @@ private struct PitchMeterGraph: View {
     var body: some View {
         let current = reading
         VStack(alignment: .leading, spacing: 4) {
-            Text(current?.label ?? "Waiting for audio").font(.system(.caption, design: .monospaced))
+            Text(current?.label ?? "Waiting for audio").etFont(size: 12, design: .monospaced)
                 // 音名はテレメトリで何度も変わる。更新中だと伝えて、VoiceOver が拾い直せるようにする。
                 .accessibilityAddTraits(.updatesFrequently)
             Canvas { screen, size in

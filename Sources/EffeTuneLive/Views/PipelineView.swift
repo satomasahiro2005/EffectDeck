@@ -1462,7 +1462,7 @@ struct PipelineView: View {
             let radius = min(16, width / 2)
             Button(role: .destructive) { remove(row.node.id) } label: {
                 Image(systemName: "trash")
-                    .font(.body.weight(.semibold))
+                    .etFont(size: 15, weight: .semibold)
                     .foregroundStyle(.white)
                     .frame(width: width)
                     .frame(maxHeight: .infinity)
@@ -2635,9 +2635,12 @@ private struct EmptyChainRow: View {
                 .foregroundStyle(.secondary)
             Text("No effects")
                 .etFont(size: 16, weight: .semibold)
-            Button("Add Effect", action: add)
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 2)
+            Button(action: add) {
+                // 上の 'No effects'（16）と帯のボタン（13）の間の大きさ。
+                Text("Add Effect").etFont(size: 15, weight: .semibold)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
     }

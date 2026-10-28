@@ -394,6 +394,7 @@ struct DynamicEQParameterRow: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .etFont(size: 14)
                     .fixedSize(horizontal: stacked, vertical: false)
                 }
 

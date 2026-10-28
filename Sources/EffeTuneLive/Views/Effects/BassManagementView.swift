@@ -135,6 +135,7 @@ private struct BassManagementBody: View {
             Button("Use all output channels") {
                 dsp.setRouting(at: index, channelSpec: -2)
             }
+            .etFont(size: 14, weight: .medium)
         } else if let error = s.configurationError(allChannels: true, width: width) {
             Text(error.message)
                 .etFont(size: 12, weight: .semibold)
@@ -181,6 +182,8 @@ private struct BassManagementBody: View {
                             edit { $0.settingSubOutput(ch, enabled: on, width: w) }
                         }))
                         .toggleStyle(.button)
+                        // 14 は見出しと同じ。64pt の枠が窮屈なら 13 に下げる。
+                        .etFont(size: 14)
                         .accessibilityLabel("Sub output Ch \(ch + 1)")
                 }
             }
@@ -219,6 +222,7 @@ private struct BassManagementBody: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+                .etFont(size: 14)
             }
 
             frequencyRow(ch, s, name: name)
@@ -261,6 +265,7 @@ private struct BassManagementBody: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .etFont(size: 14)
         }
     }
 
@@ -277,11 +282,13 @@ private struct BassManagementBody: View {
                 get: { on },
                 set: { _ in edit { $0.togglingRoute(input: input, output: output) } }))
                 .toggleStyle(.button)
+                .etFont(size: 13, weight: .semibold)
                 .accessibilityLabel("Route Ch \(input + 1) to Sub Ch \(output + 1)")
             Toggle("Ø", isOn: Binding(
                 get: { inverted },
                 set: { _ in edit { $0.togglingInversion(input: input, output: output) } }))
                 .toggleStyle(.button)
+                .etFont(size: 13, weight: .semibold)
                 .disabled(!on)
                 .accessibilityLabel("Invert Ch \(input + 1) route to Sub Ch \(output + 1)")
         }
@@ -438,6 +445,7 @@ private struct BassManagementBody: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .etFont(size: 14)
         }
     }
 

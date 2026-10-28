@@ -358,6 +358,7 @@ struct PresetsView: View {
                 OutputCorrectionList(isRemote: isRemote)
             } label: {
                 Label("Output Correction", systemImage: "headphones")
+                    .etFont(size: 15)
             }
         }
     }
@@ -366,11 +367,13 @@ struct PresetsView: View {
         Section {
             HStack {
                 TextField("Preset name", text: $newName)
+                    .etFont(size: 15)
                     .textInputAutocapitalization(.words)
                 Button("Save") {
                     store.save(trimmedName, chain: dsp.chain)
                     newName = ""
                 }
+                .etFont(size: 15)
                 .disabled(!canSave)
             }
         } header: {
@@ -388,7 +391,7 @@ struct PresetsView: View {
             if store.names.isEmpty && store.emptyFolders.isEmpty {
                 // 空でも 1 行出す。上流も空のときに言う（ui.pluginPresets.noUserPresets）。
                 Text("No saved presets")
-                    .font(.footnote)
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
             } else {
                 // **見出しも中身も 1 本の ForEach に混ぜる。**並べ替えは
@@ -423,7 +426,7 @@ struct PresetsView: View {
                         // 最下部の空フォルダにだけ入れられなかったのがこれ。
                         // 掴めてしまうが、moveEntry が中身以外を無視する。
                         Text("Move a preset here")
-                            .font(.footnote)
+                            .etFont(size: 13)
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 20)
                     }
@@ -439,7 +442,7 @@ struct PresetsView: View {
                 // **Edit は置かない。**長押しでそのまま掴めるので、
                 // 先にモードへ入る必要が無い。
                 Button("New Folder") { typed = ""; naming = .newFolder }
-                    .font(.footnote)
+                    .etFont(size: 13)
                     .textCase(nil)
             }
         }
@@ -451,6 +454,7 @@ struct PresetsView: View {
             request(.user(name))
         } label: {
             Text(ETUserPresetName.leaf(name))
+                .etFont(size: 15)
                 .foregroundStyle(.primary)
                 // フォルダの中は字下げする。線を引かずに所属を出す。
                 .padding(.leading, folder.isEmpty ? 0 : 20)
@@ -500,7 +504,7 @@ struct PresetsView: View {
                 HStack(spacing: 6) {
                     Text(folder.name).etFont(size: 13, weight: .semibold)
                     if folder.items.isEmpty {
-                        Text("empty").font(.caption).foregroundStyle(.tertiary)
+                        Text("empty").etFont(size: 11).foregroundStyle(.tertiary)
                     }
                 }
             } icon: {
@@ -624,7 +628,8 @@ struct PresetsView: View {
         Section {
             // 見るための鎖を先に置く（Debug ビルドだけ空でない）。
             if !debugPresets.isEmpty || !jsfxFixtureCount.isEmpty {
-                DisclosureGroup("Debug") {
+                // 題も中の行も 15（プリセットの行と揃える）。
+                DisclosureGroup {
                     // **同梱の JSFX を全部載せた鎖。**上の 3 本は EffeTune の
                     // エフェクトだけなので、JSFX を見るにはこちらが要る。
                     if !jsfxFixtureCount.isEmpty {
@@ -632,7 +637,7 @@ struct PresetsView: View {
                             request(.debugJSFX)
                         } label: {
                             HStack {
-                                Text("JSFX Host Test").foregroundStyle(.primary)
+                                Text("JSFX Host Test").etFont(size: 15).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 Text(jsfxFixtureCount)
                                     .etFont(size: 12)
@@ -645,7 +650,7 @@ struct PresetsView: View {
                             request(.system(preset))
                         } label: {
                             HStack {
-                                Text(preset.name).foregroundStyle(.primary)
+                                Text(preset.name).etFont(size: 15).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 Text(countLabel(preset.effectCount))
                                     .etFont(size: 12)
@@ -653,16 +658,18 @@ struct PresetsView: View {
                             }
                         }
                     }
+                } label: {
+                    Text("Debug").etFont(size: 15)
                 }
             }
             ForEach(systemCategories, id: \.self) { category in
-                DisclosureGroup(category) {
+                DisclosureGroup {
                     ForEach(systemPresets(in: category)) { preset in
                         Button {
                             request(.system(preset))
                         } label: {
                             HStack {
-                                Text(preset.name).foregroundStyle(.primary)
+                                Text(preset.name).etFont(size: 15).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 // 数字だけ置かない。何を数えたのか読めない。
                                 Text(countLabel(preset.effectCount))
@@ -671,6 +678,8 @@ struct PresetsView: View {
                             }
                         }
                     }
+                } label: {
+                    Text(category).etFont(size: 15)
                 }
             }
         } header: {
@@ -685,13 +694,13 @@ struct PresetsView: View {
         let externalCount = mainExternal + (corrected ? dsp.correction.lazy.filter(\.isExternal).count : 0)
         return Section {
             HStack {
-                Text("Compatibility")
+                Text("Compatibility").etFont(size: 15)
                 Spacer()
                 HStack(spacing: 5) {
                     Image(systemName: externalCount == 0 ? "checkmark.circle.fill"
                                                            : "exclamationmark.triangle.fill")
                     Text(externalCount == 0 ? "EffeTune" : "EffectDeck only")
-                        .font(.subheadline.weight(.medium))
+                        .etFont(size: 15, weight: .medium)
                 }
                 .foregroundStyle(externalCount == 0 ? Color.green : Color.orange)
             }
@@ -706,6 +715,7 @@ struct PresetsView: View {
             } else if let deck = ETShareLink.deckURL(for: soundingChain(dsp.chain)) {
                 ShareLink(item: deck) {
                     Label("Share this chain", systemImage: "square.and.arrow.up")
+                        .etFont(size: 15)
                 }
             }
             // 鎖を ChatGPT に組ませる口（Build with ChatGPT…）はプリセットの口ではない。結果は
@@ -720,6 +730,7 @@ struct PresetsView: View {
                 dialog = text.isEmpty ? .emptyClipboard : .importClipboard(text)
             } label: {
                 Label("Import from clipboard", systemImage: "doc.on.clipboard")
+                    .etFont(size: 15)
             }
         } header: {
             Text("Share")
@@ -748,6 +759,7 @@ struct PresetsView: View {
             }
         } label: {
             Label("Share this chain", systemImage: "square.and.arrow.up")
+                .etFont(size: 15)
         }
     }
 }

@@ -112,6 +112,7 @@ struct ETDisplayChoiceRow<Value: Hashable>: View {
                     .etFont(size: 14)
                 Spacer(minLength: 8)
                 picker.pickerStyle(.menu)
+                    .etFont(size: 14)
             }
             .padding(.vertical, 2)
         }

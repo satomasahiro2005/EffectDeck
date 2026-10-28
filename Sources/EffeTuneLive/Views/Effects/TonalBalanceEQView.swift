@@ -133,6 +133,7 @@ struct TonalBalanceEQView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .etFont(size: 14)
                 Spacer(minLength: 0)
                 Toggle("Enabled", isOn: Binding(
                     get: { band.enabled },

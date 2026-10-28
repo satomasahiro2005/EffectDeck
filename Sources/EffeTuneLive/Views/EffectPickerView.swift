@@ -437,6 +437,8 @@ struct EffectPickerView: View {
                         }
                     } header: {
                         Text("New")
+                            .etFont(size: 13, weight: .semibold)
+                            .foregroundStyle(.secondary)
                             .onScrollVisibilityChange(threshold: 0.1) { v in
                                 if v { current = Self.newKey }
                             }
@@ -453,6 +455,8 @@ struct EffectPickerView: View {
                         }
                     } header: {
                         Text(name.categoryLabel)
+                            .etFont(size: 13, weight: .semibold)
+                            .foregroundStyle(.secondary)
                             // 見出しが画面に入ったらそこを現在地にする。
                             // 下へ払えば次の見出しで、上へ払えば前の見出しで切り替わる。
                             .onScrollVisibilityChange(threshold: 0.1) { visible in
@@ -507,7 +511,9 @@ struct EffectPickerView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             } else {
+                // 一覧の中の同じ口（15）と揃える。
                 Label("Import JSFX", systemImage: "square.and.arrow.down")
+                    .etFont(size: 15)
             }
         }
         .tint(asRow ? Color.primary : Color.accentColor)
@@ -526,6 +532,7 @@ struct EffectPickerView: View {
                             Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
                                 openURL(Self.writeJSFX)
                             }
+                            .etFont(size: 15)
                         }
                     }
                 }
@@ -574,6 +581,8 @@ struct EffectPickerView: View {
                                     }
                                 } header: {
                                     Text(vendor)
+                                        .etFont(size: 13, weight: .semibold)
+                                        .foregroundStyle(.secondary)
                                         .onScrollVisibilityChange(threshold: 0.1) { visible in
                                             if visible && !jumping { current = vendor }
                                         }
@@ -862,7 +871,7 @@ struct EffectPickerView: View {
         if folders.isEmpty {
             Section {
                 Text("No user presets")
-                    .font(.footnote)
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
             } header: {
                 presetHeader(group: "User Presets", title: nil)
@@ -949,8 +958,13 @@ struct EffectPickerView: View {
     /// 群の名前だけの節を別に作ると、中身の無い節が出来て飛び先も塗り分けも合わなくなる。
     private func presetHeader(group: String?, title: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            if let group { Text(group).font(.headline) }
-            if let title { Text(title) }
+            // 一覧の見出し（13 の semibold）と揃える。群の名前だけ 15 で一段上にする。
+            if let group { Text(group).etFont(size: 15, weight: .semibold) }
+            if let title {
+                Text(title)
+                    .etFont(size: 13, weight: .semibold)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1093,7 +1107,7 @@ struct EffectPickerView: View {
                     .foregroundStyle(.primary)
                 if let kind {
                     Text(kind)
-                        .etFont(size: 10)
+                        .etFont(size: 11)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1211,6 +1225,8 @@ struct EffectPickerView: View {
                             }
                         } header: {
                             Text(section.bucket.title)
+                                .etFont(size: 13, weight: .semibold)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -1256,7 +1272,7 @@ struct EffectPickerView: View {
                         .foregroundStyle(.primary)
                     if showCategory {
                         Text(effect.category.categoryLabel)
-                            .etFont(size: 10)
+                            .etFont(size: 11)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)

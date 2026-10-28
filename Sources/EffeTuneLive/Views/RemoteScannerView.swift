@@ -172,10 +172,12 @@ struct RemoteRows: View {
             }
         case .active:
             Section(Self.title) {
+                // 行の字は 15（指定しないと本文の 17 で、下の 12 の注記との差が開く）。
                 LabeledContent("Status") {
                     Text(mirror.statusText)
                         .foregroundStyle(.secondary)
                 }
+                .etFont(size: 15)
                 addressRow
                 // PC の版はつながっているあいだだけ（host は hello の返事から）。つなぎ直しを待つあいだに
                 // 前に見た版（lastHost）を並べると、Connecting でもつながっているように読める（切断中と同じ理由）。
@@ -184,17 +186,20 @@ struct RemoteRows: View {
                         Text(host.label)
                             .foregroundStyle(.secondary)
                     }
+                    .etFont(size: 15)
                 }
                 mismatchRows
             }
             Section {
                 Button("Disconnect") { mirror.disconnectByUser() }
+                    .etFont(size: 15)
             }
         case .idle:
             // 切断中は PC の情報を並べない（つないでいるように読める）。つなぎ先の名前はボタンに出す。
             Section {
                 if intent.canConnect {
                     Button("Connect to \(connectTarget)") { mirror.connectToSaved() }
+                        .etFont(size: 15)
                 }
                 // 4401 のように、つながらなかった理由があるときだけ状態を出す。
                 if case .error = mirror.status {
@@ -202,6 +207,7 @@ struct RemoteRows: View {
                         Text(mirror.statusText)
                             .foregroundStyle(.secondary)
                     }
+                    .etFont(size: 15)
                 }
                 scanButton
             } header: {
@@ -211,6 +217,7 @@ struct RemoteRows: View {
             }
             Section {
                 Button("Forget", role: .destructive) { mirror.forget() }
+                    .etFont(size: 15)
             }
         }
     }
@@ -231,6 +238,7 @@ struct RemoteRows: View {
 
     private var scanButton: some View {
         Button("Scan QR Code", action: scan)
+            .etFont(size: 15)
     }
 
     /// トークンは出さない。host:port だけ。
@@ -241,6 +249,7 @@ struct RemoteRows: View {
                 Text("\(address.host):\(address.port)")
                     .foregroundStyle(.secondary)
             }
+            .etFont(size: 15)
         }
     }
 
@@ -252,14 +261,15 @@ struct RemoteRows: View {
                 Text(mismatch.headline)
                     .foregroundStyle(.orange)
             }
+            .etFont(size: 15)
             if let text = mismatch.missingOnHostText {
                 Text(text)
-                    .font(.caption)
+                    .etFont(size: 12)
                     .foregroundStyle(.orange)
             }
             if let text = mismatch.missingHereText {
                 Text(text)
-                    .font(.caption)
+                    .etFont(size: 12)
                     .foregroundStyle(.secondary)
             }
         }
@@ -451,7 +461,7 @@ struct ETRemoteUnsupportedMark: ViewModifier {
             content
             if mirror.hostLacks(effect), let host = mirror.host {
                 Text(host.unsupportedText)
-                    .font(.caption)
+                    .etFont(size: 12)
                     .foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)

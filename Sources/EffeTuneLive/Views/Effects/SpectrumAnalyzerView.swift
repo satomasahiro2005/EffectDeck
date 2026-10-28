@@ -93,7 +93,7 @@ struct SpectrumAnalyzerView: View {
                 }
             }
             if !graphOnly { scalePicker }
-            if !graphOnly { Toggle("Bar display", isOn: $bars) }
+            if !graphOnly { Toggle(isOn: $bars) { Text("Bar display").etFont(size: 14) } }
             if !graphOnly { colorPicker }
         }
         // 畳むとこの View ごと消えるので、表示の選択は鎖に持たせる。

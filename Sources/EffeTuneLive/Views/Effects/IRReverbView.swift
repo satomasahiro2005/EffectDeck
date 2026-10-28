@@ -426,14 +426,14 @@ private struct ETRemoteIRLibraryView: View {
             List {
                 if failed {
                     Text("EffeTune could not apply this change. Try again.")
-                        .font(.footnote)
+                        .etFont(size: 13)
                         .foregroundStyle(.red)
                 }
                 if items == nil {
                     ProgressView()
                 } else if shown.isEmpty {
                     Text("No impulse responses in the library.")
-                        .font(.footnote)
+                        .etFont(size: 13)
                         .foregroundStyle(.secondary)
                 }
                 ForEach(shown) { item in

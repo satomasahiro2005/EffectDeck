@@ -341,7 +341,8 @@ struct ETKeyframeTimeline: View {
             let p = automation.keyframes[k].position
             VStack(spacing: 12) {
                 Text(automation.source.label(p))
-                    .font(.headline.monospacedDigit())
+                    .monospacedDigit()
+                    .etFont(size: 15, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Picker("Interpolation", selection: Binding(
                     get: { automation.keyframes.indices.contains(k) && automation.keyframes[k].hold },
@@ -359,6 +360,7 @@ struct ETKeyframeTimeline: View {
                     popoverPosition = nil
                 } label: {
                     Label("Delete", systemImage: "trash")
+                        .etFont(size: 14, weight: .semibold)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)

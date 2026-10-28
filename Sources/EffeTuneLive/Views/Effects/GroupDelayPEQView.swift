@@ -446,6 +446,7 @@ private struct GroupDelayPEQBody: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .etFont(size: 14)
                     .fixedSize(horizontal: stacked, vertical: false)
                 }
 

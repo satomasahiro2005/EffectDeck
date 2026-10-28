@@ -48,6 +48,7 @@ struct ETBackupSection: View {
                 export()
             } label: {
                 Label("Export presets & chain", systemImage: "square.and.arrow.up")
+                    .etFont(size: 15)
             }
             .fileExporter(isPresented: $exporting,
                           document: exportFile,
@@ -66,6 +67,7 @@ struct ETBackupSection: View {
                 importing = true
             } label: {
                 Label("Import presets & chain", systemImage: "square.and.arrow.down")
+                    .etFont(size: 15)
             }
             .fileImporter(isPresented: $importing,
                           // 型で絞らない。中身が読めるかは受け側が決める。
@@ -85,7 +87,7 @@ struct ETBackupSection: View {
             // 順番はこちらが先。
             if let backupReport {
                 Text(backupReport)
-                    .font(.footnote)
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
             }
 
@@ -96,12 +98,13 @@ struct ETBackupSection: View {
                     pending = nil
                     backupReport = apply(waiting)
                 } label: {
-                    Text("Import")
+                    Text("Import").etFont(size: 15)
                 }
                 Button("Cancel") {
                     pending = nil
                     backupReport = nil
                 }
+                .etFont(size: 15)
             }
         } header: {
             Text("Backup")

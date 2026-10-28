@@ -47,10 +47,10 @@ struct ConnectionTipsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
                         Text(verbatim: c.act)
-                            .font(.subheadline)
+                            .etFont(size: 15)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(verbatim: c.why)
-                            .font(.footnote)
+                            .etFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -58,7 +58,7 @@ struct ConnectionTipsView: View {
                     Link(destination: tip.url) {
                         Text(verbatim: ja ? ETTips.linkLabel.ja : ETTips.linkLabel.en)
                     }
-                    .font(.footnote)
+                    .etFont(size: 13)
                     // **読み上げでは題を付ける。**見た目の字だけでは同じリンクが 3 本並ぶ。
                     // 見た目の字も残す（音声コントロールはその字で押す）。
                     .accessibilityLabel(Text(verbatim: ja ? "\(c.title)。\(ETTips.linkLabel.ja)"
@@ -75,7 +75,7 @@ struct ConnectionTipsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
                     Text(verbatim: p.intro)
-                        .font(.subheadline)
+                        .etFont(size: 15)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(Array(p.steps.enumerated()), id: \.offset) { i, step in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -84,7 +84,7 @@ struct ConnectionTipsView: View {
                             Text(verbatim: step)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        .font(.subheadline)
+                        .etFont(size: 15)
                         // 番号と本文を 1 回で読ませる。
                         .accessibilityElement(children: .combine)
                     }

@@ -409,6 +409,7 @@ private struct FiveBandFIRPEQPanel: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .etFont(size: 14)
             .fixedSize(horizontal: stacked, vertical: false)
         }
     }

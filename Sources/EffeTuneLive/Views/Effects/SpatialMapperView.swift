@@ -20,6 +20,7 @@ struct SpatialMapperView: View {
                 Button("Use all output channels") {
                     dsp.setRouting(at: index, channelSpec: -2)
                 }
+                .etFont(size: 14, weight: .medium)
             }
             ForEach(node.spec.params.filter { !$0.isArray }) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
@@ -29,15 +30,17 @@ struct SpatialMapperView: View {
                 Text("Diffuse").tag("fm")
                 Text("Residual").tag("rm")
             }.pickerStyle(.segmented)
-            Stepper("Output \(shownOutput + 1)", value: Binding(
+            Stepper(value: Binding(
                 get: { shownOutput },
                 set: { output = $0 }
-            ), in: 0...(outputCount - 1))
+            ), in: 0...(outputCount - 1)) {
+                Text("Output \(shownOutput + 1)").etFont(size: 14)
+            }
             if let matrix = node.spec.params.first(where: { $0.key == component }) {
                 ForEach(0..<inputCount, id: \.self) { input in
                     let offset = matrix.offset + shownOutput * 16 + input
                     HStack {
-                        Text("Input \(input + 1)").font(.caption)
+                        Text("Input \(input + 1)").etFont(size: 12)
                         Slider(value: Binding(
                             get: { Double(node.values[offset]) },
                             set: { dsp.setValue(Float($0), at: index, offset: offset) }

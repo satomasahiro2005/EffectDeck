@@ -885,7 +885,7 @@ private struct ExternalProcessorView: View {
             } else if jsfxParameters.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(jsfx.status(instanceID: instanceID))
-                        .font(.footnote)
+                        .etFont(size: 12)
                         .foregroundStyle(.secondary)
                     jsfxTriggers
                 }
@@ -933,15 +933,16 @@ private struct ExternalProcessorView: View {
             }
         } else if parameters.isEmpty {
             Text(au.status(instanceID: instanceID))
-                .font(.footnote)
+                .etFont(size: 12)
                 .foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(parameters, id: \.address) { parameter in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
+                            // 14 は ParameterRow の題と同じ（ほかのエフェクトと並べて違和感が出ない）。
                             Text(parameter.displayName)
-                                .font(.footnote)
+                                .etFont(size: 14)
                             Spacer()
                             // `%.3g` は 1000 を `1e+03` にするので使わない。
                             // 打ち込みもできる欄にする（読み取り専用の Text だった）。
@@ -985,7 +986,7 @@ private struct ExternalProcessorView: View {
             ForEach(parameters) { parameter in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(parameter.name).font(.footnote)
+                        Text(parameter.name).etFont(size: 14)
                         Spacer()
                         // `%.3g` は 1000 を `1e+03`、12001 を `1.2e+04` にしていた。
                         // 可聴域を扱う slider（カットオフ・ディレイ・FFT 長）は
@@ -1015,6 +1016,7 @@ private struct ExternalProcessorView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                        .etFont(size: 14)
                     } else if parameter.maximum > parameter.minimum {
                         Slider(value: Binding(
                             get: { jsfx.normalizedValue(instanceID: instanceID,
@@ -1070,11 +1072,13 @@ private struct ExternalProcessorView: View {
         let live = isProcessing && !resting && jsfx.isRunning(instanceID: instanceID)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Trigger (trigger bits 1–\(ETJSFX_MaxTriggers()))")
-                .font(.caption).foregroundStyle(.secondary)
+                .etFont(size: 12).foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 ForEach(0..<Int(ETJSFX_MaxTriggers()), id: \.self) { index in
-                    Button("\(index + 1)") {
+                    Button {
                         jsfx.sendTrigger(instanceID: instanceID, index: UInt32(index))
+                    } label: {
+                        Text("\(index + 1)").etFont(size: 12, weight: .semibold)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

@@ -33,9 +33,10 @@ struct ClipboardBanner: View {
                 Card {
                     layout {
                         Image(systemName: "link")
-                            .etFont(size: 17)
+                            // 大きさは Connect / Remote / Bypass の帯（icon 20・幅 26・題 15・説明 12・余白 14）に揃える。
+                            .etFont(size: 20)
                             .foregroundStyle(.tint)
-                            .frame(width: stacked ? nil : 22)
+                            .frame(width: stacked ? nil : 26)
 
                         VStack(alignment: .leading, spacing: 2) {
                             // 中身は読んでいない。**「鎖が乗っている」とは言えない。**
@@ -43,12 +44,12 @@ struct ClipboardBanner: View {
                             // だけで、EffeTune のリンクかどうかは押すまで分からない。
                             Text(failed ? "That link had no chain in it"
                                          : "A link is on the clipboard")
-                                .etFont(size: 14, weight: .semibold)
+                                .etFont(size: 15, weight: .semibold)
                                 .fixedSize(horizontal: false, vertical: true)
                             // 押すと今の鎖が消えることを、押す前に言う。
                             if !failed {
                                 Text("Pasting replaces the current chain.")
-                                    .etFont(size: 11)
+                                    .etFont(size: 12)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -78,7 +79,7 @@ struct ClipboardBanner: View {
                         .labelStyle(.iconOnly)
                         .buttonBorderShape(.capsule)
                     }
-                    .padding(12)
+                    .padding(14)
                 }
                 .alert("Chain imported", isPresented: Binding(
                     get: { !note.isEmpty },

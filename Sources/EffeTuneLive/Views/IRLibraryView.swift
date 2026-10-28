@@ -42,10 +42,11 @@ struct IRLibraryView: View {
                         picking = true
                     } label: {
                         Label("Import audio file", systemImage: "square.and.arrow.down")
+                            .etFont(size: 15)
                     }
                     if let importReport {
                         Text(importReport)
-                            .font(.footnote)
+                            .etFont(size: 13)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -53,7 +54,7 @@ struct IRLibraryView: View {
                 if library.entries.isEmpty {
                     Section {
                         Text("No impulse responses yet")
-                            .font(.footnote)
+                            .etFont(size: 13)
                             .foregroundStyle(.secondary)
                     }
                 } else {

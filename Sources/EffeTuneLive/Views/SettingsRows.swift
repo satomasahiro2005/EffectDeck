@@ -39,10 +39,13 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
                 : AnyLayout(HStackLayout(spacing: 8))
             layout {
+                // 題 15・実測 13 は ETNoticeRow と同じ（指定しないと本文の 17 になる）。
                 Text(title)
+                    .etFont(size: 15)
                 if let detail {
                     if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                     Text(detail)
+                        .etFont(size: 13)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
@@ -73,13 +76,12 @@ struct ETChoiceRow: View {
         Button(action: action) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    // 隣の note（footnote）と同じく文字サイズに追従する文字スタイルにする。
-                    // 固定にすると、大きいサイズで note のほうが題より大きくなる。
+                    // 題も note も etFont（文字サイズに追従）。ETNoticeRow と同じ 15 / 13。
                     Text(title)
-                        .font(.callout)
+                        .etFont(size: 15)
                         .foregroundStyle(.primary)
                     Text(note)
-                        .font(.footnote)
+                        .etFont(size: 13)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -116,26 +118,27 @@ struct ETNoticeRow: View {
             icon
 
             VStack(alignment: .leading, spacing: 4) {
-                // detail（footnote）と一緒に伸びるよう、文字スタイルで持つ。
+                // 題・detail・mono・ボタンはどれも etFont（文字サイズに追従）。
+                // ConnectionTipsView の題と同じ 15 semibold で、2 つは揃えておくこと。
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .etFont(size: 15, weight: .semibold)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
-                        .font(.footnote)
+                        .etFont(size: 13)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let mono {
                     Text(mono)
-                        .font(.caption2.monospaced())
+                        .etFont(size: 11, design: .monospaced)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let actionTitle, let action {
                     Button(actionTitle, action: action)
-                        .font(.footnote)
+                        .etFont(size: 13)
                         .buttonStyle(.bordered)
                         .padding(.top, 2)
                 }
