@@ -266,6 +266,8 @@ struct NoteSpectrogramView: View {
     @State private var display = ETNoteDisplay()
     /// 全画面を出しているか。
     @State private var fullScreen = false
+    /// 全画面を閉じたら増やす。カードの図が行数を測り直す（NoteSpectrogramGraph.refitToken）。
+    @State private var cardRefit = 0
     /// 横へ回し終わるのを待っている間。
     @State private var movingToFullScreen = false
     /// 升目の履歴。**@State で参照だけ持つ**（@StateObject にすると 30Hz で body が
@@ -281,7 +283,8 @@ struct NoteSpectrogramView: View {
             // 横に倒して画面いっぱいに使えば、行に見合う高さが渡る。
             ZStack(alignment: .topTrailing) {
                 NoteSpectrogramGraph(tapId: node.tapId, display: display,
-                                     range: midiRange, band: band)
+                                     range: midiRange, band: band,
+                                     refitToken: cardRefit)
                 if !graphOnly {
                     Button {
                         movingToFullScreen = true
@@ -327,6 +330,7 @@ struct NoteSpectrogramView: View {
         .fullScreenCover(isPresented: $fullScreen, onDismiss: {
             ETInterfaceOrientation.request(.portrait)
             movingToFullScreen = false
+            cardRefit += 1
         }) {
             NoteSpectrogramFullScreen(tapId: node.tapId, display: display,
                                       range: midiRange, band: band,
@@ -562,6 +566,37 @@ struct ETNoteRollFrame {
     }
 }
 
+// MARK: - 図の色
+
+/// 鍵盤と地の色。**どれも不透明。**
+///
+/// 上流は canvas に最初に地（graph-bg-deep）を全面に塗り、鍵は不透明な rgb で塗る
+/// （note_spectrogram.js:1753 と :1875-1883）。こちらは以前 .quaternary / .secondary
+/// （前景色に不透明度を掛けた階層スタイル）で塗っていたので、カードの材質や罫が鍵の裏に透けた。
+/// 値は上流 _displayPalette（:858-872）と、既定テーマの graph-bg-deep（暗い #000、paper #fff）、
+/// graph-base-soft（paper の #fafafa に文字色 #1a1a1a を 4% 混ぜた 241）から。
+private struct ETNotePalette {
+    let dark: Bool
+
+    init(_ scheme: ColorScheme) { dark = scheme == .dark }
+
+    var background: Color { dark ? .black : .white }
+    /// 黒鍵の高さの帯。暗い外観は地 + 8（MULTI_F0_BLACK_KEY_BACKGROUND）。
+    var blackBand: Color { Color(white: (dark ? 8 : 241) / 255) }
+    var whiteKey: Double { dark ? 238 : 255 }
+    var blackKey: Double { 17 }
+    /// 鍵の境と縁の線（graph-label）。
+    static let line = Color(white: 0x66 / 255)
+    /// 鍵の上の字。上流は #111 固定。
+    static let keyText = Color(white: 0x11 / 255)
+
+    /// 鍵の地の値（0〜255）から音の色へ confidence で寄せた、不透明な色。上流 :1875 の式。
+    func lit(from base: Double, to color: (r: Double, g: Double, b: Double), by value: Double) -> Color {
+        func channel(_ target: Double) -> Double { (base + (target - base) * value).rounded() / 255 }
+        return Color(red: channel(color.r), green: channel(color.g), blue: channel(color.b))
+    }
+}
+
 // MARK: - 図
 
 /// 図の一番内側。**Telemetry を見るのはここだけ**にしてある。
@@ -577,9 +612,16 @@ private struct NoteSpectrogramGraph: View {
     var height: CGFloat?
 
     @ObservedObject private var telemetry = Telemetry.shared
-    /// 図の高さを画素で測るのに要る。行の複製はこれで決める。
+    /// 音の高さの軸を画素で測るのに要る（Horizontal は幅、Vertical は高さ）。行の複製はこれで決める。
     @Environment(\.displayScale) private var displayScale
+    /// 地と鍵の色を決める（ETNotePalette）。
+    @Environment(\.colorScheme) private var colorScheme
+    /// 全画面を閉じたとき、カードの図に行数の測り直しを頼む鍵。
+    /// 帯は全画面と共有なので、全画面で増えた行数がカードに残る（fit は大きさが変わらないと呼ばれない）。
+    var refitToken = 0
 
+    /// いまの図の大きさ。音の高さの軸の画素数を出すのに使う。
+    @State private var canvasSize: CGSize = .zero
     @State private var probe: ETNoteProbe?
     @GestureState private var previewActive = false
 
@@ -626,16 +668,22 @@ private struct NoteSpectrogramGraph: View {
                 let rollWidth = frame.width - gutter
                 guard rollWidth > 0, frame.height > 0 else { return }
 
+                let palette = ETNotePalette(colorScheme)
                 context.drawLayer { layer in
                     frame.apply(&layer)
-                    drawBands(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
+                    // 不透明な地を最初に敷く（上流 :1753）。鍵盤や音の裏に、カードの材質や
+                    // 枠が透けないようにする。
+                    layer.fill(Path(CGRect(x: 0, y: 0, width: frame.width, height: frame.height)),
+                               with: .color(palette.background))
+                    drawBands(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight,
+                              palette: palette)
                     drawGrid(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight)
                     drawRoll(&layer, frame: frame, rollWidth: rollWidth, slots: slots)
                     if display.onsets {
                         drawOnsets(&layer, frame: frame, rollWidth: rollWidth, rowHeight: rowHeight, slots: slots)
                     }
                     drawKeys(&layer, frame: frame, rollWidth: rollWidth,
-                             gutter: gutter, rowHeight: rowHeight)
+                             gutter: gutter, rowHeight: rowHeight, palette: palette)
                     if let hover = probe {
                         var line = Path()
                         let y = frame.height
@@ -675,15 +723,34 @@ private struct NoteSpectrogramGraph: View {
             }
             .onAppear {
                 band.display = display
-                // **縦の引き伸ばしを画像へ持たせる**（ETNoteBand.rowScale）。
-                // 全画面では図がずっと高くなるので、開くたびに測り直す。
-                band.fit(height: graphHeight * displayScale)
+                refit()
                 ingest()
             }
-            .onChange(of: graphHeight) { _, h in band.fit(height: h * displayScale) }
+            // **縦の引き伸ばしを画像へ持たせる**（ETNoteBand.rowScale）。
+            // 音の高さの軸の画素数は、大きさ・向き・音の範囲のどれが変わっても変わる。
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                canvasSize = size
+                refit()
+            }
+            .onChange(of: display.layout) { _, _ in refit() }
+            .onChange(of: range) { _, _ in refit() }
+            .onChange(of: refitToken) { _, _ in refit() }
             .onChange(of: latestSequence) { _, _ in ingest() }
             // 手元と PC で時計が違う。入れ替わったら溜めた列を捨てる（残すと Time Span の列数が狂う）。
             .onChange(of: display) { _, now in band.display = now }
+    }
+
+    /// 音の高さの軸の画素数に合わせて、帯の行の複製を決め直す。
+    /// 軸は Horizontal では図の幅、Vertical では高さ（ETNoteRollFrame）。
+    /// canvasSize は GraphCanvas 全体なので、Vertical は上の値の行と余白（上下 6pt）を引く。
+    private func refit() {
+        guard canvasSize.width > 0, canvasSize.height > 0 else { return }
+        // 帯は表示の切り替えで 1 音の行数が変わる。先に渡しておく。
+        band.display = display
+        let along = display.layout == .horizontal
+            ? canvasSize.width - 12
+            : canvasSize.height - ETGraphMetrics.readoutHeight - 4 - 12
+        band.fit(pitchPixels: max(0, along) * displayScale, notes: range.count)
     }
 
     // MARK: 描く
@@ -715,20 +782,22 @@ private struct NoteSpectrogramGraph: View {
         let rect = CGRect(x: 0, y: 0, width: rollWidth, height: frame.height)
         let pieces = band.pieces(in: rect, midi: range, slots: slots)
         guard !pieces.isEmpty else { return }
-        // **最近傍で貼る。**
-        // 画像は 88 列（半音 1 つが 1 列）しか無く、画面の幅まで引き伸ばす。
-        // 既定の平滑化が掛かると半音の境目と、音が始まった／終わった縦の線が
-        // ぼやける。升目の絵なので拡大は最近傍でよい。
+        // **縦は貼る画像の行数がほぼ画素数**（fit(pitchPixels:notes:) が合わせる）なので、
+        // 拡大率は 1 前後。動くのは横（時間の向き）だけ。
+        //
+        // **列が 1 画素より広いときは最近傍で貼る。**
+        // 上流は時間を 1024 列に割って 1 列がほぼ 1 画素なので、平滑化しても縁がにじまない。
+        // こちらは 1 枠が 1 列で、Time Span 2 秒では約 100 列を 300 画素以上に引き伸ばす。
+        // そこで平滑化すると、音の縁と鳴り始め・鳴り終わりが数画素の勾配になってぼける。
+        // 列が 1 画素以下なら縮めるだけなので平滑化のほうが荒れない。
         //
         // **`interpolation` は `GraphicsContext` ではなく `Image` の修飾子。**
         // `context.interpolation = .none` は通らない（has no member）。
-        // **滑らかに貼る。**縦は fit(height:) が行を図の高さまで複製してあるので、
-        // 拡大率がほぼ 1 になって動かない。動くのは横（時間の向き）だけで、
-        // そこは上流も平滑化している（note_spectrogram.js:1094）。
-        // 一発で最近傍に貼っていたころは、1/60 の 305 行が潰れて髪の毛になっていた。
+        let columnPixels = rollWidth / CGFloat(max(slots, 1)) * displayScale
+        let smoothing: Image.Interpolation = columnPixels > 1 ? .none : .high
         func tile(_ image: CGImage) -> Image {
             Image(decorative: image, scale: 1)
-                .interpolation(.high)
+                .interpolation(smoothing)
                 .antialiased(false)
         }
         // **どちらの塗り分けでも画像が色を持つ**（noteColor が常に返す）ので、
@@ -745,7 +814,7 @@ private struct NoteSpectrogramGraph: View {
     /// 上流は canvas を毎回描き直すので流れない。地は動かないものなので、
     /// 静止した層としてここで敷き、画像はトレースだけを持たせる。
     private func drawBands(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
-                           rollWidth: CGFloat, rowHeight: CGFloat) {
+                           rollWidth: CGFloat, rowHeight: CGFloat, palette: ETNotePalette) {
         var black = Path()
         for midi in range
         where ETNoteKeyboard.blackClasses.contains(((midi % 12) + 12) % 12) {
@@ -753,14 +822,16 @@ private struct NoteSpectrogramGraph: View {
             guard y + rowHeight > 0, y < frame.height else { continue }
             black.addRect(CGRect(x: 0, y: y, width: rollWidth, height: rowHeight))
         }
-        context.fill(black, with: ETGraphShading.grid)
+        // 白い帯は地そのもの（上流の whiteBand = graph-bg-deep）。黒い帯だけ不透明な色で塗る。
+        context.fill(black, with: .color(palette.blackBand))
     }
 
     /// 鍵盤。白鍵は帯いっぱい、黒鍵は手前だけ。最新の列の confidence で光らせる。
-    /// 上流 :1125-1183。色は決めないので、消灯は .quaternary と .secondary、
-    /// 点灯は .tint の濃さで出す。
+    /// 上流 :1125-1183。鍵は上流と同じ不透明な色で塗り（ETNotePalette）、裏の材質や罫を透かさない。
+    /// 光る鍵は上流 :1875 と同じく、鍵の色から音の色へ confidence で寄せた不透明な色にする。
     private func drawKeys(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
-                          rollWidth: CGFloat, gutter: CGFloat, rowHeight: CGFloat) {
+                          rollWidth: CGFloat, gutter: CGFloat, rowHeight: CGFloat,
+                          palette: ETNotePalette) {
         let blackDepth = gutter * ETNoteKeyboard.blackDepthRatio
         let whiteHeight = 12 * rowHeight / 7
         var white = Path()
@@ -802,17 +873,19 @@ private struct NoteSpectrogramGraph: View {
             if value > 0.01 { blackGlow.append((rect, midi, value)) }
         }
 
-        context.fill(white, with: ETGraphShading.grid)
-        light(&context, whiteGlow)
-        context.stroke(separators, with: ETGraphShading.axis, lineWidth: 0.5)
-        context.fill(black, with: ETGraphShading.muted)
-        light(&context, blackGlow)
+        // **鍵は全部不透明な色で塗る**（ETNotePalette）。光る鍵も opacity を掛けず、
+        // 消灯の色から音の色へ寄せた不透明な色で塗り直す。
+        context.fill(white, with: .color(Color(white: palette.whiteKey / 255)))
+        light(&context, whiteGlow, base: palette.whiteKey, palette: palette)
+        context.stroke(separators, with: .color(ETNotePalette.line), lineWidth: 0.5)
+        context.fill(black, with: .color(Color(white: palette.blackKey / 255)))
+        light(&context, blackGlow, base: palette.blackKey, palette: palette)
         outline(&context, blackGlow, rollWidth: rollWidth, blackDepth: blackDepth, rowHeight: rowHeight,
                 horizontal: frame.horizontal)
         var edge = Path()
         edge.move(to: CGPoint(x: rollWidth, y: 0))
         edge.addLine(to: CGPoint(x: rollWidth, y: frame.height))
-        context.stroke(edge, with: ETGraphShading.axis, lineWidth: 1)
+        context.stroke(edge, with: .color(ETNotePalette.line), lineWidth: 1)
     }
 
     /// 光っている黒鍵の縁取り（上流 2.15.0。note_spectrogram.js の outlineTint）。
@@ -842,7 +915,6 @@ private struct NoteSpectrogramGraph: View {
         }
     }
 
-    /// 鳴っている鍵を .tint で塗り直す。濃さが確からしさ。
     /// 光っている鍵を塗る。**音名ごとの色を使う。**
     ///
     /// 上流は Normal のとき trace（1 色）で光らせる（note_spectrogram.js:1148）が、
@@ -850,15 +922,16 @@ private struct NoteSpectrogramGraph: View {
     /// 色を持たせれば、光った所を見ただけで音名が分かる。
     /// 配色は Note Colors と同じ表（ETNoteKeyboard.noteColors）を使うので、
     /// 図の塗り分けを Note Colors にしたときに鍵と升目の色が揃う。
+    ///
+    /// 濃さ（確からしさ）は opacity でなく色の寄せ方で出す（上流 :1875-1883）。
+    /// opacity で重ねると鍵の裏が透ける。
     private func light(_ context: inout GraphicsContext,
-                       _ keys: [(rect: CGRect, midi: Int, value: Double)]) {
+                       _ keys: [(rect: CGRect, midi: Int, value: Double)],
+                       base: Double, palette: ETNotePalette) {
         for key in keys {
             // 音色で塗っているときは判定の色（上流は Instrument のときだけ鍵に Highlight も掛ける）。
             let c = band.keyColor(midi: key.midi)
-            var lamp = context
-            lamp.opacity = key.value
-            lamp.fill(Path(key.rect),
-                      with: .color(Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255)))
+            context.fill(Path(key.rect), with: .color(palette.lit(from: base, to: c, by: key.value)))
         }
     }
 
@@ -877,7 +950,8 @@ private struct NoteSpectrogramGraph: View {
             guard y >= 0, y <= frame.height else { continue }
             context.draw(Text("C\(midi / 12 - 1)")
                             .font(.system(size: ETGraphMetrics.labelSize, design: .monospaced))
-                            .foregroundStyle(.secondary),
+                            // 白鍵の上の字は上流も #111 固定。
+                            .foregroundStyle(ETNotePalette.keyText),
                          at: frame.point(x, y), anchor: .center)
         }
     }
@@ -1048,20 +1122,39 @@ final class ETNoteBand: ObservableObject {
     /// まず縦だけを平滑化なしで図の高さまで広げ、そのあと横だけを平滑化して貼る。
     /// 縦を平滑化すると隣の音を拾うから、という理由がそのままコメントに書いてある。
     ///
-    /// こちらは一発で最近傍に貼っていたので、**1/60 では 305 行が図の高さへ潰れて
-    /// 1 行 1〜2 画素にしかならず、髪の毛になっていた。**
+    /// **画像の行数を、音の高さの軸の画素数にほぼ合わせる。**
+    /// 行数が画素数に近ければ、貼るときの縦の拡大率が 1 前後で、縁がにじまない。
+    /// 数えるのは**いま見せている音の数**（88 音全部ではない）と、**音の高さの側の
+    /// 画素**（Horizontal では幅、Vertical では高さ）。以前は 88 音全部と図の高さで
+    /// 数えていたので、既定の 64 音・Horizontal では行が足りず、約 3 倍に滑らかに
+    /// 引き伸ばされて音の縁がぼやけていた。
     /// 貼る前に伸ばすと 30Hz で 2MB の面を組み直すことになるので、
-    /// **画像を作る時点で行を複製しておく。**行数が図の高さに追いつけば、
-    /// 貼るときの縦の拡大率がほぼ 1 になり、平滑化しても縦は動かない。
-    /// だから横だけを滑らかにできる（上流と同じ絵になる）。
+    /// **画像を作る時点で行を複製しておく。**
     private(set) var rowScale = 1
 
-    /// 図の高さ（画素）に合わせて行の複製を決める。**描く前に呼ぶ。**
-    func fit(height: CGFloat) {
+    /// 最後に頼まれた、音の高さの軸の画素数と見せている音の数。
+    /// Volume / High の切り替えで 1 音の行数（base）が変わると rowScale も決め直しになるので、覚えておく。
+    private var fitPixels: CGFloat = 0
+    private var fitNotes = ETNoteBand.notes
+
+    /// 画像が持つ行数の上限（88 音 × base × rowScale）。メモリ（512 列 × 4 バイト）が 8MB ほどで頭を打つ。
+    private static let maxImageRows = 3600
+
+    private func wantedRowScale() -> Int {
         let base = display.usesBars ? Self.divisions : 1
-        // 上限を置く。88 音 × 5 細分 × 8 = 3520 行までで、それ以上は要らない
-        // （iPhone の縦は @3x でも 2800 画素ほど）。
-        let want = min(8, max(1, Int(height) / max(1, Self.notes * base)))
+        let ideal = fitPixels / CGFloat(max(1, fitNotes * base))
+        let cap = max(1, min(16, Self.maxImageRows / (Self.notes * base)))
+        return min(cap, max(1, Int(ideal.rounded())))
+    }
+
+    /// 音の高さの軸の画素数に合わせて行の複製を決める。**描く前に呼ぶ。**
+    /// - Parameters:
+    ///   - pixels: 音の高さの軸の長さ（画素）。Horizontal では図の幅、Vertical では高さ。
+    ///   - notes: いま見せている音の数（Lowest / Highest Note の範囲）。
+    func fit(pitchPixels pixels: CGFloat, notes: Int) {
+        fitPixels = pixels
+        fitNotes = notes
+        let want = wantedRowScale()
         guard want != rowScale else { return }
         rowScale = want
         allocate()
@@ -1074,6 +1167,8 @@ final class ETNoteBand: ObservableObject {
     var display = ETNoteDisplay() {
         didSet {
             guard display.repaintKey != oldValue.repaintKey else { return }
+            // Volume / High で 1 音の行数が変わるので、複製数も決め直す。
+            rowScale = wantedRowScale()
             allocate()
             for column in 0..<Self.columns { paint(column: column) }
             image = makeImage()
