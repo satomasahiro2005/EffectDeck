@@ -1762,12 +1762,23 @@ final class EffeTuneDSP: ObservableObject {
         persistSoon()
     }
 
+    /// 追従をやめる（カードの ⋯ の Stop Following Volume）。キーフレームは全部捨て、カードは一番上のキーフレームの値のまま残る。
+    /// 最後の1つを消したときと同じ結果。main の段だけ。
+    func stopFollowingVolume(at index: Int) {
+        guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
+              self[slot: index].automation != nil else { return }
+        stopFollowing(at: index)
+    }
+
     /// 追従をやめる。values はもう一番上（最後の1つ）のキーフレームの値なので、そのまま普通の値になる。
+    /// キーフレームが2つ以上ある PEQ は相方を載せているので、外れたら鎖を出し直す（settleAfterKeyframes と同じ）。
     private func stopFollowing(at index: Int) {
         guard self[slot: index].automation != nil else { return }
         let before = instanceLatency(of: self[slot: index])
+        let companion = ETPEQBlend.wantsCompanion(self[slot: index])
         self[slot: index].automation = nil
         pushedAutomation[self[slot: index].instance] = nil
+        if companion { publish() }
         pushParams(self[slot: index])
         if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
         persistSoon()

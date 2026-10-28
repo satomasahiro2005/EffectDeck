@@ -270,6 +270,44 @@ struct ETAutomation: Equatable {
         return p
     }
 
+    // MARK: - 帯の押し方（Views/KeyframeTimeline.swift）
+
+    /// 帯を押したときにすること。
+    enum StripAction: Equatable {
+        case select(Int)
+        case deselect
+        /// そのキーフレームのメニュー（Smooth / Hold / Delete）を開く。
+        case openMenu(Int)
+    }
+
+    /// 帯の押しを、すること1つに決める。hit は押した所の菱形（無ければ nil）、explicit は押して選んでいる菱形。
+    /// 短い押し: 空いた所は選びを外す・選んでいない菱形は選ぶ・選んでいる菱形をもう一度押したらメニュー。
+    /// 長押し: 菱形ならどれでもメニュー、空いた所は何もしない（選びも外さない。外すのは短い押しだけ）。
+    /// editTarget の色づけだけで選ばれている菱形は「選んでいない」ので、explicit には入らない。
+    static func stripAction(hit: Int?, explicit: Int?, longPress: Bool) -> StripAction? {
+        guard let hit else { return longPress ? nil : .deselect }
+        if longPress { return .openMenu(hit) }
+        return hit == explicit ? .openMenu(hit) : .select(hit)
+    }
+
+    /// 押して選んだ位置を添字にする。PC 編集中・もう無い位置は nil（色づけの editTarget とは別に持つ）。
+    func explicitKeyframe(selected: Double?, remote: Bool) -> Int? {
+        guard !remote, let selected else { return nil }
+        return keyframeIndex(at: selected)
+    }
+
+    /// 帯の左の数に出す位置。押して選んだキーフレームがあればその位置、無ければいまの音量（0〜100%に収める）。
+    func stripLabelPosition(explicit: Int?, volume: Double?) -> Double? {
+        if let explicit, keyframes.indices.contains(explicit) { return keyframes[explicit].position }
+        guard let volume, volume.isFinite else { return nil }
+        return min(max(volume, source.range.lowerBound), source.range.upperBound)
+    }
+
+    /// Hold を選べるか。一番上は次が無いので選べない（メニューでは隠さず灰色にする。setHold も同じ線引き）。
+    func canHold(_ k: Int) -> Bool {
+        keyframes.indices.contains(k) && k < keyframes.count - 1
+    }
+
     // MARK: - カード（帯で選ぶ・いまの音量で直す）
 
     /// 音量に追従するカードが見せて直すもの（Views/EffectCardView.swift）。

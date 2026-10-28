@@ -4,7 +4,7 @@
 //  見ているもの:
 //    - 補間の種類（Hz と Q は対数、dB は直線、選択肢と入切は真ん中で切り替え、遅延の設定は補間しない）
 //    - PEQ の帯は補間せず、真ん中で近い方のキーフレームの値に切り替わる（音は ETPEQBlend）
-//    - 時間軸の帯の道具（segment・nearestKeyframe・dragTarget）
+//    - 時間軸の帯の道具（segment・nearestKeyframe・dragTarget）と帯の押し方（stripAction・explicitKeyframe・stripLabelPosition・canHold）
 //    - キーフレームの足し引きと既定の位置
 //    - カードが見せて直すもの・帯の印の左右・「+」を押せるか・いまの音量に作るキーフレーム
 //      （EffectCardView・KeyframeTimeline・EffeTuneDSP.keyframeAtVolume）
@@ -255,6 +255,70 @@ final class AutomationTests: XCTestCase {
         XCTAssertNil(k.dragTarget(9, to: 10))
         XCTAssertNil(k.dragTarget(-1, to: 10))
         XCTAssertNil(k.dragTarget(0, to: .nan))
+    }
+
+    // MARK: - 帯の押し方（KeyframeTimeline）
+
+    func testStripAction() {
+        // 短い押し
+        XCTAssertEqual(ETAutomation.stripAction(hit: nil, explicit: nil, longPress: false), .deselect)
+        XCTAssertEqual(ETAutomation.stripAction(hit: nil, explicit: 1, longPress: false), .deselect)
+        XCTAssertEqual(ETAutomation.stripAction(hit: 1, explicit: nil, longPress: false), .select(1),
+                       "色づけだけの菱形は選んでいないのと同じ")
+        XCTAssertEqual(ETAutomation.stripAction(hit: 0, explicit: 1, longPress: false), .select(0))
+        XCTAssertEqual(ETAutomation.stripAction(hit: 1, explicit: 1, longPress: false), .openMenu(1),
+                       "選んでいる菱形をもう一度押すとメニュー")
+        // 長押し
+        XCTAssertEqual(ETAutomation.stripAction(hit: 2, explicit: nil, longPress: true), .openMenu(2))
+        XCTAssertEqual(ETAutomation.stripAction(hit: 0, explicit: 1, longPress: true), .openMenu(0))
+        XCTAssertEqual(ETAutomation.stripAction(hit: 1, explicit: 1, longPress: true), .openMenu(1))
+        XCTAssertNil(ETAutomation.stripAction(hit: nil, explicit: 1, longPress: true),
+                     "空いた所の長押しは何もしない（選びも外さない）")
+        XCTAssertNil(ETAutomation.stripAction(hit: nil, explicit: nil, longPress: true))
+    }
+
+    func testExplicitKeyframe() throws {
+        var k = try automation(try spec(volume), try vol(-10), try vol(0))
+        k.add(at: 75)
+        XCTAssertEqual(k.explicitKeyframe(selected: 75, remote: false), 1)
+        XCTAssertEqual(k.explicitKeyframe(selected: 50, remote: false), 0)
+        XCTAssertNil(k.explicitKeyframe(selected: 75, remote: true), "PC 編集中は選びなし")
+        XCTAssertNil(k.explicitKeyframe(selected: 60, remote: false), "もう無い位置")
+        XCTAssertNil(k.explicitKeyframe(selected: nil, remote: false))
+        // 動かすと位置が変わる。古い位置は選びでなくなる。
+        XCTAssertNotNil(k.move(1, to: 80))
+        XCTAssertNil(k.explicitKeyframe(selected: 75, remote: false))
+        XCTAssertEqual(k.explicitKeyframe(selected: 80, remote: false), 1)
+    }
+
+    func testStripLabelPosition() throws {
+        var k = try automation(try spec(volume), try vol(-10), try vol(0))
+        k.add(at: 75)
+        XCTAssertEqual(k.stripLabelPosition(explicit: 1, volume: 20), 75, "選んだキーフレームが先")
+        XCTAssertEqual(k.stripLabelPosition(explicit: nil, volume: 20), 20)
+        XCTAssertEqual(k.stripLabelPosition(explicit: nil, volume: -5), 0, "0 に収める")
+        XCTAssertEqual(k.stripLabelPosition(explicit: nil, volume: 130), 100, "100 に収める")
+        XCTAssertNil(k.stripLabelPosition(explicit: nil, volume: nil))
+        XCTAssertNil(k.stripLabelPosition(explicit: nil, volume: .nan))
+        XCTAssertEqual(k.stripLabelPosition(explicit: 9, volume: 30), 30, "添字が範囲の外なら音量")
+        XCTAssertEqual(k.stripLabelPosition(explicit: -1, volume: 30), 30)
+        XCTAssertEqual(k.stripLabelPosition(explicit: 9, volume: nil), nil)
+        XCTAssertEqual(k.stripLabelPosition(explicit: 0, volume: nil), 50, "音量が読めなくても選んだ位置は出る")
+    }
+
+    func testCanHold() throws {
+        var k = try automation(try spec(volume), try vol(-10), try vol(0))
+        k.add(at: 75)
+        XCTAssertTrue(k.canHold(0))
+        XCTAssertTrue(k.canHold(1))
+        XCTAssertFalse(k.canHold(2), "一番上は次が無い")
+        XCTAssertFalse(k.canHold(3))
+        XCTAssertFalse(k.canHold(-1))
+        // setHold の線引きと同じ
+        for i in -1...3 {
+            var copy = k
+            XCTAssertEqual(copy.setHold(true, at: i), k.canHold(i), "k=\(i)")
+        }
     }
 
     // MARK: - 補間しない設定

@@ -94,7 +94,7 @@ struct EffectCardView: View {
                                     remote: RemoteMirror.shared.isRemote)
     }
 
-    /// 見せて直しているキーフレームの添字（帯で色を変える・⋯ の補間と削除）。
+    /// 見せて直しているキーフレームの添字（帯で色を変える）。
     private var selectedKeyframe: Int? {
         if case .keyframe(let k) = editTarget { return k }
         return nil
@@ -165,7 +165,7 @@ struct EffectCardView: View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
-                // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す。
+                // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す・選んだ菱形の押し直しか長押しでメニュー。
                 if showsTimeline, let a = node.automation {
                     keyframeStrip(a)
                         .padding(.leading, ETMetrics.cardPadding)
@@ -231,11 +231,24 @@ struct EffectCardView: View {
                 automation: a,
                 position: remote ? nil : ETVolumeFollower.shared.position,
                 selected: selectedKeyframe,
+                explicit: a.explicitKeyframe(selected: selectedPosition, remote: remote),
                 select: { k in selectedPosition = k.map { a.keyframes[$0].position } },
                 move: { k, p in
                     dsp.moveKeyframe(k, to: p, at: index)
                     // 動かしたものを選ぶ（位置で持っているので付け替える）。
                     selectedPosition = a.source.snapped(p)
+                },
+                // メニューが開いている間に添字がずれても当たるよう、位置で受けて動作の時に引き直す。
+                setHold: { p, hold in
+                    if let k = node.automation?.keyframeIndex(at: p) {
+                        dsp.setKeyframeHold(hold, keyframe: k, at: index)
+                    }
+                },
+                delete: { p in
+                    if let k = node.automation?.keyframeIndex(at: p) {
+                        dsp.removeKeyframe(k, at: index)
+                        selectedPosition = nil
+                    }
                 },
                 interactive: !remote && !isDragPreview)
             addKeyframeButton(a)
@@ -259,31 +272,18 @@ struct EffectCardView: View {
                   || RemoteMirror.shared.isRemote || isDragPreview)
     }
 
-    /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）。
-    /// 選んでいる間は、そのキーフレームの補間と削除。PC の鎖を編集している間は出さない（追従は動かない）。
+    /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）、
+    /// 追従していれば Stop Following Volume（キーフレームを捨て、一番上のキーフレームの値が普通の値になる）。
+    /// キーフレームごとの補間と削除は、帯の菱形のメニュー。PC の鎖を編集している間は出さない（追従は動かない）。
     @ViewBuilder
     private var keyframeMenuItems: some View {
         if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {
-            if let a = node.automation {
-                if let k = selectedKeyframe {
-                    // 一番上は次が無いので選べない（Move Up / Move Down と同じく隠さず灰色にする）。
-                    Picker(selection: Binding(
-                        get: { a.keyframes[k].hold },
-                        set: { dsp.setKeyframeHold($0, keyframe: k, at: index) })) {
-                        Text("Smooth").tag(false)
-                        Text("Hold").tag(true)
-                    } label: {
-                        Label("Interpolation", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(k == a.keyframes.count - 1)
-                    // 最後の1つを消すと追従をやめ、その値が普通の値になる。
-                    Button(role: .destructive) {
-                        dsp.removeKeyframe(k, at: index)
-                        selectedPosition = nil
-                    } label: {
-                        Label("Remove Keyframe", systemImage: "minus.diamond")
-                    }
+            if node.automation != nil {
+                Button(role: .destructive) {
+                    dsp.stopFollowingVolume(at: index)
+                    selectedPosition = nil
+                } label: {
+                    Label("Stop Following Volume", systemImage: "speaker.slash")
                 }
             } else if let position = ETAutomation.addChoices(nil, current: ETVolumeFollower.shared.position).suggested {
                 Button {
