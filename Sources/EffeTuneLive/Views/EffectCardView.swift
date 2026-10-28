@@ -417,8 +417,9 @@ struct EffectCardView: View {
                 // 文字サイズをアクセシビリティサイズまで上げたときだけ、縮めずに折り返す
                 // （縮めると設定が打ち消され、切ると同じ名前のカードを見分けられない）。
                 HStack(spacing: 4) {
+                    // 一覧の主役なので、他のアプリの一覧の項目名と同じ段（headline＝本文の太字）。設定に合わせて縮む。
                     Text(node.etDisplayName)
-                        .etFont(size: 16, weight: .semibold)
+                        .font(.headline)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                         .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
                     // 音量に追従している印。畳んでいても出る（頭は共通）。
@@ -430,7 +431,7 @@ struct EffectCardView: View {
                     }
                 }
                 Text(summary(shown))
-                    .etFont(size: 11)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
             })

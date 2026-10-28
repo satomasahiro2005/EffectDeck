@@ -426,7 +426,7 @@ struct EffectPickerView: View {
                         openURL(Self.buildChain)
                     }
                     // 一覧の行（エフェクト名 15）と同じ大きさ。指定しないと本文の 17 で、行より大きく見えた。
-                    .etFont(size: 15)
+                    .font(.body)
                 }
                 if !newEffects.isEmpty {
                     Section {
@@ -507,13 +507,13 @@ struct EffectPickerView: View {
                     Image(systemName: "square.and.arrow.down").foregroundStyle(Color.accentColor)
                 }
                 // 一覧の行（JSFX・AU の名前 15）と同じ大きさ。指定しないと本文の 17 で、行より大きく見えた。
-                .etFont(size: 15)
+                .font(.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             } else {
                 // 一覧の中の同じ口（15）と揃える。
                 Label("Import JSFX", systemImage: "square.and.arrow.down")
-                    .etFont(size: 15)
+                    .font(.body)
             }
         }
         .tint(asRow ? Color.primary : Color.accentColor)
@@ -532,7 +532,7 @@ struct EffectPickerView: View {
                             Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
                                 openURL(Self.writeJSFX)
                             }
-                            .etFont(size: 15)
+                            .font(.body)
                         }
                     }
                 }
@@ -552,7 +552,7 @@ struct EffectPickerView: View {
                                     Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
                                         openURL(Self.writeJSFX)
                                     }
-                                    .etFont(size: 15)
+                                    .font(.body)
                                 }
                             }
                             ForEach(pluginVendors, id: \.self) { vendor in
@@ -720,11 +720,11 @@ struct EffectPickerView: View {
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     // 折り返さない（jsfxPickButtonと同じ）。
-                    Text(entry.name).etFont(size: 15).foregroundStyle(.primary)
+                    Text(entry.name).font(.body).foregroundStyle(.primary)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                         .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
                     Text(pluginDetail(format: "AUv3", author: entry.manufacturer))
-                        .etFont(size: 12)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
@@ -770,11 +770,11 @@ struct EffectPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // 折り返さない。幅が足りないときは縮める（EffectCardViewの名前と同じ）。
                     // 右の…に44pt取られるので、長い名前が2行に折れて行の高さが崩れていた。
-                    Text(entry.name).etFont(size: 15).foregroundStyle(.primary)
+                    Text(entry.name).font(.body).foregroundStyle(.primary)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                         .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
                     Text(pluginDetail(format: "JSFX", author: entry.author))
-                        .etFont(size: 12)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
@@ -959,7 +959,7 @@ struct EffectPickerView: View {
     private func presetHeader(group: String?, title: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             // 一覧の見出し（13 の semibold）と揃える。群の名前だけ 15 で一段上にする。
-            if let group { Text(group).etFont(size: 15, weight: .semibold) }
+            if let group { Text(group).font(.headline) }
             if let title {
                 Text(title)
                     .etFont(size: 13, weight: .semibold)
@@ -1103,7 +1103,7 @@ struct EffectPickerView: View {
             // 大きい文字サイズでは、札を名前の下へ回す（名前が札に押されて削れるため）。
             nameAndChip {
                 Text(name)
-                    .etFont(size: 15)
+                    .font(.body)
                     .foregroundStyle(.primary)
                 if let kind {
                     Text(kind)
@@ -1268,7 +1268,7 @@ struct EffectPickerView: View {
             VStack(alignment: .leading, spacing: 2) {
                 nameAndChip {
                     Text(effect.name)
-                        .etFont(size: 15)
+                        .font(.body)
                         .foregroundStyle(.primary)
                     if showCategory {
                         Text(effect.category.categoryLabel)
@@ -1281,7 +1281,7 @@ struct EffectPickerView: View {
                 }
                 if !effect.about.isEmpty {
                     Text(effect.about)
-                        .etFont(size: 12)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
