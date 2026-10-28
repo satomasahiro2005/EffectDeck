@@ -77,15 +77,21 @@ struct EffectCardView: View {
         }
     }
 
-    /// 音量に追従する段は、帯でキーフレームを選んでいる間だけ、カードの本文がそのキーフレームの値になって直せる。
-    /// 選んでいないときは**いま鳴っている値**（補間）を映して、直せなくする。
+    /// 音量に追従する段は、カードの本文が選んでいるキーフレームの値になって直せる。
+    /// 押して選んでいなければ、いまの音量に一番近いキーフレーム（音量が読めなければ一番上）。
     /// **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（直しても試聴にならない）。
+    /// PC の鎖を編集している間だけは、いま鳴っている値を映して直せなくする。
     private var follows: Bool { node.automation != nil }
 
-    /// 選んでいるキーフレームの添字。消えた・動いた・追従をやめたら nil。
+    /// 選んでいるキーフレームの添字。押して選んだものが無ければ（消えた・外した）いまの音量に一番近いもの。
+    /// 追従していない・PC 編集中は nil。
     private var selectedKeyframe: Int? {
-        guard let p = selectedPosition, let a = node.automation else { return nil }
-        return a.keyframes.firstIndex { abs($0.position - p) < 0.0005 }
+        guard let a = node.automation, !a.keyframes.isEmpty, !RemoteMirror.shared.isRemote else { return nil }
+        if let p = selectedPosition, let k = a.keyframes.firstIndex(where: { abs($0.position - p) < 0.0005 }) {
+            return k
+        }
+        let current = ETVolumeFollower.shared.position ?? a.source.range.upperBound
+        return a.nearestKeyframe(to: current, within: .infinity) ?? a.keyframes.count - 1
     }
 
     /// 直すときの口。選んでいるキーフレームの写しか、普通の段。

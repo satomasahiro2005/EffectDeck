@@ -1,13 +1,14 @@
 //  KeyframeTimeline.swift
 //  音量に追従するカードのキーフレームを、横の帯で見せる（AE のタイムラインのように）。
 //
-//  横軸は音量 0〜100%。キーフレームの位置に菱形（◆）、いまの音量に縦の針（アクセント色）。
+//  横軸は音量 0〜100%。キーフレームの位置に菱形（◆）、いまの音量に縦の針（アクセント色）と、左にその数。
 //  印は AE と同じく左右の半分でその側の変わり方を見せる。滑らかに変わる側は菱形の半分、
 //  平らな側（その側にキーフレームが無い・Hold で保つ）は四角の半分。両側とも平らなら矩形。
 //  いまの音量を挟む2つのキーフレームの間は薄く塗る。字は目盛りの数字だけ。
 //
 //  出す場所は追従しているカードの頭の下。
-//  菱形を押すとそのキーフレームを選び（カードの本文がその値になって直せる）、同じ菱形か空いた所を押すと外す。
+//  菱形を押すとそのキーフレームを選び（カードの本文がその値になって直せる）、同じ菱形か空いた所を押すと外す
+//  （外すと、カードはいまの音量に一番近いキーフレームを選ぶ）。
 //  横へ引くと音量の位置を動かす（5% 刻み。ほかのキーフレームの位置には置けない）。選んでいる菱形はアクセント色。
 //  カードの長押し（並べ替え）と取り合わないよう、引くのは最小の距離を置いた横の引きだけ。
 //  音量が読めていなければ針は出さない。
@@ -55,10 +56,9 @@ struct ETKeyframeTimeline: View {
     // MARK: 本体
 
     var body: some View {
-        HStack(spacing: 4) {
-            edgeLabel("0")
+        HStack(spacing: 6) {
+            currentLabel
             strip
-            edgeLabel("100")
         }
         .frame(height: height)
         .accessibilityElement(children: .ignore)
@@ -66,11 +66,15 @@ struct ETKeyframeTimeline: View {
         .accessibilityValue(accessibilityText)
     }
 
-    private func edgeLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9).monospacedDigit())
-            .foregroundStyle(.secondary)
-            .fixedSize()
+    /// いまの音量（針と同じ色）。幅は "100%" で取り、数が変わっても帯が動かないようにする。
+    private var currentLabel: some View {
+        ZStack(alignment: .leading) {
+            Text("100%").hidden()
+            Text(position.map { automation.source.label(min(max($0, 0), 100)) } ?? "–")
+                .foregroundStyle(position == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+        }
+        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+        .fixedSize()
     }
 
     private var accessibilityText: String {
