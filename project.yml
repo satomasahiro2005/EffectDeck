@@ -308,6 +308,8 @@ targets:
       # ほかの値で触れなくなる行の規則（Cassette の Mode・Adaptive Prediction の Freeze / Hold など）。
       # Foundationだけ（ParamGateTests）。
       - path: Sources/EffeTuneLive/DSP/ETParamGate.swift
+      # 値を渡した直後には動かない遅れ（SFZ の dt・tm）を tick で見直す帳面。Foundationだけ（LatencyWatchTests）。
+      - path: Sources/EffeTuneLive/DSP/ETLatencyWatch.swift
       # Audio Unit の数え上げを報告用の行にする所。Foundationだけ（AUCensusTests）。
       - path: Sources/EffeTuneLive/Audio/ETAUCensus.swift
       # IR Reverbの下ごしらえ（伸縮・頭の無音・Direct Cut・正規化・切り詰め）と解決規則。

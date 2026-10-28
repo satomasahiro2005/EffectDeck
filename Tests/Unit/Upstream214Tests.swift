@@ -17,9 +17,8 @@ final class Upstream214Tests: XCTestCase {
 
     // MARK: 版と目録
 
-    func testUpstreamVersionIs0_14_0() {
-        XCTAssertEqual(ETUpstreamVersion, "0.14.0")
-        XCTAssertEqual(ETUpstreamAppVersion, "2.14.0", "package.json の版。公式の PC との食い違いの表示に使う")
+    /// 版の見張りは Upstream215Tests へ移った（2.15.0 は効果を足していない。112 のまま）。
+    func testCatalogStillHas112Effects() {
         XCTAssertEqual(ETCatalog.count, 112)
     }
 

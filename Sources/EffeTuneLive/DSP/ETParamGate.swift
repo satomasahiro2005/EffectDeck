@@ -28,6 +28,8 @@ enum ETParamGate {
             return cassetteDisabled(key: key, value: value)
         case "AdaptivePredictionEffectPlugin":
             return adaptiveDisabled(key: key, value: value)
+        case "SFZNotePlayerPlugin":
+            return sfzDisabled(key: key, value: value)
         default:
             return false
         }
@@ -84,5 +86,22 @@ enum ETParamGate {
         case "autonomy", "freeze": return hold
         default: return false
         }
+    }
+
+    // MARK: SFZ Note Player
+
+    /// Detection（dt）の並び。0 が Classic、1 が Event（sfz_note_player.js の dt）。
+    enum SFZDetection {
+        static let classic: Float = 0
+        static let event: Float = 1
+    }
+
+    /// sfz_note_player.js の `_syncDetectionControls`（2.15.0）。Event は音の取り方を自分で決めるので、
+    /// Threshold（th）と Retrigger Drop（rd）は効かない。止めるのは操作だけで値は残す。
+    /// dt が無い（古い鎖）ときは Classic と同じで、何も止めない。
+    private static func sfzDisabled(key: String, value: (String) -> Float?) -> Bool {
+        guard key == "th" || key == "rd" else { return false }
+        // カーネルは `params_.detection == 1.0F` で比べる。丸めない（0.7 や 2 は Classic）。
+        return (value("dt") ?? SFZDetection.classic) == SFZDetection.event
     }
 }

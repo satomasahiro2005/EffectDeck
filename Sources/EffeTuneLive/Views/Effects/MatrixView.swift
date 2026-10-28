@@ -53,8 +53,11 @@ struct MatrixView: View {
             MatrixRouting.shared.prune(keeping: dsp.nodes.map(\.id))
             push(cells)
         }
-        // 鎖を作り直すとカーネルは既定の対角へ戻る（kernel.cpp:44-48 の reset）。
+        // 新しい instance は既定の対角で始まる（kernel.cpp のメンバ初期化）。
         // 画面に出ている経路と食い違うので、instance が変わったら入れ直す。
+        // 2.14.0 までは reset（et_instance_reset・時間の巻き戻し・再開）でも対角へ戻り、
+        // instance が変わらないのでここは動かず、画面だけ人の経路を出していた。2.15.0 で
+        // reset は経路に触らなくなった（上流 basics/matrix/kernel.cpp。topology_native_test が見る）。
         .onChange(of: node.instance) { _, _ in push(cells) }
     }
 
@@ -239,7 +242,7 @@ final class MatrixRouting {
     static let shared = MatrixRouting()
 
     /// 既定は対角 2 本。matrix.js:105-111 と params.json の default（"0011"）、
-    /// カーネルの reset（kernel.cpp:44-48）が同じものを置いている。
+    /// カーネルのメンバ初期化（kernel.cpp。2.15.0 で reset から移った）が同じものを置いている。
     static let initial: [UInt8: Bool] = [0x00: false, 0x11: false]
 
     private var byNode: [UUID: [UInt8: Bool]] = [:]
