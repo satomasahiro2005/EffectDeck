@@ -12,7 +12,7 @@ New
 
 Changes
 
-- An effect you add now goes outside Sections, unless you drag it onto a Section card.
+- An effect you add now goes outside Sections, unless you drop it onto a Section card.
 - Chroma Spiral and Stereo Meter use the space better when collapsed.
 - Note Spectrogram: opaque keyboard, sharper notes, legend readable in light mode.
 - Floating Meters and graphs use less CPU.
@@ -38,7 +38,7 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 
 【変更】
 
-・エフェクトを足したとき、Sectionのカードへドラッグした場合を除いてSectionの外に置くようにしました。
+・エフェクトを足したとき、Sectionのカードにドロップした場合を除いてSectionの外に置くようにしました。
 ・Chroma SpiralとStereo Meterを畳んだときの表示を広く使うようにしました。
 ・Note Spectrogramの鍵盤が透けず、ノートがくっきりし、明るい外観でも凡例が読めるようになりました。
 ・Floating Metersとグラフの処理を軽くしました。
