@@ -8,7 +8,6 @@ New
 - Follow Volume: an effect can follow the output volume. Choose Follow Volume from the card's ⋯ menu, then add keyframes at different volumes with the + on the strip under the card name. Tap a keyframe to edit its values in the card; tap it again (or long-press) to switch Smooth / Hold or delete it. Stop Following Volume is in the ⋯ menu. Please check that the sound changes smoothly while you change the volume, and that dragging a keyframe sideways does not move the card.
 - JSFX scripts can read the output volume through the read-only variable effectdeck_output_volume (0 to 1, -1 when unknown).
 - Add Effect search: results are grouped into Effects / Plugins / Presets, well-known effects come first, and common names also work (for example de-esser, goniometer, snail, brir).
-- Accessibility: VoiceOver reads slider names and values, card open/closed state and chip selection; cards can be moved with VoiceOver actions. Text follows the iOS text size setting. On iPad, Command-Z undoes adding, removing and moving effects.
 - Effects from EffeTune 2.15.0, including SFZ Note Player Detection.
 
 Changes
@@ -18,6 +17,7 @@ Changes
 - Note Spectrogram: the keyboard is no longer see-through, notes are sharper, and the legend is readable in light mode.
 - Floating Meters and the graphs use less CPU.
 - Small text buttons (Invert Gains, Import, Reset) are now standard buttons that are easier to tap.
+- Some accessibility improvements: VoiceOver reads more slider names and values, text follows the iOS text size setting, and on iPad Command-Z undoes adding, removing and moving effects.
 
 Fixes
 
@@ -34,7 +34,6 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 ・Follow Volume：エフェクトを出力の音量に合わせて変えられます。カードの⋯からFollow Volumeを選び、名前の下の帯の+で、音量ごとにキーフレームを足します。キーフレームを押すとカードでその値を直せ、もう一度押す（または長押し）とSmooth／Holdの切り替えと削除ができます。やめるときは⋯のStop Following Volumeです。音量を変えたときに音がなめらかに変わるか、キーフレームを横に引いてもカードが動かないかをご確認ください。
 ・JSFXから、読み取り専用の変数effectdeck_output_volume（0〜1、読めないときは-1）で出力の音量を読めるようになりました。
 ・Add Effectの検索：結果をEffects／Plugins／Presetsに分けて並べ、よく使われるエフェクトを上に出します。一般的な呼び名（de-esser、goniometer、snail、brirなど）でも見つかります。
-・アクセシビリティ：VoiceOverで、スライダーの名前と値、カードの開閉、チップの選択が読まれ、カードの移動も操作から行えます。文字の大きさはiOSの設定に従います。iPadでは⌘Zで、エフェクトの追加・削除・移動を取り消せます。
 ・EffeTune 2.15.0のエフェクト（SFZ Note PlayerのDetectionなど）に対応しました。
 
 【変更】
@@ -44,6 +43,7 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 ・Note Spectrogramの鍵盤が透けなくなり、ノートがくっきり表示され、明るい外観でも凡例が読めるようになりました。
 ・Floating Metersとグラフの処理を軽くしました。
 ・小さな文字だけのボタン（Invert Gains、Import、Resetなど）を、押しやすい標準のボタンにしました。
+・アクセシビリティを一部改善しました。VoiceOverで読まれるスライダーの名前と値を増やし、文字の大きさがiOSの設定に従うようにしました。iPadでは⌘Zで、エフェクトの追加・削除・移動を取り消せます。
 
 【不具合の修正】
 
