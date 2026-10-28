@@ -806,10 +806,39 @@ private struct NoteSpectrogramGraph: View {
         context.stroke(separators, with: ETGraphShading.axis, lineWidth: 0.5)
         context.fill(black, with: ETGraphShading.muted)
         light(&context, blackGlow)
+        outline(&context, blackGlow, rollWidth: rollWidth, blackDepth: blackDepth, rowHeight: rowHeight,
+                horizontal: frame.horizontal)
         var edge = Path()
         edge.move(to: CGPoint(x: rollWidth, y: 0))
         edge.addLine(to: CGPoint(x: rollWidth, y: frame.height))
         context.stroke(edge, with: ETGraphShading.axis, lineWidth: 1)
+    }
+
+    /// 光っている黒鍵の縁取り（上流 2.15.0。note_spectrogram.js の outlineTint）。
+    /// 白を鍵の色へ 0.2 だけ寄せた色で、濃さは鍵と同じ（confidence）。太さは行の高さと黒鍵の深さの小さいほうの 1 割。
+    /// **奥の辺は開けておく**（上流は Horizontal で上、Vertical で右。draw 空間では x = rollWidth と
+    /// rollWidth + blackDepth）。ETNoteRollFrame の回し方は上流と同じなので式はそのまま。
+    private func outline(_ context: inout GraphicsContext,
+                         _ keys: [(rect: CGRect, midi: Int, value: Double)],
+                         rollWidth: CGFloat, blackDepth: CGFloat, rowHeight: CGFloat, horizontal: Bool) {
+        let width = min(rowHeight, blackDepth) * 0.1
+        guard width > 0 else { return }
+        let inset = width / 2
+        let back = rollWidth + (horizontal ? inset : blackDepth - inset)
+        let front = rollWidth + (horizontal ? blackDepth - inset : inset)
+        for key in keys where key.value > 0 {
+            let c = band.keyColor(midi: key.midi)
+            func tint(_ channel: Double) -> Double { (255 + (channel - 255) * 0.2) / 255 }
+            var path = Path()
+            path.move(to: CGPoint(x: back, y: key.rect.minY + inset))
+            path.addLine(to: CGPoint(x: front, y: key.rect.minY + inset))
+            path.addLine(to: CGPoint(x: front, y: key.rect.maxY - inset))
+            path.addLine(to: CGPoint(x: back, y: key.rect.maxY - inset))
+            var pen = context
+            pen.opacity = key.value
+            pen.stroke(path, with: .color(Color(red: tint(c.r), green: tint(c.g), blue: tint(c.b))),
+                       lineWidth: width)
+        }
     }
 
     /// 鳴っている鍵を .tint で塗り直す。濃さが確からしさ。

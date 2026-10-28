@@ -15,7 +15,7 @@ Website: [effectdeck.nemut.ai](https://effectdeck.nemut.ai/)
 <!-- 2 行目は <br> で折る（空行で段落を分けると行の間が空きすぎる。行頭に HTML コメントを置いても
      段落が切れる）。Downloads と Rating の数字は .github/workflows/badges.yml が孤立ブランチ badges に置く。 -->
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/EffectDeck?label=release&color=3B82F6)](https://github.com/satomasahiro2005/EffectDeck/releases)
-![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.14.0-3B82F6)
+![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.15.0-3B82F6)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Discord](https://img.shields.io/discord/1554111611067695114?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://fxdB.nemut.ai/)<br>
 [![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)

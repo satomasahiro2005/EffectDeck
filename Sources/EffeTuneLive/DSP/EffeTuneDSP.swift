@@ -799,6 +799,10 @@ final class EffeTuneDSP: ObservableObject {
             reloadAsset(at: index)
         } else if instanceLatency(of: self[slot: index]) != before {
             republish(reason: "遅延が変わった")
+        } else {
+            // 渡した値はまだ並んでいるだけで、カーネルが受け取るのは次の処理（SFZ の dt・tm）。
+            // 変わるのを tick で見る（EffeTuneDSP+LatencyWatch.swift）。
+            expectLatencyChange(of: self[slot: index], before: before)
         }
     }
 
@@ -1126,6 +1130,9 @@ final class EffeTuneDSP: ObservableObject {
         }
     }
 
+    /// 値を渡したのにまだ動かない遅れの見張り（EffeTuneDSP+LatencyWatch.swift）。
+    var latencyWatch = ETLatencyWatch()
+
     /// 待っている IR の下ごしらえのやり直し。段の id ごとに 1 本。
     private var pendingIRPreparation: [UUID: Task<Void, Never>] = [:]
 
@@ -1202,6 +1209,10 @@ final class EffeTuneDSP: ObservableObject {
                 reloadAsset(at: index)
             } else if instanceLatency(of: self[slot: index]) != before {
                 republish(reason: "遅延が変わった")
+            } else {
+                // SFZ の dt・tm は渡した値がまだ並んでいるだけ（settleAfterParams と同じ）。
+                // プリセットの適用とリモートの追従（RemoteMirror）はここを通る。
+                expectLatencyChange(of: self[slot: index], before: before)
             }
         }
         // 畳んだカードにはビューが無いので、ここで呼ばないと誰も呼ばない。
@@ -1260,8 +1271,14 @@ final class EffeTuneDSP: ObservableObject {
         }
         // 素材を外すとカーネルがその段を有効と数えなくなるので組み直す
         // （入れたときも ETIRLoader.load が組み直している）。
-        if unloaded || instanceLatency(of: self[slot: index]) != before {
+        let latencyMoved = instanceLatency(of: self[slot: index]) != before
+        if unloaded || latencyMoved {
             republish(reason: unloaded ? "IRを外した" : "遅延が変わった")
+        }
+        if !latencyMoved {
+            // SFZ の Detection を Event から Classic へ戻す・負の Timing を戻す、は
+            // 次の処理まで遅れが動かない（settleAfterParams と同じ。EffeTuneDSP+LatencyWatch.swift）。
+            expectLatencyChange(of: self[slot: index], before: before)
         }
         // setValues と同じ。値から材料を引く designer に、戻した値を読ませる。
         ETAssetReattach.paramsChanged(self[slot: index])
