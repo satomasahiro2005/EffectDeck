@@ -53,6 +53,9 @@ struct SFZVoiceGraph: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { touch in preview(at: touch.location, size: CGSize(width: width, height: height)) }
                         .onEnded { _ in stopPreview() })
+                    // 鍵盤の上を横へなぞって鳴らすので、行が払われない・長押しで掴まれないように。
+                    // 触れないとき（canPreview が偽）は面ごと置かないので、印も敷かない。
+                    .etOwnsDrag()
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }

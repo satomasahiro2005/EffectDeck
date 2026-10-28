@@ -10,7 +10,8 @@
 //  菱形を押すとそのキーフレームを選び（カードの本文がその値になって直せる）、同じ菱形か空いた所を押すと外す
 //  （外すと、カードはいまの音量に一番近いキーフレームを選ぶ）。
 //  横へ引くと音量の位置を動かす（5% 刻み。ほかのキーフレームの位置には置けない）。選んでいる菱形はアクセント色。
-//  カードの長押し（並べ替え）と取り合わないよう、引くのは最小の距離を置いた横の引きだけ。
+//  カードの長押し（並べ替え）と払い（削除）に渡さないよう、引く面には etOwnsDrag() で印を敷く。
+//  最小の距離を置いても、鎖の長押しと払いは SwiftUI のジェスチャが見えないので、印が無いと取り合う。
 //  音量が読めていなければ針は出さない。
 //
 //  Foundation 以外に触るのは SwiftUI だけ。位置・刻み・近さの判断は ETAutomation にある（AutomationTests）。
@@ -252,6 +253,9 @@ private struct StripGestures: ViewModifier {
                     .updating($active) { _, state, _ in state = true }
                     .onChanged(changed)
                     .onEnded { _ in ended() })
+                // 菱形を横へ引いたときに行が払われない・長押しで掴まれないように。
+                // 触れないとき（else）は印を敷かない。掴めない面に印があると、カードの払いと長押しまで止める。
+                .etOwnsDrag()
                 .onChange(of: active) { _, now in
                     if !now { cancelled() }
                 }
