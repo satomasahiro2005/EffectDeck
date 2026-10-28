@@ -239,12 +239,20 @@ struct ETKeyframeTimeline: View {
         KeyframeShape(leftFlat: sides.leftFlat, rightFlat: sides.rightFlat)
             .fill(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
             .frame(width: diamond, height: diamond)
-            // 色の違いに頼らない設定のときだけ、選んでいる菱形に外側の輪を足す（通常の見た目は変えない）。
-            .overlay {
+            // 色の違いに頼らない設定のときだけ、選んでいる印の外側に輪を足す（通常の見た目は変えない）。
+            // **輪は印の輪郭から同じ距離に引く。**以前は同じ形を枠ごと一回り大きくしていたので、
+            // 斜めの辺と縦の辺で印との間が揃わなかった。太い線から細い線を抜いて、輪郭に沿った帯を作る。
+            .background {
                 if tinted && differentiateWithoutColor {
-                    KeyframeShape(leftFlat: sides.leftFlat, rightFlat: sides.rightFlat)
-                        .stroke(.primary, lineWidth: 1.5)
-                        .padding(-3)
+                    let shape = KeyframeShape(leftFlat: sides.leftFlat, rightFlat: sides.rightFlat)
+                    let gap: CGFloat = 2, ring: CGFloat = 1.5
+                    ZStack {
+                        shape.stroke(.primary, style: StrokeStyle(lineWidth: 2 * (gap + ring), lineJoin: .round))
+                        shape.stroke(.black, style: StrokeStyle(lineWidth: 2 * gap, lineJoin: .round))
+                            .blendMode(.destinationOut)
+                        shape.fill(.black).blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
                 }
             }
             .allowsHitTesting(false)
@@ -405,13 +413,14 @@ struct ETKeyframeTimeline: View {
 }
 
 /// キーフレームの印。左右の半分を、滑らかな側は菱形の半分、平らな側は四角の半分で描く。
-/// 四角の半分は菱形の半分より細くして、矩形が菱形より大きく見えないようにする。
+/// 平らな側の半分も菱形の半分と同じ幅にする（外形が正方形にそろい、混ぜた形も傾いて見えない）。
 private struct KeyframeShape: Shape {
     let leftFlat: Bool
     let rightFlat: Bool
 
     func path(in rect: CGRect) -> Path {
-        let flat = rect.width / 2 * 0.7
+        // 平らな側の半分も、菱形の半分と同じ幅（外形が正方形にそろう）。細くしていたときは左右で幅が違って傾いて見えた。
+        let flat = rect.width / 2
         var path = Path()
         path.move(to: CGPoint(x: rect.midX, y: rect.minY))
         if leftFlat {
