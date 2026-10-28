@@ -80,7 +80,9 @@ enum ETContentSizeFloor {
         let system = UIApplication.shared.preferredContentSizeCategory
         let floor: UIContentSizeCategory = system < .large ? .large : system
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
-            for window in scene.windows where window.traitOverrides.preferredContentSizeCategory != floor {
+            // **上書きを読まない。**まだ置いていない上書きを読むと UIKit が例外を出して落ちる
+            // （_UITraitOverrides _objectForTraitToken: の NSAssertion、実機で落ちた）。置くだけにする。
+            for window in scene.windows {
                 window.traitOverrides.preferredContentSizeCategory = floor
             }
         }
