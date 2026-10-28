@@ -340,7 +340,7 @@ struct GroupDelayEQView: View {
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 if !stacked { Spacer(minLength: 0) }
-                textButton("Reset") { designer.reset() }
+                ETTextActionButton(title: "Reset") { designer.reset() }
             }
             chips
         }
@@ -399,7 +399,7 @@ struct GroupDelayEQView: View {
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-                textButton("Reset Band") { designer.setDelay(0, band: selected) }
+                ETTextActionButton(title: "Reset Band") { designer.setDelay(0, band: selected) }
             }
 
             HStack(spacing: 8) {
@@ -487,19 +487,6 @@ struct GroupDelayEQView: View {
                 }
             }
         }
-    }
-
-    /// 字だけのボタン。当たり判定は 44pt まで広げる
-    /// （15BandGEQView.swift:329-338 と同じ）。
-    private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .etFont(size: 12)
-                .foregroundStyle(.tint)
-                .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: 値の出し入れ

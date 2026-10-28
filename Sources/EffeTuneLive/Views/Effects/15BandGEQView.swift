@@ -264,7 +264,7 @@ struct FifteenBandGEQView: View {
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 if !stacked { Spacer(minLength: 0) }
-                textButton("Reset All") { resetAll() }
+                ETTextActionButton(title: "Reset All") { resetAll() }
             }
             chips
         }
@@ -325,7 +325,7 @@ struct FifteenBandGEQView: View {
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-                textButton("Reset Band") { setGain(selected, 0) }
+                ETTextActionButton(title: "Reset Band") { setGain(selected, 0) }
             }
 
             // バンドを変えたら欄の中身は捨てる。id を付けないと打ちかけの draft が
@@ -335,19 +335,6 @@ struct FifteenBandGEQView: View {
             }
             .id(selected)
         }
-    }
-
-    /// 字だけのボタン。当たり判定は 44pt まで広げる。
-    /// contentShape は label の中に置く。外に付けても Button の受ける面は label のままになる。
-    private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .etFont(size: 12)
-                .foregroundStyle(.tint)
-                .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: 値の出し入れ

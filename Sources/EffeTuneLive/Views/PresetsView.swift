@@ -441,8 +441,7 @@ struct PresetsView: View {
                 Spacer()
                 // **Edit は置かない。**長押しでそのまま掴めるので、
                 // 先にモードへ入る必要が無い。
-                Button("New Folder") { typed = ""; naming = .newFolder }
-                    .font(.footnote)
+                ETTextActionButton(title: "New Folder") { typed = ""; naming = .newFolder }
                     .textCase(nil)
             }
         }

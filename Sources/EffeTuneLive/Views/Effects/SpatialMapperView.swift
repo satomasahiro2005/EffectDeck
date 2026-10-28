@@ -17,10 +17,9 @@ struct SpatialMapperView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if node.channelSpec != -2 {
-                Button("Use all output channels") {
+                ETTextActionButton(title: "Use all output channels") {
                     dsp.setRouting(at: index, channelSpec: -2)
                 }
-                .etFont(size: 14, weight: .medium)
             }
             ForEach(node.spec.params.filter { !$0.isArray }) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)

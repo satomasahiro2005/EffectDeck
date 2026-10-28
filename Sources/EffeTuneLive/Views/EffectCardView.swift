@@ -831,10 +831,7 @@ private struct ExternalProcessorView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    Button("Re-enable") { jsfx.clearDiagnostic(instanceID: instanceID) }
-                        .etFont(size: 12)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    ETTextActionButton(title: "Re-enable") { jsfx.clearDiagnostic(instanceID: instanceID) }
                 }
             }
             // **画面に入っているかを見るのは JSFX の canvas だけ。**

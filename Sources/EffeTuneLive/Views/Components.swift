@@ -293,6 +293,29 @@ struct ETAdaptiveStack<Content: View>: View {
     }
 }
 
+/// 見出しや節の頭に置く、文字だけの操作（Reset / Import など）。
+///
+/// 小さい青字だけだとボタンに見えず、押せる場所も分からなかった。標準の small bordered にする。
+/// 見た目（カプセル）と並びの高さは標準のまま、押せる面だけを label の中で 44pt まで広げる
+/// （余白を足して同じだけ引く。外側に contentShape を付けても Button の当たりは広がらない）。
+/// footnote の 1 行は標準で約 16pt なので、上下 14 ずつで 44pt。
+struct ETTextActionButton: View {
+    let title: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.footnote)
+                .padding(.vertical, 14)
+                .contentShape(.rect)
+                .padding(.vertical, -14)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+}
+
 /// 名前（見出し）・メニュー・入切の行。PEQ のバンドの頭に使う。
 ///
 /// 横に並べると、メニューの値（"Peaking"）が UIKit のラベルに狭い幅で渡されて

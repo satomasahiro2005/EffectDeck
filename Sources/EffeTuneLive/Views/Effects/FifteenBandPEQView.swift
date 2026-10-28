@@ -438,15 +438,9 @@ struct FifteenBandPEQView: View {
             .etFont(size: 10, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
-        let invertButton = Button("Invert Gains") { invertGains() }
-            .etFont(size: 12)
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
+        let invertButton = ETTextActionButton(title: "Invert Gains") { invertGains() }
         // web は accept='.txt'（fifteen_band_peq.js:483）。
-        let importButton = Button("Import") { importing = true }
-            .etFont(size: 12)
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
+        let importButton = ETTextActionButton(title: "Import") { importing = true }
             .fileImporter(isPresented: $importing,
                           allowedContentTypes: [.plainText],
                           allowsMultipleSelection: false) { result in

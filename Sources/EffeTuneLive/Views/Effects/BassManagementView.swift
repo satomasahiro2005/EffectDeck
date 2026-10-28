@@ -132,10 +132,9 @@ private struct BassManagementBody: View {
         // All 以外では段ごと外れる（EffeTuneDSP.isChannelBypassed）。それは上のボタンが言う。
         // 誤りの行は All のとき、カーネルが受け取る幅での誤りだけ。
         if node.channelSpec != -2 {
-            Button("Use all output channels") {
+            ETTextActionButton(title: "Use all output channels") {
                 dsp.setRouting(at: index, channelSpec: -2)
             }
-            .etFont(size: 14, weight: .medium)
         } else if let error = s.configurationError(allChannels: true, width: width) {
             Text(error.message)
                 .etFont(size: 12, weight: .semibold)
