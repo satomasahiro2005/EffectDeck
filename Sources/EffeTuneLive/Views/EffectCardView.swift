@@ -324,170 +324,33 @@ struct EffectCardView: View {
     }
 
     private func header(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
-        HStack(spacing: 6) {
-            // Button ではなく Toggle。支援技術に入切が伝わるようにする。
-            Toggle("Enabled", isOn: Binding(
-                get: { node.enabled },
-                set: { dsp.setEnabled($0, at: index) }))
-                .toggleStyle(.power)
-                .labelsHidden()
-                .accessibilityLabel(node.spec.name)
-                // 名前は隣の開閉と同じになる。声で「Tap <名前>」と言ったときに取り合わないよう、電源は別の呼び名にする。
-                .accessibilityInputLabels(["\(node.etDisplayName) power"])
-
-            // **畳んだ Level Meter は図を名前の場所へ入れる。**
-            // 横長の棒 2 本と目盛りなので、名前があった枠にそのまま収まる。
-            // これでカードが 1 行になり、鎖の先頭に置いても場所を食わない。
-            // 他の analyzer（図が縦に伸びるもの）は下に置く。
-            if inlinesGraph {
-                // 名前の行と同じ頭の要素（ボタン・開閉の値・並べ替えと削除・焦点の行き先）にする。
-                // 畳んだ Level Meter は既定の鎖の唯一のカードで、ここだけ違うと操作が食い違う。
-                titleElement(
-                    ETEffectViews.view(index: address, node: shown, dsp: dsp)
-                        .id(node.resetCount)
-                        .environment(\.etGraphOnly, true)
-                        .allowsHitTesting(false)
-                        .accessibilityLabel(node.spec.name))
-            } else if !hidesName {
-                titleElement(
-                VStack(alignment: .leading, spacing: 1) {
-                    // 折り返さない。幅が足りないときは縮める。
-                    // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
-                    // 2 行に折れていた。
-                    // 文字サイズをアクセシビリティサイズまで上げたときだけ、縮めずに折り返す
-                    // （縮めると設定が打ち消され、切ると同じ名前のカードを見分けられない）。
-                    HStack(spacing: 4) {
-                        Text(node.etDisplayName)
-                            .etFont(size: 16, weight: .semibold)
-                            .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                            .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
-                        // 音量に追従している印。畳んでいても出る（頭は共通）。
-                        if node.automation != nil {
-                            Image(systemName: "speaker.wave.2.fill")
-                                .etFont(size: 11, weight: .semibold)
-                                .foregroundStyle(.secondary)
-                                .accessibilityLabel("Follow Volume")
-                        }
+        // 文字をアクセシビリティサイズまで上げたときだけ 2 段にする。
+        // 1 行のままだと、固定幅の部品（電源・矢印・⋯）が幅を取って名前が "5Band…" に切れ、
+        // 部品の右端がカードの外（余白の外）まで出ていた。上の段に部品、下の段に名前を置き、
+        // 名前に幅いっぱいを渡す。通常の文字サイズは今までの 1 行のまま。
+        Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        headerPower
+                        Spacer(minLength: 4)
+                        headerRouting
+                        headerChevron
+                        headerMenu
                     }
-                    Text(summary(shown))
-                        .etFont(size: 11)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                })
+                    headerTitle(shown, address: address)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             } else {
-                // 名前も図も頭には出さない（図は下に来る）。
-                // 読み上げだけ残す。図は読み上げられないので。
-                titleElement(
-                    Color.clear.frame(width: 0, height: 0)
-                        .accessibilityHidden(false)
-                        .accessibilityLabel(node.spec.name))
+                HStack(spacing: 6) {
+                    headerPower
+                    headerTitle(shown, address: address)
+                    Spacer(minLength: 4)
+                    headerRouting
+                    headerChevron
+                    headerMenu
+                }
             }
-
-            Spacer(minLength: 4)
-
-            // 既定（0→0 の All）から外れたものだけ出す。
-            // 普通の鎖は一直線なので、普段は何も出ない。
-            //
-            // **出ているときは押せる。** 印が出ているということは行き先を
-            // いじってあるということで、次に触りたいのもそこ。⋯ を開いて
-            // Routing を選ぶより、目に見えている印をそのまま押すほうが速い。
-            // 矢印を押し所にしていないのとは事情が違う（あちらは行を押すのと
-            // 結果が同じだった）。
-            if !node.isDefaultRouting || node.isGated {
-                Button { sheet = .routing } label: {
-                    Text(ETRouting.badge(node))
-                        .etFont(size: 10, design: .monospaced)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .etBadgeBackground(in: .capsule)
-                        .foregroundStyle(.white)
-                        // 見た目は変えず、押せる面だけ 44pt 前後に広げる（余白を足して、同じだけ引く）。
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 14)
-                        .contentShape(.rect)
-                        .padding(.horizontal, -7)
-                        .padding(.vertical, -14)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Routing \(ETRouting.badge(node))")
-            }
-
-            // 2列では図を持つものだけが 開く ↔ 図だけ を行き来する。ほかは開いたままなので出さない。
-            if hasBody && (!pinnedOpen || showsCollapsedGraph) {
-                // **印であって押し所ではない。**
-                // 押すのは行そのもの（下の onTapGesture）。
-                // 矢印にも当たり判定があると、行の手つきと取り合って
-                // 押せたり押せなかったりに見える。しかも文字を押すのと
-                // 結果が同じなので、分ける意味が無い。
-                // **右向き↔下向きにする。上向きにしない。**
-                // 0°↔180°（下↔上）だと並べ替えの矢印に見える。カードは長押しで
-                // 動かせるうえ、⋯ の中に Move Up / Move Down が上下の矢印で
-                // 並んでいるので、同じ形が開閉にも使われていると取り違える。
-                // 右→下は開閉の作法で、下の Section の印とも揃う。
-                Image(systemName: "chevron.down")
-                    .etFont(size: 12, weight: .semibold)
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-
-            Menu {
-                if node.externalID?.hasPrefix("jsfx:") == true {
-                    Button { sheet = .jsfxSource } label: {
-                        Label("View Source", systemImage: "doc.text.magnifyingglass")
-                    }
-                }
-                // 並びは上流に合わせて routing → preset → reset
-                // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
-                //
-                // 全体の Routing はツールバーにもあるが、あちらは鎖を見渡す画面。
-                // 「このカードの行き先」を変えたいときにここから直に開ける。
-                Button { sheet = .routing } label: {
-                    Label("Routing…", systemImage: "arrow.triangle.branch")
-                }
-                // 絵はしおり（上流 :360 の SVG も bookmark の d）。
-                // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
-                // プリセットの一覧に混ぜない。
-                if !node.isExternal {
-                    // 追従しているあいだは、カードが見せているもの（キーフレームか、いまの音量の位置）へ効く。
-                    Button { sheet = .presets } label: {
-                        Label("Effect Presets", systemImage: "bookmark")
-                    }
-                    .disabled(!canEdit)
-                    Button { dsp.resetParams(at: editAddress) } label: {
-                        Label("Reset Parameters", systemImage: "arrow.counterclockwise")
-                    }
-                    .disabled(!canEdit)
-                    keyframeMenuItems
-                }
-                Button(action: moveUp) {
-                    Label("Move Up", systemImage: "arrow.up")
-                }
-                .disabled(!canMoveUp)
-                Button(action: moveDown) {
-                    Label("Move Down", systemImage: "arrow.down")
-                }
-                .disabled(!canMoveDown)
-                Divider()
-                Button(role: .destructive) {
-                    removeCard()
-                } label: {
-                    Label("Remove", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .etFont(size: 15, weight: .semibold)
-                    .frame(width: 34, height: 34)
-                    // 見た目と並びの大きさは 34pt のまま、押せる面だけ 44pt にする（余白を足して、同じだけ引く）。
-                    .padding(5)
-                    .contentShape(Rectangle())
-                    .padding(-5)
-            }
-            // どのカードの ⋯ も「More」と読まれて区別できない。読み上げの名前は変えず、
-            // 声で呼ぶ名前だけカードごとに分ける。
-            .accessibilityLabel("More")
-            .accessibilityInputLabels(["\(node.etDisplayName) options"])
         }
         // 両端の部品は 44pt / 34pt の当たり判定を取っていて、絵の周りに 12pt / 9pt の
         // 余白を自分で持っている。器の内側（cardPadding = 14）をそのまま足すと、
@@ -512,6 +375,188 @@ struct EffectCardView: View {
             // 描かれる枠が 1 サイクルに 4〜5 枚ずつ写った。1 番目でも出る。
             toggleExpanded()
         }
+    }
+
+    // 以下は header の部品。1 行と 2 段の両方から同じものを置く。
+
+    /// 入切。
+    private var headerPower: some View {
+        // Button ではなく Toggle。支援技術に入切が伝わるようにする。
+        Toggle("Enabled", isOn: Binding(
+            get: { node.enabled },
+            set: { dsp.setEnabled($0, at: index) }))
+            .toggleStyle(.power)
+            .labelsHidden()
+            .accessibilityLabel(node.spec.name)
+            // 名前は隣の開閉と同じになる。声で「Tap <名前>」と言ったときに取り合わないよう、電源は別の呼び名にする。
+            .accessibilityInputLabels(["\(node.etDisplayName) power"])
+    }
+
+    /// 名前と要約（畳んだ Level Meter だけは図）。
+    @ViewBuilder
+    private func headerTitle(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
+        // **畳んだ Level Meter は図を名前の場所へ入れる。**
+        // 横長の棒 2 本と目盛りなので、名前があった枠にそのまま収まる。
+        // これでカードが 1 行になり、鎖の先頭に置いても場所を食わない。
+        // 他の analyzer（図が縦に伸びるもの）は下に置く。
+        if inlinesGraph {
+            // 名前の行と同じ頭の要素（ボタン・開閉の値・並べ替えと削除・焦点の行き先）にする。
+            // 畳んだ Level Meter は既定の鎖の唯一のカードで、ここだけ違うと操作が食い違う。
+            titleElement(
+                ETEffectViews.view(index: address, node: shown, dsp: dsp)
+                    .id(node.resetCount)
+                    .environment(\.etGraphOnly, true)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(node.spec.name))
+        } else if !hidesName {
+            titleElement(
+            VStack(alignment: .leading, spacing: 1) {
+                // 折り返さない。幅が足りないときは縮める。
+                // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
+                // 2 行に折れていた。
+                // 文字サイズをアクセシビリティサイズまで上げたときだけ、縮めずに折り返す
+                // （縮めると設定が打ち消され、切ると同じ名前のカードを見分けられない）。
+                HStack(spacing: 4) {
+                    Text(node.etDisplayName)
+                        .etFont(size: 16, weight: .semibold)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                    // 音量に追従している印。畳んでいても出る（頭は共通）。
+                    if node.automation != nil {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .etFont(size: 11, weight: .semibold)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Follow Volume")
+                    }
+                }
+                Text(summary(shown))
+                    .etFont(size: 11)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+            })
+        } else {
+            // 名前も図も頭には出さない（図は下に来る）。
+            // 読み上げだけ残す。図は読み上げられないので。
+            titleElement(
+                Color.clear.frame(width: 0, height: 0)
+                    .accessibilityHidden(false)
+                    .accessibilityLabel(node.spec.name))
+        }
+    }
+
+    /// ルーティングの札。
+    @ViewBuilder
+    private var headerRouting: some View {
+        // 既定（0→0 の All）から外れたものだけ出す。
+        // 普通の鎖は一直線なので、普段は何も出ない。
+        //
+        // **出ているときは押せる。** 印が出ているということは行き先を
+        // いじってあるということで、次に触りたいのもそこ。⋯ を開いて
+        // Routing を選ぶより、目に見えている印をそのまま押すほうが速い。
+        // 矢印を押し所にしていないのとは事情が違う（あちらは行を押すのと
+        // 結果が同じだった）。
+        if !node.isDefaultRouting || node.isGated {
+            Button { sheet = .routing } label: {
+                Text(ETRouting.badge(node))
+                    .etFont(size: 10, design: .monospaced)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .etBadgeBackground(in: .capsule)
+                    .foregroundStyle(.white)
+                    // 見た目は変えず、押せる面だけ 44pt 前後に広げる（余白を足して、同じだけ引く）。
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 14)
+                    .contentShape(.rect)
+                    .padding(.horizontal, -7)
+                    .padding(.vertical, -14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Routing \(ETRouting.badge(node))")
+        }
+    }
+
+    /// 開閉の印。
+    @ViewBuilder
+    private var headerChevron: some View {
+        // 2列では図を持つものだけが 開く ↔ 図だけ を行き来する。ほかは開いたままなので出さない。
+        if hasBody && (!pinnedOpen || showsCollapsedGraph) {
+            // **印であって押し所ではない。**
+            // 押すのは行そのもの（下の onTapGesture）。
+            // 矢印にも当たり判定があると、行の手つきと取り合って
+            // 押せたり押せなかったりに見える。しかも文字を押すのと
+            // 結果が同じなので、分ける意味が無い。
+            // **右向き↔下向きにする。上向きにしない。**
+            // 0°↔180°（下↔上）だと並べ替えの矢印に見える。カードは長押しで
+            // 動かせるうえ、⋯ の中に Move Up / Move Down が上下の矢印で
+            // 並んでいるので、同じ形が開閉にも使われていると取り違える。
+            // 右→下は開閉の作法で、下の Section の印とも揃う。
+            Image(systemName: "chevron.down")
+                .etFont(size: 12, weight: .semibold)
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// ⋯ のメニュー。
+    private var headerMenu: some View {
+        Menu {
+            if node.externalID?.hasPrefix("jsfx:") == true {
+                Button { sheet = .jsfxSource } label: {
+                    Label("View Source", systemImage: "doc.text.magnifyingglass")
+                }
+            }
+            // 並びは上流に合わせて routing → preset → reset
+            // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
+            //
+            // 全体の Routing はツールバーにもあるが、あちらは鎖を見渡す画面。
+            // 「このカードの行き先」を変えたいときにここから直に開ける。
+            Button { sheet = .routing } label: {
+                Label("Routing…", systemImage: "arrow.triangle.branch")
+            }
+            // 絵はしおり（上流 :360 の SVG も bookmark の d）。
+            // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
+            // プリセットの一覧に混ぜない。
+            if !node.isExternal {
+                // 追従しているあいだは、カードが見せているもの（キーフレームか、いまの音量の位置）へ効く。
+                Button { sheet = .presets } label: {
+                    Label("Effect Presets", systemImage: "bookmark")
+                }
+                .disabled(!canEdit)
+                Button { dsp.resetParams(at: editAddress) } label: {
+                    Label("Reset Parameters", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(!canEdit)
+                keyframeMenuItems
+            }
+            Button(action: moveUp) {
+                Label("Move Up", systemImage: "arrow.up")
+            }
+            .disabled(!canMoveUp)
+            Button(action: moveDown) {
+                Label("Move Down", systemImage: "arrow.down")
+            }
+            .disabled(!canMoveDown)
+            Divider()
+            Button(role: .destructive) {
+                removeCard()
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .etFont(size: 15, weight: .semibold)
+                .frame(width: 34, height: 34)
+                // 見た目と並びの大きさは 34pt のまま、押せる面だけ 44pt にする（余白を足して、同じだけ引く）。
+                .padding(5)
+                .contentShape(Rectangle())
+                .padding(-5)
+        }
+        // どのカードの ⋯ も「More」と読まれて区別できない。読み上げの名前は変えず、
+        // 声で呼ぶ名前だけカードごとに分ける。
+        .accessibilityLabel("More")
+        .accessibilityInputLabels(["\(node.etDisplayName) options"])
     }
 
     /// 頭の押し所が開閉として働くか。山形を出す条件と同じ（2列で開閉する先が無いカードは押しても何も起きない）。

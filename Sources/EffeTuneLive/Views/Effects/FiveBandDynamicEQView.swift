@@ -381,9 +381,10 @@ struct DynamicEQParameterRow: View {
                 }
 
             case .enumeration(let options):
-                HStack {
+                // 文字を大きくした人には、名前の下にメニューを積む（横だと値が 1 字ずつ折り返す）。
+                ETAdaptiveStack(spacing: nil) { stacked in
                     Text(title).etFont(size: 14)
-                    Spacer(minLength: 8)
+                    if !stacked { Spacer(minLength: 8) }
                     Picker("", selection: Binding(
                         get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
                         set: { set(Float($0)) })
@@ -393,6 +394,7 @@ struct DynamicEQParameterRow: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .fixedSize(horizontal: stacked, vertical: false)
                 }
 
             case .number(let lo, let hi, let step, _, let isInteger):

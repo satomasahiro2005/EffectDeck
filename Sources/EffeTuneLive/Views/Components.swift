@@ -114,6 +114,7 @@ extension View {
 /// 組み方が変わるのはアクセシビリティサイズだけで、そこでは
 /// 縮めずに（minimumScaleFactor は外す）枠のほうを広げる。
 /// - `isField: false`（ValueBox）: 字の長さに合わせて最小の枠より広がる。
+///   それでも幅を超える値（"20.00 kHz"）は、"20.00 k…" と単位を落とさず折り返して全部出す。
 /// - `isField: true`（TextField）: TextField は余白を取れるだけ取るので幅は決め打ち。
 ///   アクセシビリティサイズでは 9 字の "-12.50 dB" が入るよう 1.3 倍にする。
 private struct ETValueFrame: ViewModifier {
@@ -122,18 +123,33 @@ private struct ETValueFrame: ViewModifier {
     @Environment(\.dynamicTypeSize) private var typeSize
     let isField: Bool
     let shrinks: Bool
+    /// 通常サイズで 1 行に固定するか（ValueBox だけ。ほかの Text は今までどおり行数を指定しない）。
+    let singleLine: Bool
 
     func body(content: Content) -> some View {
         if !typeSize.isAccessibilitySize {
-            content
-                .minimumScaleFactor(shrinks ? 0.7 : 1)
-                .frame(width: width, height: height)
+            // ValueBox は 1 行のまま（今まで Text 側に付けていた lineLimit(1) をここへ移した）。
+            if singleLine {
+                content
+                    .lineLimit(1)
+                    .minimumScaleFactor(shrinks ? 0.7 : 1)
+                    .frame(width: width, height: height)
+            } else {
+                content
+                    .minimumScaleFactor(shrinks ? 0.7 : 1)
+                    .frame(width: width, height: height)
+            }
         } else if isField {
             content
                 .frame(width: width * 1.3)
                 .frame(minHeight: height)
         } else {
-            content.frame(minWidth: width, minHeight: height)
+            // 縮めず折り返す。欄の枠の中で字が詰まらないよう、左右に余白を足す。
+            content
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
+                .frame(minWidth: width, minHeight: height)
         }
     }
 }
@@ -141,8 +157,8 @@ private struct ETValueFrame: ViewModifier {
 extension View {
     /// 数値欄の枠と、アクセシビリティサイズより下での縮小の下限。ValueBox・ETValueField・ParameterRow の欄が使う。
     /// `shrinks: false` は通常サイズでも字を縮めない（今まで縮めていなかった欄用）。
-    func etValueFrame(isField: Bool = false, shrinks: Bool = true) -> some View {
-        modifier(ETValueFrame(isField: isField, shrinks: shrinks))
+    func etValueFrame(isField: Bool = false, shrinks: Bool = true, singleLine: Bool = false) -> some View {
+        modifier(ETValueFrame(isField: isField, shrinks: shrinks, singleLine: singleLine))
     }
 }
 
@@ -222,9 +238,113 @@ struct PowerBadge: View {
             .etFont(size: 11, weight: .heavy)
             .tracking(0.5)
             .foregroundStyle(isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-            .frame(width: 42, height: 26)
+            .modifier(ETPowerBadgeFrame())
             .background(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                         in: .capsule)
+    }
+}
+
+/// ON バッジの枠。通常の文字サイズでは今までどおり 42x26 の固定。
+///
+/// 字（etFont）だけが伸びて枠が固定のままだと、アクセシビリティサイズで "ON" が "…" に潰れる。
+/// そこでは字を縮めず、字の大きさに合わせて枠のほうを広げる（最小は文字サイズに追従した 42x26）。
+private struct ETPowerBadgeFrame: ViewModifier {
+    @ScaledMetric(relativeTo: .caption2) private var width: CGFloat = 42
+    @ScaledMetric(relativeTo: .caption2) private var height: CGFloat = 26
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    func body(content: Content) -> some View {
+        if typeSize.isAccessibilitySize {
+            content
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .frame(minWidth: width, minHeight: height)
+        } else {
+            content.frame(width: 42, height: 26)
+        }
+    }
+}
+
+/// 名前と操作子を並べる行。通常は横一列、アクセシビリティサイズでは縦に積む。
+///
+/// 数値欄（ETValueField）は幅が決め打ちなので、大きな文字で横に並べると名前の列が
+/// 数文字分しか残らず、"Fr…" や "Gai/n" になる。ParameterRow と同じく、そこでだけ縦にする。
+/// 通常サイズの並びは今までの HStack（中央揃え）のまま。
+///
+/// `content` には積んでいるかどうかを渡す。Spacer は縦では場所を取るだけなので、
+/// 横のときだけ置くのに使う。
+struct ETAdaptiveStack<Content: View>: View {
+    private let spacing: CGFloat?
+    private let stackedSpacing: CGFloat
+    private let content: (_ stacked: Bool) -> Content
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    // Environment を private で持つので、memberwise init には頼れない。
+    init(spacing: CGFloat? = 8, stackedSpacing: CGFloat = 4,
+         @ViewBuilder content: @escaping (_ stacked: Bool) -> Content) {
+        self.spacing = spacing
+        self.stackedSpacing = stackedSpacing
+        self.content = content
+    }
+
+    var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: stackedSpacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content(stacked) }
+    }
+}
+
+/// 名前（見出し）・メニュー・入切の行。PEQ のバンドの頭に使う。
+///
+/// 横に並べると、メニューの値（"Peaking"）が UIKit のラベルに狭い幅で渡されて
+/// 1 字ずつ折り返し、カードの高さの計算も合わなくなる（次の行が本文に重なった）。
+/// アクセシビリティサイズでは、見出しと入切を上、メニューを下の 1 行に積み、
+/// メニューは折り返さない大きさ（fixedSize）で出す。通常サイズは今までの 1 行のまま。
+struct ETMenuHeader<MenuContent: View, Trailing: View>: View {
+    private let title: String
+    private let menu: MenuContent
+    private let trailing: Trailing
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    init(title: String, @ViewBuilder menu: () -> MenuContent, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title
+        self.menu = menu()
+        self.trailing = trailing()
+    }
+
+    private var label: some View {
+        Text(title)
+            .etFont(size: 10, weight: .semibold)
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+    }
+
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    label
+                    Spacer(minLength: 0)
+                    trailing
+                }
+                menu
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            HStack(spacing: 8) {
+                label
+                // L 以下は今のまま。それより大きいと細い提案幅で「Peak-/ing」と折り返し、
+                // カードの高さが伸びきらず次の行と重なるので、折り返さず内容の幅を使う。
+                menu
+                    .fixedSize(horizontal: typeSize > .large, vertical: false)
+                Spacer(minLength: 0)
+                trailing
+            }
+        }
     }
 }
 
@@ -233,10 +353,10 @@ struct ValueBox: View {
     let text: String
 
     var body: some View {
+        // 1 行にするかは etValueFrame が決める（アクセシビリティサイズでは折り返して単位を残す）。
         Text(text)
             .etFont(size: 13, design: .monospaced)
-            .lineLimit(1)
-            .etValueFrame()
+            .etValueFrame(singleLine: true)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 }

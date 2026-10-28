@@ -235,6 +235,8 @@ private struct ETMinimapRow: View {
         }
         .padding(.leading, (item.indented ? 14 : 0) + 6)
         .padding(.trailing, 14)
+        // 名前が 2 行に折り返すと、隣の行と詰まって 1 つの塊に読める。アクセシビリティサイズだけ上下に余白を足す。
+        .padding(.vertical, typeSize.isAccessibilitySize ? 6 : 0)
         // 文字が大きくなったとき、44pt に閉じ込めて上下を切らない。既定のサイズでは 44pt のまま。
         .frame(minHeight: Self.height)
         .opacity(item.muted ? (contrast == .increased ? 0.8 : 0.55) : 1)
@@ -323,6 +325,8 @@ private struct ETMinimapCorrectionRow: View {
         // 値はETMinimapRowの写し（字下げなしの行）。
         .padding(.leading, 6)
         .padding(.trailing, 14)
+        // ETMinimapRow と同じ。アクセシビリティサイズだけ折り返した行どうしに余白を足す。
+        .padding(.vertical, typeSize.isAccessibilitySize ? 6 : 0)
         .frame(minHeight: ETMinimapRow.height)
         .opacity(oc.isOn ? 1 : (contrast == .increased ? 0.8 : 0.55))
         .contentShape(.rect)

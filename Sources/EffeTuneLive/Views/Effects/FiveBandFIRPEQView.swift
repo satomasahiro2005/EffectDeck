@@ -396,11 +396,12 @@ private struct FiveBandFIRPEQPanel: View {
                                       selection: Binding<T>,
                                       options: [T],
                                       name: @escaping (T) -> String) -> some View {
-        HStack(spacing: 8) {
+        // 文字を大きくした人には、名前の下にメニューを積む。横だと値が 1 字ずつ折り返す。
+        ETAdaptiveStack { stacked in
             Text(label)
                 .etFont(size: 14)
                 .etRowTitle()
-            Spacer(minLength: 8)
+            if !stacked { Spacer(minLength: 8) }
             Picker(label, selection: selection) {
                 ForEach(options, id: \.self) { option in
                     Text(name(option)).tag(option)
@@ -408,6 +409,7 @@ private struct FiveBandFIRPEQPanel: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .fixedSize(horizontal: stacked, vertical: false)
         }
     }
 

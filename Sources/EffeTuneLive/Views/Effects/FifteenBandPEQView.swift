@@ -241,11 +241,12 @@ private struct PEQ15SliderRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
+            // 文字を大きくした人には、名前の下に数値欄を積む（横だと名前が "Fr…" に切れる）。
+            ETAdaptiveStack { stacked in
                 Text(title)
                     .etFont(size: 13)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
+                if !stacked { Spacer(minLength: 4) }
                 // ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
                 // 下書きは単位なしの数だけ。
                 ETValueField(text: text, label: title,
@@ -304,6 +305,8 @@ struct FifteenBandPEQView: View {
 
     /// 畳んでいて図だけのとき。カードが環境で渡してくる。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// BANDS の行を、アクセシビリティサイズだけ 2 段にするため。
+    @Environment(\.dynamicTypeSize) private var typeSize
     /// 音量に追従しているとき、もう1台が鳴らしている帯（EffeTuneDSP.soundingPEQ）。曲線に足して薄い印で出す。
     @Environment(\.etPEQCompanionValues) private var companionValues
 
@@ -429,35 +432,50 @@ struct FifteenBandPEQView: View {
     // MARK: バンドを選ぶ帯
 
     private var bandStrip: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("BANDS")
-                    .etFont(size: 10, weight: .semibold)
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Button("Invert Gains") { invertGains() }
-                    .etFont(size: 12)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
-                // web は accept='.txt'（fifteen_band_peq.js:483）。
-                Button("Import") { importing = true }
-                    .etFont(size: 12)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
-                    .fileImporter(isPresented: $importing,
-                                  allowedContentTypes: [.plainText],
-                                  allowsMultipleSelection: false) { result in
-                        switch result {
-                        case .success(let urls):
-                            if let url = urls.first { importEQ(url) }
-                        case .failure(let error):
-                            // **取り消しは黙る。**それ以外の失敗は読めなかったのと同じ扱い。
-                            if (error as? CocoaError)?.code != .userCancelled {
-                                importFailure = "Could not read that file."
-                            }
-                        }
+        // 文字を大きくした人には、見出しとボタンを 2 段にする。1 行のままだと
+        // "BAN… Invert… Imp…" と全部が切れて、何のボタンか読めなくなる。
+        let bandsLabel = Text("BANDS")
+            .etFont(size: 10, weight: .semibold)
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+        let invertButton = Button("Invert Gains") { invertGains() }
+            .etFont(size: 12)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
+        // web は accept='.txt'（fifteen_band_peq.js:483）。
+        let importButton = Button("Import") { importing = true }
+            .etFont(size: 12)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
+            .fileImporter(isPresented: $importing,
+                          allowedContentTypes: [.plainText],
+                          allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first { importEQ(url) }
+                case .failure(let error):
+                    // **取り消しは黙る。**それ以外の失敗は読めなかったのと同じ扱い。
+                    if (error as? CocoaError)?.code != .userCancelled {
+                        importFailure = "Could not read that file."
                     }
+                }
+            }
+        return VStack(alignment: .leading, spacing: 6) {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    bandsLabel
+                    HStack(spacing: 16) {
+                        invertButton
+                        importButton
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    bandsLabel
+                    Spacer(minLength: 0)
+                    invertButton
+                    importButton
+                }
             }
             numbers
         }
@@ -527,12 +545,8 @@ struct FifteenBandPEQView: View {
         let l = layout
         let current = band(selected)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("BAND \(selected + 1)")
-                    .etFont(size: 10, weight: .semibold)
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-
+            // 文字を大きくした人には、見出しと入切の下にメニューを出す（ETMenuHeader）。
+            ETMenuHeader(title: "BAND \(selected + 1)") {
                 Picker("", selection: Binding(get: { current.type },
                                               set: { setType($0) })) {
                     ForEach(Array(PEQ15Math.typeNames.indices), id: \.self) { i in
@@ -540,9 +554,7 @@ struct FifteenBandPEQView: View {
                     }
                 }
                 .pickerStyle(.menu)
-
-                Spacer(minLength: 0)
-
+            } trailing: {
                 Toggle("Enabled", isOn: Binding(
                     get: { current.enabled },
                     set: { _ in dsp.setValue(current.enabled ? 0 : 1, at: index, offset: l.enabled + selected) }))

@@ -257,12 +257,13 @@ struct FifteenBandGEQView: View {
 
     private var bandStrip: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+            // 文字を大きくした人には見出しとボタンを 2 段にして、どちらも切らない。
+            ETAdaptiveStack { stacked in
                 Text("BANDS")
                     .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
+                if !stacked { Spacer(minLength: 0) }
                 textButton("Reset All") { resetAll() }
             }
             chips

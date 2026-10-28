@@ -263,6 +263,8 @@ struct NoteSpectrogramView: View {
     @ObservedObject var dsp: EffeTuneDSP
 
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 全画面の札を置く場所を、文字サイズで変えるため。
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var display = ETNoteDisplay()
     /// 全画面を出しているか。
     @State private var fullScreen = false
@@ -281,29 +283,20 @@ struct NoteSpectrogramView: View {
             // 押したら横へ回してから開く。**1/60（5x）の線が細いのはここで解く。**
             // 61 音 × 5 = 305 行をカードの高さに詰めると 1 行が 1〜2 画素にしかならない。
             // 横に倒して画面いっぱいに使えば、行に見合う高さが渡る。
-            ZStack(alignment: .topTrailing) {
-                NoteSpectrogramGraph(tapId: node.tapId, display: display,
-                                     range: midiRange, band: band,
-                                     refitToken: cardRefit)
-                if !graphOnly {
-                    Button {
-                        movingToFullScreen = true
-                        Task { @MainActor in
-                            // 先に回す。縦のまま出してから倒すと、図が 1 枚
-                            // 縦の姿で描かれてから横へ跳ねる。
-                            await Task.yield()
-                            await ETInterfaceOrientation.turnLandscape()
-                            fullScreen = true
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .etFont(size: 14, weight: .semibold)
+            if typeSize.isAccessibilitySize && !graphOnly {
+                // 文字を大きくした人には、札を図に重ねず上の段に置く。図の頭の 1 行
+                // （"234 col · 13.1 s · FFT 4096" など）も伸びて、右上の札が右端の字を隠していた。
+                VStack(alignment: .trailing, spacing: 4) {
+                    fullScreenButton
+                    graphView
+                }
+            } else {
+                ZStack(alignment: .topTrailing) {
+                    graphView
+                    if !graphOnly {
+                        fullScreenButton
+                            .padding(8)
                     }
-                    .buttonStyle(.glass(.regular.interactive()))
-                    .buttonBorderShape(.circle)
-                    .controlSize(.large)
-                    .accessibilityLabel("Full Screen")
-                    .padding(8)
                 }
             }
             // 上流の並びは Color → Pitch Resolution → Layout → Volume →
@@ -336,6 +329,34 @@ struct NoteSpectrogramView: View {
                                       range: midiRange, band: band,
                                       isPresented: $fullScreen)
         }
+    }
+
+    /// 図。
+    private var graphView: some View {
+        NoteSpectrogramGraph(tapId: node.tapId, display: display,
+                             range: midiRange, band: band,
+                             refitToken: cardRefit)
+    }
+
+    /// 全画面を開く丸い札。
+    private var fullScreenButton: some View {
+        Button {
+            movingToFullScreen = true
+            Task { @MainActor in
+                // 先に回す。縦のまま出してから倒すと、図が 1 枚
+                // 縦の姿で描かれてから横へ跳ねる。
+                await Task.yield()
+                await ETInterfaceOrientation.turnLandscape()
+                fullScreen = true
+            }
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .etFont(size: 14, weight: .semibold)
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.large)
+        .accessibilityLabel("Full Screen")
     }
 
     /// DSP に送らない 5 つ。上流 :711-729。

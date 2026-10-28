@@ -93,6 +93,8 @@ struct SpectrogramView: View {
     /// 図だけ出す指定。ParameterRow は自分で消える（ParameterRow.swift:128-135）が、
     /// ここで足したボタンは消えないので自分で見る。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 全画面の札を置く場所を、文字サイズで変えるため。
+    @Environment(\.dynamicTypeSize) private var typeSize
     /// Normal の色を引くため。
     @Environment(\.self) private var environment
 
@@ -118,26 +120,20 @@ struct SpectrogramView: View {
         VStack(alignment: .leading, spacing: 12) {
             // **全画面の口は AU と同じ形。**図の右上に丸い札を重ね、
             // 押したら横へ回してから開く。
-            ZStack(alignment: .topTrailing) {
-                SpectrogramGraph(tapId: node.tapId, floorDB: floorDB,
-                                 scale: effectiveScale, lut: lut, band: band)
-                if !graphOnly {
-                    Button {
-                        movingToFullScreen = true
-                        Task { @MainActor in
-                            await Task.yield()
-                            await ETInterfaceOrientation.turnLandscape()
-                            fullScreen = true
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .etFont(size: 14, weight: .semibold)
+            if typeSize.isAccessibilitySize && !graphOnly {
+                // 文字を大きくした人には、札を図に重ねず上の段に置く。図の頭の 1 行
+                // （"234 col · 13.1 s · FFT 4096" など）も伸びて、右上の札が右端の字を隠していた。
+                VStack(alignment: .trailing, spacing: 4) {
+                    fullScreenButton
+                    graphView
+                }
+            } else {
+                ZStack(alignment: .topTrailing) {
+                    graphView
+                    if !graphOnly {
+                        fullScreenButton
+                            .padding(8)
                     }
-                    .buttonStyle(.glass(.regular.interactive()))
-                    .buttonBorderShape(.circle)
-                    .controlSize(.large)
-                    .accessibilityLabel("Full Screen")
-                    .padding(8)
                 }
             }
             // 上流は DB Range・Points・Color・Frequency Scale の順に並べている
@@ -160,6 +156,31 @@ struct SpectrogramView: View {
                                   scale: effectiveScale, lut: lut, band: band,
                                   isPresented: $fullScreen)
         }
+    }
+
+    /// 図。
+    private var graphView: some View {
+        SpectrogramGraph(tapId: node.tapId, floorDB: floorDB,
+                         scale: effectiveScale, lut: lut, band: band)
+    }
+
+    /// 全画面を開く丸い札。
+    private var fullScreenButton: some View {
+        Button {
+            movingToFullScreen = true
+            Task { @MainActor in
+                await Task.yield()
+                await ETInterfaceOrientation.turnLandscape()
+                fullScreen = true
+            }
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .etFont(size: 14, weight: .semibold)
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.large)
+        .accessibilityLabel("Full Screen")
     }
 
     /// Color に応じた表。Normal の trace はアクセント色（上流の graph-trace）。

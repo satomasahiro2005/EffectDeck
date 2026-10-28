@@ -239,11 +239,12 @@ struct PEQ5SliderRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
+            // 文字を大きくした人には、名前の下に数値欄を積む（横だと名前が "Fr…" に切れる）。
+            ETAdaptiveStack { stacked in
                 Text(title)
                     .etFont(size: 13)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
+                if !stacked { Spacer(minLength: 4) }
                 // ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
                 // ETValueField は TextField なので届く。下書きは単位なしの数だけ。
                 ETValueField(text: text, label: title,
@@ -464,12 +465,8 @@ struct FiveBandPEQView: View {
         let l = layout
         let current = band(selected)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("BAND \(selected + 1)")
-                    .etFont(size: 10, weight: .semibold)
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-
+            // 文字を大きくした人には、見出しと入切の下にメニューを出す（ETMenuHeader）。
+            ETMenuHeader(title: "BAND \(selected + 1)") {
                 Picker("", selection: Binding(get: { current.type },
                                               set: { setType($0) })) {
                     ForEach(Array(PEQ5Math.typeNames.indices), id: \.self) { i in
@@ -477,9 +474,7 @@ struct FiveBandPEQView: View {
                     }
                 }
                 .pickerStyle(.menu)
-
-                Spacer(minLength: 0)
-
+            } trailing: {
                 Toggle("Enabled", isOn: Binding(
                     get: { current.enabled },
                     set: { _ in dsp.setValue(current.enabled ? 0 : 1, at: index, offset: l.enabled + selected) }))

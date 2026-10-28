@@ -432,9 +432,10 @@ private struct GroupDelayPEQBody: View {
                     Text("Band \(band + 1)").etFont(size: 14)
                 }
 
-                HStack {
+                // 文字を大きくした人には、名前の下にメニューを積む（横だと値が 1 字ずつ折り返す）。
+                ETAdaptiveStack(spacing: nil) { stacked in
                     Text("Type").etFont(size: 14)
-                    Spacer(minLength: 8)
+                    if !stacked { Spacer(minLength: 8) }
                     Picker("Type", selection: Binding(
                         get: { current.shape },
                         set: { shape in edit(band) { $0.shape = shape } })
@@ -445,6 +446,7 @@ private struct GroupDelayPEQBody: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .fixedSize(horizontal: stacked, vertical: false)
                 }
 
                 valueRow("Freq (Hz)", text: String(Int(current.frequency.rounded())),

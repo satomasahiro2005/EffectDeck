@@ -25,6 +25,18 @@ enum ETLayout {
         UIDevice.current.userInterfaceIdiom == .pad ? 440 : .infinity
     }
 
+    /// アクセシビリティサイズの文字のときの鎖の幅。iPad だけ広げる（iPhone は今までどおり幅いっぱい）。
+    ///
+    /// 440 のままだと、文字だけ 2 倍以上に伸びて 1 行に数文字しか入らず、名前も値も折り返しだらけになる。
+    /// 情報の量ではなく読める文字数のために広げるので、2 列の右（detailMaxWidth）と同じ幅に留める。
+    /// 通常の文字サイズでは使わない（chainMaxWidth のまま）。
+    static func chainWidth(accessibility: Bool) -> CGFloat {
+        accessibility && UIDevice.current.userInterfaceIdiom == .pad ? detailMaxWidth : chainMaxWidth
+    }
+
+    /// アクセシビリティサイズの文字のときの、2列の右のカードの幅の上限。
+    static let detailMaxWidthAccessibility: CGFloat = 880
+
     /// 2列（左に一覧、右に全部開いたカード）のときのカードの幅の上限。
     ///
     /// **ScrollViewの内側で絞る。**外で絞ると両脇の余白が鎖の外になり、
@@ -568,9 +580,11 @@ struct PipelineView: View {
                          move: { move($0, to: $1) },
                          insert: { _ = addDropped($0, to: $1) },
                          focusCard: { focusedCard = $0 })
-                // アクセシビリティサイズのときだけ広げる（名前が 2 行に折り返せるように）。通常は今までの幅。
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260,
-                                                max: typeSize.isAccessibilitySize ? 420 : 320)
+                // アクセシビリティサイズのときだけ広げる（名前が単語の途中で折れず、2 行に収まるように）。
+                // 通常は今までの幅。
+                .navigationSplitViewColumnWidth(min: typeSize.isAccessibilitySize ? 280 : 220,
+                                                ideal: typeSize.isAccessibilitySize ? 340 : 260,
+                                                max: typeSize.isAccessibilitySize ? 460 : 320)
         } detail: {
             chainConfirmations(chainList(visible, split: true))
                 .environment(\.etCardsPinnedOpen, true)
@@ -589,7 +603,8 @@ struct PipelineView: View {
                 // （iPad で撮るのは高さが要るからで、幅まで iPad になると
                 // 実機の見え方にならない）。
                 .frame(maxWidth: ETScreenshotSeed.requested == nil
-                                 ? ETLayout.chainMaxWidth : ETScreenshotSeed.phoneWidth)
+                                 ? ETLayout.chainWidth(accessibility: typeSize.isAccessibilitySize)
+                                 : ETScreenshotSeed.phoneWidth)
                 .frame(maxWidth: .infinity)
                 .overlay {
                     if sheet == .picker {
@@ -1241,7 +1256,8 @@ struct PipelineView: View {
                 }
             }
             .coordinateSpace(name: Self.contentSpace)
-            .modifier(ETDetailColumn(split: split, brake: brake))
+            .modifier(ETDetailColumn(split: split, brake: brake,
+                                      wide: typeSize.isAccessibilitySize))
             // **中身の全面を最後の口にする。**行・空の表示・末尾の帯が受けなかった所（2列の両脇の
             // 広い余白など）はここへ来て、鎖の末尾へ足す。下の .background の口は ScrollView の
             // 後ろに居る兄弟で、中身の上で放したものは届かない。だから余白の口は中身の側に置く。
@@ -2699,12 +2715,14 @@ private struct OutputCorrectionRow: View {
 private struct ETDetailColumn: ViewModifier {
     let split: Bool
     let brake: ETScrollBrake
+    /// アクセシビリティサイズの文字か。環境値を private で持つと memberwise init が使えなくなるので、呼ぶ側から渡す。
+    let wide: Bool
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if split {
             content
-                .frame(maxWidth: ETLayout.detailMaxWidth)
+                .frame(maxWidth: wide ? ETLayout.detailMaxWidthAccessibility : ETLayout.detailMaxWidth)
                 .frame(maxWidth: .infinity)
                 .etScrollBrake(brake)
         } else {

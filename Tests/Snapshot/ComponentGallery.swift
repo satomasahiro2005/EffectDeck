@@ -67,13 +67,27 @@ final class ComponentGallery: XCTestCase {
 
     // MARK: - 部品
 
+    /// 名前と ValueBox の行。大きい文字では縦に積む（ETAdaptiveStack）。
+    private func valueRow(_ title: String, _ value: String, size: CGFloat? = nil) -> some View {
+        ETAdaptiveStack { stacked in
+            if let size {
+                Text(title).etFont(size: size)
+            } else {
+                Text(title)
+            }
+            if !stacked { Spacer() }
+            ValueBox(text: value)
+        }
+    }
+
     /// 数値欄。幅の長い値（単位つき）と短い値。
     func testValueBoxes() {
         gallery("valuebox") {
             VStack(alignment: .leading, spacing: 8) {
-                HStack { Text("Gain"); Spacer(); ValueBox(text: "-12.5 dB") }
-                HStack { Text("Frequency"); Spacer(); ValueBox(text: "20.00 kHz") }
-                HStack { Text("Q"); Spacer(); ValueBox(text: "0.70") }
+                // 実際の行（ParameterRow）と同じく、大きい文字では名前の下に値を積む。
+                valueRow("Gain", "-12.5 dB")
+                valueRow("Frequency", "20.00 kHz")
+                valueRow("Q", "0.70")
             }
         }
     }
@@ -82,15 +96,15 @@ final class ComponentGallery: XCTestCase {
     func testValueFields() {
         gallery("valuefield") {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
+                ETAdaptiveStack { stacked in
                     Text("Frequency")
-                    Spacer()
+                    if !stacked { Spacer() }
                     ETValueField(text: "1.00 kHz", label: "Frequency",
                                  editText: { "1000" }, commit: { _ in })
                 }
-                HStack {
+                ETAdaptiveStack { stacked in
                     Text("Gain")
-                    Spacer()
+                    if !stacked { Spacer() }
                     ETValueField(text: "+4.5 dB", label: "Gain",
                                  editText: { "4.5" }, commit: { _ in })
                 }
@@ -157,8 +171,8 @@ final class ComponentGallery: XCTestCase {
         gallery("card") {
             Card {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack { Text("Threshold").etFont(size: 15); Spacer(); ValueBox(text: "-24.0 dB") }
-                    HStack { Text("Ratio").etFont(size: 15); Spacer(); ValueBox(text: "4.0 : 1") }
+                    valueRow("Threshold", "-24.0 dB", size: 15)
+                    valueRow("Ratio", "4.0 : 1", size: 15)
                 }
                 .padding(12)
             }

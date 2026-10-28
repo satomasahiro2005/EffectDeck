@@ -62,6 +62,10 @@ enum A11yLaunch {
         // iOS の UIKit は起動の引数から読まない（暗い名前の絵が明るいまま出る）。
         // 組ごとに毎回設定し直し、暗い回が次の組へ残らないようにする。
         XCUIDevice.shared.appearance = variant.dark ? .dark : .light
+        // 外観の切り替えは設定した直後には反映が終わっていないことがある。
+        // 終わる前に起動すると暗い回が明るいまま撮れた（-dark の全画面が -light と同じ絵だった）。
+        // 起動より前に 1 回だけ待つ（起動後の待ち settle とは別）。
+        Thread.sleep(forTimeInterval: 1.5)
         app.launch()
         _ = app.navigationBars.firstMatch.waitForExistence(timeout: 60)
         // 図は描き出すまで少しかかる（Spectrogram は埋まるまで）。
