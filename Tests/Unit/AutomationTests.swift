@@ -996,6 +996,52 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(flats(k), [[true, true], [true, true], [true, true]])
     }
 
+    /// 印の規則を1つずつ。中間は左隣の Hold と自分の Hold が別々に効き、Hold を切り替えると
+    /// 自分の右半分と右隣の左半分だけが一緒に変わる。
+    func testKeyframeSidesFollowEachRule() throws {
+        let s = try spec(volume)
+        func four() throws -> ETAutomation {
+            try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                       keyframes: [.init(position: 25, values: try vol(-15)),
+                                                   .init(position: 50, values: try vol(-10)),
+                                                   .init(position: 75, values: try vol(-5)),
+                                                   .init(position: 100, values: try vol(0))],
+                                       spec: s))
+        }
+        func flats(_ a: ETAutomation) -> [[Bool]] {
+            a.keyframes.indices.map { let f = a.sides($0); return [f.leftFlat, f.rightFlat] }
+        }
+
+        // 最初と最後は、無い側が矩形。Hold が無ければ間はどれも菱形。
+        XCTAssertEqual(flats(try four()), [[true, false], [false, false], [false, false], [false, true]])
+
+        // 中間（1番）の左は左隣（0番）の Hold、右は自分の Hold。4通りとも別々に効く。
+        for leftHold in [false, true] {
+            for ownHold in [false, true] {
+                var k = try four()
+                if leftHold { XCTAssertTrue(k.setHold(true, at: 0)) }
+                if ownHold { XCTAssertTrue(k.setHold(true, at: 1)) }
+                let f = k.sides(1)
+                XCTAssertEqual(f.leftFlat, leftHold, "左隣 Hold=\(leftHold) 自分 Hold=\(ownHold)")
+                XCTAssertEqual(f.rightFlat, ownHold, "左隣 Hold=\(leftHold) 自分 Hold=\(ownHold)")
+            }
+        }
+
+        // 1番の Hold を切り替えると、1番の右と2番の左だけが変わる。
+        var k = try four()
+        let before = flats(k)
+        XCTAssertTrue(k.setHold(true, at: 1))
+        let after = flats(k)
+        for i in before.indices {
+            for side in 0..<2 {
+                let changed = (i == 1 && side == 1) || (i == 2 && side == 0)
+                XCTAssertEqual(after[i][side] != before[i][side], changed, "\(i)番の\(side == 0 ? "左" : "右")")
+            }
+        }
+        XCTAssertTrue(k.setHold(false, at: 1))
+        XCTAssertEqual(flats(k), before, "戻すと元どおり")
+    }
+
     func testCanAddKeyframeAtVolume() throws {
         let s = try spec(volume)
         let k = try automation(s, try vol(-10), try vol(0))
