@@ -8,11 +8,11 @@ New
 - Follow Volume: an effect can follow the output volume. Choose Follow Volume in the card's ⋯ menu, then add keyframes with the + on the strip under the card name. Tap a keyframe to edit its values; tap it again (or long-press) for Smooth / Hold and Delete. Please check that the sound changes smoothly with the volume, and that dragging a keyframe does not move the card.
 - JSFX can read the output volume through the read-only variable effectdeck_output_volume (0 to 1, -1 when unknown).
 - Add Effect search groups results into Effects / Plugins / Presets, lists well-known effects first and also finds common names (de-esser, goniometer, snail, brir).
-- Effects from EffeTune 2.15.0, including SFZ Note Player Detection.
+- Updated to EffeTune 2.15.0 (SFZ Note Player Detection).
 
 Changes
 
-- New effects are added outside Sections unless dropped onto a Section card.
+- An effect you add now goes outside Sections, unless you drop it onto a Section card.
 - Chroma Spiral and Stereo Meter use the space better when collapsed.
 - Note Spectrogram: opaque keyboard, sharper notes, legend readable in light mode.
 - Floating Meters and graphs use less CPU.
@@ -34,11 +34,11 @@ If anything looks or sounds wrong, please use Settings → About → Report a pr
 ・Follow Volume：エフェクトを出力の音量に合わせて変えられます。カードの⋯からFollow Volumeを選び、名前の下の帯の+でキーフレームを足します。キーフレームを押すと値を直せ、もう一度押す（または長押し）とSmooth／HoldとDeleteが出ます。音量を変えたときに音がなめらかに変わるか、キーフレームを引いてもカードが動かないかをご確認ください。
 ・JSFXから、読み取り専用の変数effectdeck_output_volume（0〜1、読めないときは-1）で出力の音量を読めます。
 ・Add Effectの検索で、結果をEffects／Plugins／Presetsに分け、よく使われるエフェクトを上に出し、一般的な呼び名（de-esser、goniometer、snail、brir）でも見つかるようにしました。
-・EffeTune 2.15.0のエフェクト（SFZ Note PlayerのDetectionなど）に対応しました。
+・EffeTune 2.15.0に追従しました（SFZ Note PlayerのDetectionなど）。
 
 【変更】
 
-・新しいエフェクトは、Sectionのカードに落としたとき以外はSectionの外に置かれます。
+・エフェクトを足したとき、Sectionのカードに落とした場合を除いてSectionの外に置くようにしました。
 ・Chroma SpiralとStereo Meterを畳んだときの表示を広く使うようにしました。
 ・Note Spectrogramの鍵盤が透けず、ノートがくっきりし、明るい外観でも凡例が読めるようになりました。
 ・Floating Metersとグラフの処理を軽くしました。
