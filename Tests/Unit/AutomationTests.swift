@@ -6,6 +6,8 @@
 //    - PEQ の帯は補間せず、真ん中で近い方のキーフレームの値に切り替わる（音は ETPEQBlend）
 //    - 時間軸の帯の道具（segment・nearestKeyframe・dragTarget）
 //    - キーフレームの足し引きと既定の位置
+//    - カードが見せて直すもの・帯の印の左右・「+」を押せるか・いまの音量に作るキーフレーム
+//      （EffectCardView・KeyframeTimeline・EffeTuneDSP.keyframeAtVolume）
 //    - 保存形式の往復（ショート・ロング）と、読めないものの扱い
 //    - 上流（EffeTune）・PC・エフェクトのプリセットへはキーフレームを出さず、EffectDeck のリンクには出す
 //    - 貼られた字のキーフレームも範囲へ寄せる
@@ -915,6 +917,141 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(held[0].automation, k)
         let switched = ETAutomation.sounding([node(s, k)], at: 75)
         XCTAssertEqual(switched[0].values[0], -6)
+    }
+
+    // MARK: - カード（帯で選ぶ・いまの音量で直す）
+
+    func testCardEditTarget() throws {
+        let s = try spec(volume)
+        // 50 → 75 は Hold、75 → 100 は Smooth。
+        let h = try holdAutomation(s, try vol(-10), try vol(-5), try vol(0))
+        func target(_ selected: Double?, _ volume: Double?, remote: Bool = false) -> ETAutomation.EditTarget? {
+            h.editTarget(selected: selected, volume: volume, spec: s, remote: remote)
+        }
+        // PC 編集中は鳴っている値を見せるだけ。
+        XCTAssertEqual(target(75, 60, remote: true), .sounding(editable: false))
+        // 選んだキーフレームが先。もう無い位置は選んでいないのと同じ。
+        XCTAssertEqual(target(75, 90), .keyframe(1))
+        XCTAssertEqual(target(50, nil), .keyframe(0))
+        XCTAssertEqual(target(30, 90), .sounding(editable: true))
+        XCTAssertEqual(target(30, nil), .keyframe(2))
+        // 音量が読めなければ一番上。
+        XCTAssertEqual(target(nil, nil), .keyframe(2))
+        // キーフレームの位置（刻みの近く）。
+        XCTAssertEqual(target(nil, 50), .keyframe(0))
+        XCTAssertEqual(target(nil, 75), .keyframe(1))
+        XCTAssertEqual(target(nil, 100), .keyframe(2))
+        XCTAssertEqual(target(nil, 75.004), .keyframe(1))
+        // 両端の外。
+        XCTAssertEqual(target(nil, 30), .keyframe(0))
+        XCTAssertEqual(target(nil, 0), .keyframe(0))
+        // Hold の間は下のキーフレーム。
+        XCTAssertEqual(target(nil, 60), .keyframe(0))
+        XCTAssertEqual(target(nil, 74.98), .keyframe(0))
+        // Smooth の間は鳴っている値。
+        XCTAssertEqual(target(nil, 80), .sounding(editable: true))
+        XCTAssertEqual(target(nil, 90), .sounding(editable: true))
+        // 読めない値（今の挙動のまま。刻みは 100 だがどの枝にも当たらない）。
+        XCTAssertEqual(target(nil, Double.nan), .sounding(editable: true))
+        // キーフレームが1つなら全位置でそれ。
+        let one = ETAutomation(source: .outputVolume, position: 50, values: try vol(0))
+        XCTAssertEqual(one.editTarget(selected: nil, volume: 20, spec: s, remote: false), .keyframe(0))
+        XCTAssertEqual(one.editTarget(selected: nil, volume: 80, spec: s, remote: false), .keyframe(0))
+    }
+
+    func testCardEditTargetForPEQ() throws {
+        let p = try spec(peq15)
+        var a = try automation(p, p.defaults, p.defaults)
+        a.add(at: 75)
+        XCTAssertTrue(a.setHold(true, at: 0))
+        func target(_ selected: Double?, _ volume: Double?) -> ETAutomation.EditTarget? {
+            a.editTarget(selected: selected, volume: volume, spec: p, remote: false)
+        }
+        // Smooth の間は2台で鳴らしていて1組に写せないので、見せるだけ。
+        XCTAssertEqual(target(nil, 90), .sounding(editable: false))
+        // Hold の間・キーフレームの位置・外は直せる。
+        XCTAssertEqual(target(nil, 60), .keyframe(0))
+        XCTAssertEqual(target(nil, 75), .keyframe(1))
+        XCTAssertEqual(target(nil, 30), .keyframe(0))
+        XCTAssertEqual(target(100, 90), .keyframe(2))
+        // 5Band も同じ。
+        let p5 = try spec(peq5)
+        let a5 = try automation(p5, p5.defaults, p5.defaults)
+        XCTAssertEqual(a5.editTarget(selected: nil, volume: 90, spec: p5, remote: false), .sounding(editable: false))
+    }
+
+    func testKeyframeSides() throws {
+        let s = try spec(volume)
+        func flats(_ a: ETAutomation) -> [[Bool]] {
+            a.keyframes.indices.map { let f = a.sides($0); return [f.leftFlat, f.rightFlat] }
+        }
+        let one = ETAutomation(source: .outputVolume, position: 50, values: try vol(0))
+        XCTAssertEqual(flats(one), [[true, true]])
+        var k = try holdAutomation(s, try vol(-10), try vol(-5), try vol(0))
+        XCTAssertEqual(flats(k), [[true, true], [true, false], [false, true]])
+        XCTAssertTrue(k.setHold(false, at: 0))
+        XCTAssertEqual(flats(k), [[true, false], [false, false], [false, true]])
+        XCTAssertTrue(k.setHold(true, at: 0))
+        XCTAssertTrue(k.setHold(true, at: 1))
+        XCTAssertEqual(flats(k), [[true, true], [true, true], [true, true]])
+    }
+
+    func testCanAddKeyframeAtVolume() throws {
+        let s = try spec(volume)
+        let k = try automation(s, try vol(-10), try vol(0))
+        XCTAssertFalse(k.canAddKeyframe(atVolume: nil))
+        XCTAssertFalse(k.canAddKeyframe(atVolume: 50))
+        XCTAssertFalse(k.canAddKeyframe(atVolume: 52), "刻みの 50 にもうある")
+        XCTAssertTrue(k.canAddKeyframe(atVolume: 53), "刻みの 55 は空き")
+        XCTAssertFalse(k.canAddKeyframe(atVolume: 100))
+        XCTAssertFalse(k.canAddKeyframe(atVolume: 120), "100 に収めた刻みにもうある")
+        XCTAssertTrue(k.canAddKeyframe(atVolume: -5), "0 に収めた刻みは空き")
+        XCTAssertFalse(k.canAddKeyframe(atVolume: Double.nan), "読めない値は 100 になり、もうある")
+        // 空きが無ければ押せない。
+        let v = try vol(0)
+        let full = try XCTUnwrap(ETAutomation(
+            source: .outputVolume,
+            keyframes: ETAutomation.Source.outputVolume.positions.map { .init(position: $0, values: v) },
+            spec: s))
+        XCTAssertEqual(full.freePositions(), [])
+        XCTAssertFalse(full.canAddKeyframe(atVolume: 37))
+        XCTAssertFalse(full.canAddKeyframe(atVolume: nil))
+    }
+
+    func testVolumeKeyframe() throws {
+        let s = try spec(volume)
+        let k = try automation(s, try vol(-10), try vol(0))
+        for copying in [false, true] {
+            XCTAssertEqual(k.volumeKeyframe(at: 52, spec: s, copyingForPEQ: copying), .existing(0))
+            XCTAssertEqual(k.volumeKeyframe(at: 100, spec: s, copyingForPEQ: copying), .existing(1))
+            XCTAssertEqual(k.volumeKeyframe(at: 73, spec: s, copyingForPEQ: copying),
+                           .add(position: 75, storeSounding: true))
+        }
+        // PEQ は直すときは作らない。「+」だけは近いキーフレームの写しで足す（書き戻さない）。
+        let p = try spec(peq15)
+        var a = try automation(p, p.defaults, p.defaults)
+        XCTAssertNil(a.volumeKeyframe(at: 73, spec: p, copyingForPEQ: false))
+        XCTAssertEqual(a.volumeKeyframe(at: 73, spec: p, copyingForPEQ: true),
+                       .add(position: 75, storeSounding: false))
+        XCTAssertEqual(a.volumeKeyframe(at: 50, spec: p, copyingForPEQ: false), .existing(0))
+        XCTAssertNil(a.keyframeIndex(at: 75))
+        a.add(at: 75)
+        XCTAssertEqual(a.keyframeIndex(at: 75), 1)
+    }
+
+    func testVolumeKeyframeStoresSoundingValues() throws {
+        // DSP が踏む手順（足す前の鳴っている値 → 足す → 書く）を、純粋な部品だけで辿る。
+        let s = try spec(volume)
+        var a = try automation(s, try vol(-10), try vol(0))
+        let before = a.values(at: 73, spec: s, current: a.topValues)
+        guard case .add(position: let p, storeSounding: true)? =
+                a.volumeKeyframe(at: 73, spec: s, copyingForPEQ: false) else { return XCTFail("足すはず") }
+        a.add(at: p)
+        let k = try XCTUnwrap(a.keyframeIndex(at: p))
+        XCTAssertEqual(a.keyframes[k].values[0], -10, "足しただけでは一番近い写し（同じ近さなら低い方）")
+        a.store(before, at: k, spec: s)
+        XCTAssertEqual(a.keyframes[k].values[0], before[0], accuracy: 1e-6)
+        XCTAssertEqual(before[0], -5.4, accuracy: 1e-4, "新しいキーフレームは鳴っていた値で、音が跳ばない")
     }
 
     // MARK: - 段

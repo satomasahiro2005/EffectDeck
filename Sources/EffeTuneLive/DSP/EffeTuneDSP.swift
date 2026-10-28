@@ -1788,21 +1788,22 @@ final class EffeTuneDSP: ObservableObject {
         return self[slot: index].automation?.keyframes[k].position
     }
 
+    /// どう用意するかの判断は ETAutomation.volumeKeyframe（AutomationTests）。ここは実際に足して書くだけ。
     private func keyframeAtVolume(at index: Int, copyingForPEQ: Bool) -> Int? {
         guard index >= 0, index < chain.count, !RemoteMirror.shared.isRemote,
-              let a = self[slot: index].automation, let volume = ETVolumeFollower.shared.position else { return nil }
-        let p = a.source.snapped(volume)
-        func existing(_ a: ETAutomation) -> Int? {
-            a.keyframes.firstIndex { abs($0.position - p) < 0.001 }
+              let a = self[slot: index].automation, let volume = ETVolumeFollower.shared.position,
+              let plan = a.volumeKeyframe(at: volume, spec: self[slot: index].spec, copyingForPEQ: copyingForPEQ)
+        else { return nil }
+        switch plan {
+        case .existing(let k):
+            return k
+        case .add(let p, let storeSounding):
+            let values = soundingValues(of: self[slot: index])
+            addKeyframe(position: p, at: index)
+            guard let k = self[slot: index].automation?.keyframeIndex(at: p) else { return nil }
+            if storeSounding { storeKeyframe(values, keyframe: k, at: index) }
+            return k
         }
-        if let k = existing(a) { return k }
-        let peq = ETPEQBlend.Layout(self[slot: index].spec) != nil
-        guard !peq || copyingForPEQ else { return nil }
-        let values = soundingValues(of: self[slot: index])
-        addKeyframe(position: p, at: index)
-        guard let added = self[slot: index].automation, let k = existing(added) else { return nil }
-        if !peq { storeKeyframe(values, keyframe: k, at: index) }
-        return k
     }
 
     /// キーフレームのカードのつまみ1つ。

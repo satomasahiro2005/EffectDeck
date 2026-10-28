@@ -270,6 +270,76 @@ struct ETAutomation: Equatable {
         return p
     }
 
+    // MARK: - カード（帯で選ぶ・いまの音量で直す）
+
+    /// 音量に追従するカードが見せて直すもの（Views/EffectCardView.swift）。
+    enum EditTarget: Equatable {
+        /// そのキーフレーム（値もそのキーフレーム）。
+        case keyframe(Int)
+        /// いま鳴っている値。editable なら、直したときに DSP がいまの音量の位置にキーフレームを作ってそこへ書く。
+        case sounding(editable: Bool)
+    }
+
+    /// カードが見せて直すもの。selected は帯で選んだキーフレームの位置（もう無ければ選んでいないのと同じ）、
+    /// volume はいまの音量（読めなければ nil）、remote は PC の鎖を編集している間。
+    ///   - PC 編集中は鳴っている値を見せるだけ
+    ///   - 選んだキーフレームがあればそれ。音量が読めなければ一番上
+    ///   - いまの音量がキーフレームの位置・両端の外・Hold の間なら、鳴っているのはそのキーフレームの値なのでそれ
+    ///   - Smooth の間は鳴っている値。PEQ は2台で鳴らしていて1組に写せないので見せるだけ（ETPEQBlend）
+    func editTarget(selected: Double?, volume: Double?, spec: ETEffect, remote: Bool) -> EditTarget? {
+        guard !keyframes.isEmpty else { return nil }
+        guard !remote else { return .sounding(editable: false) }
+        func at(_ p: Double) -> Int? { keyframes.firstIndex { abs($0.position - p) < 0.0005 } }
+        if let p = selected, let k = at(p) { return .keyframe(k) }
+        guard let volume else { return .keyframe(keyframes.count - 1) }
+        let snapped = source.snapped(volume)
+        if abs(volume - snapped) < 0.01, let k = at(snapped) { return .keyframe(k) }
+        if volume <= keyframes[0].position { return .keyframe(0) }
+        if volume >= keyframes[keyframes.count - 1].position { return .keyframe(keyframes.count - 1) }
+        if let s = segment(at: volume), keyframes[s.lower].hold { return .keyframe(s.lower) }
+        return .sounding(editable: ETPEQBlend.Layout(spec) == nil)
+    }
+
+    /// k 番目の印の左右が平らか（Views/KeyframeTimeline.swift）。左は左隣が無いか左隣が Hold、
+    /// 右は右隣が無いか自分が Hold。k は keyframes の添字であること。
+    func sides(_ k: Int) -> (leftFlat: Bool, rightFlat: Bool) {
+        (k == 0 || keyframes[k - 1].hold, k == keyframes.count - 1 || keyframes[k].hold)
+    }
+
+    /// カードの「+」（いまの音量の刻みに足す）が押せるか。音量が読めない・その刻みにもうある・空きが無いなら false。
+    /// PC 編集中・並べ替えの浮いたカードは呼び手が見る。
+    func canAddKeyframe(atVolume volume: Double?) -> Bool {
+        let taken = volume.map { v in
+            let p = source.snapped(v)
+            return keyframes.contains { abs($0.position - p) < 0.0005 }
+        } ?? true
+        return !(taken || freePositions().isEmpty)
+    }
+
+    /// いまの音量の刻みのキーフレームをどう用意するか（EffeTuneDSP.keyframeAtVolume）。
+    enum VolumeKeyframe: Equatable {
+        /// もうある。その添字。
+        case existing(Int)
+        /// position に足す。storeSounding なら足したあと、足す前に鳴っていた値を書く（音が跳ばない）。
+        /// PEQ は2台で鳴らしていて1組に写せないので書かず、一番近いキーフレームの写し（add(at:)）のまま。
+        case add(position: Double, storeSounding: Bool)
+    }
+
+    /// 鳴っている値を直したとき（copyingForPEQ: false）と「+」（true）に書くキーフレーム。
+    /// いまの音量の刻みにあればそれ、無ければ足す。PEQ は直すときは作らない（nil。画面も間では直させない）。
+    func volumeKeyframe(at volume: Double, spec: ETEffect, copyingForPEQ: Bool) -> VolumeKeyframe? {
+        let p = source.snapped(volume)
+        if let k = keyframeIndex(at: p) { return .existing(k) }
+        let peq = ETPEQBlend.Layout(spec) != nil
+        guard !peq || copyingForPEQ else { return nil }
+        return .add(position: p, storeSounding: !peq)
+    }
+
+    /// その位置ちょうどのキーフレームの添字（同じ位置を同じと見る幅で）。
+    func keyframeIndex(at position: Double) -> Int? {
+        keyframes.firstIndex { abs($0.position - position) < Self.epsilon }
+    }
+
     // MARK: - 補間
 
     /// 補間しないパラメータ。遅延を変えるもの（鎖を組み直さないと動かない）と実行時の旗。
@@ -454,7 +524,7 @@ struct ETAutomation: Equatable {
 }
 
 /// 段の口（setValue など）へ画面が渡す番号。0以上は今までどおり slot。
-/// 負は音量に追従する段の写し：キーフレーム1つ（書ける）か、鳴っている値（読むだけ）。
+/// 負は音量に追従する段の写し：キーフレーム1つか、鳴っている値（直すと DSP がいまの音量の位置のキーフレームへ書く。EffeTuneDSP.soundingKeyframe）。
 /// 画面の部品は番号をそのまま DSP へ通すだけなので、部品を作り替えずに別の値を見せて直せる。
 /// DSP の段ごとの口は slot の範囲を見ているので、デコードしない口に負の番号が来ても何もしない。
 enum ETSlotAddress: Equatable {

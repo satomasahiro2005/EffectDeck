@@ -116,12 +116,12 @@ struct ETKeyframeTimeline: View {
                 // 菱形。選んでいるものは色を変え、引いているものは最後に描く。
                 ForEach(automation.keyframes.indices, id: \.self) { k in
                     if dragging?.keyframe != k {
-                        diamondView(tinted: k == selected, sides: sides(k))
+                        diamondView(tinted: k == selected, sides: automation.sides(k))
                             .position(x: x(automation.keyframes[k].position, w), y: trackY)
                     }
                 }
                 if let d = dragging, automation.keyframes.indices.contains(d.keyframe) {
-                    diamondView(tinted: true, sides: sides(d.keyframe))
+                    diamondView(tinted: true, sides: automation.sides(d.keyframe))
                         .position(x: x(d.to, w), y: trackY)
                 }
                 // 針
@@ -141,12 +141,6 @@ struct ETKeyframeTimeline: View {
                                     cancelled: { resetDrag() },
                                     feedback: dragging?.to))
         }
-    }
-
-    /// k 番目の印の左右が平らか。左は左隣が無いか左隣が Hold、右は右隣が無いか自分が Hold。
-    private func sides(_ k: Int) -> (leftFlat: Bool, rightFlat: Bool) {
-        let keys = automation.keyframes
-        return (k == 0 || keys[k - 1].hold, k == keys.count - 1 || keys[k].hold)
     }
 
     private func diamondView(tinted: Bool, sides: (leftFlat: Bool, rightFlat: Bool)) -> some View {

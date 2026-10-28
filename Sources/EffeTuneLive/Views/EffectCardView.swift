@@ -77,14 +77,6 @@ struct EffectCardView: View {
         }
     }
 
-    /// 音量に追従する段で、カードが見せて直すもの。
-    private enum EditTarget: Equatable {
-        /// そのキーフレーム（値もそのキーフレーム）。
-        case keyframe(Int)
-        /// いま鳴っている値。editable なら、直したときに DSP がいまの音量の位置にキーフレームを作ってそこへ書く。
-        case sounding(editable: Bool)
-    }
-
     /// 音量に追従する段は、帯の菱形を押して選んだキーフレームを見せて直す。
     /// 選んでいなければ、いまの音量で鳴っている値を見せる:
     ///   - いまの音量がキーフレームの位置・両端の外・Hold の間なら、鳴っているのはそのキーフレームの値なので、それを直す
@@ -92,20 +84,14 @@ struct EffectCardView: View {
     ///   - ただし PEQ の Smooth の間は2台で鳴らしていて1組に写せないので、見せるだけ（ETPEQBlend）
     /// **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（キーフレームを直しても試聴にならない）。
     /// PC の鎖を編集している間は、いま鳴っている値を映して直せなくする。
+    /// 判断は ETAutomation.editTarget（AutomationTests）。
     private var follows: Bool { node.automation != nil }
 
-    private var editTarget: EditTarget? {
-        guard let a = node.automation, !a.keyframes.isEmpty else { return nil }
-        guard !RemoteMirror.shared.isRemote else { return .sounding(editable: false) }
-        func at(_ p: Double) -> Int? { a.keyframes.firstIndex { abs($0.position - p) < 0.0005 } }
-        if let p = selectedPosition, let k = at(p) { return .keyframe(k) }
-        guard let volume = ETVolumeFollower.shared.position else { return .keyframe(a.keyframes.count - 1) }
-        let snapped = a.source.snapped(volume)
-        if abs(volume - snapped) < 0.01, let k = at(snapped) { return .keyframe(k) }
-        if volume <= a.keyframes[0].position { return .keyframe(0) }
-        if volume >= a.keyframes[a.keyframes.count - 1].position { return .keyframe(a.keyframes.count - 1) }
-        if let s = a.segment(at: volume), a.keyframes[s.lower].hold { return .keyframe(s.lower) }
-        return .sounding(editable: ETPEQBlend.Layout(node.spec) == nil)
+    private var editTarget: ETAutomation.EditTarget? {
+        node.automation?.editTarget(selected: selectedPosition,
+                                    volume: ETVolumeFollower.shared.position,
+                                    spec: node.spec,
+                                    remote: RemoteMirror.shared.isRemote)
     }
 
     /// 見せて直しているキーフレームの添字（帯で色を変える・⋯ の補間と削除）。
@@ -259,12 +245,7 @@ struct EffectCardView: View {
     /// 帯の右の「+」。いまの音量の位置に足して、足したものを選ぶ。
     /// その位置にもうある・音量が読めない・PC 編集中・空きが無いなら押せない。
     private func addKeyframeButton(_ a: ETAutomation) -> some View {
-        let volume = ETVolumeFollower.shared.position
-        let taken = volume.map { v in
-            let p = a.source.snapped(v)
-            return a.keyframes.contains { abs($0.position - p) < 0.0005 }
-        } ?? true
-        return Button {
+        Button {
             if let p = dsp.addKeyframeAtVolume(at: index) { selectedPosition = p }
         } label: {
             Image(systemName: "plus")
@@ -274,7 +255,8 @@ struct EffectCardView: View {
         }
         .buttonStyle(.borderless)
         .accessibilityLabel("Add Keyframe")
-        .disabled(taken || a.freePositions().isEmpty || RemoteMirror.shared.isRemote || isDragPreview)
+        .disabled(!a.canAddKeyframe(atVolume: ETVolumeFollower.shared.position)
+                  || RemoteMirror.shared.isRemote || isDragPreview)
     }
 
     /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）。
