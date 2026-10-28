@@ -62,6 +62,8 @@ final class ETVolumeFollower: ObservableObject {
         let p = ETAutomation.Source.outputVolume.position(fromVolume: v)
         guard p != position else { return }
         position = p
+        // JSFX にも同じ値を渡す（0〜1）。保存も鎖の作り直しも起こさない（ETJSFXHost.h）。
+        ETJSFX_SetOutputVolume(p / 100)
         EffeTuneDSP.shared.applyAutomation()
     }
 }

@@ -46,7 +46,8 @@ fi
 # 前の版が当たった木（一度でも build.sh を通した Mac）を「当たっている」と
 # 見て黙って飛ばし、新しく足した分（gfx の座標の切り詰めなど）が建たない。
 # パッチを変えたら、目印もその版で足したものに替えること（Tests/Fuzz/run.sh も同じ目印を見る）。
-if grep -q "effectdeck_nan_order" Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/glue_port.h 2>/dev/null; then
+# 目印は include/ysfx.h の YSFX_EFFECTDECK_OUTPUT_VOLUME（Tests/Fuzz/run.sh の門の写しは見出しだけなので include/ に置く）。
+if grep -q "YSFX_EFFECTDECK_OUTPUT_VOLUME" Vendor/ysfx/include/ysfx.h 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
   YSFX_PATCHED=1
 else

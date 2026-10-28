@@ -1,0 +1,12 @@
+desc:Output Volume Serialize
+author:nemut.ai
+slider1:0<-1,1,0.0001>-Seen by @block
+
+@block
+slider1 = effectdeck_output_volume;
+
+@serialize
+// **書いてはいけない形をわざと取る。**保存された古い値が戻っても host が上書きすること。
+file_var(0, effectdeck_output_volume);
+
+@sample

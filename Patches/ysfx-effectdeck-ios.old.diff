@@ -12,6 +12,11 @@ EffectDeck が足したもの（上流に無い）:
                         関数の中身の頭を壊していた（上流 WDL d30c30b でも同じ）
   effectdeck_file_retptr  file_rewind（開いていないハンドル）と file_riff（負のハンドル）が EEL_F* の戻りに NULL を返し、
                         EEL が戻りの先を読んで落ちていた（x = file_rewind(5) + 1;）。引数を返す。上流 ysfx でも同じ
+  effectdeck_nan_order  + と *（ADD・MUL・ADD_OP_FAST・MUL_OP_FAST）を asm で書き、オペランドが 2 つとも NaN の
+                        ときに残る NaN を式の左（top2・升の値）に決める。C の a + b はコンパイラが順を入れ替えて
+                        よく、portable と glue_port_vm.h の実行系とで残る NaN の符号が違った（glue_port.h・
+                        glue_port_vm.h）
+  heapbuf.h            空の WDL_HeapBuf を写すとき memcpy(NULL, …, 0) を呼ばない（strncat(#a, #空)。UBSan）
 diff --git a/include/ysfx.h b/include/ysfx.h
 index 49296d4..a8d7e7c 100644
 --- a/include/ysfx.h
@@ -1232,7 +1237,7 @@ index 7991721..8939246 100644
        }
        if (l>0)
 diff --git a/thirdparty/WDL/source/WDL/eel2/glue_port.h b/thirdparty/WDL/source/WDL/eel2/glue_port.h
-index e7d06f3..1ee0f2c 100644
+index e7d06f3..95a3df7 100644
 --- a/thirdparty/WDL/source/WDL/eel2/glue_port.h
 +++ b/thirdparty/WDL/source/WDL/eel2/glue_port.h
 @@ -426,6 +426,9 @@ BC_DECLASM_N(2pdd,CFUNC_2PDD,1)
@@ -1245,7 +1250,84 @@ index e7d06f3..1ee0f2c 100644
  BC_DECLASM_N2(gmegabuf,GMEGABUF,2)
  
  BC_DECLASM_N_EXPORT(generic1parm,GENERIC1PARM,2)
-@@ -802,12 +805,14 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+@@ -454,6 +457,34 @@ static void *GLUE_realAddress(void *fn, int *size)
+ 
+ #define EEL_BC_TRUE ((EEL_F*)(INT_PTR)1)
+ 
++// EffectDeck: + と *（ADD・MUL・ADD_OP_FAST・MUL_OP_FAST）は、オペランドが 2 つとも NaN のとき、残る NaN
++// （ペイロードと符号）が機械の命令の 1 つめのオペランドで決まる（x86-64 の addsd・mulsd は 1 つめを静かにした
++// もの、arm64 の fadd・fmul は信号の NaN が先で、そのあと 1 つめ）。C の a + b はコンパイラがオペランドを
++// 入れ替えてよいので、版ごと・実行系ごとに違った（x86-64 の Linux では portable が top を、vm-block・vm-goto が
++// top2 を残した）。命令を asm で書いて、1 つめを式の左（top2・升の値）に決める。glue_port_vm.h の実行系も
++// これを使う。NaN が 1 つ以下なら C の a + b と同じビット。フィルタを通すもの（ADD_OP など）は NaN が 0 に
++// なるので C のまま。
++#if (defined(__clang__) || defined(__GNUC__)) && defined(__x86_64__)
++static inline EEL_F effectdeck_nan_order_fadd(EEL_F a, EEL_F b) { __asm__("addsd %1, %0" : "+x"(a) : "x"(b)); return a; }
++static inline EEL_F effectdeck_nan_order_fmul(EEL_F a, EEL_F b) { __asm__("mulsd %1, %0" : "+x"(a) : "x"(b)); return a; }
++#elif (defined(__clang__) || defined(__GNUC__)) && defined(__aarch64__)
++static inline EEL_F effectdeck_nan_order_fadd(EEL_F a, EEL_F b)
++{
++  EEL_F r;
++  __asm__("fadd %d0, %d1, %d2" : "=w"(r) : "w"(a), "w"(b));
++  return r;
++}
++static inline EEL_F effectdeck_nan_order_fmul(EEL_F a, EEL_F b)
++{
++  EEL_F r;
++  __asm__("fmul %d0, %d1, %d2" : "=w"(r) : "w"(a), "w"(b));
++  return r;
++}
++#else
++static inline EEL_F effectdeck_nan_order_fadd(EEL_F a, EEL_F b) { return a + b; }
++static inline EEL_F effectdeck_nan_order_fmul(EEL_F a, EEL_F b) { return a * b; }
++#endif
++
+ 
+ 
+ 
+@@ -702,7 +733,7 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+       break;
+ 
+       case EEL_BC_ADD:
+-        fp_top2 += fp_top;
++        fp_top2 = effectdeck_nan_order_fadd(fp_top2, fp_top);
+         fp_rewind(1);
+       break;
+       case EEL_BC_SUB:
+@@ -710,7 +741,7 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+         fp_rewind(1);
+       break;
+       case EEL_BC_MUL:
+-        fp_top2 *= fp_top;
++        fp_top2 = effectdeck_nan_order_fmul(fp_top2, fp_top);
+         fp_rewind(1);
+       break;
+       case EEL_BC_DIV:
+@@ -740,7 +771,10 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+         *(p1 = p2) = denormal_filter_double2(*p2 - fp_pop());
+       break;
+       case EEL_BC_ADD_OP_FAST:
+-        *(p1 = p2) += fp_pop();        
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fadd(*p2, v);
++        }
+       break;
+       case EEL_BC_SUB_OP_FAST:
+         *(p1 = p2) -= fp_pop();
+@@ -752,7 +786,10 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+         *(p1 = p2) = denormal_filter_double2(*p2 / fp_pop());
+       break;
+       case EEL_BC_MUL_OP_FAST:
+-        *(p1 = p2) *= fp_pop();
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fmul(*p2, v);
++        }
+       break;
+       case EEL_BC_DIV_OP_FAST:
+         *(p1 = p2) /= fp_pop();
+@@ -802,12 +839,14 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
  
          }
        break;
@@ -1262,7 +1344,7 @@ index e7d06f3..1ee0f2c 100644
          fp_rewind(1);
        break;
        case EEL_BC_SQR:
-@@ -844,7 +849,8 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+@@ -844,7 +883,8 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
        case EEL_BC_INVSQRT:
          {
            float y = (float)fp_top;
@@ -1274,10 +1356,10 @@ index e7d06f3..1ee0f2c 100644
          }
 diff --git a/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h b/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
 new file mode 100644
-index 0000000..56ff423
+index 0000000..77b087b
 --- /dev/null
 +++ b/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
-@@ -0,0 +1,805 @@
+@@ -0,0 +1,811 @@
 +// glue_port_vm.h — EffectDeck: glue_port.h のバイトコードを解く別の実行系（ns-eel.h の NSEEL_EXEC_*）。
 +//
 +// **バイトコードと字句・構文・compile は WDL のまま。**解き方だけ替える。
@@ -1753,13 +1835,13 @@ index 0000000..56ff423
 +
 +      // fp_top2 op= fp_top; fp_rewind(1); と同じ（fp_top2 = fp_top2 op fp_top）
 +      VM_OP(ADD)
-+        fp_set2_rewind1(fp_top2 + fp_top);
++        fp_set2_rewind1(effectdeck_nan_order_fadd(fp_top2, fp_top)); // glue_port.h の注
 +      VM_NEXT;
 +      VM_OP(SUB)
 +        fp_set2_rewind1(fp_top2 - fp_top);
 +      VM_NEXT;
 +      VM_OP(MUL)
-+        fp_set2_rewind1(fp_top2 * fp_top);
++        fp_set2_rewind1(effectdeck_nan_order_fmul(fp_top2, fp_top));
 +      VM_NEXT;
 +      VM_OP(DIV)
 +        fp_set2_rewind1(fp_top2 / fp_top);
@@ -1784,7 +1866,10 @@ index 0000000..56ff423
 +        *(p1 = p2) = denormal_filter_double2(*p2 - fp_pop());
 +      VM_NEXT;
 +      VM_OP(ADD_OP_FAST)
-+        *(p1 = p2) += fp_pop();
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fadd(*p2, v);
++        }
 +      VM_NEXT;
 +      VM_OP(SUB_OP_FAST)
 +        *(p1 = p2) -= fp_pop();
@@ -1796,7 +1881,10 @@ index 0000000..56ff423
 +        *(p1 = p2) = denormal_filter_double2(*p2 / fp_pop());
 +      VM_NEXT;
 +      VM_OP(MUL_OP_FAST)
-+        *(p1 = p2) *= fp_pop();
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fmul(*p2, v);
++        }
 +      VM_NEXT;
 +      VM_OP(DIV_OP_FAST)
 +        *(p1 = p2) /= fp_pop();
@@ -2480,6 +2568,21 @@ index ccc8580..057cfc3 100644
    
  
    t=*v; // set value
+diff --git a/thirdparty/WDL/source/WDL/heapbuf.h b/thirdparty/WDL/source/WDL/heapbuf.h
+index bf2a632..6e0a79f 100644
+--- a/thirdparty/WDL/source/WDL/heapbuf.h
++++ b/thirdparty/WDL/source/WDL/heapbuf.h
+@@ -224,7 +224,9 @@ class WDL_HeapBuf
+           const int newsz=hb->GetSize();
+           Resize(newsz,true);
+           if (GetSize()!=newsz) Resize(0);
+-          else memcpy(Get(),hb->Get(),newsz);
++          // EffectDeck: 空の写し（newsz 0）では Get() が NULL。memcpy に NULL を渡すのは 0 バイトでも未定義
++          // （UBSan が strncat(#a, #空) の WDL_FastString の代入で止まった）
++          else if (newsz) memcpy(Get(),hb->Get(),newsz);
+         }
+       }
+ 
 diff --git a/thirdparty/WDL/source/WDL/lice/lice.cpp b/thirdparty/WDL/source/WDL/lice/lice.cpp
 index d1a7c30..2e37605 100644
 --- a/thirdparty/WDL/source/WDL/lice/lice.cpp

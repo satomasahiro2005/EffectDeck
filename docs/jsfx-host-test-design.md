@@ -23,6 +23,7 @@
 | §10.3・§11・§13・§14 の境界（出力の NaN、`@serialize` の 16 MiB、`pdc_delay` の上限、保守の直列） | `JSFXStabilityTests` |
 | §24 の一部（`ETJSFXLoader` のスレッドと列挙つまみ） | `JSFXLoaderTests` |
 | §28・§30・§31 の一部（取り込み直したときに前の版を置き換える規則: `desc:`・`author:` の読み方、同じ1本かの判定、別名の付け替えと戻し、保存の形、つまみの持ち越し） | `JSFXReplaceTests` |
+| 設計の外: 物理の出力の音量を読み取り専用の `effectdeck_output_volume` で渡す口（読めていない = -1、@init / @slider / @block への届き方と 1 ブロックの中で動かないこと、再設定・復元の @init、保存しない・変更の通知を立てない、範囲の切り詰め） | `JSFXOutputVolumeTests` |
 | 設計の外: ソース表示の行分けと色分け | `JSFXSourceSyntaxTests` |
 
 どれも Mac の Logic（`bash Scripts/test.sh`）で走る。Linux の `Tests/Linux/run.sh` は

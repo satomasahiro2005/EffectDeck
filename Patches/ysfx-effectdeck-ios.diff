@@ -16,12 +16,14 @@ EffectDeck が足したもの（上流に無い）:
                         ときに残る NaN を式の左（top2・升の値）に決める。C の a + b はコンパイラが順を入れ替えて
                         よく、portable と glue_port_vm.h の実行系とで残る NaN の符号が違った（glue_port.h・
                         glue_port_vm.h）
+  effectdeck_output_volume  物理の出力の音量を JSFX に渡す組み込みの変数（ysfx.h の YSFX_EFFECTDECK_OUTPUT_VOLUME）。
+                        built_ins に登録するので @init（ysfx_reinitialize_vars）で 0 に戻らない。値を書くのは host だけ
   heapbuf.h            空の WDL_HeapBuf を写すとき memcpy(NULL, …, 0) を呼ばない（strncat(#a, #空)。UBSan）
 diff --git a/include/ysfx.h b/include/ysfx.h
-index 49296d4..a8d7e7c 100644
+index 49296d4..9edbdac 100644
 --- a/include/ysfx.h
 +++ b/include/ysfx.h
-@@ -351,6 +351,10 @@ YSFX_API bool ysfx_fetch_want_undopoint(ysfx_t *fx);
+@@ -351,6 +351,12 @@ YSFX_API bool ysfx_fetch_want_undopoint(ysfx_t *fx);
  
  // process a cycle in 32-bit float
  YSFX_API void ysfx_process_float(ysfx_t *fx, const float *const *ins, float *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames);
@@ -29,22 +31,26 @@ index 49296d4..a8d7e7c 100644
 +// 使えない番号は false で何も変えない。どれでも結果は 1 ビットも変わらない（速さだけ）。
 +YSFX_API bool ysfx_set_eel_exec_mode(ysfx_t *fx, int mode);
 +YSFX_API int ysfx_get_eel_exec_mode(ysfx_t *fx);
++// EffectDeck: 物理の出力の音量を入れる組み込みの変数の名前（0〜1、読めていなければ -1）。書くのは host だけ。
++#define YSFX_EFFECTDECK_OUTPUT_VOLUME "effectdeck_output_volume"
  // process a cycle in 64-bit float
  YSFX_API void ysfx_process_double(ysfx_t *fx, const double *const *ins, double *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames);
  
 diff --git a/sources/ysfx.cpp b/sources/ysfx.cpp
-index 740d1dd..c83ca5f 100644
+index 740d1dd..031bc7b 100644
 --- a/sources/ysfx.cpp
 +++ b/sources/ysfx.cpp
-@@ -186,6 +186,7 @@ ysfx_t *ysfx_new(ysfx_config_t *config)
+@@ -186,6 +186,9 @@ ysfx_t *ysfx_new(ysfx_config_t *config)
      AUTOVAR(gfx_texth, 0);
      AUTOVAR(gfx_dest, 0);
      AUTOVAR(gfx_ext_retina, 0);
 +    AUTOVAR(gfx_ext_flags, 0);
++    // EffectDeck: 読めていないときの値は 0（消音）でなく -1。名前は ysfx.h の 1 か所に置く。
++    *(fx->var.effectdeck_output_volume = registerVariable(&fx, vm, YSFX_EFFECTDECK_OUTPUT_VOLUME)) = -1;
      AUTOVAR(mouse_x, 0);
      AUTOVAR(mouse_y, 0);
      AUTOVAR(mouse_cap, 0);
-@@ -452,13 +453,15 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
+@@ -452,13 +455,15 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
      {
          uint32_t maxmem = fx->source.main->header.options.maxmem;
          if (maxmem == 0)
@@ -64,7 +70,7 @@ index 740d1dd..c83ca5f 100644
          };
  
          ysfx_gmem_attach(fx, fx->source.main->header.options.gmem);
-@@ -574,6 +577,7 @@ void ysfx_reinitialize_vars(ysfx_t *fx)
+@@ -574,6 +579,7 @@ void ysfx_reinitialize_vars(ysfx_t *fx)
                  && strcmp(name, "mouse_wheel")
                  && strcmp(name, "mouse_hwheel")
                  && strcmp(name, "gfx_ext_retina")
@@ -72,7 +78,7 @@ index 740d1dd..c83ca5f 100644
              )
          ) {
              found = true;
-@@ -1484,6 +1488,49 @@ uint64_t ysfx_get_slider_visibility(ysfx_t *fx, uint8_t slider_group_index)
+@@ -1484,6 +1490,49 @@ uint64_t ysfx_get_slider_visibility(ysfx_t *fx, uint8_t slider_group_index)
      return fx->slider.visible_mask[slider_group_index].load();
  }
  
@@ -122,7 +128,7 @@ index 740d1dd..c83ca5f 100644
  template <class Real>
  void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames)
  {
-@@ -1529,18 +1576,32 @@ void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs,
+@@ -1529,18 +1578,32 @@ void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs,
          *fx->var.samplesblock = (EEL_F)num_frames;
          *fx->var.num_ch = (EEL_F)num_ins;
  
@@ -158,7 +164,7 @@ index 740d1dd..c83ca5f 100644
              EEL_F **spl = fx->var.spl;
              for (uint32_t i = 0; i < num_frames; ++i) {
                  for (uint32_t ch = 0; ch < num_ins; ++ch)
-@@ -1700,6 +1761,7 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+@@ -1700,6 +1763,7 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
          return nullptr;
  
      std::string buffer;
@@ -166,7 +172,7 @@ index 740d1dd..c83ca5f 100644
  
      // invoke @serialize
      {
-@@ -1710,9 +1772,14 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+@@ -1710,9 +1774,14 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
          lock.unlock();
          ysfx_serialize(fx);
          lock.lock();
@@ -182,7 +188,7 @@ index 740d1dd..c83ca5f 100644
      ysfx_state_u state{new ysfx_state_t};
      uint32_t slider_count = 0;
 diff --git a/sources/ysfx.hpp b/sources/ysfx.hpp
-index a7f2a24..fde6d3b 100644
+index a7f2a24..838783e 100644
 --- a/sources/ysfx.hpp
 +++ b/sources/ysfx.hpp
 @@ -70,6 +70,9 @@ struct ysfx_s {
@@ -195,11 +201,12 @@ index a7f2a24..fde6d3b 100644
  
      std::unordered_map<ysfx_real *, uint32_t> slider_of_var;
      
-@@ -135,6 +138,7 @@ struct ysfx_s {
+@@ -135,6 +138,8 @@ struct ysfx_s {
          EEL_F *gfx_texth = nullptr;
          EEL_F *gfx_dest = nullptr;
          EEL_F *gfx_ext_retina = nullptr;
 +        EEL_F *gfx_ext_flags = nullptr;
++        EEL_F *effectdeck_output_volume = nullptr;
          EEL_F *mouse_x = nullptr;
          EEL_F *mouse_y = nullptr;
          EEL_F *mouse_cap = nullptr;

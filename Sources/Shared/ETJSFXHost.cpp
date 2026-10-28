@@ -40,6 +40,13 @@ constexpr uint32_t kStateMagic = 0x534A4445;
 enum class Mode : uint8_t { running, maintenance, automaticBypass };
 enum class Diagnostic : uint8_t { none, deadlineOverrun };
 
+/// 物理の出力の音量（0〜1、読めていなければ -1）。出力先は 1 つなので host 全部で共有する。
+/// 主スレッドが書き、音のスレッドがブロックの頭で 1 回読む。
+/// host ごとに持たないのは、後から作った・作り直した host（Create・Reconfigure・LoadState・差し替え）が
+/// 最新の値を自分で拾えるようにするため。Swift に配り直しは要らず、作ってから最初の push までの隙間も無い。
+std::atomic<double> gOutputVolume{-1.0};
+static_assert(std::atomic<double>::is_always_lock_free);
+
 void errorCopy(char *dst, size_t cap, const char *s)
 { if (dst && cap) std::snprintf(dst, cap, "%s", s ? s : ""); }
 void errorCopy(char *dst, size_t cap, const std::string &s) { errorCopy(dst, cap, s.c_str()); }
@@ -213,8 +220,20 @@ struct ETJSFX {
     size_t gfxAccounted{};
     ETJSFXMenuCallback menuCallback{};
     void *menuContext{};
+    /// スクリプトの effectdeck_output_volume（YSFX_EFFECTDECK_OUTPUT_VOLUME）の置き場所。
+    /// 作るときに 1 度だけ引く（音のスレッドで変数を探さない）。パッチが当たっていない ysfx だと
+    /// コンパイルが通らないので、nullptr になるのは想定外の経路だけ。
+    ysfx_real *outputVolume{};
     std::string log;
 };
+
+/// 共有の音量を、この host のスクリプトの変数へ写す。load と store が 1 回ずつで、錠も確保も無い。
+/// **書くのは host だけ。**つまみ・保留の値・変更の印・SaveState には触らない
+/// （音量が動くたびに状態の保存が走らないように。ETJSFXHost.h の ETJSFX_SetOutputVolume）。
+static void writeOutputVolume(ETJSFX *h)
+{
+    if (h->outputVolume) *h->outputVolume = gOutputVolume.load(std::memory_order_relaxed);
+}
 
 static void logger(intptr_t data, ysfx_log_level level, const char *message)
 {
@@ -373,6 +392,10 @@ static int32_t process(void *ctx, float *planar, uint32_t channels, uint32_t fra
         if (triggersStale) triggers = 0;
         for (uint32_t i = 0; i < ysfx_max_triggers; ++i)
             if (triggers & (1u << i)) ysfx_send_trigger(h->effect, i);
+        // 音量はブロックの頭で 1 回だけ写す。ysfx は続く 1 回の呼び出しの中で、溜まった @init・@slider・
+        // @block・@sample をこの順に回すので、どの区間も同じ値を見る。スクリプトが書き換えても次のブロックの頭で戻る。
+        // 走らないブロック（保守・自動バイパス・鎖がこの段を飛ばす間）は写さない。最初に走るブロックが写す。
+        writeOutputVolume(h);
         uint64_t position = h->processedFrames.load(std::memory_order_relaxed);
         ysfx_time_info_t t{}; t.playback_state = ysfx_playback_playing; t.tempo = 120;
         t.time_position = (double)position / sampleRate;
@@ -459,6 +482,9 @@ ETJSFX *create(const char *path, double rate, uint32_t maxFrames, char *error, s
         h->sliders.push_back(i);
     }
     ysfx_set_midi_capacity(h->effect, 0, false); ysfx_set_sample_rate(h->effect, rate);
+    // 変数は ysfx_new で組み込みとして登録済み（パッチ）。@init が読む前に現在の値を入れる。
+    h->outputVolume = ysfx_find_var(h->effect, YSFX_EFFECTDECK_OUTPUT_VOLUME);
+    writeOutputVolume(h.get());
     ysfx_set_block_size(h->effect, maxFrames); ysfx_init(h->effect); cacheSliders(h.get());
     h->sliderComputePending.store(true, std::memory_order_release);
     h->latency.store(latencyOf(h->effect));
@@ -510,6 +536,7 @@ bool ETJSFX_Reconfigure(ETJSFX *h, double rate, uint32_t maxFrames)
     try {
         Maintenance m(h); if (!m.live || !h->effect) return false;
         h->sampleRate=rate; h->maxFrames=maxFrames; ysfx_set_sample_rate(h->effect,rate);
+        writeOutputVolume(h);
         ysfx_set_block_size(h->effect,maxFrames); ysfx_init(h->effect); h->processedFrames.store(0);
         h->sliderComputePending.store(true,std::memory_order_release);
         cacheSliders(h); return true;
@@ -575,8 +602,11 @@ bool ETJSFX_LoadState(ETJSFX *h,const uint8_t *bytes,size_t size)
         for(const auto &v:values)
             if(v.index<ysfx_max_sliders&&ysfx_slider_exists(h->effect,v.index))
                 ysfx_slider_set_value(h->effect,v.index,v.value,false);
+        writeOutputVolume(h);
         ysfx_init(h->effect);
         bool ok=ysfx_load_state(h->effect,&s);
+        // @serialize が file_var で名前を読むと、保存されていた古い値が入る。次のブロックまで残さない。
+        writeOutputVolume(h);
         h->sliderComputePending.store(true,std::memory_order_release);
         cacheSliders(h);return ok;
     } catch (...) { return false; }
@@ -620,6 +650,13 @@ double ETJSFX_SliderFromNormalized(ETJSFX *h,uint32_t i,double value)
 // 印を先、cachedValues を後に書く（cacheSliders を読むこと）。
 void ETJSFX_SetSlider(ETJSFX *h,uint32_t i,double v){if(!h||i>=ysfx_max_sliders)return;h->pendingValues[i].store(toBits(v));h->pendingSliders[i].store(true);h->cachedValues[i].store(toBits(v));}
 double ETJSFX_GetSlider(ETJSFX *h,uint32_t i){return h&&i<ysfx_max_sliders?fromBits(h->cachedValues[i].load()):0;}
+// つまみ・保留の値・変更の印・SaveState には触らない（Swift の ConsumeSliderChange → snapshotState が動かない）。
+// 負と非有限は「読めていない」の -1。1 を超える分は 1 に切る。0 は消音という本物の値なので -1 と区別する。
+void ETJSFX_SetOutputVolume(double v)
+{
+    if(!std::isfinite(v)||v<0)v=-1;else if(v>1)v=1;
+    gOutputVolume.store(v,std::memory_order_relaxed);
+}
 bool ETJSFX_SendTrigger(ETJSFX *h,uint32_t i)
 {
     if(!h||i>=ysfx_max_triggers)return false;

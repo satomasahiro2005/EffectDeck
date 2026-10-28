@@ -220,6 +220,8 @@ They cannot put a script together from pieces.
   what makes a setting survive a preset save and an app restart.
 - Graphics: LICE drawing, text, images in slots 0–127, mouse, keyboard, and
   `gfx_showmenu`.
+- `effectdeck_output_volume`: the iOS output volume, read-only (see
+  *Following the output volume*).
 
 ### What is not there
 
@@ -230,6 +232,44 @@ They cannot put a script together from pieces.
 - `gfx_idle` / `gfx_idle_only`.
 - Cross-instance `gmem`, `_global.*`, and `regXX` are not guaranteed.
 - REAPER project APIs and its gain-reduction meter integration.
+
+### Following the output volume: `effectdeck_output_volume`
+
+EffectDeck puts the iOS volume setting of the physical output (built-in
+speaker, wired or Bluetooth headphones) in `effectdeck_output_volume`, from 0
+(silent) to 1 (full).
+
+- **It is -1 until EffectDeck has read a volume.** Treat any negative value as
+  unknown, and fall back to what your effect does at full volume.
+- **It changes only between blocks.** One value holds through each `@block` and
+  all of its `@sample` calls. `@init` and `@slider` see the latest value as well.
+- **iOS reports it in steps of 0.05** (21 levels: 0, 0.05, ... 1), even though
+  the device's own volume moves more finely. Expect jumps of 0.05, and smooth
+  any gain or filter you derive from it, or it may click.
+- It is the volume setting iOS reports, not the loudness at your ear and not the
+  headphone's internal gain.
+- **It is read-only.** Do not assign to it; EffectDeck overwrites it at the next
+  block.
+- **It is not saved.** Do not write it with `file_var` in `@serialize`. Do not
+  copy it into a slider or call `sliderchange()` / `slider_automate()` because
+  of it: that saves a preset change every time the volume moves.
+- Other hosts such as REAPER do not set it. There it is an ordinary variable
+  that starts at 0.
+
+```jsfx
+@init
+g = 1;
+
+@block
+vol = effectdeck_output_volume;
+vol < 0 ? vol = 1;               // unknown: behave as at full volume
+target = vol;                    // jumps in 0.05 steps
+
+@sample
+g += (target - g) * 0.001;       // smooth the step
+spl0 *= g;
+spl1 *= g;
+```
 
 ### Graphics: size your canvas from `gfx_w` / `gfx_h`
 
@@ -301,6 +341,8 @@ anything that can run once per block into `@block`.
 - persistent in-memory LICE graphics, text, Retina, basic keyboard/mouse input,
   and synchronous `gfx_showmenu`
 - serializer handle 0 numeric, memory, string, and slider state
+- read-only `effectdeck_output_volume` (iOS output volume of the physical
+  route, -1 when unknown)
 
 ## Deliberate v1 limits
 

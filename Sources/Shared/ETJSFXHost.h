@@ -38,6 +38,10 @@ double ETJSFX_SliderToNormalized(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_SliderFromNormalized(ETJSFX *host, uint32_t index, double value);
 void ETJSFX_SetSlider(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_GetSlider(ETJSFX *host, uint32_t index);
+/// 物理の出力の音量（0〜1）をスクリプトの effectdeck_output_volume に渡す。読めていなければ負の値か NaN を渡す（-1 になる）。
+/// どのスレッドからでもよい。値は次のブロックの頭（と次の @init）から見える。**保存しない・つまみも通知も立てない。**
+/// 出力先は 1 つなので値は host ごとでなくプロセスで 1 つ。後から作った host も最新の値から始まる。
+void ETJSFX_SetOutputVolume(double volume);
 /// trigger を送る。**running でなければ false を返して捨てる。**
 /// 溜めると、再開した最初の 1 ブロックで一斉に発火して、押した覚えの無い音が出る。
 /// runningのまま鎖がこの段を飛ばしている間（段・Section・全体の入切・無音で休む）は受け取るが、

@@ -163,7 +163,7 @@ if [ "$native_needed" = 1 ]; then
   cp -R "$repo/Vendor/ysfx/include" "$gate_inc/"
   cp -R "$repo/Vendor/ysfx/thirdparty/WDL/source/WDL" "$gate_inc/thirdparty/WDL/source/"
   find "$gate_inc" -type f \( -name '*.h' -o -name '*.hpp' \) -exec sed -i 's/\r$//' {} +
-  if ! grep -q effectdeck_nan_order "$gate_inc/thirdparty/WDL/source/WDL/eel2/glue_port.h"; then
+  if ! grep -q YSFX_EFFECTDECK_OUTPUT_VOLUME "$gate_inc/include/ysfx.h"; then
     sed 's/\r$//' "$repo/Patches/ysfx-effectdeck-ios.diff" \
       | (cd "$gate_inc" && GIT_CEILING_DIRECTORIES="$(dirname "$gate_inc")" \
            git apply -p1 --include='include/*' --include='thirdparty/WDL/source/WDL/*.h' \
@@ -202,7 +202,7 @@ if [ "$exec_needed" = 1 ]; then
   find "$ysfx.new" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) \
     -exec sed -i 's/\r$//' {} +
   # 当たっているかの目印は Scripts/setup.sh と同じ（パッチの今の版が初めて足したもの）。
-  if ! grep -q effectdeck_nan_order "$ysfx.new/thirdparty/WDL/source/WDL/eel2/glue_port.h"; then
+  if ! grep -q YSFX_EFFECTDECK_OUTPUT_VOLUME "$ysfx.new/include/ysfx.h"; then
     # patch(1) は CI の swift の image に無いことがあるので git apply で当てる。写しの上の
     # ディレクトリにリポジトリを探しに行かせない（GIT_CEILING_DIRECTORIES）。
     sed 's/\r$//' "$repo/Patches/ysfx-effectdeck-ios.diff" \
