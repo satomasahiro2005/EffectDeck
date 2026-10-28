@@ -257,76 +257,146 @@ enum ETEffectSearch {
         return m
     }()
 
-    /// **別名。**名前に無い呼び名・略称・綴りの揺れ。小文字で書く。
-    /// 名前にすでに入っている語は書かない（探せるので）。
+    /// **別名。検索のとっかかり。**エフェクトの名前を知らない人が打つ言葉を、エフェクトごとに置く。
+    /// やりたいこと（bass boost・wider・louder）、困っていること（hiss・harsh・muffle・音割れ）、
+    /// よく知られた呼び名・略称（hpf・goniometer）、日本語（低音・残響・ノイズ除去）。小文字で書く。
+    /// 当たるのは別名の頭か語の頭だけ（途中の字では当てない）。名前にすでに入っている語は書かない（探せるので）。
     static let aliases: [String: [String]] = [
-        // EQ
-        "FifteenBandPEQPlugin": ["parametric eq", "parametric equalizer", "equalizer"],
-        "FifteenBandGEQPlugin": ["graphic eq", "graphic equalizer", "equalizer"],
-        "FiveBandPEQPlugin": ["parametric eq", "parametric equalizer", "equalizer"],
-        "FiveBandFIRPEQPlugin": ["linear phase eq", "fir eq", "parametric eq"],
-        "FiveBandDynamicEQ": ["dyn eq", "dynamic equalizer"],
-        "ToneControlPlugin": ["bass treble", "treble", "bass and treble"],
-        "LoudnessEqualizerPlugin": ["equal loudness", "fletcher munson"],
-        "RoomEqPlugin": ["room correction", "acoustic correction"],
-        "HiPassFilterPlugin": ["high pass", "highpass", "hpf", "low cut"],
-        "LoPassFilterPlugin": ["low pass", "lowpass", "lpf", "high cut"],
-        "BandPassFilterPlugin": ["bandpass"],
-        // ダイナミクス
-        "CompressorPlugin": ["compression"],
-        "MultibandCompressorPlugin": ["mb comp", "compression"],
-        "BrickwallLimiterPlugin": ["maximizer", "peak limiter"],
-        "GatePlugin": ["noise gate"],
-        "AutoLevelerPlugin": ["agc", "leveller"],
-        "TransientShaperPlugin": ["attack sustain"],
-        // 空間系
-        "DattorroPlateReverbPlugin": ["verb"],
-        "FDNReverbPlugin": ["verb", "hall"],
-        "IRReverbPlugin": ["verb", "convolution", "convolver"],
-        "RSReverbPlugin": ["verb"],
-        "DelayPlugin": ["echo"],
-        // モジュレーション
-        "PhaserPlugin": ["phase shifter"],
-        "RotarySpeakerPlugin": ["leslie"],
-        "PitchShifterPlugin": ["transpose", "key change"],
-        "PitchShifterHQPlugin": ["transpose", "key change"],
-        // 歪み
-        "SaturationPlugin": ["drive", "overdrive", "distortion"],
-        "HardClippingPlugin": ["clipper", "distortion"],
-        "TubeSimulatorPlugin": ["valve", "tube amp"],
-        "BitCrusherPlugin": ["bitcrush", "lofi", "lo-fi"],
-        "ExciterPlugin": ["enhancer"],
-        // 基本・ステレオ
-        "VolumePlugin": ["gain", "fader"],
-        "MutePlugin": ["silence"],
-        "PolarityInversionPlugin": ["phase invert", "invert", "phase flip"],
-        "StereoBalancePlugin": ["pan", "panning"],
-        "StereoBlendPlugin": ["stereo width", "width"],
-        "MSMatrixPlugin": ["mid side", "mid-side", "mid/side"],
-        "CrossfeedFilterPlugin": ["headphone", "headphones", "bs2b"],
-        "CrosstalkCancellationPlugin": ["xtc"],
-        "BassManagementPlugin": ["subwoofer", "sub", "crossover"],
+        // 解析
+        "AnalogMeterPlugin": ["vu meter", "needle", "ppm", "loudness meter", "lufs", "メーター", "針"],
+        "ChromaSpiralPlugin": ["snail", "chromagram", "pitch class", "key", "chord", "調", "コード"],
+        "LevelMeterPlugin": ["peak meter", "volume meter", "clipping", "音量メーター", "レベル"],
+        "NoteSpectrogramPlugin": ["piano roll", "notes", "melody", "chord", "transcribe", "ピアノロール", "耳コピ", "音程"],
+        "OscilloscopePlugin": ["scope", "waveform", "波形"],
+        "PitchMeterPlugin": ["tuner", "tuning", "チューナー", "音程"],
+        "RhythmAnalyzerPlugin": ["bpm", "tempo", "beat", "テンポ", "リズム"],
+        "SpectrogramPlugin": ["sonogram", "waterfall", "スペクトログラム"],
+        "SpectrumAnalyzerPlugin": ["fft", "analyser", "rta", "frequency", "周波数", "スペクトル"],
+        "StereoMeterPlugin": ["goniometer", "vectorscope", "phase scope", "correlation", "stereo width", "位相"],
+
+        // 基本
+        "BassManagementPlugin": ["subwoofer", "sub", "2.1", "サブウーファー"],
+        "ChannelDividerPlugin": ["crossover", "bi-amp", "multi-amp", "帯域分割"],
         "DCOffsetPlugin": ["dc blocker"],
-        // 修復
-        "NoiseReductionPlugin": ["denoise", "denoiser"],
-        "ClickRemoverPlugin": ["declick", "crackle"],
-        "HumRemoverPlugin": ["dehum", "mains"],
-        "ClipRestorerPlugin": ["declip", "declipper"],
-        // 見る道具
-        "SpectrumAnalyzerPlugin": ["fft", "analyser", "rta"],
-        "LevelMeterPlugin": ["peak meter"],
-        "AnalogMeterPlugin": ["vu meter", "needle meter", "ppm"],
-        "StereoMeterPlugin": ["goniometer", "vectorscope", "phase scope", "correlation"],
-        "OscilloscopePlugin": ["scope", "waveform"],
-        "SpectrogramPlugin": ["sonogram", "waterfall"],
-        "PitchMeterPlugin": ["tuner"],
-        "ChromaSpiralPlugin": ["snail", "chromagram", "pitch class"],
-        // その他
-        "OscillatorPlugin": ["signal generator", "tone generator", "sine", "test tone"],
+        "FIRCrossoverPlugin": ["linear phase crossover", "bi-amp", "multi-amp", "クロスオーバー"],
+        "MatrixPlugin": ["routing", "swap channels", "downmix", "ルーティング"],
+        "MultiChannelPanelPlugin": ["surround", "speaker level", "チャンネル"],
+        "MutePlugin": ["silence", "ミュート", "消音"],
+        "PolarityInversionPlugin": ["phase invert", "invert", "phase flip", "reverse polarity", "逆相", "位相反転"],
+        "StereoBalancePlugin": ["pan", "panning", "left right", "左右", "バランス"],
+        "VolumePlugin": ["gain", "fader", "louder", "quieter", "level", "音量", "ボリューム"],
+
+        // 遅延
+        "DelayPlugin": ["echo", "エコー", "ディレイ"],
+        "TimeAlignmentPlugin": ["speaker alignment", "delay compensation", "speaker distance", "タイムアライメント"],
+
+        // ダイナミクス
+        "AttackTonalBalancePlugin": ["punch", "transient"],
+        "AutoLevelerPlugin": ["agc", "leveller", "normalize", "consistent volume", "night mode", "音量をそろえる", "音量差"],
+        "BrickwallLimiterPlugin": ["maximizer", "peak limiter", "prevent clipping", "音割れ", "リミッター"],
+        "CompressorPlugin": ["compression", "dynamics", "night mode", "コンプ"],
+        "ExpanderPlugin": ["dynamics", "エキスパンダー"],
+        "GatePlugin": ["noise gate", "ゲート", "ノイズゲート"],
+        "MultibandCompressorPlugin": ["mb comp", "compression", "マルチバンド"],
+        "MultibandExpanderPlugin": ["mb expander", "マルチバンド"],
+        "MultibandTransientPlugin": ["punch", "attack"],
+        "PowerAmpSagPlugin": ["amplifier", "アンプ"],
+        "TransientShaperPlugin": ["attack sustain", "punch", "snap", "drums", "アタック"],
+
+        // EQ
+        "BandPassFilterPlugin": ["bandpass", "telephone", "電話"],
+        "CombFilterPlugin": ["flange", "metallic"],
+        "EarphoneCableSimPlugin": ["impedance", "iem", "イヤホン", "ケーブル"],
+        "FifteenBandGEQPlugin": ["graphic eq", "graphic equalizer", "equalizer", "イコライザー", "グライコ"],
+        "FifteenBandPEQPlugin": ["parametric eq", "parametric equalizer", "equalizer", "autoeq", "headphone eq", "イコライザー", "パライコ"],
+        "FiveBandDynamicEQ": ["dyn eq", "dynamic equalizer", "de-esser", "deesser", "sibilance", "harsh", "歯擦音", "サ行"],
+        "FiveBandFIRPEQPlugin": ["linear phase eq", "fir eq", "parametric eq"],
+        "FiveBandPEQPlugin": ["parametric eq", "parametric equalizer", "equalizer", "イコライザー", "パライコ"],
+        "GroupDelayEqPlugin": ["all-pass", "phase"],
+        "GroupDelayPEQPlugin": ["all-pass", "phase"],
+        "HiPassFilterPlugin": ["high pass", "highpass", "hpf", "low cut", "rumble", "ローカット", "低域カット"],
+        "LoPassFilterPlugin": ["low pass", "lowpass", "lpf", "high cut", "muffle", "ハイカット", "高域カット"],
+        "LoudnessEqualizerPlugin": ["equal loudness", "fletcher munson", "low volume", "quiet listening", "小音量"],
+        "NarrowRangePlugin": ["bandpass", "telephone", "crossover"],
+        "RoomEqPlugin": ["room correction", "acoustic correction", "speaker correction", "measurement", "ルーム補正", "部屋"],
+        "TiltEQPlugin": ["brighter", "darker", "warm", "bright", "明るく", "暗く"],
+        "TonalBalanceEQPlugin": ["target curve", "harman", "match eq", "ターゲット"],
+        "ToneControlPlugin": ["bass treble", "treble", "bass boost", "bass", "mid", "低音", "高音", "トーン"],
+
+        // Lo-fi
+        "AMRadioSimulatorPlugin": ["old radio", "vintage", "ラジオ"],
+        "BitCrusherPlugin": ["bitcrush", "lofi", "lo-fi", "8bit", "8-bit", "chiptune", "ローファイ"],
+        "BluetoothSBCSimulatorPlugin": ["bluetooth", "a2dp", "wireless", "ブルートゥース"],
+        "CassetteArtifactsPlugin": ["tape", "walkman", "カセット"],
+        "DSD64IMDSimulatorPlugin": ["sacd"],
+        "DigitalErrorEmulatorPlugin": ["glitch", "dropout", "グリッチ"],
+        "FMRadioSimulatorPlugin": ["radio broadcast", "ラジオ"],
+        "G726ADPCMSimulatorPlugin": ["phone", "telephone", "voip", "電話"],
+        "GSMFullRateSimulatorPlugin": ["phone", "mobile", "cell phone", "telephone", "携帯", "電話"],
+        "HumGeneratorPlugin": ["mains", "50hz", "60hz", "ハム"],
+        "MDSimulatorPlugin": ["minidisc", "atrac", "ミニディスク"],
+        "MP3CodecSimulatorPlugin": ["low bitrate", "lossy", "compressed audio"],
         "NoiseBlenderPlugin": ["white noise", "pink noise"],
-        "VinylSimulatorPlugin": ["record", "turntable", "phono"],
-        "SFZNotePlayerPlugin": ["sampler"],
-        "BluetoothSBCSimulatorPlugin": ["bluetooth", "a2dp"],
-        "TimeAlignmentPlugin": ["speaker alignment"],
+        "SWRadioSimulatorPlugin": ["shortwave", "ham radio", "短波", "ラジオ"],
+        "SimpleJitterPlugin": ["clock"],
+        "TVAudioSimulatorPlugin": ["television", "nicam", "テレビ"],
+        "TapeArtifactsPlugin": ["reel to reel", "analog", "テープ"],
+        "VinylArtifactsPlugin": ["crackle", "record noise", "lp", "レコード"],
+        "VinylSimulatorPlugin": ["record", "turntable", "phono", "lp", "analog", "レコード"],
+
+        // モジュレーション
+        "AutoFilterPlugin": ["wah", "envelope filter", "ワウ"],
+        "AutoPanPlugin": ["8d audio", "8d", "rotating", "パン"],
+        "ChorusPlugin": ["ensemble", "flanger", "vibrato", "コーラス"],
+        "FrequencyShifterPlugin": ["ring modulator", "ring mod", "barber pole"],
+        "PhaserPlugin": ["phase shifter", "フェイザー"],
+        "PitchShifterHQPlugin": ["transpose", "key change", "キー", "移調"],
+        "PitchShifterPlugin": ["transpose", "key change", "キー", "移調"],
+        "RotarySpeakerPlugin": ["leslie", "organ", "ロータリー"],
+        "TremoloPlugin": ["wobble", "トレモロ"],
+        "WowFlutterPlugin": ["tape wobble", "warble", "vintage", "ワウフラッター"],
+
+        // その他
+        "OscillatorPlugin": ["signal generator", "tone generator", "sine", "test tone", "sweep", "発振器", "テストトーン"],
+        "SFZNotePlayerPlugin": ["sampler", "instrument", "piano", "synth", "音源"],
+
+        // 共鳴
+        "AdaptivePredictionEffectPlugin": ["resonance"],
+        "HornResonatorPlugin": ["horn speaker", "vintage speaker"],
+        "HornResonatorPlusPlugin": ["horn speaker", "vintage speaker"],
+        "ModalResonatorPlugin": ["resonance", "metallic", "bell"],
+
+        // 修復
+        "ClickRemoverPlugin": ["declick", "crackle", "pop", "vinyl noise", "プチプチ"],
+        "ClipRestorerPlugin": ["declip", "declipper", "音割れ"],
+        "HumRemoverPlugin": ["dehum", "mains", "buzz", "50hz", "60hz", "ハム"],
+        "NoiseReductionPlugin": ["denoise", "denoiser", "hiss", "background noise", "ノイズ除去", "ノイズ"],
+
+        // リバーブ
+        "DattorroPlateReverbPlugin": ["verb", "space", "リバーブ", "残響"],
+        "FDNReverbPlugin": ["verb", "hall", "room", "space", "リバーブ", "残響", "ホール"],
+        "IRReverbPlugin": ["verb", "convolution", "convolver", "impulse response", "リバーブ", "残響"],
+        "RSReverbPlugin": ["verb", "space", "リバーブ", "残響"],
+
+        // サチュレーション
+        "BandwidthExtenderPlugin": ["high frequency", "air", "restore treble", "高音補完"],
+        "BassExtenderPlugin": ["bass boost", "more bass", "低音", "重低音"],
+        "DynamicSaturationPlugin": ["speaker distortion", "warm"],
+        "ExciterPlugin": ["enhancer", "clarity", "presence", "brighten", "sparkle", "air", "明瞭", "エキサイター"],
+        "HardClippingPlugin": ["clipper", "distortion", "fuzz", "クリップ"],
+        "HarmonicDistortionPlugin": ["harmonics", "warmth", "倍音"],
+        "MultibandSaturationPlugin": ["warmth", "drive"],
+        "SaturationPlugin": ["drive", "overdrive", "distortion", "warm", "warmth", "analog", "歪み", "サチュレーション"],
+        "SubSynthPlugin": ["subharmonic", "sub bass", "bass boost", "重低音"],
+        "TubeSimulatorPlugin": ["valve", "tube amp", "vacuum tube", "warm", "真空管"],
+
+        // 空間
+        "CrossfeedFilterPlugin": ["headphone", "headphones", "bs2b", "speaker-like", "ヘッドホン"],
+        "CrosstalkCancellationPlugin": ["xtc", "3d", "立体"],
+        "MSMatrixPlugin": ["mid side", "mid-side", "mid/side", "ミッドサイド"],
+        "MultibandBalancePlugin": ["stereo"],
+        "PhaseSelectEqPlugin": ["vocal remover", "karaoke", "center", "vocal", "ボーカル", "カラオケ"],
+        "SpatialMapperPlugin": ["ambience", "upmix", "surround", "center extract", "アンビエンス"],
+        "StereoBlendPlugin": ["stereo width", "width", "wider", "narrower", "mono", "広がり", "モノラル"],
     ]
 }
