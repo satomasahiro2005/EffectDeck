@@ -62,7 +62,7 @@ struct SFZNotePlayerView: View {
                 bankRow.etLocalAudioOnly()
                 if let line = errorLine {
                     Text(line)
-                        .font(.system(size: 11))
+                        .etFont(size: 11)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -128,12 +128,12 @@ struct SFZNotePlayerView: View {
 
     private var bankRow: some View {
         HStack(spacing: 8) {
-            Text("SFZ").font(.system(size: 14))
+            Text("SFZ").etFont(size: 14)
             ETMeasurementButton(title: "SFZ Library…", isEnabled: !loading && !remote.isRemote) {
                 browsing = true
             }
             Text(loading ? "Loading…" : bankName)
-                .font(.system(size: 14))
+                .etFont(size: 14)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)

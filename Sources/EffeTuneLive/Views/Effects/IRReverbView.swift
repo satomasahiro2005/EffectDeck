@@ -159,7 +159,7 @@ struct IRReverbView: View {
             }
 
             Text(status)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .etLocalAudioOnly()
@@ -187,16 +187,16 @@ struct IRReverbView: View {
             // 名前が先。何を使っているかが分からないと、聴き比べのときに困る。
             if let name = fileName {
                 Text(name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .etFont(size: 12, weight: .semibold)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(caption)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(fileName == nil ? .primary : .secondary)
             if let failure {
                 Text(failure)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -286,7 +286,7 @@ struct IRReverbView: View {
         let o = preparation
         Toggle(isOn: Binding(get: { o.directCut },
                              set: { setPreparation(ETDesignParam.flag($0), key: "dc") })) {
-            Text("Direct Cut").font(.system(size: 14))
+            Text("Direct Cut").etFont(size: 14)
         }
         .padding(.vertical, 2)
         preparationSlider("Cut Offset", unit: "ms", key: "co", value: o.cutOffsetMs,
@@ -315,9 +315,8 @@ struct IRReverbView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ETValueField(text: text, label: title,
                              editText: { ETNumberText.draft(value) },
@@ -337,7 +336,7 @@ struct IRReverbView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(.tint)
@@ -356,7 +355,7 @@ struct IRReverbView: View {
         let current = min(max(intValue(param), 0), max(options.count - 1, 0))
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text(param.label).font(.system(size: 14))
+            Text(param.label).etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -367,7 +366,7 @@ struct IRReverbView: View {
                         dsp.setValue(Float(i), at: index, offset: param.offset)
                     } label: {
                         Text(name)
-                            .font(.system(size: 13, weight: selected ? .bold : .regular))
+                            .etFont(size: 13, weight: selected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(selected ? AnyShapeStyle(.white)
@@ -442,8 +441,8 @@ private struct ETRemoteIRLibraryView: View {
                         pick(item)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(item.name).font(.system(size: 15)).lineLimit(2)
-                            Text(item.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(item.name).etFont(size: 15).lineLimit(2)
+                            Text(item.detail).etFont(size: 11).foregroundStyle(.secondary)
                         }
                     }
                     .disabled(working)

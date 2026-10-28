@@ -21,16 +21,21 @@ struct ClipboardBanner: View {
     /// 貼った鎖で直したもの・落としたもの（ETChainText.Report.message）。空でなければ1行で出す。
     /// Presets → Import from clipboardと同じ。**黙って直さない。**
     @State private var note = ""
+    /// 大きい文字サイズでは、字と貼り付けのボタンを縦に積む。
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                             : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
         Group {
             if looksLikeLink {
                 Card {
-                    HStack(alignment: .center, spacing: 12) {
+                    layout {
                         Image(systemName: "link")
-                            .font(.system(size: 17))
+                            .etFont(size: 17)
                             .foregroundStyle(.tint)
-                            .frame(width: 22)
+                            .frame(width: stacked ? nil : 22)
 
                         VStack(alignment: .leading, spacing: 2) {
                             // 中身は読んでいない。**「鎖が乗っている」とは言えない。**
@@ -38,18 +43,18 @@ struct ClipboardBanner: View {
                             // だけで、EffeTune のリンクかどうかは押すまで分からない。
                             Text(failed ? "That link had no chain in it"
                                          : "A link is on the clipboard")
-                                .font(.system(size: 14, weight: .semibold))
+                                .etFont(size: 14, weight: .semibold)
                                 .fixedSize(horizontal: false, vertical: true)
                             // 押すと今の鎖が消えることを、押す前に言う。
                             if !failed {
                                 Text("Pasting replaces the current chain.")
-                                    .font(.system(size: 11))
+                                    .etFont(size: 11)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
 
-                        Spacer(minLength: 4)
+                        if !stacked { Spacer(minLength: 4) }
 
                         PasteButton(payloadType: String.self) { items in
                             guard let text = items.first else { return }

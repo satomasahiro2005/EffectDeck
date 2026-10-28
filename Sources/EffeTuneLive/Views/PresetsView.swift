@@ -492,13 +492,13 @@ struct PresetsView: View {
             // フォルダが 1 つも無いうちは、仕切りを出す意味が無い。
             if orderedFolders.count > 1 {
                 Label("Uncategorized", systemImage: "tray")
-                    .font(.system(size: 13, weight: .semibold))
+                    .etFont(size: 13, weight: .semibold)
                     .foregroundStyle(.secondary)
             }
         } else {
             Label {
                 HStack(spacing: 6) {
-                    Text(folder.name).font(.system(size: 13, weight: .semibold))
+                    Text(folder.name).etFont(size: 13, weight: .semibold)
                     if folder.items.isEmpty {
                         Text("empty").font(.caption).foregroundStyle(.tertiary)
                     }
@@ -581,7 +581,7 @@ struct PresetsView: View {
             }
             i -= 1
         }
-        withAnimation { move(moved.name, into: folder) }
+        etWithAnimation { move(moved.name, into: folder) }
     }
 
     /// `/` の前でフォルダに束ねる。**中身の無いフォルダも出す。**
@@ -635,7 +635,7 @@ struct PresetsView: View {
                                 Text("JSFX Host Test").foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 Text(jsfxFixtureCount)
-                                    .font(.system(size: 12))
+                                    .etFont(size: 12)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -648,7 +648,7 @@ struct PresetsView: View {
                                 Text(preset.name).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 Text(countLabel(preset.effectCount))
-                                    .font(.system(size: 12))
+                                    .etFont(size: 12)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -666,7 +666,7 @@ struct PresetsView: View {
                                 Spacer(minLength: 8)
                                 // 数字だけ置かない。何を数えたのか読めない。
                                 Text(countLabel(preset.effectCount))
-                                    .font(.system(size: 12))
+                                    .etFont(size: 12)
                                     .foregroundStyle(.secondary)
                             }
                         }

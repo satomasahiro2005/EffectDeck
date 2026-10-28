@@ -124,7 +124,7 @@ struct ChannelDividerView: View {
     /// 上流はラジオ（同 603-621）。ここは直のボタンで並べる。
     private var bandCountRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Band Count").font(.system(size: 14))
+            Text("Band Count").etFont(size: 14)
             HStack(spacing: 6) {
                 ForEach([2, 3, 4], id: \.self) { count in
                     let isSelected = bandCount == count
@@ -132,7 +132,7 @@ struct ChannelDividerView: View {
                         set("bc", Float(count))
                     } label: {
                         Text("\(count)")
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)
                                                         : AnyShapeStyle(.secondary))
                             .frame(maxWidth: .infinity, minHeight: ETMetrics.hitTarget)
@@ -190,7 +190,7 @@ struct ChannelDividerView: View {
         } label: {
             // 上流の option と同じ字（同 697）。
             Text("\(abs(slope))dB")
-                .font(.system(size: 12, weight: isSelected ? .bold : .regular))
+                .etFont(size: 12, weight: isSelected ? .bold : .regular)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))

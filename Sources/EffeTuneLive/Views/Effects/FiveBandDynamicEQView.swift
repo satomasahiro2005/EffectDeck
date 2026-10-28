@@ -183,17 +183,29 @@ struct FiveBandDynamicEQView: View {
                 } label: {
                     VStack(spacing: 1) {
                         Text("\(i + 1)")
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                         Text(ETFormat.hzTick(bands[i].hz))
-                            .font(.system(size: 8, design: .monospaced))
+                            .etFont(size: 8, design: .monospaced)
                     }
                     .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                     .frame(maxWidth: .infinity, minHeight: 30)
                     .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                                 in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                     .opacity(bands[i].enabled ? 1 : 0.45)
+                    // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                    // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 3)
+                    .contentShape(.rect)
+                    .padding(.vertical, -7)
+                    .padding(.horizontal, -3)
                 }
                 .buttonStyle(.plain)
+                // 数字と周波数の 2 行だけでは選ばれているかも切ってあるかも伝わらない。
+                .accessibilityLabel("Band \(i + 1)")
+                .accessibilityValue(bands[i].enabled ? ETFormat.hzTick(bands[i].hz)
+                                                    : "\(ETFormat.hzTick(bands[i].hz)), Off")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
     }
@@ -205,7 +217,7 @@ struct FiveBandDynamicEQView: View {
             ForEach(node.spec.params) { param in
                 if let label = Self.groupLabel(before: param.key) {
                     Text(label)
-                        .font(.system(size: 10, weight: .semibold))
+                        .etFont(size: 10, weight: .semibold)
                         .tracking(0.6)
                         .foregroundStyle(.secondary)
                         .padding(.top, 2)
@@ -350,8 +362,6 @@ struct DynamicEQParameterRow: View {
     let values: [Float]
 
     @ObservedObject var dsp: EffeTuneDSP
-    @State private var editing = false
-    @State private var draft = ""
 
     private static let filterTypeNames = ["pk": "Peak", "ls": "Low Shelf", "hs": "High Shelf"]
 
@@ -367,12 +377,12 @@ struct DynamicEQParameterRow: View {
             switch param.kind {
             case .toggle:
                 Toggle(isOn: Binding(get: { value >= 0.5 }, set: { set($0 ? 1 : 0) })) {
-                    Text(title).font(.system(size: 14))
+                    Text(title).etFont(size: 14)
                 }
 
             case .enumeration(let options):
                 HStack {
-                    Text(title).font(.system(size: 14))
+                    Text(title).etFont(size: 14)
                     Spacer(minLength: 8)
                     Picker("", selection: Binding(
                         get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
@@ -388,9 +398,8 @@ struct DynamicEQParameterRow: View {
             case .number(let lo, let hi, let step, _, let isInteger):
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.system(size: 14))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .etFont(size: 14)
+                        .etRowTitle()
                     Spacer(minLength: 4)
                     valueField
                 }
@@ -400,6 +409,8 @@ struct DynamicEQParameterRow: View {
                                        set: { set(isInteger ? Float($0.rounded()) : Float($0)) }),
                         in: Double(lo)...Double(hi),
                         step: step > 0 ? Double(step) : (isInteger ? 1 : 0.0001))
+                        .accessibilityLabel(title)
+                        .accessibilityValue(param.format(value))
                 }
             }
         }
@@ -413,31 +424,16 @@ struct DynamicEQParameterRow: View {
         return ""
     }
 
+    /// ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
+    /// ETValueField は TextField なので届く。下書きは単位なしの数だけ。
     private var valueField: some View {
-        Group {
-            if editing {
-                TextField("", text: $draft)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: 1))
-                    .submitLabel(.done)
-                    .onSubmit { commit() }
-            } else {
-                ValueBox(text: param.format(value))
-                    .onTapGesture {
-                        draft = trimmed(value)
-                        editing = true
-                    }
-            }
+        ETValueField(text: param.format(value), label: title,
+                     editText: { trimmed(value) }) { typed in
+            commit(Float(typed))
         }
     }
 
-    private func commit() {
-        editing = false
-        guard let v = Float(draft.trimmingCharacters(in: .whitespaces)) else { return }
+    private func commit(_ v: Float) {
         if case .number(let lo, let hi, _, _, let isInteger) = param.kind {
             let clamped = min(max(v, lo), hi)
             set(isInteger ? clamped.rounded() : clamped)

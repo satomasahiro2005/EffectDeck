@@ -82,14 +82,14 @@ struct RoutingRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(node.spec.name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .etFont(size: 15, weight: .semibold)
                 Spacer()
                 if !node.isDefaultRouting || node.isGated {
                     Text(ETRouting.badge(node))
-                        .font(.system(size: 11, design: .monospaced))
+                        .etFont(size: 11, design: .monospaced)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(.tint, in: .capsule)
+                        .etBadgeBackground(in: .capsule)
                         .foregroundStyle(.white)
                 }
             }
@@ -99,7 +99,7 @@ struct RoutingRow: View {
                     dsp.setRouting(at: index, inputBus: $0)
                 }
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                 busMenu(title: "Out", value: node.outputBus) {
                     dsp.setRouting(at: index, outputBus: $0)
@@ -120,12 +120,12 @@ struct RoutingRow: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text("Channel").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("Channel").etFont(size: 11).foregroundStyle(.secondary)
                         Text(ETRouting.channelName(node.channelSpec))
-                            .font(.system(size: 13))
+                            .etFont(size: 13)
                             .lineLimit(1)
                         Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9))
+                            .etFont(size: 9)
                     }
                 }
                 .accessibilityLabel("Channel")
@@ -144,9 +144,9 @@ struct RoutingRow: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(title).etFont(size: 11).foregroundStyle(.secondary)
                 Text("\(value)")
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .etFont(size: 14, weight: .semibold, design: .monospaced)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)

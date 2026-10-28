@@ -61,12 +61,12 @@ struct IRLibraryView: View {
                         ForEach(library.entries) { entry in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.name)
-                                    .font(.system(size: 15))
+                                    .etFont(size: 15)
                                     .lineLimit(2)
                                 // 鍵は web 版と突き合わせるためのもの。
                                 // 24 桁を裸で出しても何の数か読めないので名前を付ける。
                                 Text("Key \(entry.id) · \(size(entry.bytes))")
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .etFont(size: 11, design: .monospaced)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.7)

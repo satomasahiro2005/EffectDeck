@@ -108,7 +108,7 @@ struct SpectrumAnalyzerView: View {
     private var colorPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Color")
-                .font(.system(size: 14))
+                .etFont(size: 14)
             Picker("Color", selection: $color) {
                 ForEach(ETSpectrumColor.allCases) { option in
                     Text(option.label).tag(option)
@@ -124,7 +124,7 @@ struct SpectrumAnalyzerView: View {
     private var scalePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Frequency Scale")
-                .font(.system(size: 14))
+                .etFont(size: 14)
             HStack(spacing: 6) {
                 ForEach(ETSpectrumScale.allCases) { option in
                     let isSelected = effectiveScale == option
@@ -135,7 +135,7 @@ struct SpectrumAnalyzerView: View {
                         }
                     } label: {
                         Text(option.label)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)
@@ -204,9 +204,8 @@ private struct PointsRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(param.label)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 field
             }
@@ -228,9 +227,9 @@ private struct PointsRow: View {
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true, shrinks: false)
             .background(.quaternary,
                         in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)

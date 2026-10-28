@@ -135,12 +135,11 @@ private struct FIRCrossoverBody: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("Latency")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 Text("\(options[selected]) samples")
-                    .font(.system(size: 13, design: .monospaced))
+                    .etFont(size: 13, design: .monospaced)
                     .foregroundStyle(.secondary)
             }
             FIRCrossoverChoiceStrip(
@@ -166,9 +165,8 @@ private struct FIRCrossoverBody: View {
 
         return VStack(alignment: .leading, spacing: 6) {
             Text("Band Count")
-                .font(.system(size: 14))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .etFont(size: 14)
+                .etRowTitle()
             FIRCrossoverChoiceStrip(
                 options: options,
                 selectedIndex: options.firstIndex(of: current),
@@ -187,19 +185,19 @@ private struct FIRCrossoverBody: View {
     private var progress: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(designer.status.message)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let detail = designer.status.detail {
                 // stageFailed の中身。validateBegin は理由を返さないので、
                 // ここに出るのは AssetUpload 側で分かったぶんだけ。
                 Text(detail)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let line = designLine {
                 Text(line)
-                    .font(.system(size: 11, design: .monospaced))
+                    .etFont(size: 11, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -228,7 +226,7 @@ private struct FIRCrossoverBody: View {
     /// fir_crossover.js:615-622 の _renderBusError の 1 文目。文言は上流と同じ。
     private var busError: some View {
         Text("This effect needs an even number of output channels from 4 to 16.")
-            .font(.system(size: 12, weight: .semibold))
+            .etFont(size: 12, weight: .semibold)
             .fixedSize(horizontal: false, vertical: true)
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -286,9 +284,9 @@ private struct FIRCrossoverChoiceStrip: View {
                     onSelect(i)
                 } label: {
                     Text(String(option))
-                        .font(.system(size: 13,
-                                      weight: isSelected ? .bold : .regular,
-                                      design: .monospaced))
+                        .etFont(size: 13,
+                                weight: isSelected ? .bold : .regular,
+                                design: .monospaced)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .foregroundStyle(isSelected ? AnyShapeStyle(.white)

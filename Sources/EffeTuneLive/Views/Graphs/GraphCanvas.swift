@@ -80,6 +80,9 @@ struct GraphCanvas<Overlay: View>: View {
     /// 格子の層の鍵（ETGraphGrid）。外観とコントラストで線と字の色が変わる。
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// 値の行の高さは文字サイズに追従させる。通常のサイズでは 17pt のまま。
+    @ScaledMetric(relativeTo: .caption2) private var readoutHeight = ETGraphMetrics.readoutHeight
     @GestureState private var previewActive = false
     var insets: ETGraphInsets
     /// 掴んでいる値。空なら caption を出す。
@@ -99,6 +102,14 @@ struct GraphCanvas<Overlay: View>: View {
     /// 上の値の行（readoutHeight ぶん）を取るか。図の中に見出しを自分で描く図
     /// （Rhythm Analyzer）だけが false にして、行の分の空きを無くす。
     var showsHeader: Bool
+    /// 図の外周に 1pt の枠を引くか。渦巻きのように丸い図は false にする
+    /// （四角い枠が丸い図の周りの空きを目立たせる）。
+    var framed: Bool
+    /// 図の面を縦横 1:1 にするか。幅を測って高さに入れ直す方式だと開いた最初の 1 回だけ
+    /// 高さが跳ねるので、レイアウトに任せる。true のとき height は使わない。
+    var isSquare: Bool
+    /// Audio Graphs（VoiceOver の「再生」とデータの要約）に渡す中身。nil なら何も付けない。
+    var chart: ETChartAccess?
     var draw: (inout GraphicsContext, ETPlot) -> Void
     var overlay: (ETPlot) -> Overlay
 
@@ -113,6 +124,9 @@ struct GraphCanvas<Overlay: View>: View {
          clipsContent: Bool = true,
          previewsFrequency: Bool = false,
          showsHeader: Bool = true,
+         framed: Bool = true,
+         isSquare: Bool = false,
+         chart: ETChartAccess? = nil,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void,
          @ViewBuilder overlay: @escaping (ETPlot) -> Overlay) {
         self.x = x
@@ -126,13 +140,17 @@ struct GraphCanvas<Overlay: View>: View {
         self.clipsContent = clipsContent
         self.previewsFrequency = previewsFrequency
         self.showsHeader = showsHeader
+        self.framed = framed
+        self.isSquare = isSquare
+        self.chart = chart
         self.draw = draw
         self.overlay = overlay
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if showsHeader { header }
+            // 札の押せる範囲は上下に広げてある。下側が図の下に隠れないよう、見出しを前に出す。
+            if showsHeader { header.zIndex(1) }
             GeometryReader { geo in
                 ZStack {
                     // 格子は軸・余白・大きさが同じあいだ描き直さない（下の ETGraphGrid）。
@@ -143,7 +161,8 @@ struct GraphCanvas<Overlay: View>: View {
                     // overlay は前から別の View だったので、グループの外に置く。
                     ZStack {
                         ETGraphGrid(x: x, y: y, insets: insets, size: geo.size,
-                                    colorScheme: colorScheme, contrast: colorSchemeContrast)
+                                    colorScheme: colorScheme, contrast: colorSchemeContrast,
+                                    framed: framed)
                             .equatable()
                         Canvas { context, size in
                             let plot = ETPlot(size: size, x: x, y: y, insets: insets)
@@ -175,8 +194,9 @@ struct GraphCanvas<Overlay: View>: View {
                     .onEnded { _ in ETPreviewTone_SetFrequency(0) },
                     // 立てない図ではジェスチャごと外す。子の印を掴むジェスチャは残る。
                     including: previewsFrequency ? .all : .subviews)
+                .etChartAccess(chart)
             }
-            .frame(height: min(height, maxHeight ?? height))
+            .etGraphSized(isSquare: isSquare, height: min(height, maxHeight ?? height))
         }
         // 読み値の行ごと沈める。数字も手元の音のもの。
         .etDimmedWhenMeasuring(measurementDimmed)
@@ -195,7 +215,7 @@ struct GraphCanvas<Overlay: View>: View {
             if readout.isEmpty {
                 if let caption {
                     Text(caption)
-                        .font(.system(size: ETGraphMetrics.readoutSize))
+                        .etFont(size: ETGraphMetrics.readoutSize)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -206,41 +226,55 @@ struct GraphCanvas<Overlay: View>: View {
                 // 進んでいる位置の動きを引き継がないので、**行が動いている最中に
                 // 値が変わると、字だけが先に着く**（並べ替えの 0.22 秒のあいだ、
                 // 読み値は 30Hz で変わるのでほぼ必ず起きる）。
-                ForEach(Array(readout.enumerated()), id: \.offset) { _, item in
-                    HStack(spacing: 3) {
-                        if !item.label.isEmpty {
-                            Text(item.label)
-                                .font(.system(size: 9, weight: .semibold))
-                                .tracking(0.4)
-                                .foregroundStyle(.secondary)
+                //
+                // 内側の HStack は並びを変えない（外と同じ spacing）。読み上げのために
+                // 1 つの要素にまとめる入れ物。まとめないと「BAND」「1」「FREQ」…を
+                // 1 つずつスワイプで読むことになり、読んでいる間に値が変わってしまう。
+                HStack(spacing: 10) {
+                    ForEach(Array(readout.enumerated()), id: \.offset) { _, item in
+                        HStack(spacing: 3) {
+                            if !item.label.isEmpty {
+                                Text(item.label)
+                                    .etFont(size: 9, weight: .semibold)
+                                    .tracking(0.4)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(item.value)
+                                .etFont(size: ETGraphMetrics.readoutSize, weight: .medium,
+                                        design: .monospaced)
                         }
-                        Text(item.value)
-                            .font(.system(size: ETGraphMetrics.readoutSize, weight: .medium,
-                                          design: .monospaced))
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.updatesFrequently)
             }
             Spacer(minLength: 0)
             if let accessory {
                 accessory.fixedSize()
             }
-            // 右端の札。行の高さは下で固定してあるので、出ても位置は動かない。
+            // 右端の札。行の高さは下で決めているので、出ても位置は動かない。
             if let badge {
                 Text(badge)
+                    // 札は伸ばさない（行が 2 段になると図が下へ押される）。
+                    // 代わりに Large Content Viewer で、長押しして大きく読めるようにする。
                     .font(.system(size: 10, weight: .heavy))
                     .tracking(0.5)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.tint, in: .capsule)
+                    .etBadgeBackground()
                     // 行の高さは下の frame が決めているので、
                     // 札が大きくても位置は動かない。
                     .fixedSize()
+                    .accessibilityShowsLargeContentViewer()
             }
         }
-        .frame(height: ETGraphMetrics.readoutHeight, alignment: .leading)
+        // 高さは文字サイズに追従する（通常は 17pt）。値が入ったり消えたりしても
+        // 行が 1 つのままなので、掴んでいる間に図が動かない。
+        // 大きい文字では 2 段にせず、縮めて 1 行に収める。
+        .frame(minHeight: readoutHeight, alignment: .leading)
         .lineLimit(1)
-        .minimumScaleFactor(0.8)
+        .minimumScaleFactor(typeSize.isAccessibilitySize ? 0.5 : 0.8)
     }
 }
 
@@ -258,17 +292,19 @@ private struct ETGraphGrid: View, Equatable {
     let size: CGSize
     let colorScheme: ColorScheme
     let contrast: ColorSchemeContrast
+    let framed: Bool
 
     var body: some View {
         Canvas { context, canvasSize in
-            Self.drawGrid(&context, ETPlot(size: canvasSize, x: x, y: y, insets: insets))
+            Self.drawGrid(&context, ETPlot(size: canvasSize, x: x, y: y, insets: insets),
+                          framed: framed)
         }
         .accessibilityHidden(true)
     }
 
     // MARK: 格子
 
-    static func drawGrid(_ context: inout GraphicsContext, _ plot: ETPlot) {
+    static func drawGrid(_ context: inout GraphicsContext, _ plot: ETPlot, framed: Bool) {
         let rect = plot.rect
 
         // 縦線と、その下の字。
@@ -301,7 +337,9 @@ private struct ETGraphGrid: View, Equatable {
             }
         }
 
-        context.stroke(Path(rect), with: ETGraphShading.grid, lineWidth: 1)
+        if framed {
+            context.stroke(Path(rect), with: ETGraphShading.grid, lineWidth: 1)
+        }
     }
 
     private static func tickText(_ s: String) -> Text {
@@ -322,10 +360,63 @@ extension GraphCanvas where Overlay == EmptyView {
          clipsContent: Bool = true,
          previewsFrequency: Bool = false,
          showsHeader: Bool = true,
+         framed: Bool = true,
+         isSquare: Bool = false,
+         chart: ETChartAccess? = nil,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void) {
         self.init(x: x, y: y, height: height, insets: insets, readout: readout,
                   caption: caption, badge: badge, clipsContent: clipsContent,
-                  previewsFrequency: previewsFrequency, showsHeader: showsHeader, draw: draw,
+                  previewsFrequency: previewsFrequency, showsHeader: showsHeader,
+                  framed: framed, isSquare: isSquare, chart: chart, draw: draw,
                   overlay: { _ in EmptyView() })
+    }
+}
+
+// MARK: - 図の面の大きさ
+
+private struct ETGraphSizedModifier: ViewModifier {
+    let isSquare: Bool
+    let height: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isSquare {
+            content.aspectRatio(1, contentMode: .fit)
+        } else {
+            content.frame(height: height)
+        }
+    }
+}
+
+extension View {
+    fileprivate func etGraphSized(isSquare: Bool, height: CGFloat) -> some View {
+        modifier(ETGraphSizedModifier(isSquare: isSquare, height: height))
+    }
+}
+
+// MARK: - 小さな札の地
+
+/// 小さな札（10pt 前後の白い字を .tint の地に載せたもの）の地。
+///
+/// 通常の見た目は `.background(.tint, in: .capsule)` と同じ。
+/// 「コントラストを上げる」がオンのときだけ地を黒で 30% 沈めて、白い字との比を上げる。
+/// 小さい字は .tint（システムの青）の地だと約 3.6〜4.0:1 で、AA に届かないため。
+private struct ETBadgeBackgroundModifier: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func body(content: Content) -> some View {
+        content.background {
+            Capsule().fill(.tint)
+            if contrast == .increased {
+                Capsule().fill(Color.black.opacity(0.3))
+            }
+        }
+    }
+}
+
+extension View {
+    /// 札の地。Routing や OVERLOAD の札も同じにしたいときに使う。
+    func etBadgeBackground() -> some View {
+        modifier(ETBadgeBackgroundModifier())
     }
 }

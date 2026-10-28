@@ -43,7 +43,7 @@ struct ConnectionTipsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         // 題は ETNoticeRow と同じ字の大きさ。
                         Text(verbatim: c.title)
-                            .font(.system(size: 15, weight: .semibold))
+                            .etFont(size: 15, weight: .semibold)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
                         Text(verbatim: c.act)
@@ -71,7 +71,7 @@ struct ConnectionTipsView: View {
                 let p = ja ? ETTips.procedure.ja : ETTips.procedure.en
                 VStack(alignment: .leading, spacing: 6) {
                     Text(verbatim: p.title)
-                        .font(.system(size: 15, weight: .semibold))
+                        .etFont(size: 15, weight: .semibold)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
                     Text(verbatim: p.intro)

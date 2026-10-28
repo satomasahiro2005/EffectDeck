@@ -390,9 +390,8 @@ struct ETScopeMillisecondRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(param.label + " (ms)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 valueField
             }
@@ -406,10 +405,14 @@ struct ETScopeMillisecondRow: View {
                         set(step > 0 ? (value / step).rounded() * step : value)
                     }),
                        in: 0...100)
+                    .accessibilityLabel(param.label)
+                    .accessibilityValue(valueText)
             } else if b.hi > b.lo {
                 Slider(value: Binding(get: { min(max(milliseconds, b.lo), b.hi) },
                                       set: { set($0) }),
                        in: b.lo...b.hi, step: step)
+                    .accessibilityLabel(param.label)
+                    .accessibilityValue(valueText)
             }
         }
         .padding(.vertical, 2)
@@ -421,9 +424,9 @@ struct ETScopeMillisecondRow: View {
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true, shrinks: false)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: editing ? 1 : 0))
             .submitLabel(.done)

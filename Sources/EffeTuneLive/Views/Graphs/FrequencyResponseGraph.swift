@@ -38,25 +38,28 @@ struct ETFrequencyCurve: Identifiable {
     var dashed: Bool
     /// バンドごとの内訳のように、合成曲線の脇に薄く添えるもの。
     var subdued: Bool
+    /// 読み上げる名前（Audio Graphs の系列名）。nil なら id から決める。
+    var name: String?
 
     init(id: String, points: [ETFreqPoint], width: CGFloat = 2,
-         dashed: Bool = false, subdued: Bool = false) {
+         dashed: Bool = false, subdued: Bool = false, name: String? = nil) {
         self.id = id
         self.points = points
         self.width = width
         self.dashed = dashed
         self.subdued = subdued
+        self.name = name
     }
 
     /// 対数で等間隔に並んだ dB の列から作る。DSP から並びだけ貰うときはこれ。
     static func logSpaced(id: String, decibels: [Float],
                           from: Double = 20, to: Double = 20000,
                           width: CGFloat = 2, dashed: Bool = false,
-                          subdued: Bool = false) -> ETFrequencyCurve {
+                          subdued: Bool = false, name: String? = nil) -> ETFrequencyCurve {
         let n = decibels.count
         guard n > 1 else {
             return ETFrequencyCurve(id: id, points: [], width: width,
-                                    dashed: dashed, subdued: subdued)
+                                    dashed: dashed, subdued: subdued, name: name)
         }
         let lo = log10(max(from, 1e-9))
         let hi = log10(max(to, from * 1.000001))
@@ -65,17 +68,18 @@ struct ETFrequencyCurve: Identifiable {
             return ETFreqPoint(pow(10, lo + t * (hi - lo)), Double(decibels[i]))
         }
         return ETFrequencyCurve(id: id, points: points, width: width,
-                                dashed: dashed, subdued: subdued)
+                                dashed: dashed, subdued: subdued, name: name)
     }
 
     /// 式から引く。count 点を対数で等間隔に取る。
     static func sampled(id: String, count: Int = 256,
                         from: Double = 20, to: Double = 20000,
                         width: CGFloat = 2, dashed: Bool = false, subdued: Bool = false,
+                        name: String? = nil,
                         magnitude: (Double) -> Double) -> ETFrequencyCurve {
         guard count > 1 else {
             return ETFrequencyCurve(id: id, points: [], width: width,
-                                    dashed: dashed, subdued: subdued)
+                                    dashed: dashed, subdued: subdued, name: name)
         }
         let lo = log10(max(from, 1e-9))
         let hi = log10(max(to, from * 1.000001))
@@ -85,7 +89,7 @@ struct ETFrequencyCurve: Identifiable {
             return ETFreqPoint(hz, magnitude(hz))
         }
         return ETFrequencyCurve(id: id, points: points, width: width,
-                                dashed: dashed, subdued: subdued)
+                                dashed: dashed, subdued: subdued, name: name)
     }
 }
 
@@ -180,6 +184,7 @@ struct FrequencyResponseGraph: View {
             caption: caption,
             accessory: spectrumToggle,
             clipsContent: true,
+            chart: chart,
             draw: { context, plot in
                 // 掴んでいる間の目印。指の下に細い十字を出しておく。
                 if let p = dragged {
@@ -242,6 +247,9 @@ struct FrequencyResponseGraph: View {
                         markerBadge(marker)
                             .position(plot.clampedPoint(marker.hz, marker.db))
                             .allowsHitTesting(false)
+                            // 番号だけの要素が並んでも、バンド・周波数・ゲインも操作も付かない。
+                            // 操作の経路は下のバンドのスライダー 1 本にする（印は読ませない）。
+                            .accessibilityHidden(true)
                     }
                 }
             })
@@ -253,6 +261,28 @@ struct FrequencyResponseGraph: View {
         guard !graphOnly, let tap = spectrumTap, spectrumBeforeTap != nil,
               let spectrumMode else { return nil }
         return AnyView(ETRemoteOverlayGate(tap: tap) { SpectrumOverlayToggle(mode: spectrumMode) })
+    }
+
+    // MARK: Audio Graphs
+
+    /// 淡色でない曲線を 1 本ずつ系列にする（バンドごとの内訳は除く）。
+    /// 中身は VoiceOver が求めたときに作る。
+    private var chart: ETChartAccess? {
+        // 畳んだカードの図は効果名のない同じ読み上げが並ぶだけなので、開いたカードだけ。
+        guard !graphOnly else { return nil }
+        let lines = curves.filter { !$0.subdued && $0.points.count > 1 }
+        guard !lines.isEmpty else { return nil }
+        let named = lines.map { curve in
+            ETFrequencyChart.Line(name: ETFrequencyChart.name(of: curve, count: lines.count),
+                                  points: curve.points)
+        }
+        let frequency = frequencyRange
+        let decibels = decibelRange
+        let step = decibelStep
+        return ETChartAccess(label: "Frequency response") {
+            ETFrequencyChart.descriptor(lines: named, frequency: frequency,
+                                        decibels: decibels, decibelStep: step)
+        }
     }
 
     // MARK: 掴む
@@ -299,6 +329,7 @@ struct FrequencyResponseGraph: View {
     private func markerBadge(_ marker: ETFrequencyMarker) -> some View {
         let held = dragging == marker.id
         return Text(marker.label)
+            // 22pt の丸の中の番号なので固定（読ませない印。バンドは下のスライダーで操作する）。
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(marker.isActive ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
             .frame(width: 22, height: 22)

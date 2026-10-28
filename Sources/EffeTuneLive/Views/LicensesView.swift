@@ -18,7 +18,7 @@ struct LicensesView: View {
                 ForEach(ETLicenses) { item in
                     DisclosureGroup {
                         Text(item.text)
-                            .font(.system(size: 12, design: .monospaced))
+                            .etFont(size: 12, design: .monospaced)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -26,9 +26,9 @@ struct LicensesView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(item.name)
-                                .font(.system(size: 15, weight: .medium))
+                                .etFont(size: 15, weight: .medium)
                             Text("\(item.license) · \(item.author)")
-                                .font(.system(size: 12))
+                                .etFont(size: 12)
                                 .foregroundStyle(.secondary)
                         }
                     }

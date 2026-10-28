@@ -119,7 +119,7 @@ private struct GEQ15GainRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 field
@@ -127,6 +127,8 @@ private struct GEQ15GainRow: View {
             Slider(value: Binding(get: { min(max(value, range.lowerBound), range.upperBound) },
                                   set: { onChange($0) }),
                    in: range)
+                .accessibilityLabel(title)
+                .accessibilityValue(text)
         }
     }
 
@@ -143,9 +145,9 @@ private struct GEQ15GainRow: View {
                                        set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true, shrinks: false)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
                 .stroke(.tint, lineWidth: editing ? 1 : 0))
@@ -257,7 +259,7 @@ struct FifteenBandGEQView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("BANDS")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -280,7 +282,7 @@ struct FifteenBandGEQView: View {
                 .padding(.vertical, 1)
             }
             .onChange(of: selected) { _, new in
-                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
+                etWithAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
             }
         }
     }
@@ -294,9 +296,9 @@ struct FifteenBandGEQView: View {
         } label: {
             VStack(spacing: 1) {
                 Text(i < GEQ15Math.names.count ? GEQ15Math.names[i] : "\(i + 1)")
-                    .font(.system(size: 12, weight: isPicked ? .bold : .regular))
+                    .etFont(size: 12, weight: isPicked ? .bold : .regular)
                 Text(String(format: "%+.1f", gain(i)))
-                    .font(.system(size: 10, design: .monospaced))
+                    .etFont(size: 10, design: .monospaced)
                     .opacity(isFlat ? 0.45 : 1)
             }
             .foregroundStyle(isPicked ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
@@ -307,6 +309,9 @@ struct FifteenBandGEQView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(GEQ15Math.fullName(i))
+        // 名前で置き換えると、字で見えているゲインが読まれない。値として足す。
+        .accessibilityValue(String(format: "%+.1f dB", gain(i)))
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいるバンド
@@ -315,7 +320,7 @@ struct FifteenBandGEQView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("BAND \(selected + 1) · \(GEQ15Math.fullName(selected))")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -336,7 +341,7 @@ struct FifteenBandGEQView: View {
     private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12))
+                .etFont(size: 12)
                 .foregroundStyle(.tint)
                 .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
                 .contentShape(Rectangle())

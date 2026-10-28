@@ -132,9 +132,9 @@ struct MultibandExpanderView: View {
                 } label: {
                     VStack(spacing: 1) {
                         Text("\(i + 1)")
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                         Text(Self.span(edges, band: i))
-                            .font(.system(size: 8, design: .monospaced))
+                            .etFont(size: 8, design: .monospaced)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
@@ -146,6 +146,7 @@ struct MultibandExpanderView: View {
                 .buttonStyle(.plain)
                 // 中は「1」と帯の 2 行なので、読み上げは番号だけにする。
                 .accessibilityLabel("Band \(i + 1)")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
     }
@@ -172,7 +173,7 @@ struct MultibandExpanderView: View {
             ForEach(node.spec.params) { param in
                 if let label = Self.groupLabel(before: param.key, band: selected) {
                     Text(label)
-                        .font(.system(size: 10, weight: .semibold))
+                        .etFont(size: 10, weight: .semibold)
                         .tracking(0.6)
                         .foregroundStyle(.secondary)
                         .padding(.top, 2)

@@ -471,6 +471,7 @@ private struct StatusSection: View {
 /// 締切に対してどれだけ使ったか。名前と言い回しは ETLoadReading が持っている。
 private struct ProcessingTimeRow: View {
     @ObservedObject var io: AudioIO
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     var body: some View {
         // **行を消さない。** 休んでいる間 nil になるので、以前はここだけ
@@ -478,9 +479,17 @@ private struct ProcessingTimeRow: View {
         // 同じ踏み方を既に直している）。出ないときは薄く "—"。
         let reading = ETLoadReading(io: io)
         LabeledContent("CPU") {
-            Text(reading?.value ?? "—")
-                .monospacedDigit()
-                .foregroundStyle(reading.map { style($0.level) } ?? AnyShapeStyle(.secondary))
+            HStack(spacing: 4) {
+                // 色だけだった high / over の印。「色の区別なし」の設定のときだけ出す。
+                if differentiateWithoutColor, let level = reading?.level, level != .normal {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .imageScale(.small)
+                        .accessibilityHidden(true)
+                }
+                Text(reading?.value ?? "—")
+                    .monospacedDigit()
+            }
+            .foregroundStyle(reading.map { style($0.level) } ?? AnyShapeStyle(.secondary))
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(reading?.accessibility ?? "CPU")
@@ -524,7 +533,7 @@ private struct DelayRow: View {
         // 同じ値が 2 度並ぶ。合計と足し算を 1 行にまとめる。
         if let d = ETDelayReading(io: io) {
             Text(d.summary)
-                .font(.system(size: 12))
+                .etFont(size: 12)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }

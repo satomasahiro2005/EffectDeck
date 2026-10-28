@@ -298,6 +298,12 @@ private struct AnalogMeterFigure: View {
                 draw(&context, CGRect(origin: .zero, size: size), reading: current, grid: layout, band: band)
             }
             .frame(height: min(plotHeight, maxHeight ?? plotHeight))
+            // 針と LUFS の数字は Canvas に描いているだけで、VoiceOver からは何も見えない。
+            // 読み値は値に出し、更新中だと伝える。
+            .accessibilityElement()
+            .accessibilityLabel("Analog Meter")
+            .accessibilityValue(spokenValue(current))
+            .accessibilityAddTraits(.updatesFrequently)
             .background(AnalogMeterPalette.face)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             .onGeometryChange(for: CGFloat.self) { proxy in
@@ -307,6 +313,9 @@ private struct AnalogMeterFigure: View {
             }
             .padding(Self.bezelWidth)
             .background(AnalogMeterPalette.bezel, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            // 黒い面と赤い帯の色に意味があるので、スマート反転で入れ替えない。
+            // 描画（淡い色の墨）と黒い面を同じ範囲に入れないと、面だけ白く反転して墨が読めなくなる。
+            .accessibilityIgnoresInvertColors()
             // 幅に余りがあれば中央に置く（針の数ぶんの幅で止め、左に寄せない）。
             .frame(maxWidth: min(CGFloat(layout.columns) * 320, 1024) + Self.bezelWidth * 2)
             .frame(maxWidth: .infinity)
@@ -321,6 +330,25 @@ private struct AnalogMeterFigure: View {
         .onChange(of: settings.mode) { _, _ in holds = [] }
         // 検波を替えたら前の読みを捨てる（上流の setParameters の clearReading）。
         .onChange(of: settings.detector) { _, _ in holds = [] }
+    }
+
+    /// VoiceOver に読ませる値。針の dB と、Loudness のときは Program の LUFS。
+    private func spokenValue(_ reading: ETAnalogMeter.Reading?) -> String {
+        guard let reading else { return "No signal" }
+        func level(_ v: Double, _ unit: String) -> String {
+            v <= ETAnalogMeter.silenceDB ? "silent" : String(format: "%.1f", v) + " " + unit
+        }
+        var parts = reading.channels.enumerated().map { index, channel in
+            "Channel \(index + 1) \(level(channel.needleDB, "dB"))"
+        }
+        if let program = reading.program {
+            parts.append("Momentary \(level(program.momentary, "LUFS"))")
+            parts.append("Short-term \(level(program.shortTerm, "LUFS"))")
+            parts.append(reading.integratedValid
+                         ? "Integrated \(level(program.integrated, "LUFS"))"
+                         : "Integrated not available")
+        }
+        return parts.joined(separator: ", ")
     }
 
     /// 新しい枠が来たときだけ、保持を進める。

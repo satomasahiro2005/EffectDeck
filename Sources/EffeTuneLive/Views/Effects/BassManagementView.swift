@@ -110,7 +110,7 @@ private struct BassManagementBody: View {
             graph(s)
             if !graphOnly {
                 Text(s.routeSummary(width: width))
-                    .font(.system(size: 11, design: .monospaced))
+                    .etFont(size: 11, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 statusRow(s).etLocalAudioOnly()
@@ -137,7 +137,7 @@ private struct BassManagementBody: View {
             }
         } else if let error = s.configurationError(allChannels: true, width: width) {
             Text(error.message)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -170,7 +170,7 @@ private struct BassManagementBody: View {
     /// Sub Outputs（:729-750）。候補は処理幅の中だけ（:1044-1049）。
     private func subOutputs(_ s: BassManagementSettings) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Sub Outputs").font(.system(size: 14))
+            Text("Sub Outputs").etFont(size: 14)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 6)],
                       alignment: .leading, spacing: 6) {
                 ForEach(0..<width, id: \.self) { ch in
@@ -193,7 +193,7 @@ private struct BassManagementBody: View {
         let subs = s.selectedSubs(width: width)
         return VStack(alignment: .leading, spacing: 10) {
             Text("BASS MATRIX")
-                .font(.system(size: 10, weight: .semibold))
+                .etFont(size: 10, weight: .semibold)
                 .tracking(0.6)
                 .foregroundStyle(.secondary)
             ForEach(0..<width, id: \.self) { ch in
@@ -210,7 +210,7 @@ private struct BassManagementBody: View {
         let name = "Ch \(ch + 1)"
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(name).font(.system(size: 14, weight: .semibold))
+                Text(name).etFont(size: 14, weight: .semibold)
                 Spacer(minLength: 8)
                 Picker("\(name) Role", selection: Binding(
                     get: { role },
@@ -271,7 +271,7 @@ private struct BassManagementBody: View {
         let inverted = on && s.inversions[input] & bit != 0
         return HStack(spacing: 6) {
             Text("→ Sub \(output + 1)")
-                .font(.system(size: 12))
+                .etFont(size: 12)
                 .foregroundStyle(.secondary)
             Toggle("ON", isOn: Binding(
                 get: { on },
@@ -404,15 +404,14 @@ private struct BassManagementBody: View {
             : "\(samples) samples / " + String(format: "%.1f ms", Double(samples) * 1000 / dsp.sampleRate)
         return HStack(spacing: 8) {
             Text(designer.status.label)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
                 .foregroundStyle(designer.status.isError ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
             Spacer(minLength: 8)
             Text(latency)
-                .font(.system(size: 12, design: .monospaced))
+                .etFont(size: 12, design: .monospaced)
                 .foregroundStyle(.secondary)
         }
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
+        .etRowTitle()
     }
 
     // MARK: 部品
@@ -432,7 +431,7 @@ private struct BassManagementBody: View {
                          selection: Int,
                          onSelect: @escaping (Int) -> Void) -> some View {
         HStack {
-            Text(title).font(.system(size: 14))
+            Text(title).etFont(size: 14)
             Spacer(minLength: 8)
             Picker(title, selection: Binding(get: { selection }, set: onSelect)) {
                 ForEach(choices) { Text($0.label).tag($0.id) }

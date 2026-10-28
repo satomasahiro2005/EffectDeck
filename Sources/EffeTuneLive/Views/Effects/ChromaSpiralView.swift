@@ -100,6 +100,7 @@ struct ChromaSpiralView: View {
     @ObservedObject var dsp: EffeTuneDSP
 
     @Environment(\.etGraphOnly) private var graphOnly
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var settings = ETChromaSpiralSettings()
 
     var body: some View {
@@ -160,9 +161,13 @@ struct ChromaSpiralView: View {
 
     /// 上流 :229-232。形は ParameterRow の選択肢の行と同じ（標準の Picker）。
     private var colorPicker: some View {
-        HStack {
-            Text("Color").font(.system(size: 14))
-            Spacer(minLength: 8)
+        // 文字を大きくした人には、名前とメニューを縦に積む（ParameterRow の選択肢の行と同じ）。
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout())
+        return layout {
+            Text("Color").etFont(size: 14)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
             Picker("Color", selection: Binding(
                 get: { settings.color },
                 set: { settings.mode = Double($0.rawValue) })
@@ -190,14 +195,20 @@ private struct ETChromaSliderRow: View {
     let range: ClosedRange<Double>
     let step: Double
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        // 文字を大きくした人には縮めず折り返し、名前と数値欄を縦に積む。
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return VStack(alignment: .leading, spacing: 6) {
+            layout {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 4)
+                    .etFont(size: 14)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                 ETValueField(text: text, label: label,
                              editText: { ETNumberText.draft(value) }) { typed in
                     value = snapped(typed)
@@ -232,9 +243,11 @@ private struct ChromaSpiralFigure: View {
 
     @ObservedObject private var telemetry = Telemetry.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.etGraphOnly) private var graphOnly
+    @Environment(\.etGraphMaxHeight) private var maxHeight
 
     @State private var meter = ETChromaSpiralMeter()
-    @State private var side: CGFloat = ETGraphMetrics.height
     /// 指の下の音（MIDI、端数あり）。鳴らしている間だけ入る。
     @State private var probe: Double?
     @GestureState private var previewActive = false
@@ -242,21 +255,52 @@ private struct ChromaSpiralFigure: View {
     /// 上流の図の幅の上限（chroma_spiral.js:244 の maxWidth 640）。縦横は 1:1。
     private static let maxSide: CGFloat = 640
 
+    /// 畳んだカードの図の一辺。畳んだカードは etGraphOnly と etGraphMaxHeight が両方入る
+    /// （EffectCardView）。開いたカード（iPad の 2 列で図だけを出す所も含む）では nil。
+    /// 上流に畳んだ形は無い（畳むと .plugin-ui ごと隠れる）ので、ここだけ別の形にする。
+    private var foldedSide: CGFloat? {
+        graphOnly ? maxHeight : nil
+    }
+
     var body: some View {
         let frame = telemetry.frame(tap: tapId, type: .spectrum)
         let octaves = settings.octaves
-        let style = ETChromaSpiralStyle(color: settings.color)
+        let folded = foldedSide
+        let compact = folded != nil
+        let background: Color = colorScheme == .dark ? .black : .white
+        var style = ETChromaSpiralStyle(color: settings.color)
+        // 案内線は上流の 1 画素の淡い線（graph-base-soft）に寄せる。1pt の .quaternary は
+        // 3 倍の画面では 3 画素になって重い。
+        style.guideWidth = 0.5
+        if compact {
+            // 畳んだ図は音名を 12 個並べず、真上の C だけ小さく残す。
+            style.showsOnlyC = true
+            style.labelSize = 8
+        }
+        let finalStyle = style
         return GraphCanvas(
             x: .blank(), y: .blank(),
-            height: side,
-            insets: .none,
+            height: folded ?? ETGraphMetrics.height,
+            // 地を図の面いっぱいに塗るので余白は取らない。
+            insets: ETGraphInsets(leading: 0, trailing: 0, top: 0, bottom: 0),
             readout: readout,
             caption: meter.caption ?? "Waiting for audio",
             clipsContent: true,
+            // 畳んだ図は字の行を持たない（空の渦巻きがそのまま「音が来ていない」を表す）。
+            showsHeader: !compact,
+            // 上流も渦巻きの周りに枠を引かない。四角い枠は丸い図の周りの空きを目立たせる。
+            framed: false,
+            // 開いた図は幅から高さを決める（測って入れ直すと開いた直後に 1 回跳ねる）。
+            isSquare: !compact,
             draw: { context, plot in
-                let geometry = ETChromaSpiralGeometry(rect: plot.rect, lo: octaves.lo, hi: octaves.hi)
+                // 上流は canvas を --et-graph-bg-deep（暗いと黒、明るいと白）で塗る（chroma_spiral.js:313-317）。
+                context.fill(Path(roundedRect: plot.rect, cornerRadius: ETMetrics.innerRadius,
+                                  style: .continuous),
+                             with: .color(background))
+                let geometry = ETChromaSpiralGeometry(rect: plot.rect, lo: octaves.lo, hi: octaves.hi,
+                                                      compact: compact)
                 ETChromaSpiral.draw(&context, geometry: geometry, bounds: plot.rect,
-                                    meter: meter, settings: settings, style: style)
+                                    meter: meter, settings: settings, style: finalStyle)
                 // 鳴らしている所。渦巻きの上の点に輪を置く。
                 if let probe, geometry.outer > 0 {
                     let p = geometry.point(midi: probe)
@@ -276,7 +320,8 @@ private struct ChromaSpiralFigure: View {
                             .updating($previewActive) { _, active, _ in active = true }
                             .onChanged { touch in
                                 let geometry = ETChromaSpiralGeometry(rect: plot.rect,
-                                                                      lo: octaves.lo, hi: octaves.hi)
+                                                                      lo: octaves.lo, hi: octaves.hi,
+                                                                      compact: compact)
                                 if let midi = geometry.midi(at: touch.location) {
                                     probe = midi
                                     ETPreviewTone_SetFrequency(ETChromaSpiral.frequency(midi: midi))
@@ -290,13 +335,10 @@ private struct ChromaSpiralFigure: View {
                                 ETPreviewTone_SetFrequency(0)
                             })
             })
-            .frame(maxWidth: Self.maxSide)
-            // 上流は aspectRatio '1 / 1'（同 :244）。幅を測って高さに使う。
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.width
-            } action: { width in
-                if width > 0 { side = width }
-            }
+            // 畳んだ図は高さ（collapsedGraphHeight）と同じ幅の正方形。開いた図は上流の 640 まで。
+            .frame(maxWidth: folded ?? Self.maxSide)
+            // カードが 640pt より広い（iPad の 2 列）ときも真ん中に置く。上流は margin '1rem auto 0'。
+            .frame(maxWidth: .infinity)
             .onAppear { push(frame) }
             .onChange(of: frame?.sequence) { _, _ in
                 push(telemetry.frame(tap: tapId, type: .spectrum))
@@ -449,11 +491,25 @@ struct ETChromaSpiralGeometry {
     let midiLow: Double
     let midiEnd: Double
 
-    init(rect: CGRect, lo: Int, hi: Int) {
+    /// 畳んだ図の余白。真上の C（8pt）が外周のすぐ外に入るだけ。開いた図は 32pt（音名 12 個ぶん）。
+    static let compactMargin: CGFloat = 11
+
+    /// compact は畳んだカード用の寸法。**上流の式は 300 画素以上の canvas を前提にしている**
+    /// （余白 32pt と内側の穴 14pt が固定）ので、132pt の正方形にそのまま当てると
+    /// 7 巻きが半径 18pt に詰まって案内線が灰色の塊になる。
+    /// 余白を音名ぶんだけにして、内側の穴は 1 巻きぶん（pitch）にする。
+    init(rect: CGRect, lo: Int, hi: Int, compact: Bool = false) {
         center = CGPoint(x: rect.midX, y: rect.midY)
-        outer = min(rect.width, rect.height) / 2 - 32
-        inner = max(14, outer * 0.1)
-        pitch = (outer - inner) / CGFloat(hi - lo + 2)
+        if compact {
+            outer = max(0, min(rect.width, rect.height) / 2 - Self.compactMargin)
+            // outer = inner + (hi - lo + 2) * pitch で inner = pitch。
+            pitch = outer / CGFloat(hi - lo + 3)
+            inner = pitch
+        } else {
+            outer = min(rect.width, rect.height) / 2 - 32
+            inner = max(14, outer * 0.1)
+            pitch = (outer - inner) / CGFloat(hi - lo + 2)
+        }
         self.lo = lo
         self.hi = hi
         midiLow = Double((lo + 1) * 12)
@@ -504,6 +560,10 @@ struct ETChromaSpiralStyle {
     var signalColor: ((Double, Double) -> Color?)? = nil
     /// 字の大きさ。見た目だけで、出すかどうかの判定には使わない（ETChromaSpiral.fitSize）。
     var labelSize: CGFloat = 10
+    /// 音名は真上の C だけ、オクターブ番号は無し（畳んだカード）。
+    var showsOnlyC = false
+    /// 案内線の太さ（pt）。既定は 1。
+    var guideWidth: CGFloat = 1
 }
 
 // MARK: - 描く
@@ -562,7 +622,7 @@ enum ETChromaSpiral {
                      bounds: CGRect, meter: ETChromaSpiralMeter,
                      settings: ETChromaSpiralSettings, style: ETChromaSpiralStyle) {
         guard geometry.outer > 0 else { return }
-        if style.showsAxes { drawGuides(&context, geometry: geometry) }
+        if style.showsAxes { drawGuides(&context, geometry: geometry, width: style.guideWidth) }
         drawSignal(&context, geometry: geometry, meter: meter, settings: settings, style: style)
         if style.showsLabels {
             drawLabels(&context, geometry: geometry, bounds: bounds, style: style)
@@ -570,7 +630,8 @@ enum ETChromaSpiral {
     }
 
     /// 12 本の放射線と、1/8 半音刻みの渦巻き。同 :307-322。
-    static func drawGuides(_ context: inout GraphicsContext, geometry g: ETChromaSpiralGeometry) {
+    static func drawGuides(_ context: inout GraphicsContext, geometry g: ETChromaSpiralGeometry,
+                           width: CGFloat = 1) {
         var radial = Path()
         for pc in 0..<12 {
             let a = Double(pc) * .pi / 6
@@ -579,7 +640,7 @@ enum ETChromaSpiral {
             radial.addLine(to: CGPoint(x: g.center.x + CGFloat(sin(a)) * g.outer,
                                        y: g.center.y - CGFloat(cos(a)) * g.outer))
         }
-        context.stroke(radial, with: ETGraphShading.grid, lineWidth: 1)
+        context.stroke(radial, with: ETGraphShading.grid, lineWidth: width)
 
         var spiral = Path()
         var midi = g.midiLow
@@ -589,7 +650,7 @@ enum ETChromaSpiral {
             spiral.addLine(to: g.point(midi: midi))
             midi += 0.125
         }
-        context.stroke(spiral, with: ETGraphShading.grid, lineWidth: 1)
+        context.stroke(spiral, with: ETGraphShading.grid, lineWidth: width)
     }
 
     /// 信号。同 :324-384。
@@ -672,6 +733,13 @@ enum ETChromaSpiral {
                            bounds: CGRect, style: ETChromaSpiralStyle) {
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
         let font = Font.system(size: style.labelSize, design: .monospaced)
+        if style.showsOnlyC {
+            // 畳んだ図。外周の真上に C だけ。ほかの音名とオクターブ番号は出さない。
+            context.draw(Text(names[0]).font(font).foregroundStyle(.secondary),
+                         at: CGPoint(x: g.center.x, y: g.center.y - g.outer - style.labelSize * 0.75),
+                         anchor: .center)
+            return
+        }
         let halfWidth = bounds.width / 2
         let halfHeight = bounds.height / 2
         for pc in 0..<12 {

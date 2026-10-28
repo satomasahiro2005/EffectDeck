@@ -94,15 +94,26 @@ struct TonalBalanceEQView: View {
         let picked = selected == i
         return Button { selected = i } label: {
             Text("\(i + 1)")
-                .font(.system(size: 13, weight: picked ? .bold : .regular))
+                .etFont(size: 13, weight: picked ? .bold : .regular)
                 .foregroundStyle(picked ? AnyShapeStyle(.white)
                                         : (band.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(band.enabled ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
+                .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Band \(i + 1)")
+        // 切ってあるバンドは不透明度だけで表しているので、VoiceOver には値として伝える。
+        .accessibilityValue(band.enabled ? "" : "Off")
+        .accessibilityAddTraits(picked ? .isSelected : [])
     }
 
     private static let typeNames = ["Peaking", "Low Shelf", "High Shelf"]
@@ -113,7 +124,7 @@ struct TonalBalanceEQView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("BAND \(i + 1)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Picker("", selection: Binding(get: { band.type }, set: { setType($0, band: i) })) {
@@ -209,9 +220,8 @@ private struct TonalAveragingRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("Averaging Time (s)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ETValueField(text: ETTonalBalance.formatAveragingTime(seconds),
                              label: "Averaging Time",
@@ -248,6 +258,9 @@ private struct TonalBalanceFigure: View {
 
     @ETTelemetryFeed private var telemetry
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 「色以外で区別」。目標・測定値・応答の 3 本を色だけで見分けている人のために、
+    /// 目標を破線、測定値を点線にする。普段の見た目は変えない。
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     /// 縦軸（dB）。6 dB きざみで広がり、縮むのは Reset と Target の変更のときだけ。
     @State private var dbTop = ETTonalBalance.defaultDbRange
@@ -310,7 +323,8 @@ private struct TonalBalanceFigure: View {
                 clipsContent: true,
                 draw: { context, plot in
                     drawFigure(&context, plot, display: display, adjust: adjust,
-                               low: low, high: high, top: top, bottom: bottom)
+                               low: low, high: high, top: top, bottom: bottom,
+                               dashed: differentiateWithoutColor)
                 },
                 overlay: { plot in
                     markersOverlay(plot, bands: bands)
@@ -368,7 +382,8 @@ private struct TonalBalanceFigure: View {
 
     private func drawFigure(_ context: inout GraphicsContext, _ plot: ETPlot,
                             display: ETTonalBalance.Display?, adjust: [Double],
-                            low: Double, high: Double, top: Double, bottom: Double) {
+                            low: Double, high: Double, top: Double, bottom: Double,
+                            dashed: Bool) {
         let rect = plot.rect
         let span = top - bottom
         func toX(_ logFrequency: Double) -> CGFloat {
@@ -388,7 +403,7 @@ private struct TonalBalanceFigure: View {
                      with: .color(veil))
 
         func stroke(_ logFrequencies: [Double], _ values: [Double], _ shading: GraphicsContext.Shading,
-                    width: CGFloat, in context: inout GraphicsContext) {
+                    width: CGFloat, dash: [CGFloat] = [], in context: inout GraphicsContext) {
             var path = Path()
             var drawing = false
             for (i, value) in values.enumerated() {
@@ -398,7 +413,7 @@ private struct TonalBalanceFigure: View {
                 drawing = true
             }
             context.stroke(path, with: shading,
-                           style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+                           style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dash))
         }
 
         /// 有限な点が続く所ごとに、low と high に挟まれた面を塗る。
@@ -431,8 +446,10 @@ private struct TonalBalanceFigure: View {
             // 保留した持ち上げは薄い。上の縁だけ 1 本引いて見えるようにする。
             fillRuns(c.withheldLow, c.withheldHigh, .color(Self.traceGreen.opacity(0.15)), in: &context)
             stroke(xs, c.withheldEdge, .color(Self.traceGreen.opacity(0.8)), width: 1, in: &context)
-            stroke(xs, c.target, ETGraphShading.overlayCompare, width: 1.5, in: &context)
-            stroke(xs, c.measured, ETGraphShading.overlay, width: 1.5, in: &context)
+            stroke(xs, c.target, ETGraphShading.overlayCompare, width: 1.5,
+                   dash: dashed ? [5, 4] : [], in: &context)
+            stroke(xs, c.measured, ETGraphShading.overlay, width: 1.5,
+                   dash: dashed ? [1, 3] : [], in: &context)
             for band in 0..<ETTonalBalance.bands where display.measured[band].isFinite {
                 let center = CGPoint(x: toX(ETTonalBalance.bandLogFreqs[band]), y: toY(display.measured[band]))
                 context.fill(Path(ellipseIn: CGRect(x: center.x - 2, y: center.y - 2, width: 4, height: 4)),
@@ -462,6 +479,9 @@ private struct TonalBalanceFigure: View {
                     badge(i, band)
                         .position(plot.clampedPoint(band.frequency, band.gain))
                         .allowsHitTesting(false)
+                        // 印は指でつかむ絵。VoiceOver ではバンドの札と下のスライダーが操作の道なので、
+                        // 数字だけの要素を並べて邪魔しない。
+                        .accessibilityHidden(true)
                 }
             }
         }
@@ -471,6 +491,7 @@ private struct TonalBalanceFigure: View {
         let held = dragging == i
         let active = band.enabled
         return Text("\(i + 1)")
+            // 22pt の丸に収まる字なので文字サイズ設定には追従させない（軸の目盛りと同じ扱い）。
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(active ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
             .frame(width: 22, height: 22)

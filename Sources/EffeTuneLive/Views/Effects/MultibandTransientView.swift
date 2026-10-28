@@ -91,9 +91,9 @@ struct MultibandTransientView: View {
                 } label: {
                     VStack(spacing: 1) {
                         Text(MultibandTransientBands.names[i])
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                         Text(MultibandTransientBands.span(i, f1: f1, f2: f2))
-                            .font(.system(size: 9, design: .monospaced))
+                            .etFont(size: 9, design: .monospaced)
                     }
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -112,7 +112,7 @@ struct MultibandTransientView: View {
 
     private func label(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .etFont(size: 10, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
             .padding(.top, 2)

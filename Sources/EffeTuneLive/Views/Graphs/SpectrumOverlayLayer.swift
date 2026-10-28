@@ -285,21 +285,32 @@ struct SpectrumOverlayLayer: View {
 struct SpectrumOverlayToggle: View {
 
     @Binding var mode: ETSpectrumOverlayMode
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Button {
             mode = mode.next
         } label: {
             Text(mode.title)
+                // 札は伸ばさない（読み値の行に収める）。Large Content Viewer で長押しして読める。
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tint)
+                // 「コントラストを上げる」のときだけ、字を .tint でなく本文の色にする
+                // （.tint の字を薄い地に載せると小さい字では足りない）。
+                .foregroundStyle(contrast == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(.quaternary, in: .capsule)
-                .contentShape(.capsule)
+                // 当たり判定だけを 44pt まで広げる。見た目と行の高さは変えないので、
+                // 広げた分（上下 14pt・左右 4pt）を負の余白で打ち消す。
+                .padding(.vertical, 14)
+                .padding(.horizontal, 4)
+                .contentShape(.rect)
+                .padding(.vertical, -14)
+                .padding(.horizontal, -4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Spectrum overlay")
         .accessibilityValue(mode.title)
+        .accessibilityShowsLargeContentViewer()
     }
 }

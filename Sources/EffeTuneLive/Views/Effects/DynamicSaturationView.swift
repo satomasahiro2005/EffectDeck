@@ -65,7 +65,7 @@ struct DynamicSaturationView: View {
     /// 区切りの見出し。ParameterRow のバンド見出しと同じ作りにしてある。
     private func label(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
+            .etFont(size: 10, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
     }

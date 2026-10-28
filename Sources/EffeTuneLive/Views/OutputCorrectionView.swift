@@ -47,6 +47,10 @@ struct OutputCorrectionView: View {
 struct OutputCorrectionList: View {
     @ObservedObject private var oc = OutputCorrection.shared
     @ObservedObject private var store = PresetStore.shared
+    /// 出力先の絵の枠。文字サイズに合わせて広げる（既定のサイズでは 30pt のまま）。
+    @ScaledMetric(relativeTo: .title3) private var iconWidth: CGFloat = 30
+    /// 大きい文字サイズでだけ、長い Bluetooth 機器名と要約の折り返しを許す。
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     /// PC の鎖を編集している間（PipelineView・PresetsView が渡す）。補正は外してあるので、
     /// いまの出力先を「使っている」とは出さず、紐付けてあれば他の出力先と同じ並びに置く。
@@ -114,14 +118,14 @@ struct OutputCorrectionList: View {
             Image(systemName: ETOutputDevice.Kind(rawValue: d.kind)?.symbol ?? "speaker")
                 .font(.title3)
                 .foregroundStyle(.tint)
-                .frame(width: 30)
+                .frame(width: iconWidth)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 if let preset {
                     Text(ETUserPresetName.leaf(preset))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 } else {
                     Text("None")
                         .foregroundStyle(.secondary)
@@ -129,12 +133,12 @@ struct OutputCorrectionList: View {
                 Text(d.name)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 if !summary.isEmpty {
                     Text(summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
             }
 

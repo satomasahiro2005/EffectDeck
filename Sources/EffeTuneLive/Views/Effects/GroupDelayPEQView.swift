@@ -337,15 +337,15 @@ private struct GroupDelayPEQBody: View {
     private var statusBox: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(headline)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
             Text(message)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(messageStyle)
                 .fixedSize(horizontal: false, vertical: true)
             if designer.design != nil {
                 // group_delay_peq.js:616-629 の details 行。
                 Text(designer.detailText)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -388,7 +388,7 @@ private struct GroupDelayPEQBody: View {
                 ForEach(0..<GroupDelayPEQDesignCore.bandCount, id: \.self) { i in
                     Button { band = i } label: {
                         Text("\(i + 1)")
-                            .font(.system(size: 12, weight: band == i ? .bold : .regular))
+                            .etFont(size: 12, weight: band == i ? .bold : .regular)
                             .foregroundStyle(band == i ? AnyShapeStyle(.white)
                                                        : AnyShapeStyle(.secondary))
                             .frame(minWidth: 30, minHeight: 26)
@@ -396,13 +396,23 @@ private struct GroupDelayPEQBody: View {
                                                   : AnyShapeStyle(.quaternary),
                                         in: .rect(cornerRadius: ETMetrics.innerRadius,
                                                   style: .continuous))
+                            // 見た目は 30x26 のまま、押せる面だけを 44pt まで広げる。
+                            // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 3)
+                            .contentShape(.rect)
+                            .padding(.vertical, -9)
+                            .padding(.horizontal, -3)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Band \(i + 1)")
                     .accessibilityAddTraits(band == i ? [.isSelected] : [])
                 }
             }
+            // 押せる面を 44pt にするぶんの余白。外側で同じだけ引くので並びの高さは変わらない。
+            .padding(.vertical, 9)
         }
+        .padding(.vertical, -9)
     }
 
     /// 選んだバンドのつまみ。名前は上流に合わせた
@@ -419,11 +429,11 @@ private struct GroupDelayPEQBody: View {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle(isOn: Binding(get: { current.enabled },
                                      set: { on in edit(band) { $0.enabled = on } })) {
-                    Text("Band \(band + 1)").font(.system(size: 14))
+                    Text("Band \(band + 1)").etFont(size: 14)
                 }
 
                 HStack {
-                    Text("Type").font(.system(size: 14))
+                    Text("Type").etFont(size: 14)
                     Spacer(minLength: 8)
                     Picker("Type", selection: Binding(
                         get: { current.shape },
@@ -507,9 +517,8 @@ private struct GroupDelayPEQBody: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 if let value, let range, let commit {
                     ETValueField(text: text, label: title,
@@ -532,7 +541,7 @@ private struct GroupDelayPEQBody: View {
                            selected: Int,
                            action: @escaping (Int) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 14))
+            Text(title).etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -540,7 +549,7 @@ private struct GroupDelayPEQBody: View {
                     let isSelected = option.id == selected
                     Button { action(option.id) } label: {
                         Text(option.label)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)

@@ -67,8 +67,15 @@ struct SFZVoiceGraph: View {
         .onChange(of: node.enabled) { _, enabled in if !enabled { display.clear(); stopPreview() } }
         .onChange(of: canPreview) { _, can in if !can { stopPreview() } }
         .onDisappear { stopPreview() }
+        // 棒と格子は適応色で背景が透明なので、ここでスマート反転を外すとカードだけ反転して見えなくなる。
         .accessibilityElement()
-        .accessibilityLabel("Sounding SFZ notes and decaying velocity bars. Voices: \(display.active) / \(maxVoices)")
+        // 名前に声の数を混ぜると、鳴るたびに要素の名前が変わる。数は値に分け、更新中だと伝える。
+        .accessibilityLabel("SFZ voices")
+        .accessibilityValue("\(display.active) of \(maxVoices)")
+        .accessibilityAddTraits(.updatesFrequently)
+        // 試し弾きは鍵盤の上をなぞって鳴らす。VoiceOver の操作を介さず直接触れるようにする。
+        // 触れないとき（canPreview が偽）は置かない。
+        .accessibilityDirectTouch(canPreview, options: .silentOnTouch)
     }
 
     // MARK: 寸法

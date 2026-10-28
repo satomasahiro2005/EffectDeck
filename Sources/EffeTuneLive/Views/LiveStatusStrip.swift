@@ -81,6 +81,10 @@ struct LiveStatusStrip: View {
     @AppStorage("strip.face") private var faceRaw = Face.delay.rawValue
     private var face: Face { Face(rawValue: faceRaw) ?? .delay }
 
+    /// 「色の区別なし」の設定のときだけ、警告の行の頭に三角を付ける。
+    /// 通常の見た目は変えない。幅は三角の欄ぶん（9pt＋隙間）だけ広げる。
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+
     /// 欄の幅。**桁で揺れないよう固定する。**
     /// 桁が変わるたびに動くと、隣のものまで揺れて読めない。
     ///
@@ -154,12 +158,14 @@ struct LiveStatusStrip: View {
             case .load:
                 // 上流の CPU と同じ量（経過時間 ÷ 音の長さ、plugins/audio-processor.js の
                 // finishPipelineCpuMeasurement、e200e515 で 4830–4833 行）で、語も上流に合わせてある。
-                row("CPU", r.loadText, tint: loadTint(r.loadLevel))
+                row("CPU", r.loadText, tint: loadTint(r.loadLevel),
+                    warns: r.loadLevel == .high || r.loadLevel == .over)
                 // 効果を回しているレート（入口 × オーバーサンプリング倍率）。
                 // 入口が 48 kHz から外れているときだけ色を付ける。
                 // 速さと音程がずれている状態なので、黙って出すと気づけない。
                 row("Rate", r.rate,
-                    tint: r.rateIsOff ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    tint: r.rateIsOff ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary),
+                    warns: r.rateIsOff)
             }
         }
         // **押せる。** 帯そのものが切り替えの口。
@@ -168,6 +174,8 @@ struct LiveStatusStrip: View {
         .contentShape(.rect)
         .onTapGesture { faceRaw = face.next.rawValue }
         .padding(.vertical, -9)
+        // ナビゲーションバーは伸ばせないので、字は固定のまま
+        // （文字サイズに追従させると枠から溢れる）。代わりに長押しの Large Content Viewer を出す。
         .font(.system(size: 10, design: .monospaced))
         .monospacedDigit()
         .foregroundStyle(.secondary)
@@ -181,18 +189,36 @@ struct LiveStatusStrip: View {
         .accessibilityLabel(face == .delay ? r.delayVoice : r.loadVoice)
         .accessibilityHint("Shows " + (face == .delay ? "CPU and sample rate" : "the delay"))
         .accessibilityAddTraits(.isButton)
+        .accessibilityShowsLargeContentViewer {
+            Label(face == .delay ? r.delayVoice : r.loadVoice, systemImage: "gauge")
+        }
     }
 
+    /// 三角の欄の幅。
+    private static let flagWidth: CGFloat = 9
+
     /// 語を左、値を右。上下の行で列が揃うように、どちらも幅を固定する。
-    private func row(_ label: String, _ value: String, tint: AnyShapeStyle) -> some View {
+    /// `warns` は色だけで伝えていた「ずれている・重い」の印。三角は色の区別なしの設定のときだけ出す。
+    /// 欄は両方の行に置いて（警告が無い行は透明）、列を揃える。
+    private func row(_ label: String, _ value: String, tint: AnyShapeStyle,
+                     warns: Bool = false) -> some View {
         HStack(spacing: Cell.gap) {
+            if differentiateWithoutColor {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(tint)
+                    .opacity(warns ? 1 : 0)
+                    .frame(width: Self.flagWidth)
+                    .accessibilityHidden(true)
+            }
             Text(label)
                 .frame(width: Cell.label, alignment: .leading)
             Text(value)
                 .frame(width: Cell.value, alignment: .trailing)
                 .foregroundStyle(tint)
         }
-        .frame(width: Cell.total, alignment: .leading)
+        .frame(width: Cell.total + (differentiateWithoutColor ? Self.flagWidth + Cell.gap : 0),
+               alignment: .leading)
     }
 
     // MARK: - CPU の色

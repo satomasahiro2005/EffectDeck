@@ -147,7 +147,7 @@ private struct SWRadioHUD: View {
 
     private func placeholder(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 13, weight: .semibold))
+            .etFont(size: 13, weight: .semibold)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .frame(height: Self.cardHeight * 2 + Self.gap)
@@ -194,16 +194,16 @@ private struct SWRadioHUD: View {
     private func card(_ item: ETSWRadioCard, flashing: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(item.title)
-                .font(.system(size: 9, weight: .semibold))
+                .etFont(size: 9, weight: .semibold)
                 .tracking(0.4)
                 .foregroundStyle(.secondary)
             Text(item.value)
-                .font(.system(size: 13, design: .monospaced))
+                .etFont(size: 13, design: .monospaced)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             if let detail = item.detail {
                 Text(detail)
-                    .font(.system(size: 10, design: .monospaced))
+                    .etFont(size: 10, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -315,7 +315,7 @@ struct SWRadioSimulatorView: View {
                         tab = item
                     } label: {
                         Text(item.title)
-                            .font(.system(size: 12, weight: tab == item ? .bold : .regular))
+                            .etFont(size: 12, weight: tab == item ? .bold : .regular)
                             .foregroundStyle(tab == item ? AnyShapeStyle(.white)
                                                          : AnyShapeStyle(.secondary))
                             .padding(.horizontal, 10)

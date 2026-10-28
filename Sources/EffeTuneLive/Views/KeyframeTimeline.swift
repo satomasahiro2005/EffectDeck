@@ -64,13 +64,16 @@ struct ETKeyframeTimeline: View {
     @State private var pressConsumed = false
     /// 帯の縦の真ん中（画面の座標）。吹き出しを上下どちらに開くかに使う。
     @State private var stripMidY: CGFloat = 0
+    /// 色の違いに頼らない設定のとき、選んでいる菱形に輪を足す。
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     // MARK: 寸法
 
     private let diamond: CGFloat = 14
     /// 菱形が端でも欠けないよう、軸の両端を菱形の半分だけ内側に取る。
     private var inset: CGFloat { diamond / 2 }
-    private let height: CGFloat = 30
+    /// 帯の高さ。文字サイズに追従する（既定のサイズでは 30pt のまま。左の数字が切れないように）。
+    @ScaledMetric(relativeTo: .caption2) private var height: CGFloat = 30
     private var trackY: CGFloat { height / 2 }
     /// 押して菱形を掴める距離。
     private let grabDistance: CGFloat = 22
@@ -93,6 +96,20 @@ struct ETKeyframeTimeline: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Keyframes")
         .accessibilityValue(accessibilityText)
+        // 音量の数字が変わり続けるので、読み上げに常に変わるものだと伝える。
+        .accessibilityAddTraits(.updatesFrequently)
+        // 上下のスワイプ・キーボードで選ぶ菱形を順に切り替える。いまは触るしか選ぶ手段が無く、
+        // 下の Smooth / Hold / Delete に辿り着けなかった。触ったときと同じ select を呼ぶ。
+        .accessibilityAdjustableAction { direction in
+            guard interactive, !automation.keyframes.isEmpty else { return }
+            let last = automation.keyframes.count - 1
+            let current = selected ?? explicit
+            switch direction {
+            case .increment: select?(current.map { min($0 + 1, last) } ?? 0)
+            case .decrement: select?(current.map { max($0 - 1, 0) } ?? last)
+            @unknown default: break
+            }
+        }
         // 菱形の吹き出しは触りでしか開かない。⋯ から消えた Hold と削除の代わりに、読み上げ操作で渡す。
         .accessibilityActions {
             if interactive, let k = selected, automation.keyframes.indices.contains(k) {
@@ -102,8 +119,19 @@ struct ETKeyframeTimeline: View {
                     Button("Hold") { setHold?(p, true) }
                 }
                 Button("Delete") { delete?(p) }
+                // 引く代わりの 1 刻み。刻みと、ほかのキーフレームに重ならない判定は引くときと同じ（dragTarget）。
+                Button("Move Left") { nudge(k, by: -automation.source.step) }
+                Button("Move Right") { nudge(k, by: automation.source.step) }
             }
         }
+    }
+
+    /// 選んでいるキーフレームを 1 刻みだけ動かす。置けない所（端の外・ほかのキーフレームの上）では何もしない。
+    private func nudge(_ k: Int, by delta: Double) {
+        guard automation.keyframes.indices.contains(k),
+              let to = automation.dragTarget(k, to: automation.keyframes[k].position + delta),
+              abs(automation.keyframes[k].position - to) > 0.0005 else { return }
+        move?(k, to)
     }
 
     /// 押して選んだキーフレームがあればその位置、無ければいまの音量（針と同じ色）。
@@ -115,7 +143,8 @@ struct ETKeyframeTimeline: View {
             Text(shown.map { automation.source.label($0) } ?? "–")
                 .foregroundStyle(shown == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
         }
-        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+        .etFont(size: 11, weight: .semibold)
+        .monospacedDigit()
         .fixedSize()
     }
 
@@ -123,6 +152,11 @@ struct ETKeyframeTimeline: View {
         var text = automation.keyframes.map {
             automation.source.label($0.position) + ($0.hold ? " Hold" : "")
         }.joined(separator: ", ")
+        // 選んでいるものを先に読ませる（長い一覧の終わりまで聞かないと分からないので）。
+        if let k = selected, automation.keyframes.indices.contains(k) {
+            let frame = automation.keyframes[k]
+            text = "Selected \(automation.source.label(frame.position))\(frame.hold ? " Hold" : ""), " + text
+        }
         if let position {
             text += ", Volume \(automation.source.label(position))"
         }
@@ -205,6 +239,14 @@ struct ETKeyframeTimeline: View {
         KeyframeShape(leftFlat: sides.leftFlat, rightFlat: sides.rightFlat)
             .fill(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
             .frame(width: diamond, height: diamond)
+            // 色の違いに頼らない設定のときだけ、選んでいる菱形に外側の輪を足す（通常の見た目は変えない）。
+            .overlay {
+                if tinted && differentiateWithoutColor {
+                    KeyframeShape(leftFlat: sides.leftFlat, rightFlat: sides.rightFlat)
+                        .stroke(.primary, lineWidth: 1.5)
+                        .padding(-3)
+                }
+            }
             .allowsHitTesting(false)
     }
 
@@ -322,7 +364,8 @@ struct ETKeyframeTimeline: View {
                 .buttonStyle(.bordered)
             }
             .padding(16)
-            .frame(width: 240)
+            // 文字が大きいとき、分節の字と Delete が切れないよう広がれるようにする。
+            .frame(minWidth: 240)
             // iPhone でもシートにせず、矢印つきの吹き出しのまま出す。
             .presentationCompactAdaptation(.popover)
         }

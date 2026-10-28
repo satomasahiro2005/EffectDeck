@@ -158,9 +158,9 @@ struct MultibandCompressorView: View {
                 } label: {
                     VStack(spacing: 1) {
                         Text("\(i + 1)")
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                         Text(Self.span(i, edges))
-                            .font(.system(size: 8, design: .monospaced))
+                            .etFont(size: 8, design: .monospaced)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
@@ -171,6 +171,7 @@ struct MultibandCompressorView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Band \(i + 1)")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
     }
@@ -208,7 +209,7 @@ struct MultibandCompressorView: View {
 
     private func groupLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .etFont(size: 10, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
             .padding(.top, 2)

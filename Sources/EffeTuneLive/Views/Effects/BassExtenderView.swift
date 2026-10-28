@@ -22,7 +22,7 @@ struct BassExtenderView: View {
         VStack(alignment: .leading, spacing: 12) {
             if EffeTuneDSP.isChannelBypassed(node) {
                 Text("Bypassed")
-                    .font(.system(size: 12, weight: .semibold))
+                    .etFont(size: 12, weight: .semibold)
                     .foregroundStyle(.secondary)
             }
             ForEach(node.spec.params) { param in

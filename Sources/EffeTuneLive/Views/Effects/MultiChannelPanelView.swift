@@ -128,7 +128,7 @@ struct MultiChannelPanelView: View {
     private var channelPicker: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("CHANNEL")
-                .font(.system(size: 10, weight: .semibold))
+                .etFont(size: 10, weight: .semibold)
                 .tracking(0.6)
                 .foregroundStyle(.secondary)
 
@@ -140,35 +140,48 @@ struct MultiChannelPanelView: View {
                             strip = ch
                         } label: {
                             Text("\(ch + 1)")
-                                .font(.system(size: 12, weight: channel == ch ? .bold : .regular))
+                                .etFont(size: 12, weight: channel == ch ? .bold : .regular)
                                 .foregroundStyle(channel == ch
                                                  ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                                 .frame(minWidth: 30, minHeight: 26)
                                 .background(channel == ch
                                             ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                                // 見た目は 30x26 のまま、押せる面だけを 44pt まで広げる。
+                                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                                .padding(.vertical, 9)
+                                .padding(.horizontal, 3)
+                                .contentShape(.rect)
+                                .padding(.vertical, -9)
+                                .padding(.horizontal, -3)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Channel \(ch + 1)")
+                        .accessibilityAddTraits(channel == ch ? .isSelected : [])
                     }
                 }
+                // 押せる面を 44pt にするぶんの余白。外側で同じだけ引くので並びの高さは変わらない。
+                .padding(.vertical, 9)
             }
+            .padding(.vertical, -9)
         }
     }
 
     private var switches: some View {
         HStack(spacing: 8) {
             if let mute = param("mute") {
-                badgeButton("M", on: isOn(mute.offset + channel)) {
+                badgeButton("M", name: "Mute", on: isOn(mute.offset + channel)) {
                     apply(mute.offset, isOn(mute.offset + channel) ? 0 : 1, channel: channel)
                 }
             }
             if let solo = param("solo") {
-                badgeButton("S", on: isOn(solo.offset + channel)) {
+                badgeButton("S", name: "Solo", on: isOn(solo.offset + channel)) {
                     apply(solo.offset, isOn(solo.offset + channel) ? 0 : 1, channel: channel)
                 }
             }
             if let link = param("link"), channel < link.count {
                 badgeButton("LINK \(channel + 1)-\(channel + 2)",
+                            name: "Link channels \(channel + 1) and \(channel + 2)",
                             on: isOn(link.offset + channel),
                             wide: true) {
                     setLink(link, on: !isOn(link.offset + channel))
@@ -178,19 +191,30 @@ struct MultiChannelPanelView: View {
         }
     }
 
-    private func badgeButton(_ label: String, on: Bool, wide: Bool = false,
+    private func badgeButton(_ label: String, name: String, on: Bool, wide: Bool = false,
                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 12, weight: .bold))
+                .etFont(size: 12, weight: .bold)
                 .lineLimit(1)
                 .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 .padding(.horizontal, wide ? 10 : 0)
                 .frame(minWidth: wide ? 0 : 34, minHeight: 28)
                 .background(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                // 見た目は高さ 28 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣との隙間（8pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 8)
+                .padding(.horizontal, 4)
+                .contentShape(.rect)
+                .padding(.vertical, -8)
+                .padding(.horizontal, -4)
         }
         .buttonStyle(.plain)
+        // 「M」「S」だけでは何のスイッチか分からない。
+        .accessibilityLabel(name)
+        .accessibilityValue(on ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
     }
 
     @ViewBuilder
@@ -200,9 +224,8 @@ struct MultiChannelPanelView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(unit.isEmpty ? param.label : "\(param.label) (\(unit))")
-                        .font(.system(size: 14))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .etFont(size: 14)
+                        .etRowTitle()
                     Spacer(minLength: 4)
                     ETValueField(text: param.format(value(offset)), label: param.label,
                                  editText: { ETNumberText.draft(Double(value(offset))) }) { typed in
@@ -214,6 +237,8 @@ struct MultiChannelPanelView: View {
                                       set: { apply(param.offset, Float($0), channel: channel) }),
                        in: Double(lo)...Double(hi),
                        step: step > 0 ? Double(step) : 0.0001)
+                    .accessibilityLabel(param.label)
+                    .accessibilityValue(param.format(value(offset)))
             }
         }
     }

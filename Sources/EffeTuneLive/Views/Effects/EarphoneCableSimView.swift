@@ -332,7 +332,7 @@ struct EarphoneCableSimView: View {
     private var resonanceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("RESONANCES")
-                .font(.system(size: 10, weight: .semibold))
+                .etFont(size: 10, weight: .semibold)
                 .tracking(0.6)
                 .foregroundStyle(.secondary)
 
@@ -361,7 +361,7 @@ struct EarphoneCableSimView: View {
                         slot = i
                     } label: {
                         Text("\(i + 1)")
-                            .font(.system(size: 12, weight: slot == i ? .bold : .regular))
+                            .etFont(size: 12, weight: slot == i ? .bold : .regular)
                             .foregroundStyle(slot == i ? AnyShapeStyle(.white)
                                                        : AnyShapeStyle(.secondary))
                             .frame(minWidth: 30, minHeight: 26)
@@ -371,11 +371,25 @@ struct EarphoneCableSimView: View {
                             .overlay(
                                 RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
                                     .stroke(.tint, lineWidth: isSlotEnabled(i) ? 1 : 0))
+                            // 見た目は 30x26 のまま、押せる面だけを 44pt まで広げる。
+                            // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 3)
+                            .contentShape(.rect)
+                            .padding(.vertical, -9)
+                            .padding(.horizontal, -3)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Resonance \(i + 1)")
+                    // 入っているかは枠線の有無だけで表しているので、値として伝える。
+                    .accessibilityValue(isSlotEnabled(i) ? "On" : "Off")
+                    .accessibilityAddTraits(slot == i ? .isSelected : [])
                 }
             }
+            // 押せる面を 44pt にするぶんの余白。外側で同じだけ引くので並びの高さは変わらない。
+            .padding(.vertical, 9)
         }
+        .padding(.vertical, -9)
     }
 
     private func isSlotEnabled(_ element: Int) -> Bool {
@@ -387,7 +401,7 @@ struct EarphoneCableSimView: View {
         let isOn = node.values.indices.contains(offset) && node.values[offset] >= 0.5
         return Toggle(isOn: Binding(get: { isOn },
                                     set: { dsp.setValue($0 ? 1 : 0, at: index, offset: offset) })) {
-            Text("Resonance \(slot + 1)").font(.system(size: 14))
+            Text("Resonance \(slot + 1)").etFont(size: 14)
         }
     }
 
@@ -401,9 +415,8 @@ struct EarphoneCableSimView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(param.label)
-                        .font(.system(size: 14))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .etFont(size: 14)
+                        .etRowTitle()
                     Spacer(minLength: 4)
                     ETValueField(text: param.format(current), label: param.label,
                                  editText: { ETNumberText.draft(Double(current)) }) { typed in
@@ -420,6 +433,8 @@ struct EarphoneCableSimView: View {
                                             at: index, offset: offset) }),
                     in: Double(lower)...Double(upper),
                     step: step > 0 ? Double(step) : (isInteger ? 1 : 0))
+                .accessibilityLabel(param.label)
+                .accessibilityValue(param.format(current))
             }
         }
     }

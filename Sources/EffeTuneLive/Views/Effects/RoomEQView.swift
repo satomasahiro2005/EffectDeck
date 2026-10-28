@@ -112,7 +112,7 @@ struct RoomEQView: View {
             }
 
             Text(session.sources.isEmpty ? Self.importHint : session.measurement)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -212,23 +212,23 @@ struct RoomEQView: View {
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(headline)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
 
             if let failure {
                 Text(failure)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else if case .failed(let why) = session.correction.state {
                 Text(why)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             ForEach(warnings, id: \.self) { warning in
                 Text(warning)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -313,7 +313,7 @@ struct RoomEQView: View {
 
     private var graphRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Graph").font(.system(size: 14))
+            Text("Graph").etFont(size: 14)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
                 ForEach(RoomEQResponseView.allCases) { view in
@@ -326,7 +326,7 @@ struct RoomEQView: View {
     /// チャンネルの名前は段の Ch の先頭から数える（room_eq.js:1318-1331 の _channelStartIndex）。
     private func previewChannelRow(count: Int, selected: Int) -> some View {
         HStack {
-            Text("Graph Preview Ch").font(.system(size: 14))
+            Text("Graph Preview Ch").etFont(size: 14)
             Spacer(minLength: 8)
             Picker("Graph Preview Ch", selection: Binding(get: { selected },
                                                          set: { previewChannel = $0 })) {
@@ -400,7 +400,7 @@ struct RoomEQView: View {
         if options.isEmpty { options = [RoomEQConfig.allowedTaps[0]] }
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Taps").font(.system(size: 14))
+            Text("Taps").etFont(size: 14)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 6)],
                       alignment: .leading, spacing: 6) {
                 ForEach(options, id: \.self) { taps in
@@ -417,7 +417,7 @@ struct RoomEQView: View {
     /// RoomEQDesigner.swift:290-297）ので、選べる札にしない。
     private var phaseRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Phase").font(.system(size: 14))
+            Text("Phase").etFont(size: 14)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 6)],
                       alignment: .leading, spacing: 6) {
                 ForEach([RoomEQPhase.minimum, RoomEQPhase.linear], id: \.self) { phase in
@@ -469,9 +469,8 @@ struct RoomEQView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 // 打ち込みも受ける。**下書きに text を渡さない**——"2.00 oct" のような
                 // 単位付きの字は Double(_:) が nil を返して黙って捨てられる。
@@ -480,11 +479,15 @@ struct RoomEQView: View {
                     value.wrappedValue = min(max(typed, range.lowerBound), range.upperBound)
                 }
             }
-            if logarithmic {
-                ETLogSlider(value: value, range: range)
-            } else {
-                ETSlider(value: value, range: range, step: step)
+            Group {
+                if logarithmic {
+                    ETLogSlider(value: value, range: range)
+                } else {
+                    ETSlider(value: value, range: range, step: step)
+                }
             }
+            .accessibilityLabel(title)
+            .accessibilityValue(text)
         }
         .padding(.vertical, 2)
     }
@@ -494,7 +497,7 @@ struct RoomEQView: View {
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(name)
-                .font(.system(size: 13, weight: selected ? .bold : .regular))
+                .etFont(size: 13, weight: selected ? .bold : .regular)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
@@ -511,7 +514,7 @@ struct RoomEQView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(.tint)

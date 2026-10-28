@@ -51,6 +51,7 @@ struct ETDragHandle: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let v = HoleView()
         context.coordinator.anchor = v
+        context.coordinator.longPressDuration = ETAssistiveState.reorderLongPress(in: context.environment)
         // **付けるのは階層に入ってから。**makeUIView も updateUIView も
         // superview がまだ無い時点で走ることがあり、そこで諦めると
         // 二度と呼ばれずに認識器が付かないままになる（実機で確認、
@@ -63,6 +64,7 @@ struct ETDragHandle: UIViewRepresentable {
 
     func updateUIView(_ v: UIView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.longPressDuration = ETAssistiveState.reorderLongPress(in: context.environment)
         context.coordinator.attach()
         context.coordinator.syncReorders()
     }
@@ -75,6 +77,10 @@ struct ETDragHandle: UIViewRepresentable {
         weak var anchor: UIView?
         private weak var recognizer: UILongPressGestureRecognizer?
         private weak var panRecognizer: UIPanGestureRecognizer?
+        /// 掴みを始める長押しの秒数。普段は 0.25、VoiceOver かスイッチコントロールが動いているときだけ
+        /// システム既定の 0.5（手の震えや、指を置いて考える人が、触れただけで掴んでしまわないように）。
+        /// 値は updateUIView が書く。環境値は認識器の側から読めないので、ここに写して持つ。
+        var longPressDuration: Double = 0.25
         /// いま動いている払いが自分のものか。
         private var mineSwipe = false
         /// いま動いている掴みが自分のものか。
@@ -106,7 +112,7 @@ struct ETDragHandle: UIViewRepresentable {
             // そこを越えていれば取り合いにならない。
             // 払いと送りは別の口で見ているので、ここを詰めても取られない
             // （gestureRecognizerShouldBegin で送っている最中は立てない）。
-            g.minimumPressDuration = 0.25
+            g.minimumPressDuration = longPressDuration
             // 長押しの判定中に指がぶれても外さない。掴んだ後は自由に動かす。
             // つまみを動かしている最中（10pt 以上動いた）は立たない。
             g.allowableMovement = 10
@@ -130,7 +136,12 @@ struct ETDragHandle: UIViewRepresentable {
 
         /// 掴まないときは長押しを眠らせる。立たなければ送りを預かること（holdScroll）も無い。
         func syncReorders() {
-            guard let recognizer, recognizer.isEnabled != parent.reorders else { return }
+            guard let recognizer else { return }
+            // 設定が途中で変わったときも追従する。
+            if recognizer.minimumPressDuration != longPressDuration {
+                recognizer.minimumPressDuration = longPressDuration
+            }
+            guard recognizer.isEnabled != parent.reorders else { return }
             recognizer.isEnabled = parent.reorders
         }
 

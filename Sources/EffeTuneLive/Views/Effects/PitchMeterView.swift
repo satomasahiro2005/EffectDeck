@@ -56,7 +56,7 @@ struct PitchMeterView: View {
     private var colorPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Color")
-                .font(.system(size: 14))
+                .etFont(size: 14)
             Picker("Color", selection: $color) {
                 ForEach(ETPitchColor.allCases) { option in
                     Text(option.label).tag(option)
@@ -72,7 +72,7 @@ struct PitchMeterView: View {
     private var layoutPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Layout")
-                .font(.system(size: 14))
+                .etFont(size: 14)
             Picker("Layout", selection: $layout) {
                 ForEach(ETNoteLayout.allCases) { option in
                     Text(option.label).tag(option)
@@ -120,6 +120,8 @@ private struct PitchMeterGraph: View {
         let current = reading
         VStack(alignment: .leading, spacing: 4) {
             Text(current?.label ?? "Waiting for audio").font(.system(.caption, design: .monospaced))
+                // 音名はテレメトリで何度も変わる。更新中だと伝えて、VoiceOver が拾い直せるようにする。
+                .accessibilityAddTraits(.updatesFrequently)
             Canvas { screen, size in
                 // 描くのは x が時間（右が新しい）、y が音の高さ（上が高い）の面。
                 // Horizontal は上流と同じく面ごと 90 度回す（pitch_meter.js v2.11.0:526-534）。

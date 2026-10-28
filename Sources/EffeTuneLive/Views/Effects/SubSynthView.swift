@@ -161,7 +161,7 @@ struct SubSynthView: View {
         } label: {
             // 上流の option と同じ字（同 351）。
             Text(slope == 0 ? "Off" : "\(abs(slope))dB/oct")
-                .font(.system(size: 12, weight: isSelected ? .bold : .regular))
+                .etFont(size: 12, weight: isSelected ? .bold : .regular)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))

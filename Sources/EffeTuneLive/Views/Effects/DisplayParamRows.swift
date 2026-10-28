@@ -7,6 +7,25 @@
 
 import SwiftUI
 
+/// 行の題。通常の文字サイズでは今まで通り 1 行で、長ければ 0.8 倍まで縮める。
+/// アクセシビリティサイズでは縮めると文字サイズの設定を打ち消すので、縮めずに折り返す。
+private struct ETRowTitle: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    func body(content: Content) -> some View {
+        content
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+            .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+    }
+}
+
+extension View {
+    /// Effects の各行の題に付ける（ETRowTitle）。
+    func etRowTitle() -> some View {
+        modifier(ETRowTitle())
+    }
+}
+
 /// 数 1 つ。名前と数値欄を上、スライダーを下の 2 段（ParameterRow と同じ形）。
 struct ETDisplayNumberRow: View {
     let title: String
@@ -28,9 +47,8 @@ struct ETDisplayNumberRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(unit.isEmpty ? title : "\(title) (\(unit))")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ETValueField(text: valueText,
                              label: title,
@@ -48,12 +66,16 @@ struct ETDisplayNumberRow: View {
         let binding = Binding<Double>(
             get: { min(max(value, range.lowerBound), range.upperBound) },
             set: { commit($0) })
+        // 画面の題と同じく単位つきで読ませる（値には単位が付かない）。
+        let spokenTitle = unit.isEmpty ? title : "\(title) (\(unit))"
         if step > 0 || isInteger {
             Slider(value: binding, in: range, step: isInteger ? 1 : step)
-                .accessibilityLabel(title)
+                .accessibilityLabel(spokenTitle)
+                .accessibilityValue(valueText)
         } else {
             Slider(value: binding, in: range)
-                .accessibilityLabel(title)
+                .accessibilityLabel(spokenTitle)
+                .accessibilityValue(valueText)
         }
     }
 
@@ -80,14 +102,14 @@ struct ETDisplayChoiceRow<Value: Hashable>: View {
         case .segmented:
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 14))
+                    .etFont(size: 14)
                 picker.pickerStyle(.segmented)
             }
             .padding(.vertical, 2)
         case .menu:
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
+                    .etFont(size: 14)
                 Spacer(minLength: 8)
                 picker.pickerStyle(.menu)
             }
@@ -112,7 +134,7 @@ struct ETDisplayToggleRow: View {
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            Text(title).font(.system(size: 14))
+            Text(title).etFont(size: 14)
         }
         .padding(.vertical, 2)
     }
@@ -128,7 +150,7 @@ struct ETMeasurementButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .etFont(size: 14, weight: .medium)
                 .frame(minHeight: ETMetrics.controlHeight)
                 .padding(.horizontal, 14)
                 .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))

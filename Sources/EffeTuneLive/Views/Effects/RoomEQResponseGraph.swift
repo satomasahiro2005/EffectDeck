@@ -117,7 +117,7 @@ struct RoomEQResponseGraph: View {
                         .fill(line.style)
                         .frame(width: 14, height: 2)
                     Text(line.label)
-                        .font(.system(size: 10))
+                        .etFont(size: 10)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }

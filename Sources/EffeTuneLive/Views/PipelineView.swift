@@ -132,6 +132,22 @@ struct PipelineView: View {
     @Environment(\.horizontalSizeClass) private var hSize
     /// 鎖を ChatGPT に組ませる依頼を開く（空の鎖の表示。EffectPickerView.buildChain）。
     @Environment(\.openURL) private var openURL
+    /// 鎖の追加・削除・並べ替えの取り消し先（⌘Z と 3 本指の取り消し。ETChainUndo）。
+    @Environment(\.undoManager) private var undoManager
+    /// アクセシビリティサイズのときだけ、2列の左の一覧の幅を広げる。
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// VoiceOver の焦点を置くカード。左の一覧から飛んだとき・足したときに、飛び先のカードの名前へ移す。
+    @AccessibilityFocusState private var focusedCard: UUID?
+    /// 掴んだ時点の並び。離したときに 1 回だけ取り消しを登録する（入れ替えのたびには積まない）。
+    @State private var orderAtGrab: [UUID]?
+    /// 足したカード。シートが畳み終わってから焦点を移して知らせる（畳む前に移しても、畳んだ後にツールバーへ戻される）。
+    @State private var addedCard: AddedCard?
+
+    private struct AddedCard {
+        let id: UUID
+        let name: String
+    }
+
     /// 窓の幅が2列に足りるか。**640で立て、620を切るまで落とさない。**
     /// 1本の線にすると、Stage Managerで窓の端を引いているあいだ行き来する。
     /// 書くのは跨いだときだけ（updateWideEnough）。
@@ -290,7 +306,8 @@ struct PipelineView: View {
             switch which {
             case .picker:
                 ETPickerHost(dsp: dsp, sheet: $sheet, pluginError: $pluginError,
-                             pane: $pickerPane, fresh: $freshJSFX, onScreen: $pickerOnScreen)
+                             pane: $pickerPane, fresh: $freshJSFX, onScreen: $pickerOnScreen,
+                             undoManager: undoManager)
             case .settings:
                 SettingsView(io: io)
             case .routing:
@@ -437,8 +454,51 @@ struct PipelineView: View {
         // 鎖の並び。左の一覧の「右で一番上のカード」と、足したカードを見せるのに使う。
         .onChange(of: dsp.chain.map(\.id), initial: true) { old, new in
             viewport.setOrder(new)
-            if old != new { revealNew(old, new) }
+            if old != new {
+                revealNew(old, new)
+                noteAdded(old)
+                dropStaleUndo(old, new)
+            }
         }
+        // PC の鎖を編集し始める・やめると、手元の鎖の取り消しは指す先が変わる。
+        .onChange(of: isRemote) { _, _ in
+            undoManager?.removeAllActions(withTarget: dsp)
+        }
+        // ⌘, は「設定」のメニュー項目にも付けてあるが、メニューは開くまで階層に居ないので
+        // 閉じている間は効かない。常に居る見えない釦でも受ける。
+        .background {
+            Button("Settings") { presentSettingsFromKeyboard() }
+                .keyboardShortcut(",")
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// 鎖がまるごと入れ替わったら、積んである取り消しを捨てる。
+    ///
+    /// プリセット・貼り付け・バックアップ・リセット・削除の取り消しは、全部の段に新しい id を振る。
+    /// 前の追加・並べ替えの取り消しは id で段を探すので何も起きないのに、
+    /// 積まれたまま ⌘Z や振る動作で「Undo Move Effect」と出て、押しても変わらない。
+    /// 旧い id が 1 つも残っていなくて、新しい段が入ったときだけを入れ替えとみなす
+    /// （最後の 1 枚を消して空になる・root reset だけが残るのは削除であって入れ替えではない）。
+    private func dropStaleUndo(_ old: [UUID], _ new: [UUID]) {
+        guard !old.isEmpty, let undoManager else { return }
+        let before = Set(old)
+        guard before.isDisjoint(with: new) else { return }
+        let fresh = dsp.chain.contains { !before.contains($0.id) && !$0.isRootReset }
+        if fresh { undoManager.removeAllActions(withTarget: dsp) }
+    }
+
+    /// ⌘, 。ツールバーの Settings と同じ振る舞い（PipelineToolbar.present）。
+    /// 2列で popover が画面に出ていたら、畳み終えてから出す。
+    private func presentSettingsFromKeyboard() {
+        guard usesSplit, sheet == .picker, pickerOnScreen else {
+            sheet = .settings
+            return
+        }
+        Self.openAfterClosingSheet({ sheet = .settings }, sheet: $sheet, afterSheet: $afterSheet)
     }
 
     /// 2列。左に鎖の一覧、右に鎖を全部開いて並べる。
@@ -506,8 +566,11 @@ struct PipelineView: View {
             ChainMinimap(items: minimapItems(visible), dsp: dsp, viewport: viewport,
                          correction: isRemote ? nil : Self.correctionRowID,
                          move: { move($0, to: $1) },
-                         insert: { _ = addDropped($0, to: $1) })
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+                         insert: { _ = addDropped($0, to: $1) },
+                         focusCard: { focusedCard = $0 })
+                // アクセシビリティサイズのときだけ広げる（名前が 2 行に折り返せるように）。通常は今までの幅。
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260,
+                                                max: typeSize.isAccessibilitySize ? 420 : 320)
         } detail: {
             chainConfirmations(chainList(visible, split: true))
                 .environment(\.etCardsPinnedOpen, true)
@@ -665,6 +728,28 @@ struct PipelineView: View {
         layoutSplit = split
     }
 
+    /// 1 段だけ足されたとき、あとで焦点を移して知らせる。
+    ///
+    /// ピッカーを閉じると VoiceOver の焦点はツールバーへ戻され、足したカードがどこへ行ったか分からない。
+    /// プリセットや鎖ごとの入れ替え（複数が一度に増える）では言わない。rootReset の印は数えない。
+    private func noteAdded(_ old: [UUID]) {
+        guard !isRemote else { return }
+        let before = Set(old)
+        let added = dsp.chain.filter { !before.contains($0.id) && !$0.isRootReset }
+        guard added.count == 1, let node = added.first else { return }
+        let name = node.isSection ? (node.sectionName.isEmpty ? "Section" : node.sectionName)
+                                  : node.etDisplayName
+        addedCard = AddedCard(id: node.id, name: name)
+        // シートやポップオーバーが畳み終わるのを待ってから移す。
+        Task { @MainActor in
+            await ETPresentation.settled()
+            guard let added = addedCard else { return }
+            addedCard = nil
+            focusedCard = added.id
+            AccessibilityNotification.Announcement("Added \(added.name)").post()
+        }
+    }
+
     /// 足したカードが画面に無ければ、上端へ出す。**2列のときだけ。**
     ///
     /// 押して足す・落とす・JSFXが後から入る・プリセット・鎖ごとの入れ替えの全部が
@@ -693,7 +778,7 @@ struct PipelineView: View {
         // 入れ替えで動いただけ（高さが同じ）では基準に触れない（swap の注記）。
         if id == dragFolded, let grabY = foldGrabY, rect.height != anchorRect.height {
             foldGrabY = nil
-            withAnimation(.snappy(duration: 0.22)) {
+            etWithAnimation(.snappy(duration: 0.22)) {
                 anchorRect = CGRect(x: rect.minX, y: grabY - rect.height / 2,
                                     width: rect.width, height: rect.height)
             }
@@ -1024,7 +1109,8 @@ struct PipelineView: View {
                         moveDown: { moveRow(row.visible, to: row.visible + 2) },
                         canMoveUp: row.visible > 0,
                         canMoveDown: row.visible < visible.count - 1,
-                        block: row.block)
+                        block: row.block,
+                        focus: $focusedCard)
                     }
                         // 線のぶんは外側の余白から取る。カードの左端は
                         // どちらの行でも 14 に揃う（ETSectionBracket の頭）。
@@ -1288,7 +1374,9 @@ struct PipelineView: View {
 
     private func addDropped(_ payload: String, to target: ETChainEditing.AddTarget) -> Bool {
         if let preset = presetPayload(payload) {
-            dsp.addPreset(named: preset.0, items: preset.1, at: target.presetIndex)
+            ETChainUndo.run(.add, dsp: dsp, undoManager: undoManager) {
+                dsp.addPreset(named: preset.0, items: preset.1, at: target.presetIndex)
+            }
             sheet = nil
             return true
         }
@@ -1297,9 +1385,11 @@ struct PipelineView: View {
             let instanceID = UUID().uuidString
             guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                 instanceID: instanceID) else { return false }
-            dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
-                            category: "Audio Units", externalIndex: externalIndex,
-                            to: target)
+            ETChainUndo.run(.add, dsp: dsp, undoManager: undoManager) {
+                dsp.addExternal(id: entry.id, instanceID: instanceID, name: entry.name,
+                                category: "Audio Units", externalIndex: externalIndex,
+                                to: target)
+            }
             ETAUHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
             return true
@@ -1319,7 +1409,9 @@ struct PipelineView: View {
             return true
         }
         guard let spec = EffeTuneDSP.spec(forType: payload) else { return false }
-        dsp.add(spec, to: target)
+        ETChainUndo.run(.add, dsp: dsp, undoManager: undoManager) {
+            dsp.add(spec, to: target)
+        }
         sheet = nil
         return true
     }
@@ -1390,7 +1482,7 @@ struct PipelineView: View {
         let open = -Self.swipeWidth
         // **払い切りでは消さない。**一発で消えると取り返しがつかない。
         // 開くところまでで止めて、ゴミ箱を押させる。
-        withAnimation(.snappy(duration: 0.24)) {
+        etWithAnimation(.snappy(duration: 0.24)) {
             if dx < open / 2 {
                 swipeX = open
             } else {
@@ -1403,7 +1495,7 @@ struct PipelineView: View {
     /// 開いているものを閉じる。掴み始めや消したあとに通す。
     private func closeSwipe() {
         guard swiping != nil else { return }
-        withAnimation(.snappy(duration: 0.2)) { swipeX = 0; swiping = nil }
+        etWithAnimation(.snappy(duration: 0.2)) { swipeX = 0; swiping = nil }
     }
 
     // MARK: - 並べ替え（矩形の重なりで決める）
@@ -1422,12 +1514,13 @@ struct PipelineView: View {
             dragExternalSnapshot = nil
         }
         dragging = row.node.id
+        orderAtGrab = dsp.chain.map(\.id)
         anchorRect = geometry[row.node.id] ?? .zero
         dragShift = .zero
         // 名前の行だけに畳む。札の大きさは畳んだ行が測れたときに合わせる（measured）。
         if !row.node.isSection && !usesSplit {
             foldGrabY = anchorRect.minY + grabY
-            withAnimation(.snappy(duration: 0.22)) { dragFolded = row.node.id }
+            etWithAnimation(.snappy(duration: 0.22)) { dragFolded = row.node.id }
         }
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
@@ -1450,9 +1543,14 @@ struct PipelineView: View {
     /// 時間で必ず畳む。
     private func endDrag() {
         guard let id = dragging else { return }
+        // 掴んで動かした 1 回ぶんを、取り消しに登録する（並びが変わっていなければ何もしない）。
+        if let before = orderAtGrab {
+            ETChainUndo.registerMove(dsp: dsp, undoManager: undoManager, from: before)
+        }
+        orderAtGrab = nil
         foldGrabY = nil
         let slot = geometry[id] ?? anchorRect
-        withAnimation(.snappy(duration: Self.returnDuration)) {
+        etWithAnimation(.snappy(duration: Self.returnDuration)) {
             anchorRect = slot
             dragShift = .zero
         }
@@ -1463,7 +1561,7 @@ struct PipelineView: View {
                 dragging = nil
                 dragExternalSnapshot = nil
                 // 戻りきってから元の開き方に戻す。
-                withAnimation(.snappy(duration: 0.22)) { dragFolded = nil }
+                etWithAnimation(.snappy(duration: 0.22)) { dragFolded = nil }
             }
         }
     }
@@ -1539,7 +1637,7 @@ struct PipelineView: View {
         // **判断は模型が持つ。**画面は「この行を外へ」と言うだけ。
         // 直前が既に印か、もう root に居るか、正規化で取り消されるか、は
         // 全部あちらが決めて、起きたかどうかだけを返す。
-        let changed = withAnimation(.snappy(duration: 0.22)) {
+        let changed = etWithAnimation(.snappy(duration: 0.22)) {
             dsp.leaveSection(at: visible[at].index)
         }
         // **打ち消されたら振動は出さない。**指に成功を返しておいて何も起きないと、
@@ -1563,7 +1661,7 @@ struct PipelineView: View {
     /// 移動量」で決まりきっていて、下の並びがどう動こうと関係ない。
     /// 補正そのものが要らなかった。
     private func swap(_ at: Int, to destination: Int) {
-        withAnimation(.snappy(duration: 0.22)) { moveRow(at, to: destination) }
+        etWithAnimation(.snappy(duration: 0.22)) { moveRow(at, to: destination) }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
@@ -1735,7 +1833,9 @@ struct PipelineView: View {
             confirmingSectionRemoval = id
             return
         }
-        dsp.remove(at: IndexSet(integer: i))
+        ETChainUndo.run(.remove, dsp: dsp, undoManager: undoManager) {
+            dsp.remove(at: IndexSet(integer: i))
+        }
     }
 
     /// 開いたリンクを振り分ける（ETFXDLink.route）。
@@ -1845,7 +1945,9 @@ struct PipelineView: View {
             let members = Set(dsp.analysis.members(of: id))
             for (j, node) in dsp.chain.enumerated() where members.contains(node.id) { doomed.insert(j) }
         }
-        dsp.remove(at: doomed)
+        ETChainUndo.run(.remove, dsp: dsp, undoManager: undoManager) {
+            dsp.remove(at: doomed)
+        }
     }
 
     /// 長押しで動かしたときの置き換え。
@@ -1929,7 +2031,14 @@ struct PipelineView: View {
         // 落ちた先が畳んだ Section の中なら、EffeTuneDSP.move が開く
         // （revealHidden）。連れて行った配下は開く理由に数えない。
         let wasVisible = Set(visible.map(\.node.id))
-        dsp.move(from: moving, to: target)
+        if dragging == nil {
+            ETChainUndo.run(.move, dsp: dsp, undoManager: undoManager) {
+                dsp.move(from: moving, to: target)
+            }
+        } else {
+            // 掴んでいる間は入れ替えのたびに積まない。離したときに 1 回だけ登録する（endDrag）。
+            dsp.move(from: moving, to: target)
+        }
 
         // **見えていたのに消えた段を開く。**
         //
@@ -1989,6 +2098,8 @@ private struct PipelineToolbar: ToolbarContent {
     @Binding var pickerOnScreen: Bool
     @Binding var pluginError: String?
     @Binding var afterSheet: (() -> Void)?
+    /// 2列のポップオーバーで足したものを取り消せるように、ピッカーへ渡す。
+    @Environment(\.undoManager) private var undoManager
 
     /// popoverを出しているか。中身はsheetの.pickerで、根の.sheetはそれを見ない（presentedSheet）。
     /// 親がシートで出したときは偽のまま。
@@ -2101,7 +2212,7 @@ private struct PipelineToolbar: ToolbarContent {
                 .grayscale(hasPeer ? 0 : 1)
                 // 0.4 だと 13pt の字が読めない。沈んでいると分かる所で止める。
                 .opacity(hasPeer ? 1 : 0.55)
-                .animation(.easeInOut(duration: 0.2), value: hasPeer)
+                .etAnimation(.easeInOut(duration: 0.2), value: hasPeer)
                 .accessibilityLabel("All effects")
                 .accessibilityValue(voiceOverValue)
                 .accessibilityHint("Turns every effect in the pipeline on or off")
@@ -2121,17 +2232,22 @@ private struct PipelineToolbar: ToolbarContent {
             if pickerAsPopover && ETFeatures.remoteControl {
                 RemoteToolbarButton { present(.remote) }
             }
+            // iPad のキーボード: ⇧⌘P。
             Button("Presets", systemImage: "square.stack") { present(.presets) }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
             if pickerAsPopover {
                 // **+から出す。**選ぶたびに閉じる。つまんで運ぶと自分で閉じ、
                 // 右のカード・余白、左の一覧の行の間のどれへでも落とせる。
                 // 押せたなら+は画面に居る。popoverで出す。
+                // iPad のキーボード: ⌘N。
                 Button("Add Effect", systemImage: "plus") { openPopoverPicker() }
+                    .keyboardShortcut("n")
                     .popover(isPresented: pickerShown) {
                         ETPickerHost(dsp: dsp, sheet: $sheet, pluginError: $pluginError,
                                      pane: $pickerPane, fresh: $freshJSFX,
                                      onScreen: $pickerOnScreen,
-                                     waitsForDismissal: true)
+                                     waitsForDismissal: true,
+                                     undoManager: undoManager)
                             .frame(minWidth: 380, idealWidth: 420,
                                    minHeight: 520, idealHeight: 720)
                             .onDisappear { runAfterPopover() }
@@ -2146,10 +2262,13 @@ private struct PipelineToolbar: ToolbarContent {
                     .onDisappear { pickerAnchored = false }
             } else {
                 Button("Add Effect", systemImage: "plus") { sheet = .picker }
+                    .keyboardShortcut("n")
             }
             // IR Library はここに出さない。IR Reverb のカードから開く。
             Menu {
+                // iPad のキーボード: ⌘,（設定の標準のキー）。
                 Button("Settings", systemImage: "gearshape") { present(.settings) }
+                    .keyboardShortcut(",")
                 Button("Routing", systemImage: "arrow.triangle.branch") { present(.routing) }
                 // 試作: 鎖の入口か出口の音を、横長のメーターにして PiP の窓に出す（PiPVisualizer.swift）。
                 // トグル。入れているあいだは、外で消えても戻ったら出し直す。
@@ -2209,19 +2328,23 @@ struct ETPickerHost: View {
     /// JSFXは音の準備が無いとその場で失敗し、閉じる途中に警告を立てると出ないまま残る。
     /// シート（1列）は今までどおりその場で立てる。
     var waitsForDismissal = false
+    /// 足したものを取り消せるようにする。PipelineView の環境のものを渡す（シートの中の環境は別になりうる）。
+    var undoManager: UndoManager? = nil
 
     var body: some View {
         EffectPickerView(onPick: { spec in
-            dsp.add(spec)
+            ETChainUndo.run(.add, dsp: dsp, undoManager: undoManager) { dsp.add(spec) }
             sheet = nil
         }, onPickAU: { entry in
             let instanceID = UUID().uuidString
             guard let externalIndex = try? ETAUExternalBridge.shared.reserve(
                 instanceID: instanceID) else { return }
-            dsp.addExternal(id: entry.id, instanceID: instanceID,
-                            name: entry.name,
-                            category: "Audio Units",
-                            externalIndex: externalIndex)
+            ETChainUndo.run(.add, dsp: dsp, undoManager: undoManager) {
+                dsp.addExternal(id: entry.id, instanceID: instanceID,
+                                name: entry.name,
+                                category: "Audio Units",
+                                externalIndex: externalIndex)
+            }
             ETAUHost.shared.create(entry, instanceID: instanceID)
             sheet = nil
         }, onPickJSFX: { entry in
@@ -2239,7 +2362,9 @@ struct ETPickerHost: View {
         }, onPickPreset: { name, items in
             // 名前の付いた Section に包んで挿す。置き換えない。
             // 鎖ごと置き換えたいときは Presets 画面のほう。
-            dsp.addPreset(named: name, items: items, at: nil)
+            ETChainUndo.run(.add, dsp: dsp, undoManager: undoManager) {
+                dsp.addPreset(named: name, items: items, at: nil)
+            }
             sheet = nil
         }, pane: $pane, fresh: $fresh)
         .onAppear { onScreen = true }
@@ -2293,6 +2418,9 @@ enum ETPresentation {
 /// 拡張が繋がっていない間だけ、鎖の一番上に出る。
 /// 2本構成は普通ではないので、黙っていると詰まる。
 private struct ConnectBanner: View {
+    /// 大きい文字サイズでは、字・ボタンを横に並べず縦に積む（ボタンに押されて字が一語ずつ折れるため）。
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     /// プロトコル名を替えた版へ上げてから、まだ繋がっていない（#12・ETProtocolMigration）。
     let restartNeeded: Bool
     let openTips: () -> Void
@@ -2316,16 +2444,19 @@ private struct ConnectBanner: View {
     }
 
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                             : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
         Card {
-            HStack(alignment: .top, spacing: 12) {
+            layout {
                 Image(systemName: restartNeeded ? "exclamationmark.triangle.fill" : "airplayaudio")
-                    .font(.system(size: 20))
+                    .etFont(size: 20)
                     .foregroundStyle(restartNeeded ? AnyShapeStyle(Color.red) : AnyShapeStyle(.tint))
-                    .frame(width: 26)
+                    .frame(width: stacked ? nil : 26)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 15, weight: .semibold))
+                        .etFont(size: 15, weight: .semibold)
                         .foregroundStyle(restartNeeded ? Color.red : Color.primary)
                     // **やることをそのまま書く。**「送る」では、どこで何を
                     // 押せばよいのか画面から読めない。選ぶ場所を名指しする。
@@ -2343,12 +2474,12 @@ private struct ConnectBanner: View {
                     // **鳴らしてから選ぶ順は書かない**（#1 の訂正）。止めている間に選んでも
                     // 基本的に戻されない。一時停止が原因と確かめた失敗は無い。
                     Text(instruction)
-                        .font(.system(size: 12))
+                        .etFont(size: 12)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Spacer(minLength: 4)
+                if !stacked { Spacer(minLength: 4) }
 
                 // **帯は選び損ねたときにも戻ってくる。**経路を戻されると繋がりが切れて
                 // hasPeer が落ちるので、失敗を見分ける仕掛けを持たなくてもここに出る。
@@ -2360,7 +2491,7 @@ private struct ConnectBanner: View {
                     if restartNeeded { openURL(Self.restartIssue) } else { openTips() }
                 } label: {
                     Text("Help")
-                        .font(.system(size: 13, weight: .semibold))
+                        .etFont(size: 13, weight: .semibold)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 7)
                 }
@@ -2377,32 +2508,37 @@ private struct ConnectBanner: View {
 /// 状態だけを言う。つなぎ先は host だけ（トークンは出さない）。
 private struct RemoteBanner: View {
     let openRemote: () -> Void
+    /// 大きい文字サイズでは縦に積む（ConnectBanner と同じ）。
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                             : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
         Card {
-            HStack(alignment: .center, spacing: 12) {
+            layout {
                 Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 20))
+                    .etFont(size: 20)
                     .foregroundStyle(.blue)
-                    .frame(width: 26)
+                    .frame(width: stacked ? nil : 26)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Remote Control")
-                        .font(.system(size: 15, weight: .semibold))
+                        .etFont(size: 15, weight: .semibold)
                     if let host = ETRemoteAddress.parse(Preferences.shared.remoteAddress)?.host {
                         Text(host)
-                            .font(.system(size: 12))
+                            .etFont(size: 12)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                Spacer(minLength: 4)
+                if !stacked { Spacer(minLength: 4) }
 
                 // 大きさは ConnectBanner の Help に揃える。
                 Button(action: openRemote) {
                     Text("Settings")
-                        .font(.system(size: 13, weight: .semibold))
+                        .etFont(size: 13, weight: .semibold)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 7)
                 }
@@ -2426,23 +2562,28 @@ private struct RemoteBanner: View {
 /// この画面を触っていないのに切れていることがある。なおさら出す。
 private struct BypassBanner: View {
     let turnOn: () -> Void
+    /// 大きい文字サイズでは縦に積む（ConnectBanner と同じ）。
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                             : AnyLayout(HStackLayout(spacing: 12))
         Card {
-            HStack(spacing: 12) {
+            layout {
                 Image(systemName: "power")
-                    .font(.system(size: 20))
+                    .etFont(size: 20)
                     .foregroundStyle(.secondary)
-                    .frame(width: 26)
+                    .frame(width: stacked ? nil : 26)
 
                 Text("All effects bypassed")
-                    .font(.system(size: 15, weight: .semibold))
+                    .etFont(size: 15, weight: .semibold)
 
-                Spacer(minLength: 4)
+                if !stacked { Spacer(minLength: 4) }
 
                 Button(action: turnOn) {
                     Text("Turn On")
-                        .font(.system(size: 13, weight: .semibold))
+                        .etFont(size: 13, weight: .semibold)
                         // 見た目を膨らませるためではなく、押せる面を 44pt に
                         // 届かせるための余白。字が 13pt だと、style が足す
                         // 上下 7pt だけでは 30pt 前後にしかならない。
@@ -2463,10 +2604,10 @@ private struct EmptyChainRow: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 30))
+                .etFont(size: 30)
                 .foregroundStyle(.secondary)
             Text("No effects")
-                .font(.system(size: 16, weight: .semibold))
+                .etFont(size: 16, weight: .semibold)
             Button("Add Effect", action: add)
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 2)
@@ -2492,6 +2633,10 @@ private struct OutputCorrectionRow: View {
     /// 「プリセット名 · 出力先」（PipelineView.correctionDetail）。
     let detail: String
     let open: () -> Void
+    /// 大きい文字サイズでだけ、名前と要約の折り返しを許す。
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// コントラストを上げる設定のとき、切のときの薄さを弱める。
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Card {
@@ -2510,14 +2655,14 @@ private struct OutputCorrectionRow: View {
                     // （プリセット名）とどの出力先かを小さい行に「 · 」でつなぐ（Section の札と同じ組み立て）。
                     // 線の上に見出しは置かない（PipelineView の呼び出し側の頭を参照）。
                     Text("Output Correction")
-                        .font(.system(size: 16, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .etFont(size: 16, weight: .semibold)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
                     // 絵は付けない。カードのこの行は字だけなので、絵があると高さと字の頭がずれる。
                     Text(detail)
-                        .font(.system(size: 11))
+                        .etFont(size: 11)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
                 // 名前と小さい行を 1 つのボタンとして読ませる。押したときの動きは下の onTapGesture と同じ。
                 .accessibilityElement(children: .combine)
@@ -2530,7 +2675,7 @@ private struct OutputCorrectionRow: View {
                 // 畳んでいる間、灰色の右向きの山形なので、同じ色だと「開くと中身が出る」と読める。
                 // こちらは別の画面へ進む印。
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 15, weight: .semibold))
+                    .etFont(size: 15, weight: .semibold)
                     .foregroundStyle(.tint)
                     .frame(width: 34, height: 34)
                     .accessibilityHidden(true)
@@ -2544,7 +2689,7 @@ private struct OutputCorrectionRow: View {
             .onTapGesture(perform: open)
         }
         // 切のときはバイパスしたエフェクトのカードと同じだけ沈める。
-        .opacity(oc.isOn ? 1 : 0.55)
+        .opacity(oc.isOn ? 1 : (contrast == .increased ? 0.8 : 0.55))
     }
 }
 

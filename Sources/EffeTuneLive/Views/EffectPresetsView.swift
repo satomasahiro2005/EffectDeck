@@ -123,7 +123,7 @@ struct EffectPresetsView: View {
                 // グループ名が空なら見出しを出さない（上流 :273-278 の `if (group.label)`）。
                 if !group.id.isEmpty {
                     Text(group.id)
-                        .font(.system(size: 12, weight: .semibold))
+                        .etFont(size: 12, weight: .semibold)
                         .foregroundStyle(.secondary)
                 }
                 ForEach(group.presets) { preset in
@@ -135,7 +135,7 @@ struct EffectPresetsView: View {
                             Spacer(minLength: 8)
                             if preset.presetId == active {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .etFont(size: 13, weight: .semibold)
                                     .foregroundStyle(.tint)
                             }
                         }

@@ -127,6 +127,7 @@ struct ParameterRow: View {
     @State private var editing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var offset: Int { param.offset + (param.isArray ? slot : 0) }
     private var value: Float { shown ?? (values.indices.contains(offset) ? values[offset] : 0) }
@@ -181,13 +182,14 @@ struct ParameterRow: View {
         switch param.kind {
         case .toggle:
             Toggle(isOn: Binding(get: { value >= 0.5 }, set: { set($0 ? 1 : 0) })) {
-                Text(title).font(.system(size: 14))
+                Text(title).etFont(size: 14)
             }
 
         case .enumeration(let options):
-            HStack {
-                Text(title).font(.system(size: 14))
-                Spacer(minLength: 8)
+            // 文字を大きくした人には、名前とメニューを縦に積む（横に並べると値が切れる）。
+            rowLayout(spacing: nil) {
+                Text(title).etFont(size: 14)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 Picker(title, selection: Binding(
                     get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
                     set: { set(Float($0)) })
@@ -203,18 +205,28 @@ struct ParameterRow: View {
         case .number:
             if choices != nil {
                 // 選ぶ所は下の段。数値欄は置かない（打てるのは選択肢の値だけなので）。
-                Text(title).font(.system(size: 14))
+                Text(title).etFont(size: 14)
             } else {
-                HStack(spacing: 8) {
+                rowLayout(spacing: 8) {
                     Text(title)
-                        .font(.system(size: 14))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 4)
+                        .etFont(size: 14)
+                        // 文字を大きくした人には縮めず、折り返して全部読ませる。
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                     valueField
                 }
             }
         }
+    }
+
+    /// 名前と操作子の並べ方。通常は横一列、アクセシビリティサイズでは縦に積む。
+    private func rowLayout<Content: View>(spacing: CGFloat?,
+                                          @ViewBuilder content: () -> Content) -> some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        return layout { content() }
     }
 
     /// つまみ。数値のパラメータだけが持つ。
@@ -239,15 +251,22 @@ struct ParameterRow: View {
                 // 黙っていると 0-1 や 0-1000 の位置が読まれる）。
                 // 単位は名前の側に付いているので、ここも欄と同じ displayValue。
                 ETLogSlider(value: binding, range: Double(lo)...Double(hi))
+                    .accessibilityLabel(title)
                     .accessibilityValue(displayValue)
             case .zeroAwareLog:
                 ETZeroAwareLogSlider(value: binding, maximum: Double(hi))
+                    .accessibilityLabel(title)
                     .accessibilityValue(displayValue)
             case .linear:
+                // 名前と値を付けないと「45 パーセント」としか読まれない。隣の数値欄と同じ文字列にする。
                 if stride > 0 {
                     Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
+                        .accessibilityLabel(title)
+                        .accessibilityValue(displayValue)
                 } else {
                     Slider(value: binding, in: Double(lo)...Double(hi))
+                        .accessibilityLabel(title)
+                        .accessibilityValue(displayValue)
                 }
             }
         }
@@ -344,9 +363,9 @@ struct ParameterRow: View {
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true, shrinks: false)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: editing ? 1 : 0))
             .submitLabel(.done)
@@ -402,22 +421,37 @@ struct ParameterRow: View {
     /// 名前は上の行が出す（"Balance 3 (%)"）。ここで見出しとして繰り返さない。
     private var bandPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
+            // 端の札の当たり（左右 3pt）が ScrollView の外に出て切られないよう、
+            // 中身の両端に 3pt を足す。外側で同じだけ引いて、見た目の位置は変えない。
             HStack(spacing: 6) {
                 ForEach(0..<param.count, id: \.self) { i in
                     Button {
                         slot = i
                     } label: {
                         Text("\(i + 1)")
-                            .font(.system(size: 12, weight: slot == i ? .bold : .regular))
+                            .etFont(size: 12, weight: slot == i ? .bold : .regular)
                             .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                             .frame(minWidth: 30, minHeight: 26)
                             .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                                         in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                            // 見た目は 30x26 のまま、押せる面だけを 44pt まで広げる。
+                            // 縦は広げた分を ScrollView 側で引く（下）。札の側で引くと、
+                            // ScrollView が 26pt の高さになり、外にはみ出た 9pt には触りが届かない。
+                            // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 3)
+                            .contentShape(.rect)
+                            .padding(.horizontal, -3)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(param.label) \(i + 1)")
+                    .accessibilityAddTraits(slot == i ? .isSelected : [])
                 }
             }
+            .padding(.horizontal, 3)
         }
+        // ScrollView 自身を 44pt の高さにしたまま、並びには 26pt として数える。
+        .padding(.vertical, -9)
+        .padding(.horizontal, -3)
     }
 }

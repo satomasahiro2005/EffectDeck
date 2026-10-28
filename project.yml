@@ -517,6 +517,39 @@ targets:
     dependencies:
       - target: EffeTuneLive
 
+  # ------------------------------------------------------------------
+  # 共有の部品を ImageRenderer で絵にして並べる（文字サイズ・外観・幅ごと）。製品には入らない。
+  # 何も判定せず、絵を添付に残すだけ（Tests/Snapshot/ComponentGallery.swift）。
+  # 本体の型を @testable で読むので、アプリをホストにする（UI テストと違い同じプロセスで走る）。
+  # scheme AccessibilitySnapshot だけが建てる。Logic（単体テスト）には混ぜない。
+  # ------------------------------------------------------------------
+  EffeTuneLiveSnapshotTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/Snapshot
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.snapshottests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/EffectDeck.app/EffectDeck
+        BUNDLE_LOADER: $(TEST_HOST)
+        # **本体のモジュールを読むと、本体の橋渡しヘッダ（ETNames.h・ETJSFXHost.h・effetune/abi.h など）を
+        # この対象の探索パスで引き直す。**本体は headermap と dspSettings で見つけているので、同じ場所を並べる。
+        # 無いと 'effetune/abi.h' file not found で ComponentGallery が建たない。
+        CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+        CLANG_CXX_LIBRARY: "libc++"
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Sources/Shared
+          - $(SRCROOT)/Vendor/effetune/dsp/include
+          - $(SRCROOT)/Vendor/effetune/dsp
+          - $(SRCROOT)/Vendor/effetune/dsp/generated/cpp
+          - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
+          - $(SRCROOT)/Vendor/ysfx/include
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
+    dependencies:
+      - target: EffeTuneLive
+
 schemes:
   # 実機なしで走るもの。Scripts/test.sh が xcodegen から xcodebuild test まで回す
   # （端末は既定で "iPad Pro 13-inch (M5)"。Scripts/lib/sim.sh）。
@@ -528,6 +561,33 @@ schemes:
     test:
       targets:
         - EffeTuneLiveUnitTests
+
+  # アクセシビリティの監査と、画面の絵を作る（CI の macos a11y）。
+  #   xcodebuild test -scheme Accessibility -only-testing:EffeTuneLiveUITests/AccessibilityAudit ...
+  # 拡張を外したシミュレータ用の仕様（project-sim.yml）で建てる。
+  # **部品の絵（Snapshot）は別の scheme。**ホスト付きの束は本体の型を読むので、建てそこなうことがある。
+  # 同じ scheme に入れると、その失敗で監査と画面の絵まで一緒に落ちる。
+  Accessibility:
+    build:
+      targets:
+        EffeTuneLive: all
+        EffeTuneLiveUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - EffeTuneLiveUITests
+
+  # 共有の部品を ImageRenderer で絵にする（CI の macos a11y の 2 本目）。
+  # Debug 構成で建てる。@testable import EffectDeck が要る。
+  AccessibilitySnapshot:
+    build:
+      targets:
+        EffeTuneLive: all
+        EffeTuneLiveSnapshotTests: [test]
+    test:
+      config: Debug
+      targets:
+        - EffeTuneLiveSnapshotTests
 
   EffeTuneLive:
     build:

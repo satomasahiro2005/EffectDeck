@@ -52,7 +52,7 @@ struct AdaptivePredictionView: View {
         VStack(alignment: .leading, spacing: 12) {
             if EffeTuneDSP.isChannelBypassed(node) {
                 Text("Bypassed")
-                    .font(.system(size: 12, weight: .semibold))
+                    .etFont(size: 12, weight: .semibold)
                     .foregroundStyle(.secondary)
             }
             row("gap")
@@ -64,7 +64,7 @@ struct AdaptivePredictionView: View {
                     get: { decayInfinite },
                     set: { setDecay(infinite: $0) })
                 ) {
-                    Text("Infinity").font(.system(size: 14))
+                    Text("Infinity").etFont(size: 14)
                 }
                 .padding(.vertical, 2)
                 .disabled(learningStopped)
@@ -81,7 +81,7 @@ struct AdaptivePredictionView: View {
                 .etLocalAudioOnly()
             if faulted {
                 Text(Self.faultMessage)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }

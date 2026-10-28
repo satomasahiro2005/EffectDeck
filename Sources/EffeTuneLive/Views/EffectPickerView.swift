@@ -31,6 +31,8 @@ struct EffectPickerView: View {
     @StateObject private var presets = PresetStore.shared
 
     @Environment(\.dismiss) private var dismiss
+    /// 大きい文字サイズでだけ、行の中の名前と札・折り返しを縦に積む。
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.openURL) private var openURL
     @StateObject private var dsp = EffeTuneDSP.shared
     @StateObject private var au = ETAUHost.shared
@@ -364,8 +366,7 @@ struct EffectPickerView: View {
                             jump = Jump(name: name, count: jump.count + 1)
                         } label: {
                             Text(Self.stripLabel(name))
-                                .font(.system(size: 13,
-                                              weight: current == name ? .semibold : .regular))
+                                .etFont(size: 13, weight: current == name ? .semibold : .regular)
                                 .foregroundStyle(current == name ? AnyShapeStyle(.white)
                                                                  : AnyShapeStyle(.secondary))
                                 .padding(.horizontal, 13)
@@ -377,6 +378,8 @@ struct EffectPickerView: View {
                                 .contentShape(.capsule)
                         }
                         .buttonStyle(.plain)
+                        // 選んでいる状態を色と太さだけで見せている。読み上げにも伝える。
+                        .accessibilityAddTraits(current == name ? .isSelected : [])
                         .id("chip-" + name)
                     }
                 }
@@ -385,11 +388,11 @@ struct EffectPickerView: View {
             }
             .onChange(of: jump) { _, now in
                 guard !now.name.isEmpty else { return }
-                withAnimation { proxy.scrollTo("chip-" + now.name, anchor: .center) }
+                etWithAnimation { proxy.scrollTo("chip-" + now.name, anchor: .center) }
             }
             .onChange(of: current) { _, now in
                 guard !now.isEmpty else { return }
-                withAnimation { proxy.scrollTo("chip-" + now, anchor: .center) }
+                etWithAnimation { proxy.scrollTo("chip-" + now, anchor: .center) }
             }
         }
     }
@@ -446,7 +449,7 @@ struct EffectPickerView: View {
             .listStyle(.plain)
             .onChange(of: jump) { _, now in
                 guard !now.name.isEmpty else { return }
-                withAnimation { proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top) }
+                etWithAnimation { proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top) }
             }
         }
     }
@@ -596,7 +599,7 @@ struct EffectPickerView: View {
                         jumping = true
                         // 払った直後の慣性中はscrollToが効かない。止めてから飛ぶ。
                         brake.jump {
-                            withAnimation {
+                            etWithAnimation {
                                 proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top)
                             }
                         }
@@ -689,13 +692,13 @@ struct EffectPickerView: View {
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     // 折り返さない（jsfxPickButtonと同じ）。
-                    Text(entry.name).font(.system(size: 15)).foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    Text(entry.name).etFont(size: 15).foregroundStyle(.primary)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
                     Text(pluginDetail(format: "AUv3", author: entry.manufacturer))
-                        .font(.system(size: 12))
+                        .etFont(size: 12)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -706,7 +709,7 @@ struct EffectPickerView: View {
             return NSItemProvider(object: ("au:" + entry.id) as NSString)
         } preview: {
             Text(entry.name)
-                .font(.system(size: 14, weight: .medium))
+                .etFont(size: 14, weight: .medium)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)
@@ -739,13 +742,13 @@ struct EffectPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // 折り返さない。幅が足りないときは縮める（EffectCardViewの名前と同じ）。
                     // 右の…に44pt取られるので、長い名前が2行に折れて行の高さが崩れていた。
-                    Text(entry.name).font(.system(size: 15)).foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    Text(entry.name).etFont(size: 15).foregroundStyle(.primary)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
                     Text(pluginDetail(format: "JSFX", author: entry.author))
-                        .font(.system(size: 12))
+                        .etFont(size: 12)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -756,7 +759,7 @@ struct EffectPickerView: View {
             return NSItemProvider(object: ("plugin-jsfx:" + entry.id) as NSString)
         } preview: {
             Text(entry.name)
-                .font(.system(size: 14, weight: .medium))
+                .etFont(size: 14, weight: .medium)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)
@@ -827,7 +830,7 @@ struct EffectPickerView: View {
             }
             .onChange(of: jump) { _, now in
                 guard !now.name.isEmpty else { return }
-                withAnimation { proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top) }
+                etWithAnimation { proxy.scrollTo(Self.jumpTarget(now.name), anchor: .top) }
             }
         }
     }
@@ -978,8 +981,7 @@ struct EffectPickerView: View {
                         jump = Jump(name: chip.key, count: jump.count + 1)
                     } label: {
                         Text(chip.label)
-                            .font(.system(size: 13,
-                                          weight: current == chip.key ? .semibold : .regular))
+                            .etFont(size: 13, weight: current == chip.key ? .semibold : .regular)
                             .foregroundStyle(current == chip.key ? AnyShapeStyle(.white)
                                                                  : AnyShapeStyle(.secondary))
                             .padding(.horizontal, 13)
@@ -991,6 +993,7 @@ struct EffectPickerView: View {
                             .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(current == chip.key ? .isSelected : [])
                 }
             }
             .padding(.horizontal, 14)
@@ -1047,6 +1050,14 @@ struct EffectPickerView: View {
         ETUserPresetName.folders(presets.names)
     }
 
+    /// 名前と、その横の小さい札。通常は 1 行に横並び。文字サイズをアクセシビリティサイズまで上げたときだけ縦に積む。
+    private func nameAndChip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 6))
+        return layout { content() }
+    }
+
     /// プリセット 1 件の行。押すと入り、つまんで鎖へ落とすこともできる。
     /// `kind` は検索のときだけ渡す（User Preset / System Preset）。効果と混ざって並ぶので、
     /// 効果の行のジャンルの札（row の showCategory）と同じ札で、何の行かを示す。
@@ -1056,13 +1067,14 @@ struct EffectPickerView: View {
             searching = false
             Task { @MainActor in onPickPreset(name, load()) }
         } label: {
-            HStack(spacing: 6) {
+            // 大きい文字サイズでは、札を名前の下へ回す（名前が札に押されて削れるため）。
+            nameAndChip {
                 Text(name)
-                    .font(.system(size: 15))
+                    .etFont(size: 15)
                     .foregroundStyle(.primary)
                 if let kind {
                     Text(kind)
-                        .font(.system(size: 10))
+                        .etFont(size: 10)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1201,13 +1213,13 @@ struct EffectPickerView: View {
             Task { @MainActor in onPick(effect) }
         } label: {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                nameAndChip {
                     Text(effect.name)
-                        .font(.system(size: 15))
+                        .etFont(size: 15)
                         .foregroundStyle(.primary)
                     if showCategory {
                         Text(effect.category.categoryLabel)
-                            .font(.system(size: 10))
+                            .etFont(size: 10)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -1216,7 +1228,7 @@ struct EffectPickerView: View {
                 }
                 if !effect.about.isEmpty {
                     Text(effect.about)
-                        .font(.system(size: 12))
+                        .etFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1241,7 +1253,7 @@ struct EffectPickerView: View {
             return NSItemProvider(object: effect.type as NSString)
         } preview: {
             Text(effect.name)
-                .font(.system(size: 14, weight: .medium))
+                .etFont(size: 14, weight: .medium)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.thickMaterial, in: .capsule)

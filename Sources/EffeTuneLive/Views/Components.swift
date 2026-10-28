@@ -30,6 +30,183 @@ enum ETMetrics {
     /// 引き算の結果 0 になり、minimum を付けても実機で角が消えていた。
     /// 見た目が先なので数値にしてある。変えるのはこの 1 行。
     static let innerRadius: CGFloat = 8
+
+    /// 文字サイズに追従させた数値欄の高さ（UIKit 側で測るとき用）。
+    /// SwiftUI の中では ETValueFrame の @ScaledMetric を使い、これは ETTapOutside のように
+    /// View の外から当たりを測る所だけが読む。既定の文字サイズでは controlHeight と同じ。
+    static var scaledControlHeight: CGFloat {
+        UIFontMetrics(forTextStyle: .footnote).scaledValue(for: controlHeight)
+    }
+}
+
+// MARK: - アクセシビリティの共通部品
+//
+// 他のビューはここだけを使う。
+//   .etFont(size: 14)                      文字サイズ設定に追従する .font(.system(size:))
+//   .etValueFrame() / .etValueFrame(isField: true)   数値欄の枠（68x30 を文字サイズに追従させる）
+//   etWithAnimation(.snappy) { ... }       視差効果を減らすとき動かさない withAnimation
+//   ETMotion.animation(.snappy)            同じ判定で Animation? だけ欲しいとき
+//   .etAnimation(.snappy, value: x)        同じ判定の .animation(_:value:)
+//   ETAssistiveState                       VoiceOver / スイッチコントロールが動いているか（DynamicProperty）
+
+/// 文字サイズ設定に追従する固定ポイントのフォント。
+///
+/// **既定の文字サイズ（Large）では .font(.system(size:)) と同じ大きさ。**
+/// @ScaledMetric は relativeTo の文字スタイルの伸び方で size を拡大する。
+/// 伸び方を揃えるため、size から近い文字スタイルを選ぶ（relativeTo を渡せば上書き）。
+private struct ETFontModifier: ViewModifier {
+    @ScaledMetric private var scaledSize: CGFloat
+    private let weight: Font.Weight
+    private let design: Font.Design
+
+    init(size: CGFloat, relativeTo style: Font.TextStyle,
+         weight: Font.Weight, design: Font.Design) {
+        _scaledSize = ScaledMetric(wrappedValue: size, relativeTo: style)
+        self.weight = weight
+        self.design = design
+    }
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: scaledSize, weight: weight, design: design))
+    }
+}
+
+enum ETFontStyle {
+    /// 既定サイズが近い文字スタイル。16 は callout、15 は subheadline、14 と 13 は footnote、
+    /// 12 は caption、11 以下は caption2。
+    static func nearest(to size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case 32...:   return .largeTitle
+        case 26...:   return .title
+        case 21...:   return .title2
+        case 19...:   return .title3
+        case 17...:   return .body
+        case 16...:   return .callout
+        case 15...:   return .subheadline
+        case 13...:   return .footnote
+        case 12...:   return .caption
+        default:      return .caption2
+        }
+    }
+}
+
+extension View {
+    /// `.font(.system(size:weight:design:))` の、文字サイズ設定に追従する版。
+    /// 既定のサイズでは見た目が変わらない。ツールバーのように伸ばせない所には使わない。
+    func etFont(size: CGFloat,
+                relativeTo style: Font.TextStyle? = nil,
+                weight: Font.Weight = .regular,
+                design: Font.Design = .default) -> some View {
+        modifier(ETFontModifier(size: size,
+                                relativeTo: style ?? ETFontStyle.nearest(to: size),
+                                weight: weight, design: design))
+    }
+}
+
+/// 数値欄の枠。68x30 を文字サイズに追従させる。
+///
+/// 既定の文字サイズ（Large）では今までと同じ 68x30 の固定の枠。
+/// 他の文字サイズでは、字と同じ比率で枠も伸び縮みする（字だけ変わって枠が合わなくなるのを防ぐ）。
+/// 組み方が変わるのはアクセシビリティサイズだけで、そこでは
+/// 縮めずに（minimumScaleFactor は外す）枠のほうを広げる。
+/// - `isField: false`（ValueBox）: 字の長さに合わせて最小の枠より広がる。
+/// - `isField: true`（TextField）: TextField は余白を取れるだけ取るので幅は決め打ち。
+///   アクセシビリティサイズでは 9 字の "-12.50 dB" が入るよう 1.3 倍にする。
+private struct ETValueFrame: ViewModifier {
+    @ScaledMetric(relativeTo: .footnote) private var width = ETMetrics.valueWidth
+    @ScaledMetric(relativeTo: .footnote) private var height = ETMetrics.controlHeight
+    @Environment(\.dynamicTypeSize) private var typeSize
+    let isField: Bool
+    let shrinks: Bool
+
+    func body(content: Content) -> some View {
+        if !typeSize.isAccessibilitySize {
+            content
+                .minimumScaleFactor(shrinks ? 0.7 : 1)
+                .frame(width: width, height: height)
+        } else if isField {
+            content
+                .frame(width: width * 1.3)
+                .frame(minHeight: height)
+        } else {
+            content.frame(minWidth: width, minHeight: height)
+        }
+    }
+}
+
+extension View {
+    /// 数値欄の枠と、アクセシビリティサイズより下での縮小の下限。ValueBox・ETValueField・ParameterRow の欄が使う。
+    /// `shrinks: false` は通常サイズでも字を縮めない（今まで縮めていなかった欄用）。
+    func etValueFrame(isField: Bool = false, shrinks: Bool = true) -> some View {
+        modifier(ETValueFrame(isField: isField, shrinks: shrinks))
+    }
+}
+
+/// 視差効果を減らす設定のときは動かさない。
+///
+/// ドラッグへの追従はそのままでよい（指に付いてくる動きは酔いの原因にならない）。
+/// 動かさないのは、カードの開閉・並べ替えの着地・チップの切り替えのような、
+/// 押したあとに画面が勝手に動く所だけ。
+enum ETMotion {
+    @MainActor
+    static func animation(_ animation: Animation?) -> Animation? {
+        UIAccessibility.isReduceMotionEnabled ? nil : animation
+    }
+}
+
+/// `withAnimation` の、視差効果を減らす設定に従う版。
+@MainActor
+func etWithAnimation<Result>(_ animation: Animation? = .default,
+                             _ body: () throws -> Result) rethrows -> Result {
+    try withAnimation(ETMotion.animation(animation), body)
+}
+
+private struct ETAnimationModifier<V: Equatable>: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let animation: Animation?
+    let value: V
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : animation, value: value)
+    }
+}
+
+extension View {
+    /// `.animation(_:value:)` の、視差効果を減らす設定に従う版。
+    func etAnimation<V: Equatable>(_ animation: Animation?, value: V) -> some View {
+        modifier(ETAnimationModifier(animation: animation, value: value))
+    }
+}
+
+/// VoiceOver かスイッチコントロールが動いているか。
+///
+/// View の中では `private var assistive = ETAssistiveState()` として持つ
+/// （環境値なので、設定が変わると View が作り直される）。
+/// UIViewRepresentable は private な保持を足すと memberwise init が private になり
+/// 呼び出し側が壊れるので、`reorderLongPress(in: context.environment)` を使う
+/// （makeUIView / updateUIView の context は常に最新の環境値を持つ）。
+/// 並べ替えの長押しは通常 0.25 秒、動いているときだけシステム既定の 0.5 秒にする。
+struct ETAssistiveState: DynamicProperty {
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilitySwitchControlEnabled) private var switchControl
+
+    var isRunning: Bool { voiceOver || switchControl }
+
+    /// 並べ替えを始める長押しの秒数。
+    var reorderLongPress: Double { isRunning ? 0.5 : 0.25 }
+
+    /// 環境値を直接渡すとき用（UIViewRepresentable の context.environment）。
+    static func reorderLongPress(in environment: EnvironmentValues) -> Double {
+        environment.accessibilityVoiceOverEnabled || environment.accessibilitySwitchControlEnabled ? 0.5 : 0.25
+    }
+}
+
+enum ETAssistive {
+    /// View の外から見るとき用（環境値が使えない所）。
+    @MainActor
+    static var isRunning: Bool {
+        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
+    }
 }
 
 /// エフェクトの入切。EffeTune は各エフェクトの頭に ON のバッジを置いている。
@@ -38,7 +215,7 @@ struct PowerBadge: View {
 
     var body: some View {
         Text("ON")
-            .font(.system(size: 11, weight: .heavy))
+            .etFont(size: 11, weight: .heavy)
             .tracking(0.5)
             .foregroundStyle(isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
             .frame(width: 42, height: 26)
@@ -53,10 +230,9 @@ struct ValueBox: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame()
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 }
@@ -92,11 +268,10 @@ struct ETValueField: View {
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
                 .stroke(.tint, lineWidth: editing ? 1 : 0))
@@ -187,13 +362,14 @@ final class ETTapOutside: NSObject, UIGestureRecognizerDelegate {
     private static func insideEditingBox(_ touch: UITouch) -> Bool {
         guard let window = touch.window else { return false }
         let point = touch.location(in: window)
-        let reach = ETMetrics.controlHeight / 2
+        let height = ETMetrics.scaledControlHeight
+        let reach = height / 2
         for dy in [reach, -reach] {
             var hit = window.hitTest(CGPoint(x: point.x, y: point.y + dy), with: nil)
             while let current = hit, !(current is UITextInput) { hit = current.superview }
             guard let field = hit, field.isFirstResponder else { continue }
             let frame = field.convert(field.bounds, to: window)
-            let band = max(0, (ETMetrics.controlHeight - frame.height) / 2)
+            let band = max(0, (height - frame.height) / 2)
             if frame.insetBy(dx: 0, dy: -band).contains(point) { return true }
         }
         return false
@@ -616,13 +792,20 @@ struct PowerToggleStyle: ToggleStyle {
             configuration.isOn.toggle()
         } label: {
             Image(systemName: configuration.isOn ? "power.circle.fill" : "power.circle")
-                .font(.system(size: 20, weight: .medium))
+                .etFont(size: 20, weight: .medium)
                 .foregroundStyle(configuration.isOn ? AnyShapeStyle(.tint)
                                                     : AnyShapeStyle(.secondary))
-                .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
+                .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        // Button で描くと、支援技術に「入切できる」と「いま入／切」が伝わるかが OS 任せになる。
+        // 読み上げの木だけ本物の Toggle にする（見た目は上の Button のまま）。
+        // .automatic を明示するのは、環境の .power を継いで makeBody が入れ子で呼ばれないため。
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.automatic)
+        }
     }
 }
 
@@ -650,6 +833,8 @@ struct MasterPowerToggleStyle: ToggleStyle {
         Button {
             configuration.isOn.toggle()
         } label: {
+            // この 2 つの字（11・12pt）は etFont にしない。ツールバーの枠は伸ばせず、
+            // 伸ばすと隣のボタンを押しのける。代わりに下の Large Content Viewer を出す。
             HStack(spacing: 4) {
                 // 絵で入切を言う。切っているときは斜線入り。
                 Image(systemName: configuration.isOn ? "power" : "power.dotted")
@@ -678,6 +863,15 @@ struct MasterPowerToggleStyle: ToggleStyle {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.automatic)
+        }
+        // ツールバーは伸ばせないので字は固定のまま、長押しで大きな表示を出す
+        // （文字サイズをアクセシビリティサイズにしているときだけ出る）。
+        .accessibilityShowsLargeContentViewer {
+            Label("Effects", systemImage: configuration.isOn ? "power" : "power.dotted")
+        }
     }
 }
 

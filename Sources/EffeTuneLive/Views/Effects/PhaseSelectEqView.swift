@@ -380,7 +380,7 @@ struct PhaseSelectEqView: View {
                 DisclosureGroup("Band Boundaries", isExpanded: $showsBoundaries) {
                     boundaryRows
                 }
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
             }
         }
         .onChange(of: frameSequence) { _, _ in appendHistory() }
@@ -925,17 +925,25 @@ struct PhaseSelectEqView: View {
             band = slot
         } label: {
             Text("\(slot + 1)")
-                .font(.system(size: 13, weight: picked ? .bold : .regular))
+                .etFont(size: 13, weight: picked ? .bold : .regular)
                 .foregroundStyle(picked ? AnyShapeStyle(.white)
                                         : (on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(on ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
                 .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Band \(slot + 1)")
+        // 切ってあるバンドは不透明度だけで表しているので、VoiceOver には値として伝える。
+        .accessibilityValue(on ? "" : "Off")
         .accessibilityAddTraits(picked ? [.isSelected] : [])
     }
 
@@ -946,7 +954,7 @@ struct PhaseSelectEqView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("BAND \(band + 1)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
 
@@ -965,7 +973,7 @@ struct PhaseSelectEqView: View {
                 set("gn", band, $0)
             }
             Toggle(isOn: Binding(get: { r.solo }, set: { set("so", band, $0 ? 1 : 0) })) {
-                Text("Solo").font(.system(size: 14))
+                Text("Solo").etFont(size: 14)
             }
         }
     }
@@ -994,7 +1002,7 @@ struct PhaseSelectEqView: View {
 
     private func groupHeading(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 9, weight: .semibold))
+            .etFont(size: 9, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
     }
@@ -1102,9 +1110,8 @@ private struct ETPhaseSliderRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(unit.isEmpty ? label : "\(label) (\(unit))")
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 13)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 // 打ち込みも受ける。**下書きに text を渡さない**——"1.50 k" のような
                 // 字は Double(_:) が nil を返して黙って捨てられる。挟むのは range で。
@@ -1115,6 +1122,10 @@ private struct ETPhaseSliderRow: View {
             }
             Slider(value: Binding(get: { normalized }, set: { onChange(denormalized($0)) }),
                    in: 0...1)
+                // 0...1 に正規化した位置のままだと「50%」としか読まれない。名前と実値を渡す。
+                // 画面の題と同じく単位つきで読ませる（値には単位が付かない）。
+                .accessibilityLabel(unit.isEmpty ? label : "\(label) (\(unit))")
+                .accessibilityValue(text)
         }
     }
 

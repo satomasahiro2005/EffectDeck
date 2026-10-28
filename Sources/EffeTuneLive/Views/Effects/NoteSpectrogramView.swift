@@ -297,7 +297,7 @@ struct NoteSpectrogramView: View {
                         }
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 14, weight: .semibold))
+                            .etFont(size: 14, weight: .semibold)
                     }
                     .buttonStyle(.glass(.regular.interactive()))
                     .buttonBorderShape(.circle)
@@ -357,11 +357,11 @@ struct NoteSpectrogramView: View {
                             text: { $0.label },
                             selection: $display.layout)
             Toggle(isOn: $display.volume) {
-                Text("Volume").font(.system(size: 14))
+                Text("Volume").etFont(size: 14)
             }
             .padding(.vertical, 2)
             Toggle(isOn: $display.onsets) {
-                Text("Onsets").font(.system(size: 14))
+                Text("Onsets").etFont(size: 14)
             }
             .padding(.vertical, 2)
             timeSpanRow
@@ -373,9 +373,8 @@ struct NoteSpectrogramView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("Time Span (s)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ETValueField(text: "\(Int(display.timeSpan.rounded())) s",
                              label: "Time Span",
@@ -441,7 +440,7 @@ private struct ETNoteChoiceRow<Option: Hashable & Identifiable>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 14))
+                .etFont(size: 14)
             HStack(spacing: 6) {
                 ForEach(options) { option in
                     let isSelected = selection == option
@@ -449,7 +448,7 @@ private struct ETNoteChoiceRow<Option: Hashable & Identifiable>: View {
                         selection = option
                     } label: {
                         Text(text(option))
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)
@@ -496,9 +495,8 @@ struct ETNoteRangeRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(param.label)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ValueBox(text: ETNoteBand.name(midi))
             }
@@ -577,8 +575,13 @@ struct ETNoteRollFrame {
 /// graph-base-soft（paper の #fafafa に文字色 #1a1a1a を 4% 混ぜた 241）から。
 private struct ETNotePalette {
     let dark: Bool
+    /// 「コントラストを上げる」が入っているとき。見た目を変えるのはこのときだけ。
+    let increasedContrast: Bool
 
-    init(_ scheme: ColorScheme) { dark = scheme == .dark }
+    init(_ scheme: ColorScheme, contrast: ColorSchemeContrast = .standard) {
+        dark = scheme == .dark
+        increasedContrast = contrast == .increased
+    }
 
     var background: Color { dark ? .black : .white }
     /// 黒鍵の高さの帯。暗い外観は地 + 8（MULTI_F0_BLACK_KEY_BACKGROUND）。
@@ -589,6 +592,10 @@ private struct ETNotePalette {
     static let line = Color(white: 0x66 / 255)
     /// 鍵の上の字。上流は #111 固定。
     static let keyText = Color(white: 0x11 / 255)
+    /// 凡例の字。上流は graph-label（#666）固定だが、黒い地では約 3.7:1 で読みにくい。
+    /// 見た目を変えないため、暗い外観で「コントラストを上げる」のときだけ明るくする
+    /// （明るい外観の白地では #666 のまま 5.7:1 ある）。
+    var legendText: Color { dark && increasedContrast ? Color(white: 0.62) : Self.line }
 
     /// 鍵の地の値（0〜255）から音の色へ confidence で寄せた、不透明な色。上流 :1875 の式。
     func lit(from base: Double, to color: (r: Double, g: Double, b: Double), by value: Double) -> Color {
@@ -616,6 +623,7 @@ private struct NoteSpectrogramGraph: View {
     @Environment(\.displayScale) private var displayScale
     /// 地と鍵の色を決める（ETNotePalette）。
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     /// 全画面を閉じたとき、カードの図に行数の測り直しを頼む鍵。
     /// 帯は全画面と共有なので、全画面で増えた行数がカードに残る（fit は大きさが変わらないと呼ばれない）。
     var refitToken = 0
@@ -668,7 +676,7 @@ private struct NoteSpectrogramGraph: View {
                 let rollWidth = frame.width - gutter
                 guard rollWidth > 0, frame.height > 0 else { return }
 
-                let palette = ETNotePalette(colorScheme)
+                let palette = ETNotePalette(colorScheme, contrast: contrast)
                 context.drawLayer { layer in
                     frame.apply(&layer)
                     // 不透明な地を最初に敷く（上流 :1753）。鍵盤や音の裏に、カードの材質や
@@ -970,6 +978,7 @@ private struct NoteSpectrogramGraph: View {
 
         var confidence: Double?
         var level: Double?
+        var timbre: String?
         let columnWidth = rollWidth / CGFloat(max(slots, 1))
         if columnWidth > 0, rollWidth > 0 {
             let shown = min(band.count, slots)
@@ -979,8 +988,9 @@ private struct NoteSpectrogramGraph: View {
                 confidence = Double(cell.confidence)
                 level = cell.confidence > 0 ? Double(cell.level) : nil
             }
+            timbre = band.timbreName(displayColumn: slot, midi: midi, slots: slots)
         }
-        return ETNoteProbe(midi: midi, confidence: confidence, level: level)
+        return ETNoteProbe(midi: midi, confidence: confidence, level: level, timbre: timbre)
     }
 
     private var readout: [ETReadoutItem] {
@@ -991,6 +1001,10 @@ private struct NoteSpectrogramGraph: View {
         }
         if let level = probe.level, level > -200 {
             items.append(ETReadoutItem("LEVEL", ETFormat.db(level)))
+        }
+        // 楽器の色は似た色が多く、凡例と見比べないと読めない。名前でも出して、色に頼らず確かめられるようにする。
+        if let timbre = probe.timbre {
+            items.append(ETReadoutItem("CLASS", timbre))
         }
         return items
     }
@@ -1068,7 +1082,7 @@ private struct NoteSpectrogramGraph: View {
         var x = rect.minX + padding, y = rect.minY + padding
         for label in labels {
             let index = ETNoteTimbre.classes.firstIndex(of: label)
-            let text = context.resolve(Text(label).font(.system(size: 12)).foregroundStyle(ETNotePalette.line))
+            let text = context.resolve(Text(label).font(.system(size: 12)).foregroundStyle(palette.legendText))
             let width = text.measure(in: CGSize(width: 1000, height: line)).width + (index == nil ? 0 : swatch)
                 + 2 * padding
             if x > rect.minX + padding && x + width > rect.maxX - padding { x = rect.minX + padding; y += line }
@@ -1094,6 +1108,8 @@ struct ETNoteProbe {
     let midi: Int
     let confidence: Double?
     let level: Double?
+    /// 触った音の楽器の名前。判定がまだ無い音・音色を見ない設定では nil。
+    let timbre: String?
 }
 
 // MARK: - 横に流す帯
@@ -1337,6 +1353,26 @@ final class ETNoteBand: ObservableObject {
         timbreNotes.removeAll()
         for slot in timbreByPitch.indices { timbreByPitch[slot].removeAll() }
         dirtyRanges.removeAll()
+    }
+
+    /// 触った所の楽器の名前（確からしさがいちばん高い分類）。3 分類のときは Bass・Vocal・Other の 3 つ。
+    /// 色でしか楽器を見分けられない人のための読み値。判定がまだ届いていない音は nil。
+    func timbreName(displayColumn: Int, midi: Int, slots: Int) -> String? {
+        let shown = min(count, slots)
+        guard display.timbreEnabled, displayColumn >= 0, displayColumn < shown else { return nil }
+        let start = (head - shown + Self.columns) % Self.columns
+        let column = (start + displayColumn) % Self.columns
+        guard let p = timbre(column: column, midi: midi)?.probabilities, p.count >= 9 else { return nil }
+        // 3 分類の色と強調は Other を 1〜7 番の合計として扱う。読み値も合計で比べないと、
+        // Other の色で描いた音を Bass と読み上げて食い違う。
+        if display.color == .instrument3 {
+            let other = p[1..<8].reduce(0, +)
+            if other > p[0] && other > p[8] { return "Other" }
+            return p[8] > p[0] ? ETNoteTimbre.classes[8] : ETNoteTimbre.classes[0]
+        }
+        var best = 0
+        for category in 1..<9 where p[category] > p[best] { best = category }
+        return ETNoteTimbre.classes[best]
     }
 
     /// その列でその鍵に鳴っていた音（上流 _timbreForColumn）。
@@ -1808,7 +1844,7 @@ private struct NoteSpectrogramFullScreen: View {
             }
             Button { isPresented = false } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
+                    .etFont(size: 15, weight: .bold)
             }
             .buttonStyle(.glass(.regular.interactive()))
             .buttonBorderShape(.circle)

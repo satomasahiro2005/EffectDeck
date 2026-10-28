@@ -111,18 +111,21 @@ struct MatrixView: View {
         let key = Self.key(input, output)
         let phase = cells[key]
         return HStack(spacing: 0) {
-            pad("ON", on: phase != nil) { toggleActive(key) }
-            pad("Ø", on: phase == true, heavy: true) { togglePhase(key) }
+            pad("ON", name: "Input \(input + 1) to output \(output + 1)", on: phase != nil) { toggleActive(key) }
+            pad("Ø", name: "Invert phase, input \(input + 1) to output \(output + 1)",
+                on: phase == true, heavy: true) { togglePhase(key) }
         }
         .frame(width: Self.cellWidth, height: ETMetrics.hitTarget)
         // 升は押せるままにしておく。上流も薄くするだけで外さない（matrix.js:500-519）。
         .opacity(dim(input) || dim(output) ? 0.5 : 1)
     }
 
-    private func pad(_ label: String, on: Bool, heavy: Bool = false,
+    private func pad(_ label: String, name: String, on: Bool, heavy: Bool = false,
                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
+                // 升の幅は固定で広げられないので、文字サイズ設定には追従させず、
+                // 大きな文字は長押しの拡大表示で読ませる。
                 .font(.system(size: 11, weight: heavy ? .heavy : .bold))
                 .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 .frame(width: 36, height: 30)
@@ -132,17 +135,22 @@ struct MatrixView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityShowsLargeContentViewer()
+        // 「ON」「Ø」だけでは、どの入力から出力への升か分からない。
+        .accessibilityLabel(name)
+        .accessibilityValue(on ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
     }
 
     private func channelLabel(_ channel: Int) -> some View {
         Text("Ch \(channel + 1)")
-            .font(.system(size: 11))
+            .etFont(size: 11)
             .foregroundStyle(.secondary)
     }
 
     private func caption(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .etFont(size: 10, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
     }

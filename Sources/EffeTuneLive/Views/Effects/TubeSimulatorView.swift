@@ -300,9 +300,8 @@ private struct ETTubeChoiceRow: View {
         VStack(alignment: .leading, spacing: 6) {
             if let title {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
             }
             HStack(spacing: 6) {
                 ForEach(Array(labels.enumerated()), id: \.offset) { i, label in
@@ -311,7 +310,7 @@ private struct ETTubeChoiceRow: View {
                         onSelect(i)
                     } label: {
                         Text(label)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)
@@ -366,7 +365,7 @@ struct TubeSimulatorView: View {
             // 上流も操作が先で、図と数値は後ろ（js:7506-7512 のコメント）。
             if panels.isEmpty {
                 Text("No tube stage is active.")
-                    .font(.system(size: 12))
+                    .etFont(size: 12)
                     .foregroundStyle(.secondary)
             } else if panels.count > 1 {
                 panelPicker
@@ -798,21 +797,21 @@ private struct TubeSimulatorHUD: View {
             ForEach(readings.filter { localAudio || !$0.measured }) { reading in
                 HStack(spacing: 6) {
                     Text(reading.label)
-                        .font(.system(size: 9, weight: .semibold))
+                        .etFont(size: 9, weight: .semibold)
                         .tracking(0.4)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     Text(reading.value)
-                        .font(.system(size: 11, design: .monospaced))
+                        .etFont(size: 11, design: .monospaced)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
             }
             if localAudio {
                 Text(safetyLine)
-                    .font(.system(size: 10))
+                    .etFont(size: 10)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -933,9 +932,8 @@ private struct TubeSimulatorSafetyTrimRow: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("Output Safety Trim (dB)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ETValueField(text: String(format: "%.1f dB", shown),
                              label: "Output Safety Trim (dB)",
@@ -954,6 +952,8 @@ private struct TubeSimulatorSafetyTrimRow: View {
                            held = false
                        }
                    })
+                .accessibilityLabel("Output Safety Trim (dB)")
+                .accessibilityValue(String(format: "%.1f dB", shown))
         }
         .padding(.vertical, 2)
         // 報告された減衰が変わったら、二重取り込みの止めを外す（js:6579-6583）。

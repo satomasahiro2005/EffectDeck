@@ -88,6 +88,9 @@ struct RemoteStatusSlot: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(mirror.statusText)
+            // ナビバーに置いた固定の 13pt なので大きくできない。文字サイズをアクセシビリティサイズにした人が、
+            // 長押しで拡大して読めるようにする（他の人の見た目は変わらない）。
+            .accessibilityShowsLargeContentViewer()
         } else {
             LiveStatusStrip(io: io)
         }

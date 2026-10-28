@@ -131,7 +131,7 @@ struct SpectrogramView: View {
                         }
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 14, weight: .semibold))
+                            .etFont(size: 14, weight: .semibold)
                     }
                     .buttonStyle(.glass(.regular.interactive()))
                     .buttonBorderShape(.circle)
@@ -174,7 +174,7 @@ struct SpectrogramView: View {
     private var colorPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Color")
-                .font(.system(size: 14))
+                .etFont(size: 14)
             Picker("Color", selection: $color) {
                 ForEach(ETSpectrogramColor.allCases) { option in
                     Text(option.label).tag(option)
@@ -190,7 +190,7 @@ struct SpectrogramView: View {
     private var scalePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Frequency Scale")
-                .font(.system(size: 14))
+                .etFont(size: 14)
             HStack(spacing: 6) {
                 ForEach(ETSpectrogramScale.allCases) { option in
                     let isSelected = effectiveScale == option
@@ -201,7 +201,7 @@ struct SpectrogramView: View {
                         }
                     } label: {
                         Text(option.label)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)
@@ -816,7 +816,7 @@ private struct SpectrogramFullScreen: View {
             }
             Button { isPresented = false } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
+                    .etFont(size: 15, weight: .bold)
             }
             .buttonStyle(.glass(.regular.interactive()))
             .buttonBorderShape(.circle)

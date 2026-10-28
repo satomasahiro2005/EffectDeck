@@ -288,20 +288,20 @@ struct GroupDelayEQView: View {
     private var status: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(designer.stage.message)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
                 .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                 .fixedSize(horizontal: false, vertical: true)
 
             if let warning = designer.warning {
                 Text(warning)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if let details = details {
                 Text(details)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -335,7 +335,7 @@ struct GroupDelayEQView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("BANDS")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -358,7 +358,7 @@ struct GroupDelayEQView: View {
                 .padding(.vertical, 1)
             }
             .onChange(of: selected) { _, new in
-                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
+                etWithAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
             }
         }
     }
@@ -371,9 +371,9 @@ struct GroupDelayEQView: View {
         } label: {
             VStack(spacing: 1) {
                 Text(GroupDelayEQBands.shortName(band))
-                    .font(.system(size: 12, weight: isPicked ? .bold : .regular))
+                    .etFont(size: 12, weight: isPicked ? .bold : .regular)
                 Text(String(format: "%+.1f", delay(band)))
-                    .font(.system(size: 10, design: .monospaced))
+                    .etFont(size: 10, design: .monospaced)
                     .opacity(isFlat ? 0.45 : 1)
             }
             .foregroundStyle(isPicked ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
@@ -385,6 +385,7 @@ struct GroupDelayEQView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(GroupDelayEQBands.fullName(band))
         .accessibilityValue(GroupDelayEQBands.delayText(delay(band)))
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいる帯
@@ -393,7 +394,7 @@ struct GroupDelayEQView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("BAND \(selected + 1) · \(GroupDelayEQBands.fullName(selected))")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -402,7 +403,7 @@ struct GroupDelayEQView: View {
 
             HStack(spacing: 8) {
                 Text("Delay")
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 ETValueField(text: GroupDelayEQBands.delayText(delay(selected)),
@@ -411,7 +412,7 @@ struct GroupDelayEQView: View {
                     designer.setDelay(min(max(typed, -limit), limit), band: selected)
                 }
                 Text(GroupDelayEQBands.angleText(band: selected, milliseconds: delay(selected)))
-                    .font(.system(size: 11, design: .monospaced))
+                    .etFont(size: 11, design: .monospaced)
                     .foregroundStyle(.secondary)
             }
 
@@ -458,7 +459,7 @@ struct GroupDelayEQView: View {
                            options: [(name: String, selected: Bool)],
                            action: @escaping (Int) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 14))
+            Text(title).etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -467,7 +468,7 @@ struct GroupDelayEQView: View {
                         action(position)
                     } label: {
                         Text(option.name)
-                            .font(.system(size: 13, weight: option.selected ? .bold : .regular))
+                            .etFont(size: 13, weight: option.selected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(option.selected ? AnyShapeStyle(.white)
@@ -492,7 +493,7 @@ struct GroupDelayEQView: View {
     private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12))
+                .etFont(size: 12)
                 .foregroundStyle(.tint)
                 .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
                 .contentShape(Rectangle())

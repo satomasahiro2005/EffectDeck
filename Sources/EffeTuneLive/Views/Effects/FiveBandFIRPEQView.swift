@@ -204,12 +204,12 @@ struct FiveBandFIRPEQView: View {
     private var pendingNotice: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("No filter loaded")
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
             // 上の文は BandFIRPEQDesignError.instanceMissing と同じ言い方にしてある。
             Text(node.instance == 0
                  ? "The equalizer is not running."
                  : "Preparing the FIR filter…")
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -349,9 +349,9 @@ private struct FiveBandFIRPEQPanel: View {
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(loaded ?? "No filter loaded")
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
             Text(designer.status.message)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(designer.status.isFailure
                                  ? AnyShapeStyle(.red)
                                  : AnyShapeStyle(.secondary))
@@ -398,9 +398,8 @@ private struct FiveBandFIRPEQPanel: View {
                                       name: @escaping (T) -> String) -> some View {
         HStack(spacing: 8) {
             Text(label)
-                .font(.system(size: 14))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .etFont(size: 14)
+                .etRowTitle()
             Spacer(minLength: 8)
             Picker(label, selection: selection) {
                 ForEach(options, id: \.self) { option in
@@ -430,7 +429,7 @@ private struct FiveBandFIRPEQPanel: View {
             selected = i
         } label: {
             Text("\(i + 1)")
-                .font(.system(size: 13, weight: isPicked ? .bold : .regular))
+                .etFont(size: 13, weight: isPicked ? .bold : .regular)
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary)
                                                   : AnyShapeStyle(.secondary)))
@@ -438,9 +437,18 @@ private struct FiveBandFIRPEQPanel: View {
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
+                .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Band \(i + 1)")
+        // 切ってあるバンドは不透明度だけで表しているので、VoiceOver には値として伝える。
+        .accessibilityValue(isOn ? "" : "Off")
         .accessibilityAddTraits(isPicked ? [.isSelected] : [])
     }
 
@@ -456,7 +464,7 @@ private struct FiveBandFIRPEQPanel: View {
             // （5band / 15band / Modal Resonator はどれも見出し行＋power トグル）。
             HStack(spacing: 8) {
                 Text("BAND \(slot + 1)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
 
@@ -546,9 +554,6 @@ private struct BandFIRPEQSliderRow: View {
 
     /// ドラッグ中の値。離したら nil に戻して designer の値へ戻る。
     @State private var draft: Double?
-    /// 数値欄に打ち込み中。形は FiveBandPEQView の PEQ5SliderRow と同じ。
-    @State private var typing = false
-    @State private var typed = ""
 
     private var shown: Double { draft ?? value }
     private var text: String { String(format: "%.\(decimals)f", shown) }
@@ -557,9 +562,8 @@ private struct BandFIRPEQSliderRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(label)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 field
             }
@@ -576,35 +580,13 @@ private struct BandFIRPEQSliderRow: View {
         }
     }
 
+    /// ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
+    /// 下書きは単位なしの数だけ。
     private var field: some View {
-        Group {
-            if typing {
-                TextField("", text: $typed)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary,
-                                in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius,
-                                              style: .continuous).stroke(.tint, lineWidth: 1))
-                    .submitLabel(.done)
-                    .onSubmit { commitTyped() }
-            } else {
-                ValueBox(text: text)
-                    .onTapGesture {
-                        typed = String(format: "%.\(decimals)f", value)
-                        typing = true
-                    }
-            }
+        ETValueField(text: text, label: label,
+                     editText: { String(format: "%.\(decimals)f", value) }) { typedValue in
+            commit(min(max(typedValue, range.lowerBound), range.upperBound))
         }
-    }
-
-    /// 打ち込みは 1 回で決まるので、そのまま渡す。
-    private func commitTyped() {
-        typing = false
-        guard let typedValue = Double(typed.trimmingCharacters(in: .whitespaces)) else { return }
-        commit(min(max(typedValue, range.lowerBound), range.upperBound))
     }
 
     private var lower: Double { range.lowerBound }

@@ -54,6 +54,9 @@ struct ChainMinimap: View {
     let move: (IndexSet, Int) -> Void
     /// ピッカーから運ばれた文字列と、落とした先（鎖の添字）。
     let insert: (String, ETChainEditing.AddTarget) -> Void
+    /// 行を押して右のカードへ飛んだあと、VoiceOver の焦点もそのカードへ移す（PipelineView の focusedCard）。
+    /// 飛ぶだけでは焦点が左の一覧に残り、カードを探し直すことになる。
+    var focusCard: (UUID) -> Void = { _ in }
 
     @State private var tracker = ETMinimapTracker()
     /// 末尾の帯の高さ。一覧が画面を埋めていないときは残りを埋める（ETMinimapTail）。
@@ -63,7 +66,9 @@ struct ChainMinimap: View {
         ScrollViewReader { proxy in
             List {
                 ForEach(items) { item in
-                    ETMinimapRow(item: item, dsp: dsp, viewport: viewport, tracker: tracker)
+                    ETMinimapRow(item: item, dsp: dsp, viewport: viewport, tracker: tracker,
+                                 position: items.firstIndex(where: { $0.id == item.id }) ?? 0,
+                                 count: items.count, move: move, focusCard: focusCard)
                         .id(ETMinimapID(id: item.id))
                 }
                 .onMove(perform: move)
@@ -136,7 +141,8 @@ private struct ETMinimapFollow: View {
         Color.clear
             .onChange(of: viewport.leading) { _, id in
                 guard let id, tracker.phase == .idle, !tracker.shown.contains(id) else { return }
-                withAnimation(.snappy(duration: 0.25)) {
+                // 視差効果を減らす設定のときは動かさない。
+                etWithAnimation(.snappy(duration: 0.25)) {
                     proxy.scrollTo(ETMinimapID(id: id))
                 }
             }
@@ -152,6 +158,17 @@ private struct ETMinimapRow: View {
     let dsp: EffeTuneDSP
     let viewport: ETChainViewport
     let tracker: ETMinimapTracker
+    /// 画面の何行目か、行数。VoiceOver の Move Up / Move Down が端で出ないように使う。
+    let position: Int
+    let count: Int
+    /// 画面の行番号で動かす。ListのonMoveと同じ数え方（ドラッグと同じ道を通る）。
+    let move: (IndexSet, Int) -> Void
+    let focusCard: (UUID) -> Void
+
+    /// 大きい文字サイズでだけ、名前の折り返しを許す。
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// コントラストを上げる設定のとき、ミュートの薄さを弱める。
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         HStack(spacing: 2) {
@@ -163,9 +180,12 @@ private struct ETMinimapRow: View {
                 .toggleStyle(.power)
                 .labelsHidden()
                 .accessibilityLabel(item.name)
+                // 隣の「行へ飛ぶ」ボタンと名前が同じになる。声で呼ぶ名前は電源だけ別にする。
+                .accessibilityInputLabels(["\(item.name) power"])
 
             Button {
                 viewport.request(item.id)
+                focusCard(item.id)
             } label: {
                 // **名前を先に並べる。**札を右端へ寄せるのはSpacerでなく名前の枠で持つ。
                 // Spacerを挟むとHStackの間隔がその両側に付いて名前が16pt削られ、
@@ -175,23 +195,23 @@ private struct ETMinimapRow: View {
                     Group {
                         if item.isSection {
                             Text(item.name)
-                                .font(.system(size: 15, weight: .semibold))
+                                .etFont(size: 15, weight: .semibold)
                                 .foregroundStyle(.secondary)
                         } else {
                             HStack(spacing: 4) {
                                 Text(item.name)
-                                    .font(.system(size: 15))
+                                    .etFont(size: 15)
                                     .foregroundStyle(.primary)
                                 if item.follows {
                                     Image(systemName: "speaker.wave.2.fill")
-                                        .font(.system(size: 11))
+                                        .etFont(size: 11)
                                         .foregroundStyle(.secondary)
                                         .accessibilityLabel("Follow Volume")
                                 }
                             }
                         }
                     }
-                    .lineLimit(1)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
                     // Level Meterの行はクリップしたときだけOVERLOADを出す。棒は出さない（オーナーの判断）。
@@ -199,14 +219,25 @@ private struct ETMinimapRow: View {
                         ETMinimapOverload(tap: tap)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: Self.height, alignment: .leading)
                 .contentShape(.rect)
+            }
+            // 一覧の行は並べ替えが長押しのドラッグしか無く、VoiceOver からは動かせない。
+            // 右のカードの ⋯ と同じ動きを行にも渡す（端の行では出さない）。
+            .accessibilityActions {
+                if position > 0 {
+                    Button("Move Up") { move(IndexSet(integer: position), position - 1) }
+                }
+                if position < count - 1 {
+                    Button("Move Down") { move(IndexSet(integer: position), position + 2) }
+                }
             }
         }
         .padding(.leading, (item.indented ? 14 : 0) + 6)
         .padding(.trailing, 14)
-        .frame(height: Self.height)
-        .opacity(item.muted ? 0.55 : 1)
+        // 文字が大きくなったとき、44pt に閉じ込めて上下を切らない。既定のサイズでは 44pt のまま。
+        .frame(minHeight: Self.height)
+        .opacity(item.muted ? (contrast == .increased ? 0.8 : 0.55) : 1)
         .onScrollVisibilityChange(threshold: 0.9) { visible in
             if visible { tracker.shown.insert(item.id) } else { tracker.shown.remove(item.id) }
         }
@@ -266,6 +297,8 @@ private struct ETMinimapCorrectionRow: View {
     let insert: (String, ETChainEditing.AddTarget) -> Void
 
     @ObservedObject private var oc = OutputCorrection.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         HStack(spacing: 2) {
@@ -273,23 +306,25 @@ private struct ETMinimapCorrectionRow: View {
                 .toggleStyle(.power)
                 .labelsHidden()
                 .accessibilityLabel("Output Correction")
+                // 隣の行へ飛ぶボタンと名前が同じになる。声で呼ぶ名前は電源だけ別にする。
+                .accessibilityInputLabels(["Output Correction power"])
 
             Button {
                 viewport.request(id)
             } label: {
                 Text("Output Correction")
-                    .font(.system(size: 15))
+                    .etFont(size: 15)
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    .frame(maxWidth: .infinity, minHeight: ETMinimapRow.height, alignment: .leading)
                     .contentShape(.rect)
             }
         }
         // 値はETMinimapRowの写し（字下げなしの行）。
         .padding(.leading, 6)
         .padding(.trailing, 14)
-        .frame(height: ETMinimapRow.height)
-        .opacity(oc.isOn ? 1 : 0.55)
+        .frame(minHeight: ETMinimapRow.height)
+        .opacity(oc.isOn ? 1 : (contrast == .increased ? 0.8 : 0.55))
         .contentShape(.rect)
         .dropDestination(for: String.self) { items, _ in
             guard let type = items.first else { return false }
@@ -323,13 +358,15 @@ private struct ETMinimapOverload: View {
         ZStack {
             if let until, Date() < until {
                 // 色と形はGraphCanvasのbadgeと同じ。字と左右の余白だけ詰める（上の説明）。
+                // 字は一覧の行に収めるため固定。大きくして読めるよう、長押しで拡大表示を出せるようにする。
                 Text("OVERLOAD")
                     .font(.system(size: 9, weight: .heavy))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(.tint, in: .capsule)
+                    .etBadgeBackground(in: .capsule)
                     .fixedSize()
+                    .accessibilityShowsLargeContentViewer()
             }
         }
         .onChange(of: reading?.sequence ?? 0) { _, _ in advance(reading) }

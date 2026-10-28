@@ -78,10 +78,10 @@ struct SFZLibraryView: View {
                     ForEach(entries) { entry in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.name)
-                                .font(.system(size: 15))
+                                .etFont(size: 15)
                                 .lineLimit(2)
                             Text(badge(entry))
-                                .font(.system(size: 11))
+                                .etFont(size: 11)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }

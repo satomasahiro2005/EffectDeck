@@ -153,7 +153,7 @@ struct CrosstalkCancellationView: View {
             earRow(.right)
             if let importFailure {
                 Text(importFailure)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -173,10 +173,10 @@ struct CrosstalkCancellationView: View {
         let loaded = measurement(for: side)
         return VStack(alignment: .leading, spacing: 6) {
             Text(side.title)
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
 
             Text(loaded.map(Self.describe) ?? "Not assigned")
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(loaded == nil ? AnyShapeStyle(.secondary)
                                                : AnyShapeStyle(.primary))
                 .lineLimit(2)
@@ -265,16 +265,16 @@ struct CrosstalkCancellationView: View {
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(loaded ?? "No crosstalk filter loaded")
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
 
             if case .failed(let reason) = controller.phase {
                 Text(reason)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(detail)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -356,7 +356,7 @@ struct CrosstalkCancellationView: View {
     /// taps は 5 つから選ぶ（CrosstalkCancellationDesigner.swift:88 の allowedTaps）。
     private var tapsRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Taps").font(.system(size: 14))
+            Text("Taps").etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -366,7 +366,7 @@ struct CrosstalkCancellationView: View {
                         store.update(node.id) { $0.taps = value }
                     } label: {
                         Text(String(value))
-                            .font(.system(size: 13, weight: selected ? .bold : .regular))
+                            .etFont(size: 13, weight: selected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(selected ? AnyShapeStyle(.white)
@@ -401,9 +401,8 @@ struct CrosstalkCancellationView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 if let number, let range, let commit {
                     ETValueField(text: value, label: title,
@@ -412,8 +411,8 @@ struct CrosstalkCancellationView: View {
                     }
                 } else {
                     Text(value)
-                        .font(.system(size: 13, design: .monospaced))
-                        .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+                        .etFont(size: 13, design: .monospaced)
+                        .etValueFrame(shrinks: false)
                         .background(.quaternary,
                                     in: .rect(cornerRadius: ETMetrics.innerRadius,
                                               style: .continuous))
@@ -431,7 +430,7 @@ struct CrosstalkCancellationView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(.tint)

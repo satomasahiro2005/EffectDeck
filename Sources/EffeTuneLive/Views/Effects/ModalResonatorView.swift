@@ -210,13 +210,15 @@ private struct ModalSliderRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 field
             }
             ETSlider(value: Binding(get: { value }, set: { onChange(clamped($0)) }),
                      range: range, step: step)
+                .accessibilityLabel(title)
+                .accessibilityValue(text)
         }
     }
 
@@ -227,9 +229,9 @@ private struct ModalSliderRow: View {
                                        set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true, shrinks: false)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
                 .stroke(.tint, lineWidth: editing ? 1 : 0))
@@ -360,17 +362,26 @@ struct ModalResonatorView: View {
             selected = i
         } label: {
             Text("\(i + 1)")
-                .font(.system(size: 13, weight: isPicked ? .bold : .regular))
+                .etFont(size: 13, weight: isPicked ? .bold : .regular)
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
                 .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Resonator \(i + 1)")
+        // 切ってある共鳴は不透明度だけで表しているので、VoiceOver には値として伝える。
+        .accessibilityValue(isOn ? "" : "Off")
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいる共鳴
@@ -381,7 +392,7 @@ struct ModalResonatorView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("RESONATOR \(selected + 1)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
 

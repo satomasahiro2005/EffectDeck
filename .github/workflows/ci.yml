@@ -10,6 +10,8 @@
 #   generated    setup.sh と Tools/golden を回し直して、追跡している生成物が 1 バイトも変わらないこと
 #   macos        iOS 27 のシミュレータで Logic の単体テスト（logic）と、拡張を外したアプリの build（sim-build）。
 #                logic は予定外の XCTSkip（.github/scripts/allowed_skips.txt に無いもの）でも落とす
+#                a11y は同じシミュレータで performAccessibilityAudit（名前の無い要素だけ落とす）と、
+#                画面・部品の絵（文字サイズ・外観・幅違い）を作り、artifact の macos-a11y に上げる
 #
 # 上流の DSP の ctest（パッチを当てたもの）は重いので dsp.yml に分けてある。
 #
@@ -280,7 +282,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: [logic, sim-build]
+        task: [logic, sim-build, a11y]
     # **ワークフローの env に上げない。**SIM_OS は Scripts/lib/sim.sh も読むので、checks の
     # Tests/Scripts に漏れると端末の選び方の試験が変わる（実際に 1 件落ちた）。
     env:
@@ -338,11 +340,11 @@ jobs:
       # パッチ・生成物・note-models。logic はここで project.yml から .xcodeproj まで組む。
       - name: Scripts/setup.sh
         env:
-          SKIP_XCODEGEN: ${{ matrix.task == 'sim-build' && '1' || '0' }}
+          SKIP_XCODEGEN: ${{ matrix.task == 'logic' && '0' || '1' }}
         run: bash Scripts/setup.sh
 
       - name: シミュレータを選んで起こす
-        if: matrix.task == 'logic'
+        if: matrix.task == 'logic' || matrix.task == 'a11y'
         id: sim
         run: |
           udid=$(python3 .github/scripts/pick_simulator.py --name "$SIM_NAME" --os "$SIM_OS")
@@ -375,7 +377,7 @@ jobs:
         run: python3 .github/scripts/check_xcresult_skips.py --xcresult build/Logic.xcresult
 
       - name: シミュレータ用の仕様を組む（拡張を外す）
-        if: matrix.task == 'sim-build'
+        if: matrix.task == 'sim-build' || matrix.task == 'a11y'
         run: |
           python3 Tools/gen_sim_spec.py
           "$XCODEGEN" generate --spec project-sim.yml
@@ -394,6 +396,99 @@ jobs:
             2>&1 | tee build/sim-build.log | xcbeautify --renderer github-actions
           test -d out-sim/EffectDeck.app
 
+      # アクセシビリティの監査（performAccessibilityAudit）と、画面の絵の書き出し。
+      # Tests/UI/AccessibilityAudit.swift は「名前が無い要素」だけで落とし、ほかの指摘は添付の文面に残す。
+      # AccessibilityGallery は何も判定しない（絵を作れなかったときだけ落ちる）。
+      # **取り直し（-retry-tests-on-failure）はかけない。**名前が無い、は毎回同じ結果で、取り直すと
+      # 監査の時間が倍になって job の 60 分に当たり、添付を書き出す段まで届かなくなる。
+      # 段にも上限を付ける：段の時間切れなら後ろの段（添付の書き出し）は走る。job の時間切れは走らない。
+      - name: アクセシビリティの監査と絵（Accessibility）
+        if: matrix.task == 'a11y'
+        id: a11y
+        timeout-minutes: 35
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          mkdir -p build
+          rm -rf build/A11y.xcresult
+          xcodebuild test \
+            -project EffeTuneLiveSim.xcodeproj -scheme Accessibility \
+            -destination "id=$UDID" \
+            -only-testing:EffeTuneLiveUITests/AccessibilityAudit \
+            -only-testing:EffeTuneLiveUITests/AccessibilityGallery \
+            -parallel-testing-enabled NO \
+            -disable-concurrent-destination-testing \
+            -jobs 3 \
+            -resultBundlePath build/A11y.xcresult \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/a11y.log | xcbeautify --renderer github-actions
+      # 部品の絵（Tests/Snapshot/ComponentGallery.swift）。何も判定せず、描画のクラッシュだけで落ちる。
+      # **別の呼び出しにする。**ホスト付きの束は本体のモジュールを読むので、建てそこなうと
+      # 同じ呼び出しの監査と画面の絵まで巻き込む。ホストの本体は上の段で建て済みなので建て直しは軽い。
+      - name: 部品の絵（Snapshot）
+        if: ${{ !cancelled() && matrix.task == 'a11y' }}
+        id: a11y_snapshot
+        timeout-minutes: 15
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          mkdir -p build
+          rm -rf build/A11ySnapshot.xcresult
+          xcodebuild test \
+            -project EffeTuneLiveSim.xcodeproj -scheme AccessibilitySnapshot \
+            -destination "id=$UDID" \
+            -only-testing:EffeTuneLiveSnapshotTests \
+            -parallel-testing-enabled NO \
+            -disable-concurrent-destination-testing \
+            -jobs 3 \
+            -resultBundlePath build/A11ySnapshot.xcresult \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/a11y-snapshot.log | xcbeautify --renderer github-actions
+
+      # xcresult の添付（PNG と監査の文面）を取り出し、画面名で読めるよう名前を付け直す。
+      # 取り出せなくても落とさない（絵が目的で、判定ではないため）。
+      - name: 添付を書き出す
+        if: ${{ !cancelled() && matrix.task == 'a11y' && steps.a11y.outcome != 'skipped' }}
+        run: |
+          rm -rf build/a11y-raw build/a11y-gallery
+          mkdir -p build/a11y-raw build/a11y-gallery
+          # 監査と画面の絵（A11y）と、部品の絵（A11ySnapshot）。片方が無くても、もう片方は書き出す。
+          for name in A11y A11ySnapshot; do
+            if [ ! -d "build/$name.xcresult" ]; then
+              echo "::warning::build/$name.xcresult が無い"
+              continue
+            fi
+            if ! xcrun xcresulttool export attachments --path "build/$name.xcresult" --output-path "build/a11y-raw/$name"; then
+              echo "::warning::$name の添付を書き出せなかった"
+            fi
+          done
+          python3 - <<'PY'
+          import json, pathlib, re, shutil
+          root = pathlib.Path("build/a11y-raw")
+          out = pathlib.Path("build/a11y-gallery")
+          out.mkdir(parents=True, exist_ok=True)
+          count = 0
+          for raw in sorted(p for p in root.iterdir() if p.is_dir()):
+              manifest = raw / "manifest.json"
+              entries = json.loads(manifest.read_text(encoding="utf-8")) if manifest.exists() else []
+              for test in entries:
+                  for att in test.get("attachments", []):
+                      src = raw / att.get("exportedFileName", "")
+                      if not src.is_file():
+                          continue
+                      # 人が読める名前（無ければ書き出された名前）。<画面>-<組み合わせ>_0_<UUID>.png の尾を落とす。
+                      name = att.get("suggestedHumanReadableName") or src.name
+                      name = re.sub(r"_\d+_[0-9A-Fa-f-]{36}(?=\.\w+$)", "", name)
+                      name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+                      if not pathlib.Path(name).suffix:
+                          name += src.suffix
+                      shutil.copyfile(src, out / name)
+                      count += 1
+          print("書き出した添付:", count)
+          PY
+
       - name: 結果を残す
         if: always()
         uses: actions/upload-artifact@v7
@@ -402,6 +497,7 @@ jobs:
           path: |
             build/*.xcresult
             build/*.log
+            build/a11y-gallery/
           retention-days: 14
           if-no-files-found: ignore
 

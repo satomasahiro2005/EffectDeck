@@ -237,55 +237,32 @@ struct PEQ5SliderRow: View {
     let unit: String
     let onChange: (Double) -> Void
 
-    @State private var editing = false
-    @State private var draft = ""
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                field
+                // ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
+                // ETValueField は TextField なので届く。下書きは単位なしの数だけ。
+                ETValueField(text: text, label: title,
+                             editText: { String(format: "%.\(decimals)f", value) }) { typed in
+                    onChange(min(max(typed, range.lowerBound), range.upperBound))
+                }
             }
+            // 0...1 に正規化した位置のままだと「37%」としか読まれない。名前と実値を渡す。
             Slider(value: Binding(get: { position },
                                   set: { onChange(denormalized($0)) }),
                    in: 0...1)
+                .accessibilityLabel(title)
+                .accessibilityValue(text)
         }
     }
 
     private var text: String {
         let s = String(format: "%.\(decimals)f", value)
         return unit.isEmpty ? s : "\(s) \(unit)"
-    }
-
-    private var field: some View {
-        Group {
-            if editing {
-                TextField("", text: $draft)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: 1))
-                    .submitLabel(.done)
-                    .onSubmit { commit() }
-            } else {
-                ValueBox(text: text)
-                    .onTapGesture {
-                        draft = String(format: "%.\(decimals)f", value)
-                        editing = true
-                    }
-            }
-        }
-    }
-
-    private func commit() {
-        editing = false
-        guard let v = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
-        onChange(min(max(v, range.lowerBound), range.upperBound))
     }
 
     /// スライダーは 0〜1 で持つ。
@@ -458,15 +435,27 @@ struct FiveBandPEQView: View {
             pickedAt = volume.position ?? -2
         } label: {
             Text("\(i + 1)")
-                .font(.system(size: 13, weight: isPicked ? .bold : .regular))
+                .etFont(size: 13, weight: isPicked ? .bold : .regular)
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
+                .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
+        // 数字だけでは Voice Control で「Tap 2」が他の数字と混ざる。切ってあるのは不透明度だけで
+        // 表しているので、VoiceOver には値として伝える。
+        .accessibilityLabel("Band \(i + 1)")
+        .accessibilityValue(isOn ? "" : "Off")
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいるバンド
@@ -477,7 +466,7 @@ struct FiveBandPEQView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("BAND \(selected + 1)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
 
