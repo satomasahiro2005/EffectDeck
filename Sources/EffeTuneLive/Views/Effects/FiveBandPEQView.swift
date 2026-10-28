@@ -330,6 +330,11 @@ struct FiveBandPEQView: View {
 
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
+    /// 帯を選んだときの音量（ETVolumeFollower.position）。音量に追従している段では、選んだあと音量が
+    /// 動いたら選んだ帯の点線を消す（鳴っている帯の組が替わるので、前の帯の内訳は残しておくと紛らわしい）。
+    /// 選んでいないときは -1、音量が読めないときに選んだら -2。
+    @State private var pickedAt: Double = -1
+    @ObservedObject private var volume = ETVolumeFollower.shared
 
     /// 図に重ねるスペクトラムの出し方。上流と同じく保存しない（SpectrumOverlayLayer の頭）。
     @State private var spectrumMode: ETSpectrumOverlayMode = .after
@@ -374,7 +379,13 @@ struct FiveBandPEQView: View {
             spectrumBeforeTap: probeTaps?.before,
             spectrumMode: $spectrumMode,
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
-            onMarkerSelected: { if $0 < layout.count { selected = $0 } })
+            onMarkerSelected: { if $0 < layout.count { selected = $0; pickedAt = volume.position ?? -2 } })
+    }
+
+    /// 選んだ帯の点線を出すか。追従していなければいつも。追従していれば、選んだときから音量が動いていないあいだだけ。
+    private var showsPicked: Bool {
+        guard node.automation != nil else { return true }
+        return pickedAt != -1 && pickedAt == (volume.position ?? -2)
     }
 
     /// 合成した特性と、選んでいるバンド 1 本ぶん。
@@ -388,7 +399,7 @@ struct FiveBandPEQView: View {
         let other = companionBands.compactMap { PEQ5Math.coefficients($0, sampleRate: rate) }
         var result: [ETFrequencyCurve] = []
         // 選んでいる 1 本。合成が平らでも、いま何を触っているかが見えるように。
-        if designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
+        if showsPicked, designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
             let c = picked.1
             result.append(ETFrequencyCurve.sampled(id: "band", count: 160,
                                                    width: 1, dashed: true, subdued: true) { hz in
@@ -444,6 +455,7 @@ struct FiveBandPEQView: View {
         let isPicked = selected == i
         return Button {
             selected = i
+            pickedAt = volume.position ?? -2
         } label: {
             Text("\(i + 1)")
                 .font(.system(size: 13, weight: isPicked ? .bold : .regular))
