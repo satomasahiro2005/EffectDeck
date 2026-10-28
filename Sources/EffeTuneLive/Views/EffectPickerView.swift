@@ -182,6 +182,15 @@ struct EffectPickerView: View {
             }
         }
 
+        /// 検索結果で入る見出し。
+        var bucket: ETEffectSearch.Bucket {
+            switch self {
+            case .effect:        return .effects
+            case .au, .jsfx:     return .plugins
+            case .user, .system: return .presets
+            }
+        }
+
         var sortName: String {
             switch self {
             case .effect(let e): return e.name
@@ -191,6 +200,11 @@ struct EffectPickerView: View {
             case .system(let p): return p.name
             }
         }
+    }
+
+    /// 結果を Effects・Plugins・Presets の順に束ねる。束の中は当たり方の順のまま。
+    private var searchSections: [ETEffectSearch.Grouped<Found>] {
+        ETEffectSearch.grouped(searchResults.map { ($0.bucket, $0) })
     }
 
     private var searchResults: [Found] {
@@ -411,6 +425,8 @@ struct EffectPickerView: View {
                     Button("Build with ChatGPT…", systemImage: "sparkles") {
                         openURL(Self.buildChain)
                     }
+                    // 一覧の行（エフェクト名 15）と同じ大きさ。指定しないと本文の 17 で、行より大きく見えた。
+                    .etFont(size: 15)
                 }
                 if !newEffects.isEmpty {
                     Section {
@@ -486,6 +502,8 @@ struct EffectPickerView: View {
                 } icon: {
                     Image(systemName: "square.and.arrow.down").foregroundStyle(Color.accentColor)
                 }
+                // 一覧の行（JSFX・AU の名前 15）と同じ大きさ。指定しないと本文の 17 で、行より大きく見えた。
+                .etFont(size: 15)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             } else {
@@ -527,6 +545,7 @@ struct EffectPickerView: View {
                                     Button("Write JSFX with ChatGPT", systemImage: "sparkles") {
                                         openURL(Self.writeJSFX)
                                     }
+                                    .etFont(size: 15)
                                 }
                             }
                             ForEach(pluginVendors, id: \.self) { vendor in
@@ -1175,28 +1194,46 @@ struct EffectPickerView: View {
     }
 
     private var searchList: some View {
-        Group {
-            if searchResults.isEmpty {
+        // 空かどうかと一覧で二度引かないよう、ここで一度だけ作る。
+        let sections = searchSections
+        return Group {
+            if sections.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
-                List(searchResults) { found in
-                    switch found {
-                    case .effect(let e): row(e, showCategory: true)
-                    case .au(let a):     auRow(a)
-                    case .jsfx(let j):   jsfxRow(j)
-                    case .user(let n):
-                        presetRow(name: ETUserPresetName.leaf(n),
-                                  payload: "preset:user:" + n, kind: "User Preset") {
-                            PresetStore.shared.load(n)
-                        }
-                    case .system(let p):
-                        presetRow(name: p.name,
-                                  payload: "preset:system:" + p.name, kind: "System Preset") {
-                            ETShareLink.parse(p.json, catalog: ETCatalog)
+                // **束ねて見出しを付ける。**見出し無しだと、検索欄の真下から
+                // 行が始まって詰まって見える。ほかの面と同じ素の見出しにして、
+                // 先頭の見出しが検索欄との間の余白を兼ねる。
+                List {
+                    ForEach(sections) { section in
+                        Section {
+                            ForEach(section.items) { found in
+                                foundRow(found)
+                            }
+                        } header: {
+                            Text(section.bucket.title)
                         }
                     }
                 }
                 .listStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func foundRow(_ found: Found) -> some View {
+        switch found {
+        case .effect(let e): row(e, showCategory: true)
+        case .au(let a):     auRow(a)
+        case .jsfx(let j):   jsfxRow(j)
+        case .user(let n):
+            presetRow(name: ETUserPresetName.leaf(n),
+                      payload: "preset:user:" + n, kind: "User Preset") {
+                PresetStore.shared.load(n)
+            }
+        case .system(let p):
+            presetRow(name: p.name,
+                      payload: "preset:system:" + p.name, kind: "System Preset") {
+                ETShareLink.parse(p.json, catalog: ETCatalog)
             }
         }
     }

@@ -173,6 +173,45 @@ enum ETEffectSearch {
             .map(\.1)
     }
 
+    // MARK: - 見出しごとの束
+
+    /// 検索結果の見出し。**宣言の順がそのまま画面の順。**
+    enum Bucket: Int, CaseIterable, Comparable {
+        /// 組み込みのエフェクト。
+        case effects = 0
+        /// AUv3 と JSFX。
+        case plugins = 1
+        /// 自分のプリセットと同梱のプリセット。
+        case presets = 2
+
+        var title: String {
+            switch self {
+            case .effects: return "Effects"
+            case .plugins: return "Plugins"
+            case .presets: return "Presets"
+            }
+        }
+
+        static func < (a: Bucket, b: Bucket) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// 並べ終えた結果を見出しごとに分ける。
+    /// **束の中の順は渡された順のまま**（順位を付け直さない）。
+    /// 空の束は返さない。画面に空の見出しだけが残らないようにする。
+    static func grouped<T>(_ ranked: [(Bucket, T)]) -> [Grouped<T>] {
+        Bucket.allCases.compactMap { b in
+            let items = ranked.filter { $0.0 == b }.map(\.1)
+            return items.isEmpty ? nil : Grouped(bucket: b, items: items)
+        }
+    }
+
+    /// 見出し 1 つ分。ForEach の鍵に見出しをそのまま使えるよう Identifiable にする。
+    struct Grouped<T>: Identifiable {
+        let bucket: Bucket
+        let items: [T]
+        var id: Int { bucket.rawValue }
+    }
+
     // MARK: - 手で決めた表
 
     /// **定番の組み込みエフェクト。上ほど先に出す。**

@@ -127,6 +127,28 @@ final class EffectSearchTests: XCTestCase {
                           ETEffectSearch.key(hit: .prefix, type: "CompressorPlugin", name: "A", query: "b"))
     }
 
+    // MARK: - 見出しごとの束
+
+    func testGroupedOrdersBucketsAndKeepsRankWithinEach() {
+        let ranked: [(ETEffectSearch.Bucket, String)] = [
+            (.presets, "p1"), (.effects, "e1"), (.plugins, "a1"),
+            (.effects, "e2"), (.presets, "p2"), (.plugins, "a2"),
+        ]
+        let g = ETEffectSearch.grouped(ranked)
+        XCTAssertEqual(g.map(\.bucket), [.effects, .plugins, .presets])
+        XCTAssertEqual(g.map(\.items), [["e1", "e2"], ["a1", "a2"], ["p1", "p2"]])
+    }
+
+    func testGroupedOmitsEmptyBuckets() {
+        let g = ETEffectSearch.grouped([(.presets, 1), (.presets, 2)])
+        XCTAssertEqual(g.map(\.bucket), [.presets])
+        XCTAssertTrue(ETEffectSearch.grouped([(ETEffectSearch.Bucket, Int)]()).isEmpty)
+    }
+
+    func testBucketTitles() {
+        XCTAssertEqual(ETEffectSearch.Bucket.allCases.map(\.title), ["Effects", "Plugins", "Presets"])
+    }
+
     // MARK: - 表
 
     func testTablesOnlyNameEffectsInTheCatalog() {
