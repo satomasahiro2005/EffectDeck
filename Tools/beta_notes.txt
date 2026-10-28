@@ -1,52 +1,52 @@
 日本語版は英語版の下にあります。
 The Japanese version follows below.
 
-This beta includes all work in progress, including features not yet in the App Store version. The layout is still being adjusted and may change between builds.
+This beta includes work in progress that is not yet in the App Store version.
 
 New
 
-- Follow Volume: an effect can follow the output volume. Choose Follow Volume from the card's ⋯ menu, then add keyframes at different volumes with the + on the strip under the card name. Tap a keyframe to edit its values in the card; tap it again (or long-press) to switch Smooth / Hold or delete it. Stop Following Volume is in the ⋯ menu. Please check that the sound changes smoothly while you change the volume, and that dragging a keyframe sideways does not move the card.
-- JSFX scripts can read the output volume through the read-only variable effectdeck_output_volume (0 to 1, -1 when unknown).
-- Add Effect search: results are grouped into Effects / Plugins / Presets, well-known effects come first, and common names also work (for example de-esser, goniometer, snail, brir).
+- Follow Volume: an effect can follow the output volume. Choose Follow Volume in the card's ⋯ menu, then add keyframes with the + on the strip under the card name. Tap a keyframe to edit its values; tap it again (or long-press) for Smooth / Hold and Delete. Please check that the sound changes smoothly with the volume, and that dragging a keyframe does not move the card.
+- JSFX can read the output volume through the read-only variable effectdeck_output_volume (0 to 1, -1 when unknown).
+- Add Effect search groups results into Effects / Plugins / Presets, lists well-known effects first and also finds common names (de-esser, goniometer, snail, brir).
 - Effects from EffeTune 2.15.0, including SFZ Note Player Detection.
 
 Changes
 
-- Newly added effects are placed outside Sections, unless you drop them onto a Section card.
-- Chroma Spiral and Stereo Meter use the space better when the card is collapsed.
-- Note Spectrogram: the keyboard is no longer see-through, notes are sharper, and the legend is readable in light mode.
-- Floating Meters and the graphs use less CPU.
-- Small text buttons (Invert Gains, Import, Reset) are now standard buttons that are easier to tap.
-- Some accessibility improvements: VoiceOver reads more slider names and values, text follows the iOS text size setting, and on iPad Command-Z undoes adding, removing and moving effects.
+- New effects are added outside Sections unless dropped onto a Section card.
+- Chroma Spiral and Stereo Meter use the space better when collapsed.
+- Note Spectrogram: opaque keyboard, sharper notes, legend readable in light mode.
+- Floating Meters and graphs use less CPU.
+- Small text buttons (Invert Gains, Import, Reset) are now standard buttons.
+- Some accessibility improvements (VoiceOver labels, text size, Command-Z on iPad).
 
 Fixes
 
-- iPad (two columns): after closing a sheet by tapping outside it, the buttons at the top right could stop responding.
+- iPad (two columns): the top-right buttons could stop responding after closing a sheet by tapping outside it.
 
-If anything looks or sounds wrong, please use Settings → About → Report a problem and include your device, the output in use and what was playing.
+If anything looks or sounds wrong, please use Settings → About → Report a problem.
 
 日本語
 
-本ベータ版には、App Store版に未搭載の機能を含む、開発中の内容をすべて収録しています。画面の配置は調整中のため、ビルドごとに変更される場合があります。
+本ベータ版には、App Store版に未搭載の開発中の内容を含みます。
 
 【新機能】
 
-・Follow Volume：エフェクトを出力の音量に合わせて変えられます。カードの⋯からFollow Volumeを選び、名前の下の帯の+で、音量ごとにキーフレームを足します。キーフレームを押すとカードでその値を直せ、もう一度押す（または長押し）とSmooth／Holdの切り替えと削除ができます。やめるときは⋯のStop Following Volumeです。音量を変えたときに音がなめらかに変わるか、キーフレームを横に引いてもカードが動かないかをご確認ください。
-・JSFXから、読み取り専用の変数effectdeck_output_volume（0〜1、読めないときは-1）で出力の音量を読めるようになりました。
-・Add Effectの検索：結果をEffects／Plugins／Presetsに分けて並べ、よく使われるエフェクトを上に出します。一般的な呼び名（de-esser、goniometer、snail、brirなど）でも見つかります。
+・Follow Volume：エフェクトを出力の音量に合わせて変えられます。カードの⋯からFollow Volumeを選び、名前の下の帯の+でキーフレームを足します。キーフレームを押すと値を直せ、もう一度押す（または長押し）とSmooth／HoldとDeleteが出ます。音量を変えたときに音がなめらかに変わるか、キーフレームを引いてもカードが動かないかをご確認ください。
+・JSFXから、読み取り専用の変数effectdeck_output_volume（0〜1、読めないときは-1）で出力の音量を読めます。
+・Add Effectの検索で、結果をEffects／Plugins／Presetsに分け、よく使われるエフェクトを上に出し、一般的な呼び名（de-esser、goniometer、snail、brir）でも見つかるようにしました。
 ・EffeTune 2.15.0のエフェクト（SFZ Note PlayerのDetectionなど）に対応しました。
 
 【変更】
 
-・新しく足したエフェクトは、Sectionのカードに落としたとき以外はSectionの外に置かれます。
+・新しいエフェクトは、Sectionのカードに落としたとき以外はSectionの外に置かれます。
 ・Chroma SpiralとStereo Meterを畳んだときの表示を広く使うようにしました。
-・Note Spectrogramの鍵盤が透けなくなり、ノートがくっきり表示され、明るい外観でも凡例が読めるようになりました。
+・Note Spectrogramの鍵盤が透けず、ノートがくっきりし、明るい外観でも凡例が読めるようになりました。
 ・Floating Metersとグラフの処理を軽くしました。
-・小さな文字だけのボタン（Invert Gains、Import、Resetなど）を、押しやすい標準のボタンにしました。
-・アクセシビリティを一部改善しました。VoiceOverで読まれるスライダーの名前と値を増やし、文字の大きさがiOSの設定に従うようにしました。iPadでは⌘Zで、エフェクトの追加・削除・移動を取り消せます。
+・小さな文字だけのボタン（Invert Gains、Import、Resetなど）を標準のボタンにしました。
+・アクセシビリティを一部改善しました（VoiceOverの読み上げ、文字の大きさ、iPadの⌘Z）。
 
 【不具合の修正】
 
 ・iPad（2列表示）で、シートを外側のタップで閉じた後、右上のボタンが反応しなくなることがある不具合を修正しました。
 
-表示や音に問題がある場合は、Settings → About → Report a problemから、ご使用の端末、出力先、再生していた内容を添えてご報告ください。
+表示や音に問題がある場合は、Settings → About → Report a problemからご報告ください。
