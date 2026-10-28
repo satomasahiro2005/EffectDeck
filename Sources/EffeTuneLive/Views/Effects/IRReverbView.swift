@@ -449,7 +449,7 @@ private struct ETRemoteIRLibraryView: View {
                 }
             }
             .searchable(text: $query)
-            .navigationTitle(RemoteMirror.shared.host?.name ?? "IR Library")
+            .etNavigationTitle(RemoteMirror.shared.host?.name ?? "IR Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

@@ -294,7 +294,7 @@ struct EffectPickerView: View {
                 jumping = false
             }
             .searchable(text: $query, isPresented: $searching, prompt: "Search effects")
-            .navigationTitle("Available Effects")
+            .etNavigationTitle("Available Effects")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

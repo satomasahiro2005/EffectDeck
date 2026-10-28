@@ -33,7 +33,7 @@ struct RoutingView: View {
                     list
                 }
             }
-            .navigationTitle("Routing")
+            .etNavigationTitle("Routing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
@@ -223,7 +223,7 @@ struct EffectRoutingSheet: View {
                     }
                 }
             }
-            .navigationTitle("Routing")
+            .etNavigationTitle("Routing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

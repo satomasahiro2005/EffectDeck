@@ -41,7 +41,7 @@ struct JSFXSourceView: View {
                     .toolbar { toolbar(proxy) }
                     .task(id: query) { await search(proxy) }
             }
-            .navigationTitle("JSFX Source")
+            .etNavigationTitle("JSFX Source")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, isPresented: $searching)
         }

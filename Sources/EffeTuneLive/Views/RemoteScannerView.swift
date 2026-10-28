@@ -129,7 +129,7 @@ struct RemoteContent: View {
         List {
             RemoteRows(scan: { scanning = true })
         }
-        .navigationTitle("Remote Control")
+        .etNavigationTitle("Remote Control")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $scanning) {
             RemoteScannerView { url in

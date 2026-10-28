@@ -453,7 +453,7 @@ private struct ETReportView: View {
                 ETShareLogButton()
             }
         }
-        .navigationTitle("Report a problem")
+        .etNavigationTitle("Report a problem")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

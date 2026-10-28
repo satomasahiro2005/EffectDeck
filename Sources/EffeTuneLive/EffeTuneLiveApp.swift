@@ -55,6 +55,11 @@ struct EffeTuneLiveApp: App {
                     PipelineView()
                 }
             }
+            // **アプリの字は標準より小さくしない。**エフェクト名などは標準で 15pt と、他のアプリの本文（17pt）より
+            // 小さく作ってあるので、iOS の最小の設定に合わせて同じ割合で縮めると他のアプリより一回り小さくなった。
+            // 大きくする側はそのまま効かせる。メニューやアラートは iOS が描くので設定どおり（窓には触らない。
+            // 窓の traitOverrides で止めるとメニューまで大きくなった）。題は etNavigationTitle で自分で描く。
+            .dynamicTypeSize(.large...)
         }
     }
 }

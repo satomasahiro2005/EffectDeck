@@ -105,7 +105,7 @@ struct SFZLibraryView: View {
                 }
             }
             .searchable(text: $query, prompt: "Search SFZ instruments")
-            .navigationTitle("SFZ Library")
+            .etNavigationTitle("SFZ Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

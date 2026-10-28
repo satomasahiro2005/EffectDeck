@@ -94,7 +94,7 @@ struct IRLibraryView: View {
                     }
                 }
             }
-            .navigationTitle("IR Library")
+            .etNavigationTitle("IR Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

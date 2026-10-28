@@ -103,7 +103,7 @@ struct OutputCorrectionList: View {
                 }
             }
         }
-        .navigationTitle("Output Correction")
+        .etNavigationTitle("Output Correction")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -191,7 +191,7 @@ private struct OutputCorrectionChooser: View {
                 }
             }
         }
-        .navigationTitle(device.name)
+        .etNavigationTitle(device.name)
         .navigationBarTitleDisplayMode(.inline)
     }
 

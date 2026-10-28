@@ -35,7 +35,7 @@ struct LicensesView: View {
                 }
             }
         }
-        .navigationTitle("Licenses")
+        .etNavigationTitle("Licenses")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

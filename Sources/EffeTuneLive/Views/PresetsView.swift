@@ -261,7 +261,7 @@ struct PresetsView: View {
                 // 扱っているのは設定ではなく、この画面と同じ「保存した鎖」。
                 ETBackupSection()
             }
-            .navigationTitle("Presets")
+            .etNavigationTitle("Presets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

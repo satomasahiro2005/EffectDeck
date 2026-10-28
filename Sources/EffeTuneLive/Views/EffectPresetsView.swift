@@ -106,7 +106,7 @@ struct EffectPresetsView: View {
                 if !groups.isEmpty { systemSection }
                 userSection
             }
-            .navigationTitle("Effect Presets")
+            .etNavigationTitle("Effect Presets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

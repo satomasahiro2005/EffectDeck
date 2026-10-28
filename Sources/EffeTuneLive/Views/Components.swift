@@ -34,8 +34,12 @@ enum ETMetrics {
     /// 文字サイズに追従させた数値欄の高さ（UIKit 側で測るとき用）。
     /// SwiftUI の中では ETValueFrame の @ScaledMetric を使い、これは ETTapOutside のように
     /// View の外から当たりを測る所だけが読む。既定の文字サイズでは controlHeight と同じ。
+    /// SwiftUI の字は標準より小さくしない（EffeTuneLiveApp の .dynamicTypeSize(.large...)）ので、ここも揃える。
     static var scaledControlHeight: CGFloat {
-        UIFontMetrics(forTextStyle: .footnote).scaledValue(for: controlHeight)
+        let current = UITraitCollection.current.preferredContentSizeCategory
+        let category = current < .large ? .large : current
+        return UIFontMetrics(forTextStyle: .footnote)
+            .scaledValue(for: controlHeight, compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
     }
 }
 
@@ -1051,5 +1055,21 @@ extension String {
     /// 頭が prefix なら、その先を返す。違えば nil。
     func dropPrefixIfPresent(_ prefix: String) -> String? {
         hasPrefix(prefix) ? String(dropFirst(prefix.count)) : nil
+    }
+}
+
+extension View {
+    /// ナビゲーションバーの題を、アプリの字として描く（題の行は iOS が描くので、アプリの「標準より小さくしない」が
+    /// 届かず、最小の設定で題だけ小さくなった）。navigationTitle も置くので、戻るボタンや読み上げはそのまま。
+    func etNavigationTitle(_ title: String) -> some View {
+        navigationTitle(title)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .etFont(size: 17, weight: .semibold)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
     }
 }
