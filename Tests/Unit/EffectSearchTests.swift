@@ -80,25 +80,26 @@ final class EffectSearchTests: XCTestCase {
         XCTAssertLessThan(index("Stereo Balance", in: r), index("Auto Pan", in: r))
     }
 
-    /// 名前を知らない人が打つ言葉（やりたいこと・困っていること・日本語）で、狙ったものが上に来る。
-    func testIntentWordsFindWhatPeopleMean() {
-        XCTAssertEqual(names("bass boost").first, "Tone Control")
-        XCTAssertTrue(names("bass boost").prefix(3).contains("Bass Extender"))
-        XCTAssertEqual(names("低音").first, "Tone Control")
-        XCTAssertEqual(names("hiss").first, "Noise Reduction", "ノイズを足す Noise Blender より減らす方")
-        XCTAssertEqual(names("ノイズ").first, "Noise Reduction")
-        XCTAssertEqual(names("louder").first, "Volume")
-        XCTAssertEqual(names("音量").first, "Volume")
-        XCTAssertEqual(names("wider").first, "Stereo Blend")
-        XCTAssertEqual(names("karaoke").first, "Phase Select EQ")
-        XCTAssertEqual(names("カラオケ").first, "Phase Select EQ")
-        XCTAssertEqual(names("harsh").first, "5Band Dynamic EQ")
-        XCTAssertEqual(names("イコライザ").first, "15Band PEQ", "イコライザー の頭で当たる")
-        XCTAssertTrue(names("残響").prefix(4).contains("FDN Reverb"))
-        XCTAssertEqual(names("8d").first, "Auto Pan")
-        // ヘッドホンで探す人は補正（AutoEq を入れる PEQ）が先、Crossfeed がその次。
-        XCTAssertEqual(Array(names("headphone").prefix(2)), ["15Band PEQ", "Crossfeed Filter"])
+    /// そのエフェクトの世の中での呼び名で、そのエフェクトが一番上に来る。
+    func testWellKnownNamesFindTheEffect() {
+        XCTAssertEqual(names("de-esser").first, "5Band Dynamic EQ")
+        XCTAssertEqual(names("maximizer").first, "Brickwall Limiter")
+        XCTAssertEqual(names("goniometer").first, "Stereo Meter")
+        XCTAssertEqual(names("virtual bass").first, "Bass Extender")
+        XCTAssertEqual(names("stereo widener").first, "Stereo Blend")
+        XCTAssertEqual(names("vocal remover").first, "Phase Select EQ")
         XCTAssertEqual(names("tuner").first, "Pitch Meter")
+        XCTAssertEqual(names("leslie").first, "Rotary Speaker")
+        XCTAssertEqual(names("denoise").first, "Noise Reduction")
+        XCTAssertEqual(names("transient designer").first, "Transient Shaper")
+        XCTAssertEqual(names("echo").first, "Delay")
+        XCTAssertEqual(names("gain").first, "Volume")
+    }
+
+    func testAliasesAreEnglishOnly() {
+        for (t, list) in ETEffectSearch.aliases {
+            for a in list { XCTAssertTrue(a.allSatisfy(\.isASCII), "\(t): 別名は英語で書く（\(a)）") }
+        }
     }
 
     func testAliasDoesNotMatchInsideAnAlias() {
