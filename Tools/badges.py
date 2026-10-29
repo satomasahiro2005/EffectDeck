@@ -52,13 +52,13 @@ DOWNLOAD = {"1", "1F", "1T", "1E", "1EP", "1EU", "F1",
 
 
 def get_json(url: str):
-    """iTunes lookup を引く。1 分に 20 回ほどで 403/429 を返すので、そのときは待って引き直す。"""
+    """iTunes lookup を引く。1 分に 20 回ほどで 403/429 を返し、たまに 5xx も返すので、そのときは待って引き直す。"""
     for attempt in range(5):
         try:
             with urllib.request.urlopen(url, timeout=30) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
-            if e.code in (403, 429, 503) and attempt < 4:
+            if e.code in (403, 429, 500, 502, 503, 504) and attempt < 4:
                 time.sleep(60)
                 continue
             raise
