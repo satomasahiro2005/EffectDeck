@@ -123,6 +123,11 @@ final class RhythmAnalyzerTests: XCTestCase {
         /// 先の拍の見込み（frame, fraction, index）と周期。
         var preview: [(frame: Int32, fraction: Float, index: Int32)] = []
         var previewPeriod: Float = 0
+        /// 2.16.0 の Display。0 band、1 drums。drums の項目は strength の所が logit。
+        var mode: UInt32 = 0
+        var drums: [EventSpec] = []
+        var drumLatency: Float = 0
+        var drumReserved: UInt32 = 0
     }
 
     /// 2.16.0 の版 5（2024 バイト。0〜1495 は 2.13.0 の版 4 と同じ）。`locked` が false なら周期も anchor も 0（解析した拍が無い）。
@@ -149,6 +154,22 @@ final class RhythmAnalyzerTests: XCTestCase {
         for (i, v) in f.tempogram.enumerated() { put(TelemetryBytes.f32(v), 64 + 4 * i) }
         for (k, e) in f.events.enumerated() {
             let base = 832 + 32 * k
+            put(TelemetryBytes.u32(e.frame), base)
+            put(TelemetryBytes.f32(e.fraction), base + 4)
+            put(TelemetryBytes.u32(e.epoch), base + 8)
+            put(TelemetryBytes.i32(e.beatIndex), base + 12)
+            put(TelemetryBytes.f32(e.beatFraction), base + 16)
+            put(TelemetryBytes.f32(e.period), base + 20)
+            put(TelemetryBytes.f32(e.strength), base + 24)
+            put([e.band], base + 28)
+            put([e.flags], base + 29)
+        }
+        put(TelemetryBytes.u32(f.mode), 1496)
+        put(TelemetryBytes.u32(UInt32(f.drums.count)), 1500)
+        put(TelemetryBytes.f32(f.drumLatency), 1504)
+        put(TelemetryBytes.u32(f.drumReserved), 1508)
+        for (k, e) in f.drums.enumerated() {
+            let base = 1512 + 32 * k
             put(TelemetryBytes.u32(e.frame), base)
             put(TelemetryBytes.f32(e.fraction), base + 4)
             put(TelemetryBytes.u32(e.epoch), base + 8)
@@ -202,8 +223,8 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(e.time, 990.5 * 0.01, accuracy: 1e-9, "(frame + fraction) × hopSeconds")
         XCTAssertEqual(e.epoch, 4)
         XCTAssertEqual(e.index, 7)
-        // 札は 世代:frame:fraction のビット:帯域（同じ onset が仮から確定へ変わっても変わらない）。
-        XCTAssertEqual(e.identity, "1:990:" + String(Float(0.5).bitPattern) + ":2")
+        // 札は 世代:band|drums:frame:fraction のビット:帯域（同じ onset が仮から確定へ変わっても変わらない）。
+        XCTAssertEqual(e.identity, "1:band:990:" + String(Float(0.5).bitPattern) + ":2")
         XCTAssertEqual(e.position, 7.25, accuracy: 1e-9)
         XCTAssertEqual(e.band, 2)
         XCTAssertEqual(e.strength, 0.6, accuracy: 1e-6)
@@ -326,8 +347,18 @@ final class RhythmAnalyzerTests: XCTestCase {
     /// 本物のカーネルと同じく、最新の確定した拍（anchor）を毎回運び、次の拍を見せる先の拍として運ぶ。
     /// `beats` は拍の頭の onset を持つ拍の番号、`midBeats` は 0.52 拍目の onset を持つ拍の番号。
     private func gridFrame(_ k: Int, generation: UInt32 = 1, epoch: UInt32 = 1, onsetsOn beats: [Int] = [],
-                           midBeats: [Int] = []) -> ETFrame {
+                           midBeats: [Int] = [], mode: UInt32 = 0, drumsOn: [(beat: Int, lane: UInt8)] = [],
+                           confidence: Float = 0.6) -> ETFrame {
         var f = Fields()
+        f.mode = mode
+        f.confidence = confidence
+        // ドラムの項目は拍の頭の確定した onset。strength の所は logit。
+        // 時刻は (frame + fraction) × 256/24000。拍の時刻（0.5 秒おき）に合わせて frame と fraction へ割る。
+        f.drums = drumsOn.map {
+            let exact = Double(50 * $0.beat) * 0.01 / (256.0 / 24000)
+            return EventSpec(frame: UInt32(exact.rounded(.down)), fraction: Float(exact - exact.rounded(.down)),
+                             epoch: epoch, beatIndex: Int32($0.beat), strength: 2, band: $0.lane)
+        }
         f.generation = generation
         f.epoch = epoch
         f.frameCount = UInt32(10 * k)
@@ -348,10 +379,13 @@ final class RhythmAnalyzerTests: XCTestCase {
     }
 
     private func feed(_ state: ETRhythmState, frames range: ClosedRange<Int>, generation: UInt32 = 1,
-                      epoch: UInt32 = 1, onsets: [Int: [Int]] = [:], mids: [Int: [Int]] = [:]) {
+                      epoch: UInt32 = 1, onsets: [Int: [Int]] = [:], mids: [Int: [Int]] = [:],
+                      mode: UInt32 = 0, drums: [Int: [(beat: Int, lane: UInt8)]] = [:],
+                      confidence: Float = 0.6) {
         for k in range {
             state.ingest(gridFrame(k, generation: generation, epoch: epoch, onsetsOn: onsets[k] ?? [],
-                                   midBeats: mids[k] ?? []), now: Double(k) * 0.1)
+                                   midBeats: mids[k] ?? [], mode: mode, drumsOn: drums[k] ?? [],
+                                   confidence: confidence), now: Double(k) * 0.1)
         }
     }
 
@@ -616,8 +650,10 @@ final class RhythmAnalyzerTests: XCTestCase {
 
     private func provisionalFrame(count: UInt32, anchorFrame: UInt32, anchorIndex: UInt32, events: [EventSpec],
                                   preview: [(frame: Int32, fraction: Float, index: Int32)] = [],
-                                  generation: UInt32 = 1) -> ETFrame {
+                                  generation: UInt32 = 1, mode: UInt32 = 0, drums: [EventSpec] = []) -> ETFrame {
         var f = Fields()
+        f.mode = mode
+        f.drums = drums
         f.generation = generation
         f.frameCount = count
         f.time = Float(Double(count) * 0.01)
@@ -917,5 +953,224 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertEqual(state.segmentOrder.count, 64)
         XCTAssertNil(state.segments[1], "古い方から捨てる")
         XCTAssertNotNil(state.segments[70])
+    }
+
+    // MARK: Drums（2.16.0）
+
+    private func drumEvent(frame: UInt32 = 100, fraction: Float = 0.5, logit: Float = 2, lane: UInt8 = 1,
+                           flags: UInt8 = 0, period: Float = 0.5) -> EventSpec {
+        EventSpec(frame: frame, fraction: fraction, epoch: 1, beatIndex: 1, period: period, strength: logit,
+                  band: lane, flags: flags)
+    }
+
+    func testParsesADrumsFrame() throws {
+        var f = Fields()
+        f.mode = 1
+        f.rate = 44100
+        f.hop = 470
+        f.events = [EventSpec(frame: 50, beatIndex: 0, band: 1)]
+        f.drums = [drumEvent(lane: 3), drumEvent(frame: 120, logit: -200, lane: 4)]
+        let s = try XCTUnwrap(ETRhythmSnapshot.parse(frame(f)))
+        XCTAssertEqual(s.displayMode, .drums)
+        XCTAssertEqual(s.events.count, 2, "drums の枠では帯域の onset を置かない。lane 4 は読む")
+        let kick = s.events[0]
+        // 時刻は 44.1 kHz・hop 470 でも (frame + fraction) × 256/24000（固定）。hopSeconds ではない。
+        XCTAssertEqual(kick.time, 100.5 * 256 / 24000, accuracy: 1e-12)
+        XCTAssertNotEqual(kick.time, 100.5 * Double(470) / 44100, accuracy: 1e-6)
+        XCTAssertEqual(kick.strength, 1 / (1 + exp(-2.0)), accuracy: 1e-12, "sigmoid(logit)")
+        XCTAssertEqual(kick.band, 3)
+        XCTAssertEqual(kick.identity, "1:drums:100:" + String(Float(0.5).bitPattern) + ":3")
+        let tom = s.events[1]
+        XCTAssertEqual(tom.band, 4)
+        XCTAssertGreaterThan(tom.strength, 0, "ごく小さい logit でも 0 にはしない")
+        XCTAssertEqual(tom.strength, 1 / (1 + exp(200.0)), accuracy: 1e-80)
+        // 極端な logit。
+        f.drums = [drumEvent(logit: -1000), drumEvent(frame: 101, logit: 1000)]
+        let extreme = try XCTUnwrap(ETRhythmSnapshot.parse(frame(f)))
+        XCTAssertGreaterThan(extreme.events[0].strength, 0)
+        XCTAssertEqual(extreme.events[1].strength, 1)
+
+        // band の枠では帯域の項目だけ置き、ドラムの項目は置かない。札は band。
+        var band = Fields()
+        band.events = [EventSpec(frame: 50, beatIndex: 0, band: 1)]
+        band.drums = [drumEvent(lane: 0)]
+        let bandSnapshot = try XCTUnwrap(ETRhythmSnapshot.parse(frame(band)))
+        XCTAssertEqual(bandSnapshot.displayMode, .band)
+        XCTAssertEqual(bandSnapshot.events.count, 1)
+        XCTAssertEqual(bandSnapshot.events[0].identity, "1:band:50:" + String(Float(0).bitPattern) + ":1")
+    }
+
+    func testRejectsMalformedDrumsFrames() {
+        func parse(_ change: (inout Fields) -> Void) -> ETRhythmSnapshot? {
+            var f = Fields()
+            f.mode = 1
+            f.drums = [drumEvent()]
+            change(&f)
+            return ETRhythmSnapshot.parse(frame(f))
+        }
+        XCTAssertNotNil(parse { _ in })
+        XCTAssertNil(parse { $0.mode = 2 })
+        XCTAssertNil(parse { $0.drums = Array(repeating: drumEvent(), count: 17) })
+        XCTAssertNotNil(parse { $0.drums = Array(repeating: drumEvent(), count: 16) })
+        XCTAssertNil(parse { $0.drumReserved = 1 })
+        XCTAssertNil(parse { $0.drumLatency = .nan })
+        XCTAssertNil(parse { $0.drumLatency = -1 })
+        XCTAssertNotNil(parse { $0.drumLatency = 0.07 })
+        XCTAssertNil(parse { $0.drums = [drumEvent(lane: 5)] })
+        for flags: UInt8 in [2, 4, 5] {
+            XCTAssertNil(parse { $0.drums = [drumEvent(flags: flags)] }, "flags \(flags) はドラムの項目に無い")
+        }
+        XCTAssertNotNil(parse { $0.drums = [drumEvent(flags: 1)] })
+        XCTAssertNotNil(parse { $0.drums = [drumEvent(flags: 3)] })
+        XCTAssertNil(parse { $0.drums = [drumEvent(logit: .nan)] })
+        XCTAssertNil(parse { $0.drums = [drumEvent(logit: .infinity)] })
+        XCTAssertNil(parse { $0.drums = [drumEvent(period: 0)] }, "拍に乗った onset は周期 0 を許さない")
+        XCTAssertNotNil(parse { $0.drums = [drumEvent(flags: 1, period: 0)] })
+        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1496, version: 4)), "2.13.0 の版 4")
+    }
+
+    func testDisplayModeLanes() {
+        XCTAssertEqual(ETRhythmDisplayMode.band.names, ["Low", "Mid", "High"])
+        XCTAssertEqual(ETRhythmDisplayMode.drums.names, ["Kick", "Snare", "Hi-hat", "Cymbals"])
+        XCTAssertEqual(ETRhythmDisplayMode.drums.order, [3, 2, 1, 0], "上から Cymbals・Hi-hat・Snare・Kick")
+        XCTAssertEqual(ETRhythmDisplayMode.drums.rows, [3, 2, 1, 0])
+        XCTAssertEqual(ETRhythmDisplayMode.band.laneCount, 3)
+        XCTAssertEqual(ETRhythmDisplayMode.drums.laneCount, 4)
+        XCTAssertEqual(ETRhythmDisplayMode.from(value: 0), .band)
+        XCTAssertEqual(ETRhythmDisplayMode.from(value: 0.5), .band, "カーネルは > .5f")
+        XCTAssertEqual(ETRhythmDisplayMode.from(value: 0.51), .drums)
+        XCTAssertEqual(ETRhythmDisplayMode.from(value: 1), .drums)
+    }
+
+    func testAFrameOfTheOtherModeKeepsTheClockButNoOnsets() {
+        let state = ETRhythmState()
+        // 状態は band。drums の枠のドラムの項目は置かない（切り替えの前に作られた枠）。拍・時計・テンポグラムは進める。
+        feed(state, frames: 1...20, mode: 1, drums: [10: [(1, 0)], 15: [(2, 1)]])
+        XCTAssertEqual(state.eventSerial, 0)
+        XCTAssertNotNil(state.snapshot)
+        XCTAssertGreaterThan(state.beatClock, 0)
+        XCTAssertLessThan(state.tempogramHead, 159 + 1)
+        XCTAssertGreaterThan(state.columnIndex, 0, "テンポグラムの列は進む")
+        // 同じ枠を drums の状態で受けると置く。
+        let drumsState = ETRhythmState()
+        drumsState.setDisplayMode(.drums)
+        feed(drumsState, frames: 1...20, mode: 1, drums: [10: [(1, 0)], 15: [(2, 1)]])
+        XCTAssertEqual(drumsState.eventSerial, 2)
+    }
+
+    func testDrumsModeDropsTomsAndKeepsTheOtherLanes() {
+        let state = ETRhythmState()
+        state.setDisplayMode(.drums)
+        feed(state, frames: 1...20, mode: 1, drums: [10: [(1, 4), (1, 0), (1, 3)]])
+        XCTAssertEqual(state.eventSerial, 2, "Tom（lane 4）は置かない")
+    }
+
+    func testChangingTheDisplayModeClearsOnsetsOnly() throws {
+        let state = ETRhythmState()
+        var onsets: [Int: [Int]] = [:]
+        for n in 1...12 { onsets[5 * n] = [n] }
+        feed(state, frames: 1...60, onsets: onsets)
+        XCTAssertEqual(state.eventSerial, 12)
+        XCTAssertNotNil(state.lensSummary())
+        let clock = state.beatClock
+        let segments = state.segments.count
+        let generation = state.activeGeneration
+        XCTAssertGreaterThan(segments, 0)
+        state.setDisplayMode(.band)
+        XCTAssertEqual(state.eventSerial, 12, "同じ表示への切り替えは何もしない")
+        state.setDisplayMode(.drums)
+        XCTAssertEqual(state.displayMode, .drums)
+        XCTAssertEqual(state.eventSerial, 0)
+        XCTAssertTrue(state.pendingOnsets.isEmpty)
+        XCTAssertEqual(state.beatClock, clock, "拍の時計は残る")
+        XCTAssertEqual(state.segments.count, segments)
+        XCTAssertEqual(state.activeGeneration, generation, "解析はやり直さない")
+        XCTAssertNotNil(state.snapshot)
+        XCTAssertEqual(state.lensSummary()?.rows.count, 0, "onset が無いのでレンズの行は空")
+        var visited = 0
+        state.forEachEvent(from: -100, to: 100) { _ in visited += 1 }
+        XCTAssertEqual(visited, 0)
+    }
+
+    func testClearHistoryClearsTheTimedFlags() {
+        let state = ETRhythmState()
+        var onsets: [Int: [Int]] = [:]
+        for n in 1...12 { onsets[5 * n] = [n] }
+        feed(state, frames: 1...60, onsets: onsets)
+        XCTAssertTrue(state.eventInfo(0).timed)
+        state.clearHistory()
+        XCTAssertFalse(state.eventInfo(0).timed, "clearHistory は clearOnsets を呼んで eventTimed も捨てる")
+        XCTAssertEqual(state.eventSerial, 0)
+    }
+
+    func testDrumsRowsOpacityAndEchoGeometry() {
+        // 1 拍ごとに Kick（lane 0）と Cymbals（lane 3）。確からしさ 0 でも濃さは 1。
+        let state = ETRhythmState()
+        state.setDisplayMode(.drums)
+        var drums: [Int: [(beat: Int, lane: UInt8)]] = [:]
+        for n in 1...12 { drums[5 * n] = [(n, 0), (n, 3)] }
+        feed(state, frames: 1...60, mode: 1, drums: drums, confidence: 0)
+        XCTAssertEqual(state.onsetOpacity, 1, "drums は確からしさに依らない")
+        state.prepareRender(now: 6.0)
+        let view = ETRhythmState.LaneView(left: 0, top: 0, width: 400, height: 120,
+                                          uRight: state.beatClock, span: 4, echo: false)
+        let points = state.points(for: view).filter(\.located)
+        XCTAssertFalse(points.isEmpty)
+        // 4 行の高さは 30。Kick は一番下の行（3）、Cymbals は一番上の行（0）。ずれ 0 ms なら行の中心。
+        // ずれ（±30 ms で行の ±0.45）で動くので、行の中に収まるかを見る。
+        for p in points where p.band == 0 {
+            XCTAssertGreaterThanOrEqual(p.y, 3 * 30)
+            XCTAssertLessThanOrEqual(p.y, 4 * 30)
+        }
+        for p in points where p.band == 3 {
+            XCTAssertGreaterThanOrEqual(p.y, 0)
+            XCTAssertLessThanOrEqual(p.y, 30)
+        }
+        XCTAssertTrue(points.contains { $0.band == 0 })
+        XCTAssertTrue(points.contains { $0.band == 3 })
+        // 反響の行の中心: 0.5 + (row - 1.5) × 0.84/4。
+        XCTAssertEqual(state.echoRowFraction(row: 3), 0.5 + 1.5 * 0.21, accuracy: 1e-12)
+        XCTAssertEqual(state.echoRowFraction(row: 0), 0.5 - 1.5 * 0.21, accuracy: 1e-12)
+        let echo = ETRhythmState.LaneView(left: 0, top: 0, width: 400, height: 40,
+                                          uRight: state.beatClock, span: 4, echo: true)
+        for p in state.points(for: echo) where p.band == 0 {
+            XCTAssertEqual(p.y, (0.5 + 1.5 * 0.21) * 40, accuracy: 1e-9)
+        }
+        // レンズ: Cymbals（band 3）の行が出る。升目は 4 × 6。
+        let lens = state.lensSummary()
+        XCTAssertNotNil(lens)
+        XCTAssertTrue(lens?.rows.contains { $0.band == 3 } == true)
+        XCTAssertTrue(lens?.rows.contains { $0.band == 0 } == true)
+        XCTAssertNotNil(state.displayedLens(lens, now: 6.0))
+
+        // band の反響の行は旧式（0.5 + (row - 1) × 0.28）のまま。
+        let band = ETRhythmState()
+        XCTAssertEqual(band.echoRowFraction(row: 0), 0.5 - 0.28, accuracy: 1e-12)
+        XCTAssertEqual(band.echoRowFraction(row: 1), 0.5, accuracy: 1e-12)
+        XCTAssertEqual(band.echoRowFraction(row: 2), 0.5 + 0.28, accuracy: 1e-12)
+        // band の濃さは確からしさ。
+        feed(band, frames: 1...5, confidence: 0.4)
+        XCTAssertEqual(band.onsetOpacity, 0.4, accuracy: 1e-6)
+        XCTAssertEqual(ETRhythmState().onsetOpacity, 0, "枠が無ければ 0")
+    }
+
+    func testAProvisionalDrumOnsetIsReplacedInPlaceByItsCommittedResend() throws {
+        let state = ETRhythmState()
+        state.setDisplayMode(.drums)
+        let onset = EventSpec(frame: 90, beatIndex: 1, beatFraction: 0.02, strength: 1, band: 1, flags: 3)
+        state.ingest(provisionalFrame(count: 100, anchorFrame: 50, anchorIndex: 0, events: [],
+                                      mode: 1, drums: [onset]), now: 0)
+        XCTAssertEqual(state.eventSerial, 1)
+        XCTAssertEqual(state.pendingOnsets.count, 1)
+        XCTAssertFalse(state.eventInfo(0).timed)
+        var committed = onset
+        committed.flags = 0
+        committed.beatFraction = 0.98
+        committed.beatIndex = 0
+        state.ingest(provisionalFrame(count: 200, anchorFrame: 150, anchorIndex: 2, events: [],
+                                      mode: 1, drums: [committed]), now: 1)
+        XCTAssertEqual(state.eventSerial, 1, "同じ札なので 2 つ目の点を足さない")
+        XCTAssertTrue(state.pendingOnsets.isEmpty)
+        XCTAssertTrue(state.eventInfo(0).timed)
     }
 }

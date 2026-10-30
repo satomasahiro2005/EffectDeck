@@ -9,8 +9,8 @@
 //  ビートレンズ（lensSummary・displayedLensSummary）をそのまま写した。
 //
 //  テレメトリ: ETFrameType.rhythmAnalyzer = 28、formatVersion 5、2024 バイト（2.16.0。2.13.0 は版 4・1496 バイト、2.12.0 は版 1・1344 バイト）
-//  0〜1495 は版 4 と同じ並び。1496 からの 528 バイトは Drums 表示の分（drum mode・drum count・drum latency・
-//  drum events）で、まだ読まない。
+//  0〜1495 は版 4 と同じ並び。1496 からの 528 バイトは Drums 表示の分（下の「Drums」）。
+//  上流の画面は版 5 だけを受ける（版 3・4 は無くなった）。カーネルはいつも版 5 を吐くので、こちらも版 5 だけ読む。
 //  （dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp の kTelemetryType / kPayloadBytes、rhythm_analyzer.js:1-8）
 //
 //  ペイロードの並び（rhythm_analyzer.js:294-394 の readSnapshot）:
@@ -29,6 +29,16 @@
 //                 4 見せない先の拍、5 確定した拍。拍（2・4・5）は band 0・beatFraction 0・strength 0〜1
 //      1344  u32 previewCount（12 まで）  1348 f32 previewPeriod
 //      1352 + 12*i  先の拍の見込み: i32 frame / f32 fraction / i32 index（時刻も番号も 1 つずつ増える）
+//
+//  Drums（2.16.0、1496 以降）:
+//      1496  u32 displayMode（0 = band、1 = drums。2 以上は捨てる）
+//      1500  u32 drumCount（16 まで）  1504 f32 drumLatencySeconds（検査だけ。表示しない）  1508 u32 0
+//      1512 + 32*i  ドラムの項目 i: 帯域の項目と同じ並びで strength の所が logit（f32）。
+//                   band の所は lane（0 Kick・1 Snare・2 Hi-hat・3 Cymbals・4 Tom）、flags は 0・1・3 だけ。
+//      項目は eventCount 個の帯域の項目と drumCount 個のドラムの項目。**いまの表示に合うほうだけ使う。**
+//      ドラムの時刻は (frame + fraction) * 256/24000 の固定（帯域の項目は hopSeconds）。
+//      強さは sigmoid(logit)。札は「世代:band|drums:frame:fractionBits:lane」で、帯域とドラムで混ざらない。
+//      Tom（lane 4）は読むが描かない。
 //
 //  **枠 1 つは「前の枠から今まで」の onset を運ぶ。**最新だけ残す読み方では前の枠の onset が消えるので、
 //  Telemetry は Rhythm Analyzer の枠だけ届いた順に全部取っておく（Telemetry.drainFrames）。
@@ -117,11 +127,16 @@ enum ETRhythm {
     static let minimumEvents = 4
     static let labelMinimumMS = 3.0
     static let slotLabels = ["1", "e", "⅓", "&", "⅔", "a"]
-    static let bandNames = ["Low", "Mid", "High"]
-    /// 上から下へ（High が上）。
-    static let bandOrder = [2, 1, 0]
-    /// 帯域ごとの行（上が 0）。
-    static let bandRows = [2, 1, 0]
+    // Drums（2.16.0）。
+    static let displayModeOffset = 1496
+    static let drumCountOffset = 1500
+    static let drumLatencyOffset = 1504
+    static let drumReservedOffset = 1508
+    static let drumEventsOffset = 1512
+    /// ドラムの時刻の刻み（256 / 24000 秒）。帯域の項目の hopSeconds とは別。
+    static let drumFrameSeconds = 256.0 / 24000
+    /// Tom まで読む。描くのは Kick・Snare・Hi-hat・Cymbals の 4 つ。
+    static let maxDrumLane = 4
     static let ledFadeSeconds = 0.09
     /// 表示の位置の補正を消す時定数（RHYTHM_ANALYZER_POSITION_SMOOTHING_MS = 100）。秒。
     static let positionSmoothing = 0.1
@@ -169,6 +184,39 @@ enum ETRhythm {
         let delta = candidate &- current
         return delta != 0 && delta < 0x8000_0000
     }
+}
+
+// MARK: - 表示（Display）
+
+/// Display（dm）。band は低・中・高の 3 帯域、drums はドラムの 4 種類（上流 RHYTHM_ANALYZER_LANES）。
+enum ETRhythmDisplayMode: Hashable {
+    case band, drums
+
+    /// 行の名前（帯域・lane の番号の順）。
+    var names: [String] {
+        switch self {
+        case .band: return ["Low", "Mid", "High"]
+        case .drums: return ["Kick", "Snare", "Hi-hat", "Cymbals"]
+        }
+    }
+    /// 上から下へ描く並び。
+    var order: [Int] {
+        switch self {
+        case .band: return [2, 1, 0]
+        case .drums: return [3, 2, 1, 0]
+        }
+    }
+    /// 帯域・lane ごとの行（上が 0）。
+    var rows: [Int] {
+        switch self {
+        case .band: return [2, 1, 0]
+        case .drums: return [3, 2, 1, 0]
+        }
+    }
+    var laneCount: Int { names.count }
+
+    /// カーネルの `params_.displayMode > .5f` と同じ。
+    static func from(value: Float) -> ETRhythmDisplayMode { value > 0.5 ? .drums : .band }
 }
 
 // MARK: - 枠
@@ -232,6 +280,10 @@ struct ETRhythmSnapshot: Equatable {
     /// 先の拍の見込み（1344 以降）。
     var previewBeats: [ETRhythmBeat] = []
     var previewPeriodSeconds: Double = 0
+    /// 枠の displayMode（1496）。events はこの表示のものだけ。
+    var displayMode: ETRhythmDisplayMode = .band
+    /// 1504。検査だけで、表示には使わない。
+    var drumLatencySeconds: Double = 0
     var sequence: UInt32
 
     var hopSeconds: Double { Double(hop) / sampleRate }
@@ -258,6 +310,13 @@ struct ETRhythmSnapshot: Equatable {
               anchorFraction >= 0, anchorFraction < 1, strongest.isFinite, strongest >= 0,
               let tempogram = p.floats(at: ETRhythm.tempogramOffset, count: ETRhythm.tempogramBins),
               !tempogram.contains(where: { !($0 >= 0 && $0 <= 1) }) else { return nil }
+        guard let modeCode = p.u32(at: ETRhythm.displayModeOffset),
+              let drumCount = p.u32(at: ETRhythm.drumCountOffset),
+              let drumLatency = p.f32(at: ETRhythm.drumLatencyOffset),
+              let reserved = p.u32(at: ETRhythm.drumReservedOffset),
+              modeCode <= 1, drumCount <= UInt32(ETRhythm.maxEvents),
+              drumLatency.isFinite, drumLatency >= 0, reserved == 0 else { return nil }
+        let displayMode: ETRhythmDisplayMode = modeCode == 1 ? .drums : .band
         let hopSeconds = Double(hop) / Double(rate)
         var snapshot = ETRhythmSnapshot(
             sampleRate: Double(rate), generation: generation, hop: hop, frameCount: UInt64(frameCount),
@@ -265,27 +324,39 @@ struct ETRhythmSnapshot: Equatable {
             eventCount: Int(eventCount), tickGateOpen: flags == 1, analysisEpoch: UInt64(epoch),
             confidence: Double(confidence), periodSeconds: Double(period), anchorFrame: UInt64(anchorFrame),
             anchorFraction: Double(anchorFraction), anchorIndex: Int(anchorIndex),
-            strongestBpm: Double(strongest), tempogram: tempogram, events: [], sequence: frame.sequence)
-        for slot in 0..<Int(eventCount) {
-            let base = ETRhythm.eventsOffset + ETRhythm.eventBytes * slot
+            strongestBpm: Double(strongest), tempogram: tempogram, events: [],
+            displayMode: displayMode, drumLatencySeconds: Double(drumLatency), sequence: frame.sequence)
+        for slot in 0..<(Int(eventCount) + Int(drumCount)) {
+            let isDrum = slot >= Int(eventCount)
+            let base = isDrum
+                ? ETRhythm.drumEventsOffset + ETRhythm.eventBytes * (slot - Int(eventCount))
+                : ETRhythm.eventsOffset + ETRhythm.eventBytes * slot
             guard let frameNumber = p.u32(at: base), let signedFrame = p.i32(at: base),
                   let fraction = p.f32(at: base + 4), let fractionBits = p.u32(at: base + 4),
                   let eventEpoch = p.u32(at: base + 8), let index = p.i32(at: base + 12),
                   let beatFraction = p.f32(at: base + 16), let eventPeriod = p.f32(at: base + 20),
-                  let strength = p.f32(at: base + 24), let band = p.u8(at: base + 28),
+                  let rawStrength = p.f32(at: base + 24), let band = p.u8(at: base + 28),
                   let kind = p.u8(at: base + 29), let pad = p.u16(at: base + 30) else { return nil }
+            // ドラムの項目は strength の所が logit。強さは sigmoid で、極端に小さくても 0 にはしない。
+            if isDrum && !rawStrength.isFinite { return nil }
+            let strength: Double = isDrum
+                ? max(Double.leastNonzeroMagnitude, 1 / (1 + exp(-Double(rawStrength))))
+                : Double(rawStrength)
             let annotated = kind == 0
             let shownBeat = kind == 2
             let forwardBeat = shownBeat || kind == 4
             let analysisBeat = kind == 5
             let beatSlot = forwardBeat || analysisBeat
-            guard beatSlot ? band == 0 : band <= 2, kind <= 5, pad == 0,
+            if isDrum && (band > ETRhythm.maxDrumLane || !(kind == 0 || kind == 1 || kind == 3)) { return nil }
+            guard isDrum ? true : (beatSlot ? band == 0 : band <= 2), kind <= 5, pad == 0,
                   fraction >= 0, fraction < 1, beatFraction >= 0, beatFraction < 1,
                   eventPeriod.isFinite, eventPeriod >= 0,
                   !((annotated || kind == 3 || forwardBeat) && eventPeriod == 0),
                   !(beatSlot && beatFraction != 0), strength.isFinite, strength <= 1,
                   beatSlot ? strength >= 0 : strength > 0 else { return nil }
-            let at = ((analysisBeat ? Double(signedFrame) : Double(frameNumber)) + Double(fraction)) * hopSeconds
+            let at = isDrum
+                ? (Double(frameNumber) + Double(fraction)) * ETRhythm.drumFrameSeconds
+                : ((analysisBeat ? Double(signedFrame) : Double(frameNumber)) + Double(fraction)) * hopSeconds
             if beatSlot {
                 let beat = ETRhythmBeat(time: at, index: index, epoch: UInt64(eventEpoch),
                                         periodSeconds: Double(eventPeriod), strength: Double(strength))
@@ -297,11 +368,13 @@ struct ETRhythmSnapshot: Equatable {
                 }
                 continue
             }
+            // いまの表示のものだけ置く（上流 readSnapshot の drum == (displayMode == drums)）。
+            guard isDrum == (displayMode == .drums) else { continue }
             snapshot.events.append(ETRhythmEvent(
                 annotated: annotated,
                 provisional: kind == 3,
                 time: at,
-                identity: "\(generation):\(frameNumber):\(fractionBits):\(band)",
+                identity: "\(generation):\(isDrum ? "drums" : "band"):\(frameNumber):\(fractionBits):\(band)",
                 epoch: UInt64(eventEpoch),
                 index: index,
                 position: Double(index) + Double(beatFraction),
@@ -390,6 +463,12 @@ final class ETRhythmState {
 
     // 表示だけの設定（sp）。変えたら refreshNovelty を呼ぶ。
     var span = ETRhythm.defaultSpan
+    /// Display（dm、2.16.0）。変えるときは setDisplayMode。
+    private(set) var displayMode: ETRhythmDisplayMode = .band
+    /// 行の名前・並び・数（band は 3、drums は 4）。
+    var lanes: ETRhythmDisplayMode { displayMode }
+    /// onset の濃さの元。band は confidence、drums はいつも 1（上流 onsetOpacity）。ヘッダ・テンポグラムは confidence のまま。
+    var onsetOpacity: Double { displayMode == .drums ? 1 : (snapshot?.confidence ?? 0) }
     /// 上流の _powerUiEnabled。EffectDeck の電源の休みは音のほうで済むので、いつも true。
     var powerUiEnabled = true
 
@@ -559,19 +638,33 @@ final class ETRhythmState {
         idleStartU = 0
         displayTimelineOffset = 0
         idleScroll = false
-        onsetIndices = [:]
-        pendingOnsets = []
         referenceRevision = 0
-        for i in eventReference.indices { eventReference[i] = nil }
+        clearOnsets()
         segments = [:]
         segmentOrder = []
         openSegment = nil
-        lensDisplay = nil
-        eventSerial = 0
         snapshot = nil
         frameBase = 0
         epochBase = 0
         clearBeatLed()
+    }
+
+    /// onset だけ捨てる（上流 clearOnsets）。拍の時計・区間・テンポグラムは残す。世代も解析もやり直さない。
+    func clearOnsets() {
+        onsetIndices = [:]
+        pendingOnsets = []
+        for i in eventReference.indices { eventReference[i] = nil }
+        for i in eventTimed.indices { eventTimed[i] = false }
+        eventSerial = 0
+        lensDisplay = nil
+    }
+
+    /// Display を替える。替わったら onset を捨てる（上流 setParameters）。カーネルは同期して
+    /// 次の枠から新しい表示の項目を運ぶので、解析のやり直し（beginEpoch）はしない。
+    func setDisplayMode(_ mode: ETRhythmDisplayMode) {
+        guard mode != displayMode else { return }
+        displayMode = mode
+        clearOnsets()
     }
 
     /// 点灯を捨てる。Metronome Click を切ったときにも呼ぶ（setParameters）。
@@ -628,6 +721,13 @@ final class ETRhythmState {
 
     func ingest(_ parsed: ETRhythmSnapshot, now: Double) {
         var snap = parsed
+        // 表示が食い違う枠（切り替えの前に作られたもの）は onset を捨てる。拍・時計・テンポグラムは進める。
+        // 同じなら、drums では Tom（lane 4）を描かない。
+        if snap.displayMode != displayMode {
+            snap.events = []
+        } else if displayMode == .drums {
+            snap.events = snap.events.filter { $0.band < ETRhythm.maxDrumLane }
+        }
         let previousU = displayU == nil ? nil : displayClock(audioNow(now), wall: now)
         let generationChanged = activeGeneration != nil && snap.generation != activeGeneration
         if activeGeneration == nil {
@@ -1209,6 +1309,12 @@ final class ETRhythmState {
         var echo: Bool
     }
 
+    /// 反響の行の中心（高さに対する割合）。上流 0.5 + (row - (N-1)/2) * 0.84/N。3 行なら 0.28 刻みで旧式と同じ。
+    func echoRowFraction(row: Int) -> Double {
+        let n = Double(lanes.laneCount)
+        return 0.5 + (Double(row) - (n - 1) / 2) * 0.84 / n
+    }
+
     func eventPoint(index: Int, view: LaneView) -> EventPoint {
         let strength = eventStrength[index] > 1 ? 1 : eventStrength[index]
         let displayed = displayedEvent(index, wall: renderWallTime)
@@ -1217,14 +1323,14 @@ final class ETRhythmState {
         var y: Double
         var radius: Double
         if view.echo {
-            y = view.top + (0.5 + (Double(ETRhythm.bandRows[band]) - 1) * 0.28) * view.height
+            y = view.top + echoRowFraction(row: lanes.rows[band]) * view.height
             radius = (0.025 + 0.035 * strength) * view.height
         } else {
-            let lane = view.height / 3
+            let lane = view.height / Double(lanes.laneCount)
             let limit = ETRhythm.deviationMS
             let deviation = displayed.deviation
             let clipped = deviation < -limit ? -limit : (deviation > limit ? limit : deviation)
-            y = view.top + (Double(ETRhythm.bandRows[band]) + 0.5) * lane
+            y = view.top + (Double(lanes.rows[band]) + 0.5) * lane
                 - (eventLocated[index] ? clipped / limit * 0.45 * lane : 0)
             radius = (0.025 + 0.04 * strength) * lane
         }
@@ -1250,12 +1356,13 @@ final class ETRhythmState {
     /// それにスウィングとジッタ。解析した拍が無いあいだは nil。
     func lensSummary() -> ETRhythmLens? {
         guard snapshot?.analysisValid == true, let segment = openSegment else { return nil }
-        var count = [Int](repeating: 0, count: 18)
-        var sum = [Double](repeating: 0, count: 18)
-        var squareSum = [Double](repeating: 0, count: 18)
+        let cells = lanes.laneCount * 6
+        var count = [Int](repeating: 0, count: cells)
+        var sum = [Double](repeating: 0, count: cells)
+        var squareSum = [Double](repeating: 0, count: cells)
         var fractions: [Double] = []
         forEachEvent(from: beatClock - ETRhythm.lensBeats, to: .infinity) { index in
-            guard eventTimed[index], eventEpoch[index] == segment.epoch,
+            guard eventTimed[index], eventEpoch[index] == segment.epoch, eventBand[index] < lanes.laneCount,
                   eventU[index] > beatClock - ETRhythm.lensBeats else { return }
             let cell = eventBand[index] * 6 + eventSlot[index]
             let deviation = eventDeviation[index]
@@ -1268,7 +1375,7 @@ final class ETRhythmState {
         var rows: [ETRhythmLensRow] = []
         var total = 0
         var spread = 0.0
-        for cell in 0..<18 where count[cell] >= ETRhythm.minimumEvents {
+        for cell in 0..<cells where count[cell] >= ETRhythm.minimumEvents {
             let mean = sum[cell] / Double(count[cell])
             let variance = squareSum[cell] / Double(count[cell]) - mean * mean
             let sd = (variance > 0 ? variance : 0).squareRoot()
@@ -1300,7 +1407,7 @@ final class ETRhythmState {
         let epoch = openSegment?.epoch
         let previous = lensDisplay.flatMap { $0.epoch == epoch ? $0 : nil }
         let weight = previous.map { 1 - exp(-(now - $0.time) * 1000 / ETRhythm.lensSmoothingMS) } ?? 1
-        var cells = [ETRhythmLensRow?](repeating: nil, count: 18)
+        var cells = [ETRhythmLensRow?](repeating: nil, count: lanes.laneCount * 6)
         let rows = lens.rows.map { row -> ETRhythmLensRow in
             let cell = row.band * 6 + row.slot
             var displayed = row
