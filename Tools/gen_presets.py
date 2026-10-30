@@ -27,6 +27,7 @@ LABEL = {
     "4ch": "4 Channel",
     "amp_sim": "Amp Simulation",
     "lofi": "Lo-Fi",
+    "mastering": "Mastering",
     "others": "Others",
     "processor": "Processor",
     "spatial": "Spatial",
