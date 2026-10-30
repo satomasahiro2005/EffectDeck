@@ -126,6 +126,10 @@ Run on 2026-10-30 on Windows / WSL. Nothing on the Mac or the device.
   1148 tests, 8 failures (all expected: version, floatCount and frame-size expectations). New: `Upstream216Tests` (6).
   After the Chords & Key / Drums follow-up: 1172 tests, 0 failures, 1 skipped.
   Device-only (not in the bundle): `Telemetry.queuedTypes` containing 32, all drawing, the shadow halo, label collisions.
+- Follow-up native checks (WSL, gcc, Release + ASan + UBSan with `-fno-sanitize=vptr`; upstream's harnesses construct kernels into raw
+  storage and trip UBSan's vptr check immediately, in both `note_spectrogram` and `rhythm_analyzer`): upstream
+  `effetune_dsp_note_spectrogram_tests` (no args), `--model-fixture <fixtures>` and `effetune_dsp_rhythm_analyzer_tests` all exit 0.
+  `Tests/Native` `asan` preset: 115 of 115 pass (the `engine` preset was not rerun; no C changed since the 121 of 121 above).
 - Python `Tests/Tools`: 251 tests OK (9 skipped). `node --test Tools/*.test.mjs`: 5 pass.
   `check_repo.py --version-guard` and `check_repo.py`: ok.
 - `Tests/Native` engine preset with the four patches (gcc, ASan + UBSan, `lsan.supp`): 121 of 121 pass.
