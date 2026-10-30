@@ -382,7 +382,12 @@ enum ETChainText {
     /// どの型でも言わない鍵。Brickwall LimiterのgetParametersが`pluginType`を書き
     /// （brickwall_limiter.js:759）、上流のショート形式はid・type・enabledしか外さない
     /// （serialization-utils.jsのgetSerializablePluginStateShort）。EffeTuneの共有リンクに載ってくる。
-    private static let quietEverywhere: Set<String> = ["pluginType"]
+    ///
+    /// 2.16.0から`_uiCollapsed`と`_uiLocked`も載る（serialization-utils.jsが畳んだ段・設定を固定した段に
+    /// `true`で書く。ショート形式は段の鍵、ロング形式は`parameters`の中）。画面だけの印で、
+    /// EffectDeckは持たないので黙って落とす。**EffectDeckの保存・共有には書かない**（店の版が
+    /// ignoredと言う）。
+    private static let quietEverywhere: Set<String> = ["pluginType", "_uiCollapsed", "_uiLocked"]
     /// ロング形式の`parameters`に上流が重ねて書く段の鍵。読むのは段のほう（PipelineStore.parse）。
     /// - `en`: Modal ResonatorのgetParametersが書く（modal_resonator.js:314-322）
     /// - `ib` `ob` `ch`: getSerializableParametersが段のバスとチャンネルを短い綴りで写す
@@ -465,6 +470,7 @@ enum ETChainText {
             entry[nameKey] = ETSection.name
             let params = isLong ? (entry["parameters"] as? [String: Any] ?? [:]) : entry
             for key in params.keys.sorted() where key != ETSection.commentKey {
+                if quietEverywhere.contains(key) { continue }
                 if !isLong && stageKeys.contains(key) { continue }
                 // 終端の印（EffectDeckどうしのリンクに乗ってくる）。どちらの形でも段の鍵に置く。
                 if key == ETSection.rootResetKey && !isLong { continue }
@@ -552,7 +558,7 @@ enum ETChainText {
         }
         clampBuses(&stage, label: hit.name, report: &report)
         checkChannel(&stage, label: hit.name, report: &report)
-        let known = Set(keep + ["jsfx", "nm", "name"])
+        let known = Set(keep + ["jsfx", "nm", "name"]).union(quietEverywhere)
         for key in entry.keys.sorted() where !known.contains(key) {
             report.add("\(hit.name).\(key)", to: \.ignored)
         }

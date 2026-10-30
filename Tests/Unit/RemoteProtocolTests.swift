@@ -384,13 +384,39 @@ final class RemoteProtocolTests: XCTestCase {
                        ETRemoteAddress(host: "10.0.0.5", port: 47300, token: "abc"))
     }
 
+    /// 2.16.0 の PC の TLS。wss / https は secure として読み、url は wss を作る（暗号なしへ落ちない）。
+    func testAddressSecureForms() throws {
+        let full = ETRemoteAddress(host: "192.168.1.10", port: 47300, token: "x", secure: true)
+        XCTAssertEqual(ETRemoteAddress.parse("wss://192.168.1.10:47300/?t=x"), full)
+        XCTAssertEqual(ETRemoteAddress.parse("https://192.168.1.10:47300/?t=x"), full)
+        XCTAssertEqual(ETRemoteAddress.parse("https://192.168.1.10:47300/remote.html?t=x"), full)
+        XCTAssertEqual(ETRemoteAddress.parse("wss://192.168.1.10:47300/x"), full)
+        // ポートが無ければ 443（暗号なしは 47300 のまま）。
+        XCTAssertEqual(ETRemoteAddress.parse("https://pc.local/?t=x"),
+                       ETRemoteAddress(host: "pc.local", port: 443, token: "x", secure: true))
+        XCTAssertEqual(ETRemoteAddress.parse("http://pc.local/?t=x"),
+                       ETRemoteAddress(host: "pc.local", port: 47300, token: "x"))
+        XCTAssertEqual(full.url?.absoluteString, "wss://192.168.1.10:47300/?t=x")
+        XCTAssertEqual(ETRemoteAddress(host: "a", port: 47300, token: "x").url?.scheme, "ws")
+        // 保存した字は読み戻せる。暗号なしは前のまま。
+        XCTAssertEqual(full.text, "wss://192.168.1.10:47300/?t=x")
+        XCTAssertEqual(ETRemoteAddress.parse(full.text), full)
+        let plain = ETRemoteAddress(host: "192.168.1.10", port: 47300, token: "x")
+        XCTAssertEqual(plain.text, "192.168.1.10:47300/x")
+        XCTAssertEqual(ETRemoteAddress.parse(plain.text), plain)
+        // QR の読み取り。
+        let link = try XCTUnwrap(URL(string: "https://10.0.0.5/?t=tok"))
+        XCTAssertEqual(ETRemoteAddress.pairingLink(link),
+                       ETRemoteAddress(host: "10.0.0.5", port: 443, token: "tok", secure: true))
+    }
+
     func testAddressRejectsWhatItCannotRead() {
         XCTAssertNil(ETRemoteAddress.parse(""))
         XCTAssertNil(ETRemoteAddress.parse("192.168.1.10:47300"))          // トークンが無い
         XCTAssertNil(ETRemoteAddress.parse("192.168.1.10:99999/tok"))      // ポートが範囲の外
         XCTAssertNil(ETRemoteAddress.parse("192.168.1.10:abc/tok"))
-        XCTAssertNil(ETRemoteAddress.parse("wss://192.168.1.10:47300/?t=x"))  // ws しか作らない
-        XCTAssertNil(ETRemoteAddress.parse("https://192.168.1.10:47300/?t=x"))  // PC は http しか出さない
+        XCTAssertNil(ETRemoteAddress.parse("https://192.168.1.10:47300/other?t=x"))  // 行き先が違う
+        XCTAssertNil(ETRemoteAddress.parse("https://192.168.1.10:47300/?x=1"))        // トークンが無い
         XCTAssertNil(ETRemoteAddress.parse("http://192.168.1.10:47300/?x=1"))   // トークンが無い
         XCTAssertNil(ETRemoteAddress.parse("http://192.168.1.10:47300/other?t=x"))  // 行き先が違う
         XCTAssertNil(ETRemoteAddress.parse("http://192.168.1.10:99999/?t=x"))
@@ -439,13 +465,77 @@ final class RemoteProtocolTests: XCTestCase {
                        ETRemoteAddress(host: "10.0.0.5", port: 47300, token: "tok"))
     }
 
+    /// 2.16.0 の PC が早く来た hello に返す仮の state（空の鎖・effects なし・music1）は送り直す。
+    func testHelloRetriesOnlyTheProvisionalState() {
+        let provisional: [String: Any] = ["op": "state", "pipeline": [], "epoch": "", "ids": [],
+                                          "features": ["sync1", "music1"]]
+        XCTAssertTrue(ETRemoteHello.needsRetry(state: provisional))
+        // 効果の一覧がある返事は本物。
+        var full = provisional
+        full["effects"] = ["Volume"]
+        XCTAssertFalse(ETRemoteHello.needsRetry(state: full))
+        // music1 を名乗らない PC（2.13.0）は、effects が無くても送り直さない。
+        XCTAssertFalse(ETRemoteHello.needsRetry(state: ["pipeline": [], "features": ["sync1"]]))
+        XCTAssertFalse(ETRemoteHello.needsRetry(state: ["pipeline": []]))
+        XCTAssertGreaterThan(ETRemoteHello.retryLimit, 0)
+    }
+
+    func testFailureMessages() {
+        XCTAssertEqual(ETRemoteFailure.message(urlErrorCode: -1011, domain: "NSURLErrorDomain", httpStatus: 403),
+                       "Refused by the PC")
+        XCTAssertEqual(ETRemoteFailure.message(urlErrorCode: -1202, domain: "NSURLErrorDomain", httpStatus: nil),
+                       "Certificate not trusted")
+        XCTAssertEqual(ETRemoteFailure.message(urlErrorCode: -1200, domain: "NSURLErrorDomain", httpStatus: nil),
+                       "Certificate not trusted")
+        XCTAssertNil(ETRemoteFailure.message(urlErrorCode: -1004, domain: "NSURLErrorDomain", httpStatus: nil))
+        XCTAssertNil(ETRemoteFailure.message(urlErrorCode: -1202, domain: "OtherDomain", httpStatus: nil))
+    }
+
+    /// 2.16.0 の PC の `_uiCollapsed` / `_uiLocked` は段ごとに控え、鎖ごと送るときに戻す。
+    /// 読めない段（1 つも数えない）は並びに入れない。
+    func testUIFlagsAreKeptPerNodeAndMergedBack() throws {
+        let volume = try XCTUnwrap(ETCatalog.first { $0.name == "Volume" })
+        let chain = [ETChainNode(spec: volume, values: volume.defaults),
+                     ETChainNode(spec: volume, values: volume.defaults),
+                     ETChainNode(spec: volume, values: volume.defaults)]
+        let pipeline: [[String: Any]] = [
+            ["nm": "Volume", "_uiCollapsed": true],
+            ["nm": "Unknown Effect", "_uiLocked": true],          // 手元に入らない段
+            ["nm": "Volume", "_uiLocked": true, "_uiCollapsed": false],
+            ["nm": "Volume"],
+        ]
+        let flags = ETRemoteUIFlags.flags(in: pipeline) { $0["nm"] as? String == "Volume" ? 1 : 0 }
+        XCTAssertEqual(flags.count, 3)
+        XCTAssertEqual(flags[0], ["_uiCollapsed": true])
+        XCTAssertEqual(flags[1], ["_uiLocked": true])       // false は印にしない
+        XCTAssertEqual(flags[2], [:])
+
+        let marks = ETRemoteUIFlags.bind(flags, to: chain)
+        XCTAssertEqual(marks.count, 2)
+        // 数が合わなければ結ばない。
+        XCTAssertTrue(ETRemoteUIFlags.bind(flags, to: Array(chain.dropLast())).isEmpty)
+
+        // 2 番目の段を落とした送り（remoteIndex が nil）でも、印は正しい段へ戻る。
+        let projected = ETRemoteProjection.Projected(
+            pipeline: [["nm": "Volume", "en": true], ["nm": "Volume", "en": true]],
+            remoteIndex: [0, nil, 1])
+        let merged = ETRemoteUIFlags.merge(marks, chain: chain, into: projected)
+        XCTAssertEqual(merged[0]["_uiCollapsed"] as? Bool, true)
+        XCTAssertNil(merged[1]["_uiCollapsed"])
+        XCTAssertEqual(merged.count, 2)
+        // 元の形は変えない（sentForm の比べに使う）。
+        XCTAssertNil(projected.pipeline[0]["_uiCollapsed"])
+        // 印が無ければそのまま。
+        XCTAssertEqual(ETRemoteUIFlags.merge([:], chain: chain, into: projected).count, 2)
+    }
+
     func testPairingLinkRejectsOtherLinks() throws {
         for text in ["https://effectdeck.nemut.ai/remote?h=1.2.3.4:47300&t=x",   // 共有リンクの側
                      "effectdeck://remote?h=1.2.3.4:47300&t=x",                  // 前の形（使わない）
                      "ws://1.2.3.4:47300/chain?t=x",                             // 行き先が違う
                      "ws://1.2.3.4:47300/",                                      // トークンが無い
-                     "wss://1.2.3.4:47300/?t=x",                                 // 暗号つき（作らない）
-                     "https://1.2.3.4:47300/?t=x",                               // PC は http しか出さない
+                     "wss://1.2.3.4:47300/remote.html?t=x",                      // /remote.html は http と https だけ
+                     "https://1.2.3.4:47300/chain?t=x",                          // 行き先が違う
                      "http://1.2.3.4:47300/?x=1",                                // トークンが無い
                      "http://1.2.3.4:47300/chain?t=x",                           // 行き先が違う
                      "ws://1.2.3.4:47300/remote.html?t=x",                       // /remote.html は http だけ

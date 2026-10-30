@@ -28,7 +28,7 @@
 //  ホスト名と同じ名前の人のフォルダが前から在れば触らず、`名前 2` へ写す。
 //  iCloud へは今までどおり PresetStoreCore が触った名前だけ当てる（鎖の persist() の門とは別）。
 //
-//  つなぎ先: ws://<host>:47300/?t=<token>（ETRemoteAddress）。トークンが違うと PC は
+//  つなぎ先: ws://<host>:47300/?t=<token>（ETRemoteAddress。2.16.0 の PC の TLS は wss://）。トークンが違うと PC は
 //  コード 4401 で閉じるので、その場合は再接続しない（繰り返しても通らない）。
 //  PC の画面の QR（http://host:port/?t=…。ws:// も読む）をアプリの中の読み取り（RemoteScannerView）で読んだら
 //  pair(_:) が控えてつなぐ（入口はツールバーのアイコン・帯・設定画面の Remote の面）。
@@ -141,6 +141,9 @@ final class RemoteMirror: ObservableObject {
     /// 最後に PC へ送った鎖と、手元の番号 → PC の番号の対応。
     private var sentForm: [[String: Any]]?
     private var sentMap: [Int?] = []
+    /// PC が段に付けている画面だけの印（2.16.0 の `_uiCollapsed` / `_uiLocked`）。段の id ごと。
+    /// 手元には持たず、`chain` で鎖ごと送るときに戻す（ETRemoteUIFlags）。
+    private var uiFlags: [UUID: [String: Bool]] = [:]
 
     /// params を送りたい段（手元の番号）。30 Hz でまとめて送る。
     private var pendingParams: Set<Int> = []
@@ -399,11 +402,21 @@ final class RemoteMirror: ObservableObject {
         // 送りの順は保たれる。open を待たずに積んでよい（URLSession が開いてから流す）。
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let state = await self.request(ETRemoteHello.message(info: Bundle.main.infoDictionary),
-                                           reply: "state", timeout: 20)
+            let hello = ETRemoteHello.message(info: Bundle.main.infoDictionary)
+            var answer = await self.request(hello, reply: "state", timeout: 20)
+            // 2.16.0 の PC は画面の用意が済む前の hello に、空の鎖の仮の state を返す。
+            // 中身のある返事が来るまで Connecting のまま、hello を送り直す（上限を過ぎたら最後の返事を使う）。
+            var tries = 0
+            while gen == self.generation, let provisional = answer,
+                  ETRemoteHello.needsRetry(state: provisional), tries < ETRemoteHello.retryLimit {
+                tries += 1
+                try? await Task.sleep(nanoseconds: UInt64(ETRemoteHello.retryInterval * 1_000_000_000))
+                guard gen == self.generation else { return }
+                answer = await self.request(hello, reply: "state", timeout: 20)
+            }
             guard gen == self.generation else { return }
             // 返事が来ない（開いたが EffeTune のリモートではない・止まっている）。Connecting のまま待たせない。
-            guard let state else {
+            guard let state = answer else {
                 self.lost(reason: "hello に返事が無い")
                 return
             }
@@ -444,6 +457,7 @@ final class RemoteMirror: ObservableObject {
         task = nil
         sentForm = nil
         sentMap = []
+        uiFlags.removeAll()
         pendingParams.removeAll()
         pendingFollow = nil
         pendingHello = nil
@@ -494,7 +508,11 @@ final class RemoteMirror: ObservableObject {
             return
         }
         log.notice("remote: 切れた code=\(code) \(error.localizedDescription, privacy: .public)")
-        status = .error("Can't connect")
+        // 証明書が通らない（TLS）・PC がアップグレードを断った（403: ホスト名の規則）は、短い字で言い分ける。
+        let http = (t.response as? HTTPURLResponse)?.statusCode
+        status = .error(ETRemoteFailure.message(urlErrorCode: (error as NSError).code,
+                                                domain: (error as NSError).domain,
+                                                httpStatus: http) ?? "Can't connect")
         scheduleReconnect()
     }
 
@@ -670,6 +688,10 @@ final class RemoteMirror: ObservableObject {
         pcSlot = state["slot"] as? String
         pcIds = (state["ids"] as? [Any])?.compactMap { $0 as? String } ?? []
         applyingRemote = false
+        // PC が段に付けた画面だけの印を、段の id ごとに控える（chain を送るとき戻す）。
+        uiFlags = ETRemoteUIFlags.bind(
+            ETRemoteUIFlags.flags(in: state["pipeline"]) { [self] entry in items(from: [entry]).count },
+            to: dsp.chain)
         // いま入れた鎖は PC と同じなので、送ったことにして控えを合わせる。
         let projected = ETRemoteProjection.project(dsp.chain, host: host)
         sentForm = projected.pipeline
@@ -787,7 +809,9 @@ final class RemoteMirror: ObservableObject {
         sentMap = projected.remoteIndex
         if let sent = sentForm, (sent as NSArray).isEqual(to: projected.pipeline) { return }
         sentForm = projected.pipeline
-        if let n = sendEdit(["op": "chain", "pipeline": projected.pipeline]) {
+        // 比べるのは印の無い形のまま。送るときだけ PC が付けていた印を戻す（畳み・固定を壊さない）。
+        let outgoing = ETRemoteUIFlags.merge(uiFlags, chain: chain, into: projected)
+        if let n = sendEdit(["op": "chain", "pipeline": outgoing]) {
             chainInFlight = chainInFlight.filter { $0.value.timeIntervalSinceNow > -2 }
             chainInFlight[n] = Date()
         }

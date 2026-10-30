@@ -95,7 +95,48 @@ Port of upstream `note_spectrogram.js` `handleChordKeyTelemetry`, `_drawChordLan
 - **To check on the device.** Four lanes in the narrow 3:5 layout are about 41 pt high instead of 55 pt. A numeric 1 loaded
   from hand-written text loads as drums (upstream ignores non-strings); an unknown string loads as band.
 
-## Not used
+## Remote client and chain text (PC on 2.16.0)
+
+Three changes, all for a PC running 2.16.0. A PC on 2.13.0 (the owner's) behaves as before in each case.
+
+- **Early `hello` (`ETRemoteHello.needsRetry`, `RemoteMirror.connect`).** A 2.16.0 desktop app with network music answers a
+  `hello` that arrives before its renderer is ready with a provisional `state`: `pipeline:[]`, `epoch:""`, `ids:[]`, no
+  `effects`, and `music1` in `features`. Entering remote with that would show an empty PC chain, hide the effect mismatch line
+  (`host.effects` is nil) and make `selectIR` fail (empty epoch). Now a reply with no `effects` key and `music1` in `features`
+  keeps the status at Connecting and the `hello` is sent again every 1 s, at most 30 times; then the last reply is used as is.
+  A 2.13.0 PC waits for its renderer and never names `music1`, so it never retries.
+- **TLS (`ETRemoteAddress.secure`).** The 2.16.0 PC can serve HTTPS / WSS (pairing links `https://<ip or endpoint>[:port]/?t=...`,
+  no port means 443, no plaintext fallback). `parse` and `pairingLink` now accept `wss` and `https` (`/` or `/remote.html` with
+  `t`), `url` builds `wss://` for them, the default port is 443 when secure and 47300 otherwise. `text` keeps the old
+  `host:port/token` for plain links (saved Preferences stay readable) and writes `wss://host:port/?t=token` for secure ones.
+  Plain `URLSessionWebSocketTask` with the system trust: **no custom trust, no disabled verification** (a private CA has to be
+  trusted by the user in iOS Settings). Certificate failures (`NSURLError` -1200 to -1204) show "Certificate not trusted".
+- **403 on the upgrade (upstream Host rule).** In 2.16.0 `verifyClient` no longer skips the Host check for clients without
+  `Origin`; every upgrade must pass `isAllowedHost` (IPv4 literal, `localhost`, `[ipv6]`, `*.local`, or the configured
+  endpoint). A manually typed MagicDNS or NetBIOS name now gets HTTP 403. QR, IPv4, Tailscale 100.x and `*.local` still work.
+  The status shows "Refused by the PC" (`ETRemoteFailure`). `docs/remote-v1.md` upstream still says the Host is not checked for
+  such clients; whether to raise that upstream is the owner's call.
+- **`_uiCollapsed` / `_uiLocked` in chain text (`ETChainText`).** 2.16.0 writes these two UI-only keys (value `true`) into every
+  saved and shared chain, short form on the stage and long form inside `parameters`. They are now in `quietEverywhere`
+  (also skipped in the Section branch and in the JSFX stage's known keys), so importing such a chain does not report them as
+  Ignored. **EffectDeck does not write them** into its own saved or shared forms (the store build would report them).
+- **Remote echo (`ETRemoteUIFlags`).** EffectDeck sends the whole chain (`chain`) on structural edits. A 2.16.0 PC reads a stage
+  without the keys as "not collapsed, not locked" (`applySerializedState` uses `=== true`), so every edit from the phone would
+  expand and unlock every card. `adopt()` now records each stage's true flags from the raw `state["pipeline"]` (each raw entry is
+  parsed on its own, so unknown stages do not shift the alignment) keyed by the node id; `sendChain` merges them back into the
+  outgoing pipeline through `remoteIndex`. The change detection (`sentForm`) still compares the form without flags, so no extra
+  sends. `params` never carries them (a missing key is left alone by `pipeline-apply.js`). A 2.13.0 PC never sends the keys,
+  so nothing is echoed.
+
+## Compatibility
+
+- Saved chains: `shortForm` always writes `ck` and `dm`; the store build (v2026.10.16) and a PC on 2.13.0 report them as Ignored
+  (harmless). `_uiCollapsed` / `_uiLocked` are never written by EffectDeck.
+- A PC on 2.13.0 is unaffected by the early-hello retry, the TLS address forms and the UI-flag echo (see above).
+- Chain text from a 2.16.0 desktop app imports without "Ignored" lines for the two UI-only keys.
+- Saved Preferences for the remote address stay readable (`text` is unchanged for plain links).
+
+## Not applied
 
 - `et_instance_stream_boundary` is visible to Swift through the bridging header (`effetune/abi.h`), `EFFETUNE_DSP_ABI_VERSION`
   is still 1. **Not called.** Upstream calls it at track starts and ends in its own player; EffectDeck processes other apps'
@@ -104,7 +145,16 @@ Port of upstream `note_spectrogram.js` `handleChordKeyTelemetry`, `_drawChordLan
   on graph-owned instances (EffectDeck's pipeline instances are not graph-owned).
 - SFZ analysis `configure(min, max, false)` is internal; nothing to do.
 - Out of scope (desktop app only): Visualizer presets (Visualizer is not on main), Android / AirPlay / network receivers,
-  UPnP, lyrics, and the remote-protocol JS changes (not looked at beyond the diff; the PC here stays on 2.13.0).
+  UPnP, lyrics.
+- Remote protocol changes that are compatible as they are: `music1` and the music ops (feature ignored), SSDP pairing with
+  approval (needs the multicast entitlement), single-IR upload / download in the browser client (same `putIR` / `getIR` ops),
+  `requestChunks`, `state.audio.channelCount`, `FEATURES` (unchanged).
+- Per-effect "Lock effect settings" (the `data-parameter-control` attributes, `defaultPrevented` guards and
+  `plugin-base.js` changes all serve it). Desktop UI only; if it is ever built it would be a stored `_uiLocked` per node plus
+  disabling the card's existing controls. Not added (no unrequested UI).
+- `plugin-base.js` Android hooks (`externalAssetParameters`, `isAndroid`), `ir_reverb.js` / `sfz_note_player.js` /
+  `phase_select_eq.js` plumbing, `audio-processor.js` boundary plumbing: no DSP change (golden diffs only change `jsEngineHash`).
+- Rhythm Analyzer: a `dm` change must not clear history. Already so: `setDisplayMode` clears only the onset state (see above).
 
 ## Risks to measure on the device
 
@@ -122,7 +172,10 @@ Port of upstream `note_spectrogram.js` `handleChordKeyTelemetry`, `_drawChordLan
 
 Run on 2026-10-30 on Windows / WSL. Nothing on the Mac or the device.
 
-- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): 1154 tests, 0 failures, 1 skipped for the import. Right after the import commit alone:
+- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): final run after the remote / chain-text work: **1177 tests, 0 failures, 1 skipped**
+  (5 new: `ChainTextTests.testUiOnlyKeysFromUpstream216AreQuiet`, `RemoteProtocolTests` secure address forms, hello retry,
+  failure messages, UI flags). `RemoteMirror.swift` is not in the bundle, so the retry loop, the status mapping and the flag
+  echo wiring are unbuilt and untested. The earlier numbers follow. 1154 tests, 0 failures, 1 skipped for the import. Right after the import commit alone:
   1148 tests, 8 failures (all expected: version, floatCount and frame-size expectations). New: `Upstream216Tests` (6).
   After the Chords & Key / Drums follow-up: 1172 tests, 0 failures, 1 skipped.
   Device-only (not in the bundle): `Telemetry.queuedTypes` containing 32, all drawing, the shadow halo, label collisions.
@@ -130,9 +183,13 @@ Run on 2026-10-30 on Windows / WSL. Nothing on the Mac or the device.
   storage and trip UBSan's vptr check immediately, in both `note_spectrogram` and `rhythm_analyzer`): upstream
   `effetune_dsp_note_spectrogram_tests` (no args), `--model-fixture <fixtures>` and `effetune_dsp_rhythm_analyzer_tests` all exit 0.
   `Tests/Native` `asan` preset: 115 of 115 pass (the `engine` preset was not rerun; no C changed since the 121 of 121 above).
+- Final run, same commands: `python -m unittest discover -s Tests/Tools` 251 OK (9 skipped); `node --test Tools/*.test.mjs` 5 of 5;
+  `Tools/check_repo.py --version-guard` and `Tools/check_repo.py` ok; `Tests/Native` `asan` preset (`cmake --preset asan`, with
+  `-DET_NATIVE_ABI_INCLUDE=Vendor/effetune/dsp/include`) 115 of 115. The `engine` preset was not rerun (no C changed since 121 of 121).
 - Python `Tests/Tools`: 251 tests OK (9 skipped). `node --test Tools/*.test.mjs`: 5 pass.
   `check_repo.py --version-guard` and `check_repo.py`: ok.
 - `Tests/Native` engine preset with the four patches (gcc, ASan + UBSan, `lsan.supp`): 121 of 121 pass.
 - Generated-files drift (`setup.sh` + every `Tools/golden/*_golden.mjs`, `ir_analysis_golden.mjs`, `ir_prepare_golden.mjs`
   against the HEAD pin): only `designers-b-golden.json` differs in content; the rest differ by line endings only.
-- **Not run:** the Xcode build, install on the iPhone 16, CI.
+- **Not run:** the Xcode build, install on the iPhone 16, CI. The Mac was offline, so nothing here was compiled for iOS.
+  `NoteSpectrogramView.swift`, `RhythmAnalyzerView.swift` and `RemoteMirror.swift` have never been compiled with these changes.

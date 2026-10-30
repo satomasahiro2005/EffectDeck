@@ -118,6 +118,8 @@ enum ETRemoteProjection {
 
 /// 画面で打たれた接続先。`host:port/token` が基本で、PC が QR とリンクに出す
 /// `http://host:port/?t=token`（Web クライアントの URL）と、前の形の `ws://host:port/?t=token` も受ける。
+/// 2.16.0 の PC は暗号（TLS）でも待てる。そのリンクは `https://host[:port]/?t=token`（ポートが無ければ 443）。
+/// `wss` と `https` は `secure` を立て、url は `wss` を作る（暗号なしへは落とさない）。
 struct ETRemoteAddress: Equatable {
 
     static let defaultPort = 47300
@@ -125,11 +127,16 @@ struct ETRemoteAddress: Equatable {
     let host: String
     let port: Int
     let token: String
+    /// 暗号つき（wss）。証明書はシステムの信頼で確かめる（外さない・自前の信頼も足さない）。
+    var secure = false
 
-    /// `ws://<host>:<port>/?t=<token>`。トークンは URLQueryItem に任せて符号化する。
+    /// 暗号つきのときの既定のポート（上流: 端点にポートが無ければ 443）。
+    static let securePort = 443
+
+    /// `ws://<host>:<port>/?t=<token>`（secure なら `wss://`）。トークンは URLQueryItem に任せて符号化する。
     var url: URL? {
         var c = URLComponents()
-        c.scheme = "ws"
+        c.scheme = secure ? "wss" : "ws"
         c.host = host
         c.port = port
         c.path = "/"
@@ -152,18 +159,20 @@ struct ETRemoteAddress: Equatable {
         // 完全な URL。scheme を見て、無ければ下の素の形へ回す。
         if let range = s.range(of: "://") {
             let scheme = s[s.startIndex..<range.lowerBound].lowercased()
-            // wss と https は受けない。url は ws しか作らず、PC は暗号なしの http しか出さないので、
-            // 受けると暗号なしへ黙って落ちる。
-            guard scheme == "ws" || scheme == "http",
+            // wss と https は secure として受ける（2.16.0 の PC の TLS）。url が wss を作るので、
+            // 暗号なしへ黙って落ちることはない。
+            guard ["ws", "wss", "http", "https"].contains(scheme),
                   let c = URLComponents(string: s), let host = c.host, !host.isEmpty else { return nil }
+            let secure = scheme == "wss" || scheme == "https"
+            let port = c.port ?? (secure ? securePort : defaultPort)
             let queryToken = c.queryItems?.first(where: { $0.name == "t" })?.value
-            if scheme == "http" {
+            if scheme == "http" || scheme == "https" {
                 // PC のリンクはトークンが t にある。行き先は / か /remote.html だけ（別の http の URL を受けない）。
                 guard c.path.isEmpty || c.path == "/" || c.path == "/remote.html", let queryToken else { return nil }
-                return make(host: host, port: c.port ?? defaultPort, token: queryToken)
+                return make(host: host, port: port, token: queryToken, secure: secure)
             }
             let token = queryToken ?? c.path.split(separator: "/").last.map(String.init) ?? ""
-            return make(host: host, port: c.port ?? defaultPort, token: token)
+            return make(host: host, port: port, token: token, secure: secure)
         }
 
         // 素の形。最初の `/` までが host[:port]、残りがトークン。
@@ -184,9 +193,9 @@ struct ETRemoteAddress: Equatable {
         return make(host: host, port: port, token: token)
     }
 
-    private static func make(host: String, port: Int, token: String) -> ETRemoteAddress? {
+    private static func make(host: String, port: Int, token: String, secure: Bool = false) -> ETRemoteAddress? {
         guard !host.isEmpty, (1...65535).contains(port), !token.isEmpty else { return nil }
-        return ETRemoteAddress(host: host, port: port, token: token)
+        return ETRemoteAddress(host: host, port: port, token: token, secure: secure)
     }
 }
 
@@ -194,18 +203,23 @@ struct ETRemoteAddress: Equatable {
 
 extension ETRemoteAddress {
 
-    /// Preferences.remoteAddress に書く字（`host:port/token`）。parse がそのまま読む。
-    var text: String { "\(host):\(port)/\(token)" }
+    /// Preferences.remoteAddress に書く字。暗号なしは前のまま `host:port/token`（保存済みの字が読める）、
+    /// 暗号つきは `wss://host:port/?t=token`。parse がどちらもそのまま読む。
+    var text: String {
+        secure ? "wss://\(host):\(port)/?t=\(token)" : "\(host):\(port)/\(token)"
+    }
 
-    /// PC が QR とリンクに出す接続先 `http://<IPv4>:47300/?t=<token>` を読む。
+    /// PC が QR とリンクに出す接続先 `http://<IPv4>:47300/?t=<token>`（TLS なら `https://<IPv4>[:port]/?t=<token>`）を読む。
     /// **QR はクライアントの種類を問わず 1 つ**（2026-10-03 本人の決定。PC は何がつなぐかを知らない）。
-    /// ブラウザならそのまま開き、EffectDeck は同じ host・port・t から ws:// を作る。
+    /// ブラウザならそのまま開き、EffectDeck は同じ host・port・t から ws://（TLS なら wss://）を作る。
     /// 前の形の `ws://<IPv4>:47300/?t=<token>` も読む。
-    /// http と ws 以外・t の無いもの・パスが / 以外のもの（http は /remote.html も）は nil（別の QR を受けない）。
+    /// http・https・ws・wss 以外・t の無いもの・パスが / 以外のもの（http と https は /remote.html も）は nil
+    /// （別の QR を受けない）。
     static func pairingLink(_ url: URL) -> ETRemoteAddress? {
-        guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "http",
+        guard let scheme = url.scheme?.lowercased(), ["ws", "wss", "http", "https"].contains(scheme),
               let c = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              c.path.isEmpty || c.path == "/" || (scheme == "http" && c.path == "/remote.html"),
+              c.path.isEmpty || c.path == "/"
+                || ((scheme == "http" || scheme == "https") && c.path == "/remote.html"),
               let t = c.queryItems?.first(where: { $0.name == "t" })?.value, !t.isEmpty else { return nil }
         return parse(url.absoluteString)
     }
@@ -621,6 +635,91 @@ enum ETRemoteHello {
         if let v = info?["CFBundleShortVersionString"] as? String, !v.isEmpty { m["version"] = v }
         if let b = info?["CFBundleVersion"] as? String, !b.isEmpty { m["build"] = b }
         return m
+    }
+
+    /// 返事の state がまだ中身の無い仮のものか。**2.16.0 の PC（ネットワーク音楽つき）は、画面の用意が
+    /// 済む前の hello に、空の鎖（`pipeline:[]`・`epoch:""`）で `effects` の無い state を返す。**
+    /// そのまま入れると空の鎖を見せ、効果の食い違いも見えず、IR も選べない。`music1` を名乗り
+    /// `effects` が無い返事だけを仮と見て、hello を送り直す。2.13.0 の PC は用意が済むまで返さず
+    /// `music1` も名乗らないので、これに当たらない。
+    static func needsRetry(state: [String: Any]) -> Bool {
+        guard state["effects"] == nil, let features = state["features"] as? [Any] else { return false }
+        return features.contains { ($0 as? String) == "music1" }
+    }
+
+    /// 送り直しの間隔（秒）と回数の上限。上限を過ぎたら最後の返事をそのまま使う。
+    static let retryInterval: Double = 1
+    static let retryLimit = 30
+}
+
+/// 2.16.0 の PC が保存・共有・state に書く画面だけの鍵（`_uiCollapsed` は畳んだ段、`_uiLocked` は設定を固定した段。
+/// 値は `true` のときだけ書く）。**EffectDeck は持たない**ので手元の鎖には入れないが、`chain` で鎖ごと
+/// 送ると PC は鍵の無い段を「畳まない・固定しない」と読んで全部戻してしまう
+/// （applySerializedState は `=== true`）。state で受けた印を段ごとに控え、`chain` に戻して送る。
+/// 2.13.0 の PC はこの鍵を書かないので、控えは空のまま何も足さない。
+enum ETRemoteUIFlags {
+
+    static let keys = ["_uiCollapsed", "_uiLocked"]
+
+    /// state の pipeline の各段から印を抜き、**読めた段ごとに** 1 つ並べる。
+    /// 読めない段（知らない効果）は手元の鎖に入らないので数えない。段を 1 つずつ読んで
+    /// （`parsedCount` が 0 か 1 を返す）、手元の鎖の並びと添字を合わせる。
+    static func flags(in pipeline: Any?, parsedCount: ([String: Any]) -> Int) -> [[String: Bool]] {
+        guard let list = pipeline as? [[String: Any]] else { return [] }
+        var result: [[String: Bool]] = []
+        for entry in list {
+            let n = parsedCount(entry)
+            guard n > 0 else { continue }
+            var marks: [String: Bool] = [:]
+            for key in keys where (entry[key] as? Bool) == true { marks[key] = true }
+            result.append(contentsOf: Array(repeating: marks, count: n))
+        }
+        return result
+    }
+
+    /// 印を手元の段の id に結ぶ。数が合わないときは何も結ばない（並びが分からない）。
+    static func bind(_ flags: [[String: Bool]], to chain: [ETChainNode]) -> [UUID: [String: Bool]] {
+        guard flags.count == chain.count else { return [:] }
+        var map: [UUID: [String: Bool]] = [:]
+        for (node, marks) in zip(chain, flags) where !marks.isEmpty { map[node.id] = marks }
+        return map
+    }
+
+    /// 送る pipeline に印を戻す。`remoteIndex[手元の番号]` が pipeline の添字。元の配列は変えない。
+    static func merge(_ marks: [UUID: [String: Bool]], chain: [ETChainNode],
+                      into projected: ETRemoteProjection.Projected) -> [[String: Any]] {
+        guard !marks.isEmpty else { return projected.pipeline }
+        var pipeline = projected.pipeline
+        for (index, node) in chain.enumerated() {
+            guard let found = marks[node.id], projected.remoteIndex.indices.contains(index),
+                  let remote = projected.remoteIndex[index], pipeline.indices.contains(remote) else { continue }
+            for (key, value) in found { pipeline[remote][key] = value }
+        }
+        return pipeline
+    }
+}
+
+/// つなぎに失敗した理由のうち、言い分けるもの。**画面に出す短い字だけ**（補足は書かない）。
+enum ETRemoteFailure {
+    /// TLS の証明書が信頼できない・期限切れ・つなぎ損ね。システムの信頼で確かめた結果なので、
+    /// 外さない（自前の信頼も足さない）。私設の CA は iOS の設定で信頼してもらう。
+    private static let certificateCodes: Set<Int> = [
+        -1200, // NSURLErrorSecureConnectionFailed
+        -1201, // NSURLErrorServerCertificateHasBadDate
+        -1202, // NSURLErrorServerCertificateUntrusted
+        -1203, // NSURLErrorServerCertificateHasUnknownRoot
+        -1204, // NSURLErrorServerCertificateNotYetValid
+    ]
+
+    /// 言い分ける理由が無ければ nil（呼び側は "Can't connect"）。
+    /// - 403: 2.16.0 の PC は Host が IPv4・localhost・[IPv6]・*.local・設定した端点でない
+    ///   アップグレードを断る。手で打った MagicDNS や NetBIOS の名前がこれに当たる。
+    static func message(urlErrorCode: Int, domain: String, httpStatus: Int?) -> String? {
+        if httpStatus == 403 { return "Refused by the PC" }
+        if domain == "NSURLErrorDomain", certificateCodes.contains(urlErrorCode) {
+            return "Certificate not trusted"
+        }
+        return nil
     }
 }
 
