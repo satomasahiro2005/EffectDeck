@@ -281,7 +281,8 @@ struct NoteSpectrogramView: View {
             // 横に倒して画面いっぱいに使えば、行に見合う高さが渡る。
             ZStack(alignment: .topTrailing) {
                 NoteSpectrogramGraph(tapId: node.tapId, display: display,
-                                     range: midiRange, band: band)
+                                     range: midiRange, chordKey: chordKey, band: band,
+                                     overlayButton: !graphOnly)
                 if !graphOnly {
                     Button {
                         movingToFullScreen = true
@@ -307,7 +308,8 @@ struct NoteSpectrogramView: View {
             // Time Span → Lowest Note → Highest Note（2.13.0 で Regular Note Limit が無くなった）。
             if !graphOnly { controls }
             // te（Timbre Enabled）は保存しない値で、行を出さない。Color・Highlight・Onsets から決まる。
-            ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
+            // ck（Chords & Key）は上流の並びで controls に出す（Onsets の次）。ここでは重ねない。
+            ForEach(node.spec.params.filter { !$0.runtimeOnly && $0.key != "ck" }) { param in
                 parameterRow(param)
             }
         }
@@ -329,7 +331,7 @@ struct NoteSpectrogramView: View {
             movingToFullScreen = false
         }) {
             NoteSpectrogramFullScreen(tapId: node.tapId, display: display,
-                                      range: midiRange, band: band,
+                                      range: midiRange, chordKey: chordKey, band: band,
                                       isPresented: $fullScreen)
         }
     }
@@ -360,6 +362,10 @@ struct NoteSpectrogramView: View {
                 Text("Onsets").font(.system(size: 14))
             }
             .padding(.vertical, 2)
+            // 2.16.0。DSP の値（保存する）なので ParameterRow をそのまま使う。Volume・Onsets と同じ Toggle。
+            if let ck = node.spec.params.first(where: { $0.key == "ck" }) {
+                ParameterRow(param: ck, nodeIndex: index, values: node.values, dsp: dsp)
+            }
             timeSpanRow
         }
     }
@@ -398,11 +404,16 @@ struct NoteSpectrogramView: View {
     @ViewBuilder
     private func parameterRow(_ param: ETParam) -> some View {
         if param.name == "minimumMidi" || param.name == "maximumMidi" {
-            ETNoteRangeRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+            // 値の綴りは全体の調に従う（2.16.0）。帯ではなく notation だけを観測する。
+            ETNoteKeyedRangeRow(param: param, nodeIndex: index, values: node.values, dsp: dsp,
+                                notation: band.notation)
         } else {
             ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
         }
     }
+
+    /// Chords & Key（ck）。
+    private var chordKey: Bool { value("chordKeyEnabled", 0) >= 0.5 }
 
     /// 出す音の範囲。params.json の minimumMidi / maximumMidi（21〜108）。
     private var midiRange: ClosedRange<Int> {
@@ -479,6 +490,8 @@ struct ETNoteRangeRow: View {
 
     @ObservedObject var dsp: EffeTuneDSP
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 音名の表（2.16.0。Chords & Key の全体の調で綴りが変わる）。SFZ は既定の # のまま。
+    var names: [String] = ETNoteChordKey.sharpNames
 
     var body: some View {
         if graphOnly {
@@ -496,14 +509,14 @@ struct ETNoteRangeRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                ValueBox(text: ETNoteBand.name(midi))
+                ValueBox(text: ETNoteBand.name(midi, names: names))
             }
             Slider(value: Binding(get: { Double(midi) },
                                   set: { dsp.setValue(Float($0.rounded()),
                                                       at: nodeIndex, offset: param.offset) }),
                    in: Double(bounds.lo)...Double(bounds.hi), step: 1)
                 .accessibilityLabel(param.label)
-                .accessibilityValue(ETNoteBand.name(midi))
+                .accessibilityValue(ETNoteBand.name(midi, names: names))
         }
         .padding(.vertical, 2)
     }
@@ -521,6 +534,20 @@ struct ETNoteRangeRow: View {
         let v = values[param.offset]
         guard v.isFinite else { return bounds.lo }
         return min(max(Int(v.rounded()), bounds.lo), bounds.hi)
+    }
+}
+
+/// 音域の行に全体の調の綴りを渡す。ETNoteNotation だけを観測する（帯は 30Hz で流れるので観測しない）。
+private struct ETNoteKeyedRangeRow: View {
+    let param: ETParam
+    let nodeIndex: Int
+    let values: [Float]
+    @ObservedObject var dsp: EffeTuneDSP
+    @ObservedObject var notation: ETNoteNotation
+
+    var body: some View {
+        ETNoteRangeRow(param: param, nodeIndex: nodeIndex, values: values, dsp: dsp,
+                       names: ETNoteChordKey.noteNames(forKey: notation.key))
     }
 }
 
@@ -571,10 +598,14 @@ private struct NoteSpectrogramGraph: View {
     let tapId: UInt32
     let display: ETNoteDisplay
     let range: ClosedRange<Int>
+    /// ck（Chords & Key）。DSP の値。
+    let chordKey: Bool
     /// 履歴は親が持つ。全画面と元の図で同じものを見せるため。
     @ObservedObject var band: ETNoteBand
     /// 図の高さ。全画面では画面いっぱいまで渡す。
     var height: CGFloat?
+    /// 右上に丸い札（Full Screen / Close）が重なるか。横向きの和音の字がそこを避ける。
+    var overlayButton = false
 
     @ObservedObject private var telemetry = Telemetry.shared
     /// 図の高さを画素で測るのに要る。行の複製はこれで決める。
@@ -645,11 +676,29 @@ private struct NoteSpectrogramGraph: View {
                         layer.stroke(line, with: ETGraphShading.axis,
                                      style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
                     }
+                    if chordKey {
+                        drawChordStrips(&layer, frame: frame, rollWidth: rollWidth, slots: slots)
+                    }
                 }
                 // 字は回さない。上流も Horizontal では 90 度戻している（:1222-1227）。
                 drawOctaveLabels(&context, frame: frame, rollWidth: rollWidth,
                                  gutter: gutter, rowHeight: rowHeight)
-                drawLegend(&context, in: plot.rect)
+                let legend = legendItems(context, in: plot.rect,
+                                         topInset: chordKey && !frame.horizontal ? Self.chordLaneHeight : 0)
+                if chordKey {
+                    let key = layoutKey(context, frame: frame, rollWidth: rollWidth)
+                    var obstacles = legend.map(\.rect)
+                    if let key { obstacles.append(key.bounds) }
+                    if overlayButton {
+                        let side = ETMetrics.hitTarget + 16
+                        obstacles.append(CGRect(x: plot.rect.maxX - side, y: plot.rect.minY,
+                                                width: side, height: side))
+                    }
+                    drawChordLabels(&context, frame: frame, rollWidth: rollWidth, slots: slots,
+                                    obstacles: obstacles)
+                    if let key { drawKey(&context, key) }
+                }
+                drawLegend(&context, items: legend)
             },
             overlay: { plot in
                 // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
@@ -672,8 +721,10 @@ private struct NoteSpectrogramGraph: View {
             .onChange(of: previewActive) { _, active in
                 if !active { ETPreviewTone_SetFrequency(0) }
             }
+            .onChange(of: chordKey) { _, on in band.chordKeyEnabled = on }
             .onAppear {
                 band.display = display
+                band.chordKeyEnabled = chordKey
                 // **縦の引き伸ばしを画像へ持たせる**（ETNoteBand.rowScale）。
                 // 全画面では図がずっと高くなるので、開くたびに測り直す。
                 band.fit(height: graphHeight * displayScale)
@@ -905,17 +956,29 @@ private struct NoteSpectrogramGraph: View {
                 level = cell.confidence > 0 ? Double(cell.level) : nil
             }
         }
-        return ETNoteProbe(midi: midi, confidence: confidence, level: level)
+        var chord: String?
+        if chordKey, columnWidth > 0, rollWidth > 0 {
+            let shown = min(band.count, slots)
+            let left = rollWidth - CGFloat(shown) * columnWidth
+            let slot = Int(((local.x - left) / columnWidth).rounded(.down))
+            chord = band.chord(displayColumn: slot, slots: slots)
+        }
+        return ETNoteProbe(midi: midi, confidence: confidence, level: level, chord: chord)
     }
 
     private var readout: [ETReadoutItem] {
         guard let probe = probe else { return [] }
-        var items = [ETReadoutItem("NOTE", ETNoteBand.name(probe.midi))]
+        var items = [ETReadoutItem("NOTE", ETNoteBand.name(probe.midi, names: band.notationNames))]
         if let confidence = probe.confidence {
             items.append(ETReadoutItem("CONF", String(format: "%.0f%%", confidence * 100)))
         }
         if let level = probe.level, level > -200 {
             items.append(ETReadoutItem("LEVEL", ETFormat.db(level)))
+        }
+        // 確定した和音（2.16.0）。まだ分からない列には出さない。
+        if chordKey, let chord = probe.chord {
+            items.append(ETReadoutItem("CHORD", chord.isEmpty ? "No chord"
+                : ETNoteChordKey.displayChordName(chord, names: band.notationNames)))
         }
         return items
     }
@@ -952,6 +1015,10 @@ private struct NoteSpectrogramGraph: View {
         // 音色の知らせは同じ tap に型 31 で来る。音の枠の後に入れる（列の番号で当てるので）。
         let timbre = telemetry.drainFrames(tap: tapId, type: ETNoteTimbreEvent.frameType)
         band.push(timbre: timbre.compactMap { ETNoteTimbreEvent($0) })
+        // 和音と調（型 32、2.16.0）も同じ tap に来る。音の枠の後に入れる（列の番号で当てるので）。
+        // ck が切れていれば帯が捨てるが、溜まり続けないように毎回取る。
+        let chordKeys = telemetry.drainFrames(tap: tapId, type: ETNoteChordKey.frameType)
+        band.push(chordKey: chordKeys.compactMap { ETNoteChordKeyFrame($0) })
     }
 
     /// 音の始まりの印（上流 _drawOnsets）。右向きの三角。Horizontal では面ごと回るので下向きになる。
@@ -977,8 +1044,16 @@ private struct NoteSpectrogramGraph: View {
         }
     }
 
-    /// 音色の凡例（上流 _drawTimbreLegend）。左上から並べ、入らなければ折り返す。
-    private func drawLegend(_ context: inout GraphicsContext, in rect: CGRect) {
+    /// 凡例の 1 項目（上流 _layoutTimbreLegend の要素）。rect は画面の座標。
+    private struct LegendItem {
+        let rect: CGRect
+        let colorIndex: Int?
+        let text: GraphicsContext.ResolvedText
+    }
+
+    /// 音色の凡例の並び（上流 _layoutTimbreLegend）。左上から並べ、入らなければ折り返す。
+    /// 和音の字が避けるので、描く前に位置だけ出せるようにしてある。
+    private func legendItems(_ context: GraphicsContext, in rect: CGRect, topInset: CGFloat) -> [LegendItem] {
         var labels: [String] = []
         switch display.color {
         case .instrument3: labels = ["Vocal", "Bass", "Other"]
@@ -986,9 +1061,10 @@ private struct NoteSpectrogramGraph: View {
         default: break
         }
         if display.highlight != .none { labels.append("Highlight: \(display.highlight.label)") }
-        guard !labels.isEmpty else { return }
+        guard !labels.isEmpty else { return [] }
         let padding: CGFloat = 6, line: CGFloat = 20, swatch: CGFloat = 14
-        var x = rect.minX + padding, y = rect.minY + padding
+        var x = rect.minX + padding, y = rect.minY + padding + topInset
+        var out: [LegendItem] = []
         for label in labels {
             let index = ETNoteTimbre.classes.firstIndex(of: label)
             let text = context.resolve(Text(label).font(.system(size: 12)).foregroundStyle(.secondary))
@@ -996,16 +1072,163 @@ private struct NoteSpectrogramGraph: View {
                 + 2 * padding
             if x > rect.minX + padding && x + width > rect.maxX - padding { x = rect.minX + padding; y += line }
             guard y + line <= rect.maxY else { break }
-            context.fill(Path(CGRect(x: x, y: y, width: width, height: line)), with: .color(.black.opacity(0.55)))
-            if let index {
+            out.append(LegendItem(rect: CGRect(x: x, y: y, width: width, height: line),
+                                  colorIndex: index, text: text))
+            x += width
+        }
+        return out
+    }
+
+    private func drawLegend(_ context: inout GraphicsContext, items: [LegendItem]) {
+        let padding: CGFloat = 6, line: CGFloat = 20, swatch: CGFloat = 14
+        for item in items {
+            let x = item.rect.minX, y = item.rect.minY
+            context.fill(Path(item.rect), with: .color(.black.opacity(0.55)))
+            if let index = item.colorIndex {
                 let c = ETNoteTimbre.colors[index]
                 context.fill(Path(CGRect(x: x + padding, y: y + 5, width: 10, height: 10)),
                              with: .color(Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255)))
             }
-            context.draw(text, at: CGPoint(x: x + padding + (index == nil ? 0 : swatch), y: y + line / 2),
+            context.draw(item.text, at: CGPoint(x: x + padding + (item.colorIndex == nil ? 0 : swatch), y: y + line / 2),
                          anchor: .leading)
-            x += width
         }
+    }
+
+    // MARK: 和音と調（2.16.0）
+
+    /// 上流 MULTI_F0_CHORD_LANE_HEIGHT / MULTI_F0_CHORD_FONT_SIZE。長さは CSS 画素 = pt。
+    private static let chordLaneHeight: CGFloat = 36
+    private static let chordFontSize: CGFloat = 28
+    private static let chordPadding: CGFloat = 6
+
+    /// 上流 _chordKeyColor。Note Colors のときだけ音名の色、それ以外は凡例と同じ .secondary。
+    private func chordColor(root: Int) -> Color {
+        guard display.color == .rainbow else { return .secondary }
+        let c = ETNoteKeyboard.noteColors[((root % 12) + 12) % 12]
+        return Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255)
+    }
+
+    /// 和音の細い帯（2 pt）。draw 空間で描く。Vertical は上の段の下端、Horizontal は右端（面ごと回るので y = 0）。
+    private func drawChordStrips(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                                 rollWidth: CGFloat, slots: Int) {
+        let columnWidth = rollWidth / CGFloat(max(slots, 1))
+        let shown = min(band.count, slots)
+        let left = rollWidth - CGFloat(shown) * columnWidth
+        let y: CGFloat = frame.horizontal ? 0 : Self.chordLaneHeight - 2
+        for run in band.chordRuns(slots: slots) {
+            let rect = CGRect(x: left + CGFloat(run.start) * columnWidth, y: y,
+                              width: CGFloat(run.end - run.start) * columnWidth, height: 2)
+            context.fill(Path(rect), with: .color(chordColor(root: run.root)))
+        }
+    }
+
+    /// 字を縁取って描く。SwiftUI は字を縁取れないので、背景色の影を重ねて代わりにする
+    /// （上流は graph-bg-deep の 2 px の縁）。maxWidth 相当は横だけ縮める。
+    private func drawChordText(_ context: inout GraphicsContext, _ text: GraphicsContext.ResolvedText,
+                               at point: CGPoint, anchor: UnitPoint, scale: CGFloat) {
+        var pen = context
+        let halo = Color(uiColor: .systemBackground)
+        pen.addFilter(.shadow(color: halo, radius: 1))
+        pen.addFilter(.shadow(color: halo, radius: 1))
+        if scale < 1 {
+            pen.translateBy(x: point.x, y: point.y)
+            pen.scaleBy(x: scale, y: 1)
+            pen.draw(text, at: .zero, anchor: anchor)
+        } else {
+            pen.draw(text, at: point, anchor: anchor)
+        }
+    }
+
+    /// 和音の字（上流 _drawChordLane）。新しい連なりから置き、次の連なりの始まりを越えない。
+    /// 入らない字は書かない。Vertical は上の段の左寄せ、Horizontal は右端に起こして置き、
+    /// 凡例・調の字・右上の札を避けて下へずらす。
+    private func drawChordLabels(_ context: inout GraphicsContext, frame: ETNoteRollFrame,
+                                 rollWidth: CGFloat, slots: Int, obstacles: [CGRect]) {
+        let columnWidth = rollWidth / CGFloat(max(slots, 1))
+        let shown = min(band.count, slots)
+        let left = rollWidth - CGFloat(shown) * columnWidth
+        let padding = Self.chordPadding
+        let maxTextWidth = max(1, (frame.horizontal ? frame.height : rollWidth) - 2 * padding)
+        let names = band.notationNames
+        // 障害物を時間の向き（draw 空間の x）へ直す。時間の順に見る。
+        let blocks: [(from: CGFloat, to: CGFloat, minX: CGFloat, maxX: CGFloat)] = frame.horizontal
+            ? obstacles.sorted { $0.minY < $1.minY }.map {
+                ($0.minY - frame.rect.minY, $0.maxY - frame.rect.minY, $0.minX, $0.maxX)
+            } : []
+        var nextStart = rollWidth
+        // Vertical は上の段にある障害物（右上の札）より右へは伸ばさない（上流には札が無い）。
+        if !frame.horizontal {
+            for obstacle in obstacles
+            where obstacle.minY < frame.rect.minY + Self.chordLaneHeight && obstacle.maxY > frame.rect.minY {
+                nextStart = min(nextStart, max(0, obstacle.minX - frame.rect.minX))
+            }
+        }
+        for run in band.chordRuns(slots: slots).reversed() {
+            let name = ETNoteChordKey.displayChordName(run.name, names: names)
+            let text = context.resolve(Text(name)
+                .font(.system(size: Self.chordFontSize, weight: .bold))
+                .foregroundStyle(chordColor(root: run.root)))
+            let size = text.measure(in: CGSize(width: 10_000, height: 1_000))
+            let scale = min(1, maxTextWidth / max(size.width, 1))
+            let textWidth = size.width * scale
+            let extent = frame.horizontal ? size.height : textWidth + 2 * padding
+            let runStart = left + CGFloat(run.start) * columnWidth
+            let runEnd = left + CGFloat(run.end) * columnWidth
+            var start = max(frame.horizontal ? padding : 0, runStart)
+            if frame.horizontal {
+                let right = frame.rect.maxX - (padding + 1)
+                let leftEdge = right - textWidth
+                for block in blocks
+                where leftEdge < block.maxX && right > block.minX
+                    && start < block.to && start + extent > block.from {
+                    start = block.to
+                }
+            }
+            let end = min(runEnd, rollWidth, nextStart)
+            if start + extent > end { continue }
+            nextStart = start
+            if frame.horizontal {
+                drawChordText(&context, text, at: frame.point(start, padding + 1),
+                              anchor: .topTrailing, scale: scale)
+            } else {
+                drawChordText(&context, text, at: frame.point(start + padding, Self.chordLaneHeight / 2),
+                              anchor: .leading, scale: scale)
+            }
+        }
+    }
+
+    private struct KeyLayout {
+        let region: CGRect
+        let text: GraphicsContext.ResolvedText
+        let point: CGPoint
+        let scale: CGFloat
+        let bounds: CGRect
+    }
+
+    /// 局所の調の字の置き場所（上流 _layoutKey）。調が無い（24・まだ）なら nil で、字は消える。
+    private func layoutKey(_ context: GraphicsContext, frame: ETNoteRollFrame, rollWidth: CGFloat) -> KeyLayout? {
+        guard let key = band.localKey, key >= 0, key < 24 else { return nil }
+        let rect = frame.rect
+        let region = frame.horizontal
+            ? CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rollWidth)
+            : CGRect(x: rect.minX, y: rect.minY, width: rollWidth, height: rect.height)
+        let text = context.resolve(Text("Key: " + ETNoteChordKey.keyName(key))
+            .font(.system(size: Self.chordFontSize, weight: .bold))
+            .foregroundStyle(chordColor(root: key % 12)))
+        let size = text.measure(in: CGSize(width: 10_000, height: 1_000))
+        let maxTextWidth = max(1, region.width - 4 * Self.chordPadding)
+        let scale = min(1, maxTextWidth / max(size.width, 1))
+        let point = CGPoint(x: region.minX + 2 * Self.chordPadding,
+                            y: region.maxY - Self.chordLaneHeight / 2 - Self.chordPadding)
+        let bounds = CGRect(x: point.x - 1, y: point.y - size.height / 2 - 1,
+                            width: size.width * scale + 2, height: size.height + 2)
+        return KeyLayout(region: region, text: text, point: point, scale: scale, bounds: bounds)
+    }
+
+    private func drawKey(_ context: inout GraphicsContext, _ layout: KeyLayout) {
+        var clipped = context
+        clipped.clip(to: Path(layout.region))
+        drawChordText(&clipped, layout.text, at: layout.point, anchor: .leading, scale: layout.scale)
     }
 }
 
@@ -1017,9 +1240,18 @@ struct ETNoteProbe {
     let midi: Int
     let confidence: Double?
     let level: Double?
+    /// 触った列の確定した和音（2.16.0）。nil はまだ分からない、"" は和音なし。
+    var chord: String?
 }
 
 // MARK: - 横に流す帯
+
+/// 音名の綴りを決める調（全体の調）。Lowest / Highest Note の行だけが見る。
+/// 帯は 30Hz で流れるので、行が帯を観測するとカードごと作り直されてボタンが固まる。
+/// 綴りの表が変わったときだけ流すので、こちらは滅多に動かない。
+final class ETNoteNotation: ObservableObject {
+    @Published fileprivate(set) var key: Int?
+}
 
 /// 細分ごとの確からしさを固定長の輪で持つ。新しい列は右端、古い列は左へ。
 /// 描く用の並びは表示の切り替えで作り直す。
@@ -1118,6 +1350,25 @@ final class ETNoteBand: ObservableObject {
     /// 音の枠の世代。違う世代の音色は捨てる。
     private var activeGeneration: UInt32?
 
+    // MARK: 和音と調（2.16.0）
+
+    /// 列ごとの確定した和音と、局所・全体の調。Foundation だけの ETNoteChordTrack が持つ。
+    private var chordTrack = ETNoteChordTrack(columns: ETNoteBand.columns)
+    /// 音名の綴り（全体の調）。Lowest / Highest Note の行が、帯を観測せずにこれだけを見る。
+    let notation = ETNoteNotation()
+    /// ck。切り替えたら和音と調を捨てる（上流 setParameters）。
+    var chordKeyEnabled = false {
+        didSet {
+            guard chordKeyEnabled != oldValue else { return }
+            clearChordKey()
+            revision &+= 1
+        }
+    }
+    var localKey: Int? { chordTrack.localKey }
+    var overallKey: Int? { chordTrack.overallKey }
+    /// いまの音名の表（全体の調に従う）。
+    var notationNames: [String] { ETNoteChordKey.noteNames(forKey: chordTrack.overallKey) }
+
     /// 音量の目盛り。幅と床は上流の既定のまま（lr 24 / df -60）。
     private var levelReference = ETLevelReference()
     private var lastTime: Double?
@@ -1127,9 +1378,12 @@ final class ETNoteBand: ObservableObject {
     }
 
     static func name(_ midi: Int) -> String {
-        let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        let pitchClass = ((midi % 12) + 12) % 12
-        return names[pitchClass] + "\(midi / 12 - 1)"
+        name(midi, names: ETNoteChordKey.sharpNames)
+    }
+
+    /// 調に合わせた綴り（2.16.0）。ChromaSpiralView と SFZNotePlayerView は # の綴りのまま。
+    static func name(_ midi: Int, names: [String]) -> String {
+        ETNoteChordKey.noteName(midi: midi, names: names)
     }
 
     private var rows: Int { Self.notes * rowsPerNote }
@@ -1337,12 +1591,14 @@ final class ETNoteBand: ObservableObject {
         }
         times[column] = snapshot.time
         frames[column] = (snapshot.generation, snapshot.frameIndex)
+        chordTrack.clearColumn(column)
         if snapshot.pitchCents.count == Self.notes {
             for note in 0..<Self.notes { cents[note * Self.columns + column] = snapshot.pitchCents[note] }
         }
         if activeGeneration != snapshot.generation {
             activeGeneration = snapshot.generation
             clearTimbre()
+            clearChordKey()
         }
         paint(column: column)
 
@@ -1386,8 +1642,53 @@ final class ETNoteBand: ObservableObject {
         for i in cents.indices { cents[i] = 0 }
         activeGeneration = nil
         clearTimbre()
+        clearChordKey()
         image = nil
         revision &+= 1
+    }
+
+    // MARK: 和音と調の入れ方
+
+    /// 型 32 の枠を入れる。上流 handleChordKeyTelemetry。音の枠の後に呼ぶ（列の番号で当てるので）。
+    /// 和音と調は線と字で描くので、画像は組み直さない。
+    func push(chordKey frames: [ETNoteChordKeyFrame]) {
+        guard chordKeyEnabled else { return }
+        var changed = false
+        for frame in frames {
+            if chordTrack.apply(frame, activeGeneration: activeGeneration, frames: self.frames,
+                                head: head, count: count) {
+                changed = true
+            }
+            setNotation(key: chordTrack.overallKey)
+        }
+        if changed { revision &+= 1 }
+    }
+
+    /// 上流 clearChordKeyHistory。
+    func clearChordKey() {
+        chordTrack.clear()
+        setNotation(key: nil)
+    }
+
+    /// 綴りの表が変わったときだけ流す（上流 _setNotationKey）。
+    private func setNotation(key: Int?) {
+        guard ETNoteChordKey.noteNames(forKey: key) != ETNoteChordKey.noteNames(forKey: notation.key) else { return }
+        notation.key = key
+    }
+
+    /// 左から数えて shown 列ぶんの和音の連なり。
+    func chordRuns(slots: Int) -> [ETNoteChordTrack.Run] {
+        let shown = min(count, slots)
+        guard shown > 0 else { return [] }
+        return chordTrack.runs(start: (head - shown + Self.columns) % Self.columns, shown: shown)
+    }
+
+    /// 左から数えた列の確定した和音。nil はまだ分からない、"" は和音なし。
+    func chord(displayColumn: Int, slots: Int) -> String? {
+        let shown = min(count, slots)
+        guard shown > 0 else { return nil }
+        return chordTrack.chord(displayColumn: displayColumn,
+                                start: (head - shown + Self.columns) % Self.columns, shown: shown)
     }
 
     /// 最新の列のその音の確からしさ。鍵盤を光らせるのに使う。
@@ -1697,6 +1998,7 @@ private struct NoteSpectrogramFullScreen: View {
     let tapId: UInt32
     let display: ETNoteDisplay
     let range: ClosedRange<Int>
+    let chordKey: Bool
     @ObservedObject var band: ETNoteBand
     @Binding var isPresented: Bool
 
@@ -1704,8 +2006,8 @@ private struct NoteSpectrogramFullScreen: View {
         ZStack(alignment: .topTrailing) {
             GeometryReader { geo in
                 NoteSpectrogramGraph(tapId: tapId, display: display, range: range,
-                                     band: band,
-                                     height: max(200, geo.size.height - 16))
+                                     chordKey: chordKey, band: band,
+                                     height: max(200, geo.size.height - 16), overlayButton: true)
                     .padding(.horizontal, 12)
             }
             Button { isPresented = false } label: {

@@ -263,3 +263,252 @@ enum ETNoteTimbre {
         return Double(p[index])
     }
 }
+
+// MARK: - 和音と調（2.16.0）
+
+/// 和音と調の名前（上流 note_spectrogram.js の MULTI_F0_KEY_NOTE_NAMES、multiF0ChordName）。
+enum ETNoteChordKey {
+    /// 型 32・版 1・32 バイト。
+    static let frameType: UInt16 = 32
+    static let version: UInt16 = 1
+    static let byteCount = 32
+    /// 確定した和音は 11 枠（約 0.22 秒）遅れて届く。枠 F の確定は枠 F - 11 の列に付く（MULTI_F0_CHORD_CONFIRMED_LAG）。
+    static let confirmedLag: UInt32 = 11
+    static let suffixes = ["", "m", "dim", "aug", "maj7", "m7", "7", "dim7", "m7b5", "sus2", "sus4"]
+    static let sharpNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    static let majorSignatures = [0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5]
+
+    /// 24 の調ごとの 12 音名。上流 :105-117 と同じ作り（♭ は U+266D、# は ASCII）。
+    /// 臨時記号が最も少ない綴り。6 つの引き分けは # に倒す。
+    static let keyNoteNames: [[String]] = (0..<24).map { key in
+        let signature = majorSignatures[(key % 12 + (key < 12 ? 0 : 3)) % 12]
+        let flat = signature < 0
+        var names = flat
+            ? ["C", "D\u{266D}", "D", "E\u{266D}", "E", "F", "G\u{266D}", "G", "A\u{266D}", "A", "B\u{266D}", "B"]
+            : sharpNames
+        let order = flat ? [11, 4, 9, 2, 7, 0, 5] : [5, 0, 7, 2, 9, 4, 11]
+        for index in 0..<abs(signature) {
+            let natural = order[index]
+            names[(natural + (flat ? -1 : 1) + 12) % 12] = String(sharpNames[natural].prefix(1)) + (flat ? "\u{266D}" : "#")
+        }
+        return names
+    }
+
+    /// 調に合わせた音名。調が無い（nil・24 以上）なら # の綴り。
+    static func noteNames(forKey key: Int?) -> [String] {
+        guard let key, key >= 0, key < 24 else { return sharpNames }
+        return keyNoteNames[key]
+    }
+
+    /// 枠が運ぶ (root, quality, bass) の名前。(255, 255, 255) は和音なし（""）。範囲外は nil。
+    /// 表記は # の綴りで固定（保存はこの形、表示で調の綴りへ直す）。
+    static func chordName(root: UInt8, quality: UInt8, bass: UInt8) -> String? {
+        if root == 255 && quality == 255 && bass == 255 { return "" }
+        guard root < 12, quality < UInt8(suffixes.count), bass < 12 else { return nil }
+        let base = sharpNames[Int(root)] + suffixes[Int(quality)]
+        return bass == root ? base : base + "/" + sharpNames[Int(bass)]
+    }
+
+    /// 「D♭ major」「B♭ minor」。24 以上は「—」。
+    static func keyName(_ key: Int) -> String {
+        guard key >= 0, key < 24 else { return "\u{2014}" }
+        return keyNoteNames[key][key % 12] + (key < 12 ? " major" : " minor")
+    }
+
+    /// # の綴りの和音名を調の綴りに直す。**根音とスラッシュの後ろの音だけ**直し、接尾辞（m7b5 の b5）には触れない。
+    static func displayChordName(_ canonical: String, names: [String]) -> String {
+        guard names.count == 12, names != sharpNames, !canonical.isEmpty else { return canonical }
+        func rename(_ note: String) -> String {
+            guard let index = sharpNames.firstIndex(of: note) else { return note }
+            return names[index]
+        }
+        /// 先頭の音名（A〜G と # 1 つ）と残り。
+        func split(_ text: String) -> (note: String, rest: String) {
+            guard let first = text.first, "ABCDEFG".contains(first) else { return ("", text) }
+            let chars = Array(text)
+            if chars.count > 1, chars[1] == "#" { return (String(chars[0..<2]), String(chars[2...])) }
+            return (String(first), String(chars[1...]))
+        }
+        let parts = canonical.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        let (root, suffix) = split(parts[0])
+        var out = rename(root) + suffix
+        if parts.count > 1 {
+            let (note, rest) = split(parts[1])
+            out += "/" + rename(note) + rest
+        }
+        return out
+    }
+
+    /// 音名 + オクターブ（「E♭4」）。
+    static func noteName(midi: Int, names: [String]) -> String {
+        let pitchClass = ((midi % 12) + 12) % 12
+        let safe = names.count == 12 ? names : sharpNames
+        return safe[pitchClass] + "\(midi / 12 - 1)"
+    }
+
+    /// 和音名から根音（0〜11）。""・読めないものは nil。
+    static func root(of name: String) -> Int? {
+        let chars = Array(name)
+        guard let first = chars.first else { return nil }
+        if chars.count > 1, chars[1] == "#", let index = sharpNames.firstIndex(of: String(chars[0..<2])) {
+            return index
+        }
+        return sharpNames.firstIndex(of: String(first))
+    }
+}
+
+/// 型 32 の 1 枠。上流の parseChordKeyTelemetryFrame（:455-476）と同じ門。
+///      0 f32 sampleRate / 4 f32 timeSeconds / 8 f32 hopSeconds / 12 u32 generation / 16 u32 frameIndex
+///     20,21,22 u8 いま届いた和音の root / quality / bass / 23,24,25 u8 確定した和音
+///     26 u8 局所の調（0〜11 長調、12〜23 短調、24 なし、255 まだ）/ 27 u8 全体の調（0〜23、255 まだ）
+///     28 f32 確定した和音の確からしさ
+struct ETNoteChordKeyFrame: Equatable {
+    let sampleRate: Double
+    let time: Double
+    let hopSeconds: Double
+    let generation: UInt32
+    let frameIndex: UInt32
+    /// "" は和音なし。表記は # の綴り。
+    let immediateName: String
+    let confirmedName: String
+    let confirmedRoot: Int?
+    let localKey: Int?
+    let overallKey: Int?
+    let confirmedProbability: Float
+
+    init?(_ frame: ETFrame) {
+        guard frame.type == ETNoteChordKey.frameType, frame.matches(version: ETNoteChordKey.version),
+              frame.hasPayload(bytes: ETNoteChordKey.byteCount) else { return nil }
+        let p = frame.payload
+        func u32(_ at: Int) -> UInt32 {
+            UInt32(p[at]) | UInt32(p[at + 1]) << 8 | UInt32(p[at + 2]) << 16 | UInt32(p[at + 3]) << 24
+        }
+        func f32(_ at: Int) -> Float { Float(bitPattern: u32(at)) }
+        let rate = f32(0), seconds = f32(4), hop = f32(8)
+        guard rate.isFinite, rate > 0, seconds.isFinite, seconds >= 0, hop.isFinite, hop > 0 else { return nil }
+        let generation = u32(12)
+        guard generation != 0 else { return nil }
+        guard let immediate = ETNoteChordKey.chordName(root: p[20], quality: p[21], bass: p[22]),
+              let confirmed = ETNoteChordKey.chordName(root: p[23], quality: p[24], bass: p[25]) else { return nil }
+        let local = p[26], overall = p[27]
+        let probability = f32(28)
+        guard local <= 24 || local == 255, overall <= 23 || overall == 255,
+              probability.isFinite, probability >= 0, probability <= 1 else { return nil }
+        sampleRate = Double(rate)
+        time = Double(seconds)
+        hopSeconds = Double(hop)
+        self.generation = generation
+        frameIndex = u32(16)
+        immediateName = immediate
+        confirmedName = confirmed
+        confirmedRoot = confirmed.isEmpty ? nil : Int(p[23])
+        localKey = local == 255 ? nil : Int(local)
+        overallKey = overall == 255 ? nil : Int(overall)
+        confirmedProbability = probability
+    }
+}
+
+/// 列に付けた和音と調の覚え（上流 confirmedChords / localKey / overallKey）。Foundation だけなので試せる。
+/// ETNoteBand が 1 つ持ち、列を書くたびに clearColumn、枠が来たら apply を呼ぶ。
+struct ETNoteChordTrack {
+
+    /// 描く和音の連なり。[start, end) は左から数えた列。
+    struct Run: Equatable {
+        let start: Int
+        let end: Int
+        let name: String
+        let root: Int
+    }
+
+    let columns: Int
+    /// nil はまだ分からない（描かない）。"" は和音なしと確定。それ以外は # の綴りの和音名。
+    private(set) var chords: [String?]
+    private(set) var localKey: Int?
+    private(set) var overallKey: Int?
+    private var lastFrameIndex: UInt32?
+
+    init(columns: Int) {
+        self.columns = columns
+        chords = [String?](repeating: nil, count: columns)
+    }
+
+    /// 上流 clearChordKeyHistory。
+    mutating func clear() {
+        for i in chords.indices { chords[i] = nil }
+        localKey = nil
+        overallKey = nil
+        lastFrameIndex = nil
+    }
+
+    /// 列を新しく書くとき。上流は書いた列の confirmedChords を null にする。
+    mutating func clearColumn(_ column: Int) {
+        guard chords.indices.contains(column) else { return }
+        chords[column] = nil
+    }
+
+    /// 新しいか（UInt32 の折り返しを見る）。
+    private static func newer(_ candidate: UInt32, than current: UInt32) -> Bool {
+        let delta = candidate &- current
+        return delta != 0 && delta < 0x8000_0000
+    }
+
+    /// 1 枠を当てる。上流 handleChordKeyTelemetry（:478-501）。何か変わったら true。
+    /// frames は列ごとに入れた (世代, 枠の番号)、head は次に書く列、count は溜まっている列数。
+    /// 確定した和音は 11 枠前の列のものなので、溜まっている列を全部探す（直しの 9 枠より深い）。
+    mutating func apply(_ frame: ETNoteChordKeyFrame, activeGeneration: UInt32?,
+                        frames: [(generation: UInt32, index: UInt32)?], head: Int, count: Int) -> Bool {
+        guard frame.generation == activeGeneration else { return false }
+        if let last = lastFrameIndex, !Self.newer(frame.frameIndex, than: last) { return false }
+        let target = frame.frameIndex &- ETNoteChordKey.confirmedLag
+        var changed = false
+        let reach = min(count, min(columns, frames.count))
+        if reach > 0 {
+            for back in 1...reach {
+                let column = ((head - back) % columns + columns) % columns
+                guard let owner = frames[column], owner.generation == frame.generation,
+                      owner.index == target else { continue }
+                if chords[column] != frame.confirmedName {
+                    chords[column] = frame.confirmedName
+                    changed = true
+                }
+            }
+        }
+        if localKey != frame.localKey || overallKey != frame.overallKey { changed = true }
+        localKey = frame.localKey
+        overallKey = frame.overallKey
+        lastFrameIndex = frame.frameIndex
+        return changed
+    }
+
+    /// 左から数えて shown 列ぶん（start は輪の中の先頭の列）の和音の連なり。
+    /// 同じ名前が続く間が 1 つ。nil か "" の列で切れ、同じ和音でも間を挟めば別の連なり（上流 previous = chord）。
+    func runs(start: Int, shown: Int) -> [Run] {
+        var out: [Run] = []
+        var current: (start: Int, name: String)?
+        func close(at end: Int) {
+            guard let c = current else { return }
+            if let root = ETNoteChordKey.root(of: c.name) {
+                out.append(Run(start: c.start, end: end, name: c.name, root: root))
+            }
+            current = nil
+        }
+        for display in 0..<max(shown, 0) {
+            let column = (start + display) % columns
+            if let name = chords[column], !name.isEmpty {
+                if let c = current, c.name == name { continue }
+                close(at: display)
+                current = (display, name)
+            } else {
+                close(at: display)
+            }
+        }
+        close(at: max(shown, 0))
+        return out
+    }
+
+    /// 左から数えた列の和音。
+    func chord(displayColumn: Int, start: Int, shown: Int) -> String? {
+        guard displayColumn >= 0, displayColumn < shown else { return nil }
+        return chords[(start + displayColumn) % columns]
+    }
+}
