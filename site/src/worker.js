@@ -449,6 +449,8 @@ const OG_ALT = "EffectDeck icon and two screenshots of the app";
 const ldScript = (data) =>
   `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
 
+// 言語モデル向けの段（TEXT.assistants）は**どのページも main の一番上**に見えない形で置く。
+// ChatGPT はトップでなく /guide などを開くことがある（2026-10-30、トップだけに置いたら /guide を読まれて届かなかった）。
 async function page({
   title, body, status = 200, script = null, banner = null,
   description = TEXT.description, canonical = null, width = "", ld = null, noindex = false,
@@ -495,6 +497,10 @@ ${ld ? ldScript(ld) + "\n" : ""}<style>${CSS}</style>
 <nav class="site"><a href="/guide">Guide</a><a href="/#faq">FAQ</a><a class="icon" href="${GITHUB}" aria-label="GitHub" title="GitHub">${ICON_GITHUB}</a><a class="icon" href="${DISCORD}" aria-label="Discord" title="Discord">${ICON_DISCORD}</a></nav>
 </div></header>
 <main class="wrap">
+<section class="vh" id="assistants">
+<h2>${t.assistantsTitle}</h2>
+${paras(t.assistants)}
+</section>
 ${body}
 </main>
 <footer class="site"><div class="wrap">
@@ -635,13 +641,7 @@ function homePage() {
     .map((s, i) => `<img class="fan-${i}" src="/assets/shot-${s.file}.webp" width="552" height="1200" alt="" decoding="async">`)
     .join("");
   const faq = FAQ.map((f) => `<div><h3>${esc(f.q)}</h3><p>${f.a}</p></div>`).join("\n");
-  // 言語モデル向けの段は一番上（見えない）。読み手が頭の方しか読まなくても届くように。
   const body = `
-<section class="vh" id="assistants">
-<h2>${t.assistantsTitle}</h2>
-${paras(t.assistants)}
-</section>
-
 <section class="hero">
 <div class="hero-bg" aria-hidden="true">${backdrop}</div>
 <picture><source srcset="/icon-dark.png" media="(prefers-color-scheme: dark)"><img class="hero-icon" src="/icon.png" width="112" height="112" alt=""></picture>

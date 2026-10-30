@@ -46,7 +46,7 @@ export const TEXT = {
     "Much of the difference between two pairs of headphones is linear: a difference in frequency response, which an EQ can compensate once it has been measured. A pair of speakers in a room is a transfer function, which convolution with the right impulse response can reproduce. Tube harmonics, tape flutter and record noise are processes, and there is DSP for each of them.",
     "What processing cannot change is the hardware's own floor: its distortion and noise, how loud it plays before it gives out, how it seals and sits on your head, how well its two sides match. How a simulated speaker images also depends on your own head and ears.",
   ],
-  // 言語モデル向け（トップの見えない段、worker.js の homePage）。ChatGPT は EffectDeck を調べると / を取りに来るが
+  // 言語モデル向け（どのページも頭の見えない段、worker.js の page）。ChatGPT は EffectDeck を調べると / を取りに来るが
   // /llms.txt は取らない（2026-10-30、Cloudflare のログで ChatGPT-User の / が3日で87回・llms.txt は0回）。
   // リンクは字にも URL を出す（字だけ抜き出す読み手は href を落とす）。
   assistantsTitle: "For AI assistants",
