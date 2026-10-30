@@ -19,8 +19,10 @@ two SwiftUI files (`NoteSpectrogramView.swift`, `RhythmAnalyzerView.swift`) are 
     Upstream's on-screen labels are "Frequency bands" and "Drums" (`rhythm_analyzer.js`).
 - System presets: 28 (was 18). The 10 new ones are `presets/mastering`. `Tools/gen_presets.py` `LABEL` gets
   `"mastering": "Mastering"` (without it the category came out lowercase). Names come from file names, as for the
-  existing ones ("Edm", "Hip Hop", "Jpop Dense", "Rnb Soul"); not renamed because ScreenshotSeed ids and
-  `preset:system:<name>` drop payloads depend on the current style.
+  existing ones; the four whose file stem reads badly (`edm`, `hip_hop`, `jpop_dense`, `rnb_soul`) use upstream's display names
+  from `presets/presets.txt` ("EDM", "Hip-Hop", "J-Pop Dense", "R&B and Soul") through `TITLE_OVERRIDE` in `Tools/gen_presets.py`.
+  Only the new `mastering/*` entries are overridden: the older presets keep their current names because ScreenshotSeed ids and
+  `preset:system:<name>` drop payloads depend on them (a grep of Sources finds no reference to any Mastering name).
 - Goldens: only `designers-b-golden.json` changes (`upstreamVersion` 2.16.0). The others are byte-identical apart from line endings.
 - Effect presets (170 / 30 effects) and licences (7) unchanged; `EffectPresets.swift` / `Licenses.swift` show as modified
   only by CRLF and are not committed.
@@ -127,6 +129,10 @@ Three changes, all for a PC running 2.16.0. A PC on 2.13.0 (the owner's) behaves
   outgoing pipeline through `remoteIndex`. The change detection (`sentForm`) still compares the form without flags, so no extra
   sends. `params` never carries them (a missing key is left alone by `pipeline-apply.js`). A 2.13.0 PC never sends the keys,
   so nothing is echoed.
+  The flags are bound through the projection (`bind(_:loaded:to:projected:)`): PC entry -> `remoteIndex` -> local node, so
+  a local stage that is not sent (an AUv3 / external stage with the same input and output bus, or an effect the PC lacks)
+  no longer drops every remembered flag (the first version required equal counts and cleared them all). Covered by
+  `RemoteProtocolTests.testUIFlagsSurviveStagesNotSentToPC`; the `adopt()` wiring itself is not in the Linux bundle.
 
 ## Compatibility
 
@@ -150,8 +156,12 @@ Three changes, all for a PC running 2.16.0. A PC on 2.13.0 (the owner's) behaves
   approval (needs the multicast entitlement), single-IR upload / download in the browser client (same `putIR` / `getIR` ops),
   `requestChunks`, `state.audio.channelCount`, `FEATURES` (unchanged).
 - Per-effect "Lock effect settings" (the `data-parameter-control` attributes, `defaultPrevented` guards and
-  `plugin-base.js` changes all serve it). Desktop UI only; if it is ever built it would be a stored `_uiLocked` per node plus
-  disabling the card's existing controls. Not added (no unrequested UI).
+  `plugin-base.js` changes all serve it). **Not desktop-only**: upstream's own remote client builds the same pipeline UI
+  (`js/remote/pipeline-apply.js` is shared by the host renderer and the browser client; `finishBatch` calls
+  `updatePluginUIState`), so a locked stage is inert there. EffectDeck only echoes `_uiLocked` back (`ETRemoteUIFlags`) and
+  does not enforce it: in remote mode the phone can still edit a stage the PC user locked (`params` ops are not refused by
+  the PC). **Known parity gap**, not fixed: closing it would mean disabling the card's existing controls for stages whose
+  stored flags have `_uiLocked`, with no new UI. Left for the owner to decide.
 - `plugin-base.js` Android hooks (`externalAssetParameters`, `isAndroid`), `ir_reverb.js` / `sfz_note_player.js` /
   `phase_select_eq.js` plumbing, `audio-processor.js` boundary plumbing: no DSP change (golden diffs only change `jsEngineHash`).
 - Rhythm Analyzer: a `dm` change must not clear history. Already so: `setDisplayMode` clears only the onset state (see above).
@@ -172,7 +182,13 @@ Three changes, all for a PC running 2.16.0. A PC on 2.13.0 (the owner's) behaves
 
 Run on 2026-10-30 on Windows / WSL. Nothing on the Mac or the device.
 
-- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): final run after the remote / chain-text work: **1177 tests, 0 failures, 1 skipped**
+- **Final run after the review fixes (2026-10-30):** Linux Logic bundle **1178 tests, 0 failures, 1 skipped** (one new:
+  `RemoteProtocolTests.testUIFlagsSurviveStagesNotSentToPC`; `testUIFlagsAreKeptPerNodeAndMergedBack` updated for the new `bind`);
+  `python -m unittest discover -s Tests/Tools` 252 OK (9 skipped; one new in `test_gen_presets.py`); `node --test Tools/*.test.mjs`
+  5 of 5; `check_repo.py --version-guard` and `check_repo.py` ok; `Tests/Native` `asan` preset 115 of 115 (run with the preset's
+  `LSAN_OPTIONS` suppressions; without them 5 pipeline tests fail on known external-processor leaks that `lsan.supp` covers).
+  The older numbers below are the history.
+- Linux Logic bundle (WSL, `Tests/Linux/run.sh`): earlier run after the remote / chain-text work: **1177 tests, 0 failures, 1 skipped**
   (5 new: `ChainTextTests.testUiOnlyKeysFromUpstream216AreQuiet`, `RemoteProtocolTests` secure address forms, hello retry,
   failure messages, UI flags). `RemoteMirror.swift` is not in the bundle, so the retry loop, the status mapping and the flag
   echo wiring are unbuilt and untested. The earlier numbers follow. 1154 tests, 0 failures, 1 skipped for the import. Right after the import commit alone:

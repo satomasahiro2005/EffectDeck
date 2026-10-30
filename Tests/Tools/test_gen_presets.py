@@ -84,6 +84,13 @@ class GenPresetsTests(unittest.TestCase):
         self.assertEqual(items[0][3], data)
         self.assertIn('json: ###"""', text)
 
+    def test_title_uses_upstream_names_for_new_mastering_only(self):
+        self.assertEqual(self.gp.title("rnb_soul", "mastering"), "R&B and Soul")
+        self.assertEqual(self.gp.title("hip_hop", "mastering"), "Hip-Hop")
+        # 既存のカテゴリは今の綴りのまま。
+        self.assertEqual(self.gp.title("hip_hop", "others"), "Hip Hop")
+        self.assertEqual(self.gp.title("fm_radio"), "Fm Radio")
+
     def test_raw_hashes(self):
         self.assertEqual(self.gp.raw_hashes('{"a":"x"}'), "#")
         self.assertEqual(self.gp.raw_hashes('{"a":"x\\\\#y"}'), "##")
@@ -100,7 +107,7 @@ class GenPresetsTests(unittest.TestCase):
         self.assertEqual(len(committed), len(files))
         by_name = {(c, n): d for c, n, _, d in committed}
         for f in files:
-            key = (self.gp.LABEL.get(f.parent.name, f.parent.name), self.gp.title(f.stem))
+            key = (self.gp.LABEL.get(f.parent.name, f.parent.name), self.gp.title(f.stem, f.parent.name))
             self.assertEqual(by_name[key], json.loads(f.read_text("utf-8")), f.name)
 
 
