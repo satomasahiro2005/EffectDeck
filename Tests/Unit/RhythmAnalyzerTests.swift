@@ -125,10 +125,10 @@ final class RhythmAnalyzerTests: XCTestCase {
         var previewPeriod: Float = 0
     }
 
-    /// 2.13.0 の版 4（1496 バイト）。`locked` が false なら周期も anchor も 0（解析した拍が無い）。
-    private func frame(_ f: Fields, length: Int = 1496, version: UInt16 = 4,
+    /// 2.16.0 の版 5（2024 バイト。0〜1495 は 2.13.0 の版 4 と同じ）。`locked` が false なら周期も anchor も 0（解析した拍が無い）。
+    private func frame(_ f: Fields, length: Int = 2024, version: UInt16 = 5,
                        sequence: UInt32 = 1) -> ETFrame {
-        var p = [UInt8](repeating: 0, count: 1496)
+        var p = [UInt8](repeating: 0, count: 2024)
         func put(_ bytes: [UInt8], _ offset: Int) { TelemetryBytes.put(bytes, at: offset, into: &p) }
         put(TelemetryBytes.f32(f.rate), 0)
         put(TelemetryBytes.u32(f.generation), 4)
@@ -224,8 +224,9 @@ final class RhythmAnalyzerTests: XCTestCase {
 
     func testRejectsMalformedFrames() {
         XCTAssertNil(ETRhythmSnapshot.parse(nil))
-        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1495)))
+        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 2023)))
         XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1344)), "2.12.0 の長さ")
+        XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), length: 1496, version: 4)), "2.13.0 の版 4")
         XCTAssertNil(ETRhythmSnapshot.parse(frame(Fields(), version: 1)), "2.12.0 の版")
         func mutate(_ change: (inout Fields) -> Void) -> ETRhythmSnapshot? {
             var f = Fields()
@@ -263,9 +264,9 @@ final class RhythmAnalyzerTests: XCTestCase {
         XCTAssertNil(mutate { $0.preview = [(10, 1, 1)]; $0.previewPeriod = 0.5 })
         XCTAssertNil(mutate { $0.preview = Array(repeating: (10, 0, 1), count: 13); $0.previewPeriod = 0.5 })
         XCTAssertNil(ETRhythmSnapshot.parse(TelemetryBytes.frame(.rhythmAnalyzer, version: 2,
-                                                                 payload: [UInt8](repeating: 0, count: 1496))))
-        XCTAssertNil(ETRhythmSnapshot.parse(TelemetryBytes.frame(.level, version: 4,
-                                                                 payload: [UInt8](repeating: 0, count: 1496))))
+                                                                 payload: [UInt8](repeating: 0, count: 2024))))
+        XCTAssertNil(ETRhythmSnapshot.parse(TelemetryBytes.frame(.level, version: 5,
+                                                                 payload: [UInt8](repeating: 0, count: 2024))))
     }
 
     func testSortsBeatsAndPreviewOutOfTheItems() throws {

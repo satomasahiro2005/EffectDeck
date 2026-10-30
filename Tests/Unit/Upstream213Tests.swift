@@ -80,9 +80,10 @@ final class Upstream213Tests: XCTestCase {
 
     func testNoteSpectrogramLostRegularNoteLimit() throws {
         let s = try spec("NoteSpectrogramPlugin")
-        // 2.14.0 で保存しない te（Timbre Enabled）が増えた。保存する鍵は mn / mx のまま。
-        XCTAssertEqual(s.floatCount, 3)
-        XCTAssertEqual(s.params.filter { !$0.runtimeOnly }.map(\.key), ["mn", "mx"])
+        // 2.14.0 で保存しない te（Timbre Enabled）が増え、2.16.0 で保存する ck（Chords & Key）が増えた
+        // （Upstream216Tests）。
+        XCTAssertEqual(s.floatCount, 4)
+        XCTAssertEqual(s.params.filter { !$0.runtimeOnly }.map(\.key), ["ck", "mn", "mx"])
         // 2.12.0 までの鎖は nc を持つ。読めて、ほかの値は残る。
         let loaded = PipelineStore.parse([["nm": "Note Spectrogram", "nc": 4, "mn": 40, "mx": 80]],
                                          catalog: ETCatalog)
@@ -345,8 +346,9 @@ final class Upstream213Tests: XCTestCase {
         XCTAssertEqual(ETNoteFrameLayout.version, 6)
         XCTAssertEqual(ETNoteFrameLayout.legacyVersion, 5)
         XCTAssertEqual(ETFrameType.rhythmAnalyzer.rawValue, 28)
-        XCTAssertEqual(ETRhythm.version, 4)
-        XCTAssertEqual(ETRhythm.payloadBytes, 1496)
+        // 2.16.0 で版 5・2024 バイト（Drums 表示の分が末尾に増えた。0〜1495 は版 4 のまま）。
+        XCTAssertEqual(ETRhythm.version, 5)
+        XCTAssertEqual(ETRhythm.payloadBytes, 2024)
     }
 
     // MARK: 直しの当て先の列

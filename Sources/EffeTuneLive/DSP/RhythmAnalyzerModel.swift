@@ -8,7 +8,9 @@
 //  （updateBeatLed）、onset の置き方と揺れ（storeEvent・referenceDeviation・isNovel）、
 //  ビートレンズ（lensSummary・displayedLensSummary）をそのまま写した。
 //
-//  テレメトリ: ETFrameType.rhythmAnalyzer = 28、formatVersion 4、1496 バイト（2.13.0。2.12.0 は版 1、1344 バイト）
+//  テレメトリ: ETFrameType.rhythmAnalyzer = 28、formatVersion 5、2024 バイト（2.16.0。2.13.0 は版 4・1496 バイト、2.12.0 は版 1・1344 バイト）
+//  0〜1495 は版 4 と同じ並び。1496 からの 528 バイトは Drums 表示の分（drum mode・drum count・drum latency・
+//  drum events）で、まだ読まない。
 //  （dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp の kTelemetryType / kPayloadBytes、rhythm_analyzer.js:1-8）
 //
 //  ペイロードの並び（rhythm_analyzer.js:294-394 の readSnapshot）:
@@ -83,8 +85,8 @@ enum ETRhythmBPMRange {
 // MARK: - 定数と小道具
 
 enum ETRhythm {
-    static let version: UInt16 = 4
-    static let payloadBytes = 1496
+    static let version: UInt16 = 5
+    static let payloadBytes = 2024
     static let tempogramBins = 192
     static let maxEvents = 16
     static let tempogramOffset = 64
