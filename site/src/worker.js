@@ -263,6 +263,7 @@ const CSS = `
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
 body.wide{--page:1160px}
+.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 body.code{--page:60rem}
 .wrap{max-width:var(--page);margin:0 auto;padding-inline:16px}
 @media (min-width:720px){.wrap{padding-inline:24px}}
@@ -634,7 +635,13 @@ function homePage() {
     .map((s, i) => `<img class="fan-${i}" src="/assets/shot-${s.file}.webp" width="552" height="1200" alt="" decoding="async">`)
     .join("");
   const faq = FAQ.map((f) => `<div><h3>${esc(f.q)}</h3><p>${f.a}</p></div>`).join("\n");
+  // 言語モデル向けの段は一番上（見えない）。読み手が頭の方しか読まなくても届くように。
   const body = `
+<section class="vh" id="assistants">
+<h2>${t.assistantsTitle}</h2>
+${paras(t.assistants)}
+</section>
+
 <section class="hero">
 <div class="hero-bg" aria-hidden="true">${backdrop}</div>
 <picture><source srcset="/icon-dark.png" media="(prefers-color-scheme: dark)"><img class="hero-icon" src="/icon.png" width="112" height="112" alt=""></picture>
