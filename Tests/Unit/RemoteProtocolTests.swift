@@ -510,10 +510,13 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(flags[1], ["_uiLocked": true])       // false は印にしない
         XCTAssertEqual(flags[2], [:])
 
-        let marks = ETRemoteUIFlags.bind(flags, to: chain)
+        let loaded = ETRemoteProjection.project(chain)
+        let marks = ETRemoteUIFlags.bind(flags, loaded: loaded, to: chain, projected: loaded)
         XCTAssertEqual(marks.count, 2)
-        // 数が合わなければ結ばない。
-        XCTAssertTrue(ETRemoteUIFlags.bind(flags, to: Array(chain.dropLast())).isEmpty)
+        // PC の段数と合わなければ結ばない。
+        let shorter = ETRemoteProjection.project(Array(chain.dropLast()))
+        XCTAssertTrue(ETRemoteUIFlags.bind(flags, loaded: loaded, to: Array(chain.dropLast()),
+                                           projected: shorter).isEmpty)
 
         // 2 番目の段を落とした送り（remoteIndex が nil）でも、印は正しい段へ戻る。
         let projected = ETRemoteProjection.Projected(
@@ -527,6 +530,32 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertNil(projected.pipeline[0]["_uiCollapsed"])
         // 印が無ければそのまま。
         XCTAssertEqual(ETRemoteUIFlags.merge([:], chain: chain, into: projected).count, 2)
+    }
+
+    /// 手元に PC へ送らない段（同じバスの外部の段）が混ざっていても、ほかの段の印は落ちない。
+    func testUIFlagsSurviveStagesNotSentToPC() throws {
+        let volume = try XCTUnwrap(ETCatalog.first { $0.name == "Volume" })
+        let plain = ETChainNode(spec: volume, values: volume.defaults)
+        var external = ETChainNode(spec: ETEffect.external(type: "External:au:x", name: "X", category: "Audio Units"),
+                                   values: [])
+        external.externalID = "au:x"
+        let local = [plain, external, ETChainNode(spec: volume, values: volume.defaults)]
+        // PC の pipeline は 2 段（外部の段は送らない）。
+        let pipeline: [[String: Any]] = [["nm": "Volume", "_uiCollapsed": true],
+                                         ["nm": "Volume", "_uiLocked": true]]
+        let flags = ETRemoteUIFlags.flags(in: pipeline) { _ in 1 }
+        let loaded = ETRemoteProjection.project(Array(local.enumerated().filter { $0.offset != 1 }.map(\.element)))
+        let projected = ETRemoteProjection.project(local)
+        XCTAssertEqual(projected.remoteIndex, [0, nil, 1])
+        let marks = ETRemoteUIFlags.bind(flags, loaded: loaded, to: local, projected: projected)
+        XCTAssertEqual(marks[local[0].id], ["_uiCollapsed": true])
+        XCTAssertNil(marks[local[1].id])
+        XCTAssertEqual(marks[local[2].id], ["_uiLocked": true])
+        // 送るとき、印は PC の番号の段に戻る。
+        let merged = ETRemoteUIFlags.merge(marks, chain: local, into: projected)
+        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(merged[0]["_uiCollapsed"] as? Bool, true)
+        XCTAssertEqual(merged[1]["_uiLocked"] as? Bool, true)
     }
 
     func testPairingLinkRejectsOtherLinks() throws {

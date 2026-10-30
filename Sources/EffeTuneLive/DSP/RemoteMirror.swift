@@ -689,11 +689,13 @@ final class RemoteMirror: ObservableObject {
         pcIds = (state["ids"] as? [Any])?.compactMap { $0 as? String } ?? []
         applyingRemote = false
         // PC が段に付けた画面だけの印を、段の id ごとに控える（chain を送るとき戻す）。
+        // 手元に PC へ送らない段が混ざっていても結べるよう、送る形の番号で結ぶ。
+        let projected = ETRemoteProjection.project(dsp.chain, host: host)
         uiFlags = ETRemoteUIFlags.bind(
             ETRemoteUIFlags.flags(in: state["pipeline"]) { [self] entry in items(from: [entry]).count },
-            to: dsp.chain)
+            loaded: ETRemoteProjection.project(loaded, host: host),
+            to: dsp.chain, projected: projected)
         // いま入れた鎖は PC と同じなので、送ったことにして控えを合わせる。
-        let projected = ETRemoteProjection.project(dsp.chain, host: host)
         sentForm = projected.pipeline
         sentMap = projected.remoteIndex
     }

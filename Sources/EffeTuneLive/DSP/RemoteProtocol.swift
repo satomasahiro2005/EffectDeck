@@ -677,11 +677,26 @@ enum ETRemoteUIFlags {
         return result
     }
 
-    /// 印を手元の段の id に結ぶ。数が合わないときは何も結ばない（並びが分からない）。
-    static func bind(_ flags: [[String: Bool]], to chain: [ETChainNode]) -> [UUID: [String: Bool]] {
-        guard flags.count == chain.count else { return [:] }
+    /// 印を手元の段の id に結ぶ。**送る形（project）の番号で結ぶ**ので、手元に PC へ送らない段
+    /// （同じバスの外部の段・PC に無い効果）が混ざっていても、ほかの段の印は落ちない。
+    /// - flags: `flags(in:)` の結果（PC の state から読めた段ごと。`loaded` と同じ並び）
+    /// - loaded: その段を手元の形にしたものを project した結果
+    /// - chain / projected: 手元の鎖と、それを project した結果
+    /// PC の pipeline の段数が合わないとき（並びが分からない）は何も結ばない。
+    static func bind(_ flags: [[String: Bool]], loaded: ETRemoteProjection.Projected,
+                     to chain: [ETChainNode], projected: ETRemoteProjection.Projected) -> [UUID: [String: Bool]] {
+        guard flags.count == loaded.remoteIndex.count,
+              loaded.pipeline.count == projected.pipeline.count,
+              chain.count == projected.remoteIndex.count else { return [:] }
+        // PC の番号 → 印。
+        var byRemote: [Int: [String: Bool]] = [:]
+        for (marks, remote) in zip(flags, loaded.remoteIndex) {
+            if let remote, !marks.isEmpty { byRemote[remote] = marks }
+        }
         var map: [UUID: [String: Bool]] = [:]
-        for (node, marks) in zip(chain, flags) where !marks.isEmpty { map[node.id] = marks }
+        for (node, remote) in zip(chain, projected.remoteIndex) {
+            if let remote, let marks = byRemote[remote] { map[node.id] = marks }
+        }
         return map
     }
 
