@@ -116,7 +116,7 @@ Three changes, all for a PC running 2.16.0. A PC on 2.13.0 (the owner's) behaves
 - **403 on the upgrade (upstream Host rule).** In 2.16.0 `verifyClient` no longer skips the Host check for clients without
   `Origin`; every upgrade must pass `isAllowedHost` (IPv4 literal, `localhost`, `[ipv6]`, `*.local`, or the configured
   endpoint). A manually typed MagicDNS or NetBIOS name now gets HTTP 403. QR, IPv4, Tailscale 100.x and `*.local` still work.
-  The status shows "Refused by the PC" (`ETRemoteFailure`). `docs/remote-v1.md` upstream still says the Host is not checked for
+  The status shows "Refused by the PC" (`ETRemoteFailure`). Upstream's `docs/remote-v1.md` (in `Vendor/effetune`) still says the Host is not checked for
   such clients; whether to raise that upstream is the owner's call.
 - **`_uiCollapsed` / `_uiLocked` in chain text (`ETChainText`).** 2.16.0 writes these two UI-only keys (value `true`) into every
   saved and shared chain, short form on the stage and long form inside `parameters`. They are now in `quietEverywhere`

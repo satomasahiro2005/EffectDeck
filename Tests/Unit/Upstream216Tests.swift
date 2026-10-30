@@ -210,11 +210,9 @@ final class Upstream216Tests: XCTestCase {
         XCTAssertFalse(ok(wrongType))
     }
 
-    /// 上流の実カーネルの出力（fixtures/chord-key-telemetry.bin）。126 枠 × (16 バイトの頭 + 32 バイト)。
+    /// 上流の実カーネルの出力（Tests/Fixtures/NoteSpectrogram に写した fixtures/chord-key-telemetry.bin）。126 枠 × (16 バイトの頭 + 32 バイト)。
     func testUpstreamChordKeyFixture() throws {
-        let dir = "Vendor/effetune/dsp/plugins/analyzer/note_spectrogram/fixtures"
-        let url = try XCTUnwrap(TestResource.url("chord-key-telemetry", "bin")
-                                ?? TestResource.url("chord-key-telemetry", "bin", subdirectory: dir),
+        let url = try XCTUnwrap(TestResource.url("chord-key-telemetry", "bin"),
                                 "fixture が見つからない（project.yml の resources）")
         let bytes = [UInt8](try Data(contentsOf: url))
         XCTAssertEqual(bytes.count, 126 * 48)

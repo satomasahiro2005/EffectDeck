@@ -335,8 +335,9 @@ targets:
       - path: Sources/EffeTuneLive/DSP/ETFXDLink.swift
       - path: site/test-vector.json
         buildPhase: resources
-      # 2.16.0 の Chords & Key（型 32）の枠。上流の実カーネルの出力をそのまま読む（Upstream216Tests）。
-      - path: Vendor/effetune/dsp/plugins/analyzer/note_spectrogram/fixtures/chord-key-telemetry.bin
+      # 2.16.0 の Chords & Key（型 32）の枠。上流 3769b9ae の fixtures/chord-key-telemetry.bin の写し（Upstream216Tests）。
+      # CI の linux-swift と fuzz は Vendor/effetune を取らないので、submodule の中を直接指さない。
+      - path: Tests/Fixtures/NoteSpectrogram/chord-key-telemetry.bin
         buildPhase: resources
       # 共有の拡張から本体へ渡す置き場。並べる・消すだけで Foundation のみ。
       - path: Sources/EffeTuneLive/DSP/ETShareInbox.swift
