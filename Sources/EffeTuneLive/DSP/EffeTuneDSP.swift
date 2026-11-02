@@ -723,7 +723,9 @@ final class EffeTuneDSP: ObservableObject {
         var next: [Node] = []
         var pushed: [UUID] = []        // 値を音へ渡し直す段
         var reloaded: [UUID] = []      // IR・SFZ を入れ直す段
-        var redesigned: [UUID] = []    // 設計の材料から作り直させる段
+        var redesigned: [UUID] = []    // 値・幅・設計の材料が変わった段（ETAssetReattach.paramsChanged）
+        var recreated: [UUID] = []      // 作り直した段（ETAssetReattach.one。鎖を読んだ直後と同じ）
+        var rewidened: [Node] = []     // 外の host の本数を変える段（setRouting と同じ）
         for saved in target.nodes {
             if !created.contains(saved.id), var node = current[saved.id] {
                 guard !ETUndo.sameContent(node, saved) else {
@@ -733,6 +735,11 @@ final class EffeTuneDSP: ObservableObject {
                 let assetChanged = node.irId != saved.irId || node.display != saved.display
                     || node.design != saved.design
                 let viewChanged = node.display != saved.display || node.design != saved.design
+                let paramsChanged = node.values != saved.values || node.design != saved.design
+                    || Self.routedChannels(of: node) != Self.routedChannels(of: saved)
+                    || Self.isChannelBypassed(node) != Self.isChannelBypassed(saved)
+                let externalWidthChanged = node.isExternal
+                    && Self.externalChannels(of: node) != Self.externalChannels(of: saved)
                 ETUndo.adopt(saved, into: &node)
                 // 専用の画面は表示の設定を現れたときにしか読まないので、作り直させる（resetCount の注記）。
                 if viewChanged { node.resetCount += 1 }
@@ -741,14 +748,15 @@ final class EffeTuneDSP: ObservableObject {
                 if assetChanged && (!node.irId.isEmpty || node.spec.type == ETChainText.sfzType) {
                     reloaded.append(node.id)
                 }
-                if viewChanged || node.values != current[saved.id]?.values { redesigned.append(node.id) }
+                if paramsChanged && !node.isExternal { redesigned.append(node.id) }
+                if externalWidthChanged { rewidened.append(node) }
             } else {
                 // 外の段は消したときの state から作り直す（控えには消す前の state が入っている）。
                 guard var node = makeNode(PipelineStore.Loaded(saved)) else { continue }
                 node.id = saved.id
                 next.append(node)
                 if !node.irId.isEmpty || node.spec.type == ETChainText.sfzType { reloaded.append(node.id) }
-                redesigned.append(node.id)
+                recreated.append(node.id)
             }
         }
 
@@ -765,7 +773,17 @@ final class EffeTuneDSP: ObservableObject {
         for id in pushed { if let i = slot(of: id) { pushParams(self[slot: i]) } }
         publish()
         for id in reloaded { if let i = slot(of: id) { reloadAsset(at: i) } }
-        for id in redesigned { if let i = slot(of: id) { ETAssetReattach.one(self[slot: i]) } }
+        for id in redesigned { if let i = slot(of: id) { ETAssetReattach.paramsChanged(self[slot: i]) } }
+        for id in recreated { if let i = slot(of: id) { ETAssetReattach.one(self[slot: i]) } }
+        for node in rewidened {
+            let channels = Self.externalChannels(of: node)
+            if node.externalID?.hasPrefix("jsfx:") == true {
+                ETJSFXHost.shared.setChannels(channels, instanceID: node.externalInstanceID)
+            } else {
+                ETAUHost.shared.setChannels(channels, instanceID: node.externalInstanceID)
+            }
+        }
+        if !rewidened.isEmpty { AudioIO.shared.rebuildForExternalProcessor() }
         retire(doomed)
         normalizeRootResets()
 
