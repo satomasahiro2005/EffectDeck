@@ -569,7 +569,14 @@ final class EffeTuneDSP: ObservableObject {
         // **PC の鎖を編集しているあいだは端末へ書かない**（RemoteMirror.isRemote）。
         // いま並んでいるのは PC の鎖で、手元の鎖は退避してある。書くと pipeline.last と
         // iCloud（CloudMirror）が PC の鎖で上書きされ、切ったときに戻す先が消える。
-        guard !RemoteMirror.shared.isRemote else { return }
+        // 取り消しも同じ。PC の鎖の手は手元の鎖へ戻せないので、出入りした時点で捨てる。
+        guard !RemoteMirror.shared.isRemote else {
+            clearUndo(keepingBase: false)
+            return
+        }
+
+        // 端末へ残すかどうかより前に積む。既定の 1 本のままでも、変えたなら戻せる。
+        recordUndo()
 
         // **restore() が置いた既定の 1 本は残さない**（ETChainEditing.shouldPersist）。
         // 書くと iCloud 側の鎖が Level Meter 1 本で上書きされ、遅れて降りてくる鎖を
@@ -641,6 +648,128 @@ final class EffeTuneDSP: ObservableObject {
         // PC の鎖の開閉は手元の鎖の位置と合わない。persist() と同じく書かない。
         guard !RemoteMirror.shared.isRemote else { return }
         PipelineStore.saveExpanded(chain.indices.filter { expanded.contains(chain[$0].id) })
+    }
+
+    // MARK: - 取り消し（Undo / Redo）
+
+    /// 積む先。PipelineView が画面の UndoManager を渡す（振る・3 本指・⌘Z がそこへ来る）。
+    /// 渡される前の手は積まない。
+    weak var undoManager: UndoManager?
+
+    /// 最後に積んだ控え。次に鎖が変わったら、ここへ戻す 1 手を積む。
+    private var undoBase: ETUndoSnapshot?
+    /// 控えへ戻している最中。戻した結果を新しい手として積まないため。
+    private var applyingUndo = false
+
+    private func undoSnapshot() -> ETUndoSnapshot {
+        ETUndoSnapshot(nodes: chain, expanded: expanded, collapsedFully: collapsedFully)
+    }
+
+    /// persist() から呼ぶ。前の控えと中身が違えば、前の控えへ戻す 1 手を積む。
+    ///
+    /// **1 手の区切りは persist() の区切り。**つまみは persistSoon() が 0.5 秒まとめるので、
+    /// 1 回のドラッグが 1 手になる。足す・消す・動かす・入切は publish() の末尾で 1 手。
+    /// 起動して最初の persist() は控えを取るだけ（undoBase が nil）。
+    private func recordUndo() {
+        let now = undoSnapshot()
+        defer { undoBase = now }
+        guard !applyingUndo, let base = undoBase, !base.sameContent(as: now) else { return }
+        registerUndo(to: base)
+    }
+
+    private func registerUndo(to target: ETUndoSnapshot) {
+        guard let manager = undoManager else { return }
+        manager.registerUndo(withTarget: self) { dsp in
+            MainActor.assumeIsolated { dsp.applyUndo(target) }
+        }
+    }
+
+    /// 積んだ手を捨てる。keepingBase なら、いまの鎖を次の手の起点にする。
+    /// 偽なら起点も捨て、次の persist() で取り直す（PC の鎖を編集しているあいだ）。
+    private func clearUndo(keepingBase: Bool) {
+        undoManager?.removeAllActions(withTarget: self)
+        undoBase = keepingBase ? undoSnapshot() : nil
+    }
+
+    /// 控えへ戻す。UndoManager から呼ばれる（Undo でも Redo でも同じ）。
+    ///
+    /// 戻す前の鎖を逆向きの 1 手として積み直す。Undo の最中に積んだ手は
+    /// UndoManager が Redo の側へ置く。
+    ///
+    /// 在る段は instance をそのまま使って値だけ戻す（ETUndo の頭）。
+    /// 消した段は控えから作り直して前の id を付け直し、足した段は外して壊す。
+    /// 壊す順は replaceChain と同じ（外の host を先に外し、publish() のあとで retire()）。
+    private func applyUndo(_ target: ETUndoSnapshot) {
+        guard ready, !RemoteMirror.shared.isRemote else { return }
+        // 0.5 秒待ちの手はまだ積まれていない。いまの鎖ごと Redo の側へ置かれる。
+        pendingPersist?.cancel()
+        pendingPersist = nil
+        let before = undoSnapshot()
+        applyingUndo = true
+        defer {
+            applyingUndo = false
+            undoBase = undoSnapshot()
+        }
+
+        let plan = ETUndo.plan(current: chain, target: target.nodes)
+        let dropped = Set(plan.dropped)
+        let created = Set(plan.created)
+        let gone = chain.filter { dropped.contains($0.id) }
+        let doomed = gone.map(\.instance).filter { $0 != 0 }
+        for node in gone where node.isExternal { removeExternal(instanceID: node.externalInstanceID) }
+
+        var current: [UUID: Node] = [:]
+        for node in chain where !dropped.contains(node.id) { current[node.id] = node }
+        var next: [Node] = []
+        var pushed: [UUID] = []        // 値を音へ渡し直す段
+        var reloaded: [UUID] = []      // IR・SFZ を入れ直す段
+        var redesigned: [UUID] = []    // 設計の材料から作り直させる段
+        for saved in target.nodes {
+            if !created.contains(saved.id), var node = current[saved.id] {
+                guard !ETUndo.sameContent(node, saved) else {
+                    next.append(node)
+                    continue
+                }
+                let assetChanged = node.irId != saved.irId || node.display != saved.display
+                    || node.design != saved.design
+                let viewChanged = node.display != saved.display || node.design != saved.design
+                ETUndo.adopt(saved, into: &node)
+                // 専用の画面は表示の設定を現れたときにしか読まないので、作り直させる（resetCount の注記）。
+                if viewChanged { node.resetCount += 1 }
+                next.append(node)
+                pushed.append(node.id)
+                if assetChanged && (!node.irId.isEmpty || node.spec.type == ETChainText.sfzType) {
+                    reloaded.append(node.id)
+                }
+                if viewChanged || node.values != current[saved.id]?.values { redesigned.append(node.id) }
+            } else {
+                // 外の段は消したときの state から作り直す（控えには消す前の state が入っている）。
+                guard var node = makeNode(PipelineStore.Loaded(saved)) else { continue }
+                node.id = saved.id
+                next.append(node)
+                if !node.irId.isEmpty || node.spec.type == ETChainText.sfzType { reloaded.append(node.id) }
+                redesigned.append(node.id)
+            }
+        }
+
+        chain = next
+        restoring = true
+        for id in created {
+            if target.expanded.contains(id) { expanded.insert(id) } else { expanded.remove(id) }
+            if target.collapsedFully.contains(id) { collapsedFully.insert(id) } else { collapsedFully.remove(id) }
+        }
+        expanded.subtract(dropped.subtracting(created))
+        collapsedFully.subtract(dropped.subtracting(created))
+        restoring = false
+
+        for id in pushed { if let i = slot(of: id) { pushParams(self[slot: i]) } }
+        publish()
+        for id in reloaded { if let i = slot(of: id) { reloadAsset(at: i) } }
+        for id in redesigned { if let i = slot(of: id) { ETAssetReattach.one(self[slot: i]) } }
+        retire(doomed)
+        normalizeRootResets()
+
+        registerUndo(to: before)
     }
 
     /// 起動時に呼ぶ。前回の鎖が残っていればそれを、無ければ既定を組む。
@@ -722,6 +851,8 @@ final class EffeTuneDSP: ObservableObject {
         guard ready, isDefaultChain, !RemoteMirror.shared.isRemote else { return }
         guard let saved = PipelineStore.loadLast(catalog: ETCatalog), !saved.isEmpty else { return }
         replaceChain(with: saved)
+        // 人がした手ではない。取り消すと、降りてきた鎖が既定の 1 本に戻ってしまう。
+        clearUndo(keepingBase: true)
     }
 
     /// 鎖に残っている鍵から、資産（IR と SFZ のバンク）を入れ直す。
@@ -1018,13 +1149,19 @@ final class EffeTuneDSP: ObservableObject {
     /// 1 本足すだけ。publish はしない（呼び手がまとめて 1 回だけ呼ぶ）。
     @discardableResult
     private func append(_ item: PipelineStore.Loaded, to part: ETChainPart = .main) -> Bool {
+        guard let node = makeNode(item) else { return false }
+        withPart(part) { $0.append(node) }
+        return true
+    }
+
+    /// 1 本作る。並びには入れない（append と、取り消しで消した段を戻す applyUndo が使う）。
+    private func makeNode(_ item: PipelineStore.Loaded) -> Node? {
         var node = Node(spec: item.spec, values: item.values)
         // 自分で置いた終端（PipelineStore.parseが印から戻す）。leaveSectionが挿すものと同じで、
         // instanceは持たない。isSectionが偽なのでinstantiateへ渡すと失敗して落ちる。
         if item.isRootReset {
             node.isRootReset = true
-            withPart(part) { $0.append(node) }
-            return true
+            return node
         }
         node.enabled = item.enabled
         node.inputBus = item.inputBus
@@ -1044,17 +1181,13 @@ final class EffeTuneDSP: ObservableObject {
                 taken: Set((chain + correction).filter(\.isExternal).map(\.externalInstanceID)))
             node.externalState = item.externalState
             guard let index = try? ETAUExternalBridge.shared.reserve(
-                instanceID: node.externalInstanceID) else { return false }
+                instanceID: node.externalInstanceID) else { return nil }
             node.externalIndex = index
             restoreExternal(node)
+            return node
         }
-        if node.isExternal {
-            withPart(part) { $0.append(node) }
-            return true
-        }
-        guard instantiate(&node) else { return false }
-        withPart(part) { $0.append(node) }
-        return true
+        guard instantiate(&node) else { return nil }
+        return node
     }
 
     /// 型名から spec を引く。Section はカタログに載っていないので別に見る。

@@ -9,7 +9,9 @@ import Foundation
 
 /// 鎖に並んでいる 1 個。
 struct ETChainNode: Identifiable {
-    let id = UUID()
+    /// 段の身元。**作り直しても変えない**のは取り消し（ETUndo）だけで、消した段を戻すときに
+    /// 前の id を付け直す。開閉（expanded）と画面の行がその id で引くため。
+    var id = UUID()
     let spec: ETEffect
     var values: [Float]
     var enabled: Bool = true

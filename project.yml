@@ -395,6 +395,8 @@ targets:
       # 鎖をいじるときの決まり（プリセットの足し方・外部の段の付け直し・選択肢をoffsetで読む・
       # descriptorの中身）。Foundationだけ（ChainEditingTests）。
       - path: Sources/EffeTuneLive/DSP/ChainEditing.swift
+      # 鎖の取り消しの控えと戻す段取り。Foundationだけ（UndoTests）。
+      - path: Sources/EffeTuneLive/DSP/ETUndo.swift
       # 共有リンクの読み書き（ShareLinkTests）。
       - path: Sources/EffeTuneLive/DSP/ETShareLink.swift
       # 実機で見るための鎖。名前が目録と一字も違わないかを見る（DebugPresetsTests）。
