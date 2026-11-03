@@ -660,6 +660,13 @@ final class EffeTuneDSP: ObservableObject {
     /// 控えへ戻している最中。戻した結果を新しい手として積まないため。
     private var applyingUndo = false
 
+    /// 掴んで並べ替えている間（PipelineView の beginDrag〜endDrag）。
+    /// 掴んでいる間は入れ替えのたびに publish() → persist() が走るので、そのまま積むと
+    /// 1 回のドラッグが通った枠の数だけの手になる。間は積まず、離したときに 1 手にする。
+    var undoHeld = false {
+        didSet { if oldValue && !undoHeld && !RemoteMirror.shared.isRemote { recordUndo() } }
+    }
+
     private func undoSnapshot() -> ETUndoSnapshot {
         ETUndoSnapshot(nodes: chain, expanded: expanded, collapsedFully: collapsedFully)
     }
@@ -670,6 +677,7 @@ final class EffeTuneDSP: ObservableObject {
     /// 1 回のドラッグが 1 手になる。足す・消す・動かす・入切は publish() の末尾で 1 手。
     /// 起動して最初の persist() は控えを取るだけ（undoBase が nil）。
     private func recordUndo() {
+        guard !undoHeld else { return }
         let now = undoSnapshot()
         defer { undoBase = now }
         guard !applyingUndo, let base = undoBase, !base.sameContent(as: now) else { return }

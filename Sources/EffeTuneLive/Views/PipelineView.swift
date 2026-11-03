@@ -144,14 +144,13 @@ struct PipelineView: View {
     @Environment(\.horizontalSizeClass) private var hSize
     /// 鎖を ChatGPT に組ませる依頼を開く（空の鎖の表示。EffectPickerView.buildChain）。
     @Environment(\.openURL) private var openURL
-    /// 鎖の追加・削除・並べ替えの取り消し先（⌘Z と 3 本指の取り消し。ETChainUndo）。
+    /// 鎖の取り消しを積む先（EffeTuneDSP.undoManager）。ボタンは置かず、
+    /// iOS の振る・3 本指・⌘Z で戻す。
     @Environment(\.undoManager) private var undoManager
     /// アクセシビリティサイズのときだけ、2列の左の一覧の幅を広げる。
     @Environment(\.dynamicTypeSize) private var typeSize
     /// VoiceOver の焦点を置くカード。左の一覧から飛んだとき・足したときに、飛び先のカードの名前へ移す。
     @AccessibilityFocusState private var focusedCard: UUID?
-    /// 掴んだ時点の並び。離したときに 1 回だけ取り消しを登録する（入れ替えのたびには積まない）。
-    @State private var orderAtGrab: [UUID]?
     /// 足したカード。シートが畳み終わってから焦点を移して知らせる（畳む前に移しても、畳んだ後にツールバーへ戻される）。
     @State private var addedCard: AddedCard?
 
@@ -294,10 +293,6 @@ struct PipelineView: View {
 
     /// 背景に回ったら図を汲むのをやめる。前例は GraphCanvas と PitchMeterView。
     @Environment(\.scenePhase) private var scenePhase
-
-    /// 鎖の取り消しを積む先（EffeTuneDSP.undoManager）。ボタンは置かず、
-    /// iOS の振る・3 本指・⌘Z で戻す。
-    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         // 1 回だけ組む。⋯ の Move Up / Move Down が「画面の何行目か」と
@@ -728,6 +723,7 @@ struct PipelineView: View {
         guard layoutSplit != split else { return }
         if dragging != nil {
             dragging = nil
+            dsp.undoHeld = false
             dragExternalSnapshot = nil
             dragShift = .zero
             dragFolded = nil
@@ -1548,7 +1544,8 @@ struct PipelineView: View {
             dragExternalSnapshot = nil
         }
         dragging = row.node.id
-        orderAtGrab = dsp.chain.map(\.id)
+        // 掴んでいる間は入れ替えのたびに積まない。離したら 1 手にする。
+        dsp.undoHeld = true
         anchorRect = geometry[row.node.id] ?? .zero
         dragShift = .zero
         // 名前の行だけに畳む。札の大きさは畳んだ行が測れたときに合わせる（measured）。
@@ -1577,11 +1574,7 @@ struct PipelineView: View {
     /// 時間で必ず畳む。
     private func endDrag() {
         guard let id = dragging else { return }
-        // 掴んで動かした 1 回ぶんを、取り消しに登録する（並びが変わっていなければ何もしない）。
-        if let before = orderAtGrab {
-            ETChainUndo.registerMove(dsp: dsp, undoManager: undoManager, from: before)
-        }
-        orderAtGrab = nil
+        dsp.undoHeld = false
         foldGrabY = nil
         let slot = geometry[id] ?? anchorRect
         etWithAnimation(.snappy(duration: Self.returnDuration)) {

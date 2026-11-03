@@ -1652,17 +1652,10 @@ private struct ETCardFocus: ViewModifier {
     }
 }
 
-/// 鎖の追加・削除・並べ替えを取り消せるようにする（⌘Z と 3 本指の取り消し）。
+/// 鎖の追加・削除・並べ替えに、取り消しの名前を付ける（振ったときの「取り消す - Remove Effect」）。
 ///
-/// パラメータの変更は対象にしない（スライダーを動かすたびに積むと、取り消しが使い物にならない）。
-/// PC の鎖を編集しているあいだ（RemoteMirror.isRemote）は登録しない。
-///
-/// 取り消しの中身は種類で違う。
-///   - 追加: 増えた段を id で外す（鎖を作り直さないので、他のカードの開閉も音も動かない）
-///   - 並べ替え: 前の並びの id へ 1 つずつ戻す（取り消しを取り消すと、いまの並びへ戻る）
-///   - 削除: 消した段だけを書き出しておく。取り消すときにいまの鎖を書き出し直し、消した段を元の位置へ
-///     差し込んで読み直す（replaceChain）。外のプラグインを作り直すので鎖全体が一度組み直され、
-///     開いていたカードは位置で開き直す。消した後に変えた値は残る
+/// 取り消しそのものは EffeTuneDSP が鎖まるごとの控えで積む（DSP/ETUndo.swift）。
+/// ここで積むと同じ 1 手が二重になる。
 @MainActor
 enum ETChainUndo {
     enum Kind {
@@ -1677,124 +1670,12 @@ enum ETChainUndo {
         }
     }
 
-    /// UndoManager の取り消しは Sendable な閉包で渡す。非 Sendable の値はここに詰めて運ぶ
-    /// （取り消しは必ずメインスレッドで走る）。
-    private struct Box<Value>: @unchecked Sendable {
-        let value: Value
-    }
-
-    /// 消した 1 段。書き出した形（非 Sendable なので Box で運ぶ）と、消す前の位置・開閉。
-    private struct Removed {
-        let index: Int
-        let entry: [String: Any]
-        let opened: Bool
-        let folded: Bool
-    }
-
-    /// `body` で鎖を変え、変わっていたら取り消しを登録する。
-    /// 非同期で足すもの（JSFX の準備待ち）は包めないので、そのまま実行する側で扱う。
+    /// `body` で鎖を変え、変わっていたら積まれた 1 手に名前を付ける。
     static func run(_ kind: Kind, dsp: EffeTuneDSP, undoManager: UndoManager?, _ body: () -> Void) {
-        guard let undoManager, !RemoteMirror.shared.isRemote else {
-            body()
-            return
-        }
         let before = dsp.chain.map(\.id)
-        let form = kind == .remove ? Box(value: dsp.remoteStashForm()) : nil
-        let opened = dsp.chain.map { dsp.expanded.contains($0.id) }
-        let folded = dsp.chain.map { dsp.collapsedFully.contains($0.id) }
         body()
-        let after = dsp.chain.map(\.id)
-        guard before != after else { return }
-
-        switch kind {
-        case .add:
-            let added = Set(after).subtracting(before)
-            undoManager.registerUndo(withTarget: dsp) { dsp in
-                MainActor.assumeIsolated {
-                    // PC の鎖に切り替わっていたら、手元の鎖の取り消しは触らない。
-                    guard !RemoteMirror.shared.isRemote else { return }
-                    let doomed = IndexSet(dsp.chain.indices.filter { added.contains(dsp.chain[$0].id) })
-                    if !doomed.isEmpty { dsp.remove(at: doomed) }
-                }
-            }
-        case .move:
-            registerOrder(before, dsp: dsp, manager: undoManager)
-        case .remove:
-            guard let form else { return }
-            // 消えた段だけを、消す前の位置と開閉つきで持つ。鎖ぜんぶは持たない
-            // （取り消すまでに他のカードで調整した値まで巻き戻してしまうため）。
-            let gone = Set(before).subtracting(after)
-            var removed: [Removed] = []
-            for (position, id) in before.enumerated() where gone.contains(id) && position < form.value.count {
-                removed.append(Removed(index: position, entry: form.value[position],
-                                       opened: opened[position], folded: folded[position]))
-            }
-            guard !removed.isEmpty else { return }
-            let box = Box(value: removed)
-            undoManager.registerUndo(withTarget: dsp) { dsp in
-                MainActor.assumeIsolated {
-                    guard !RemoteMirror.shared.isRemote else { return }
-                    // いまの鎖を書き出し直し、消した段を元の位置へ差し込んで読み直す。
-                    // 消した後に変えた値・足した段はいまのものが残る。
-                    var entries = dsp.remoteStashForm()
-                    var openedNow = dsp.chain.map { dsp.expanded.contains($0.id) }
-                    var foldedNow = dsp.chain.map { dsp.collapsedFully.contains($0.id) }
-                    guard entries.count == openedNow.count else { return }
-                    // index は昇順。小さい位置から入れれば、後ろの位置がずれない。
-                    for item in box.value {
-                        let at = min(item.index, entries.count)
-                        entries.insert(item.entry, at: at)
-                        openedNow.insert(item.opened, at: at)
-                        foldedNow.insert(item.folded, at: at)
-                    }
-                    let items = PipelineStore.parse(entries, catalog: ETCatalog)
-                    guard !items.isEmpty else { return }
-                    dsp.replaceChain(with: items)
-                    // 入れ替えると全部畳まれる。開いていたカードを位置で開き直す。
-                    for (position, node) in dsp.chain.enumerated() {
-                        if position < openedNow.count, openedNow[position] { dsp.expanded.insert(node.id) }
-                        if position < foldedNow.count, foldedNow[position] { dsp.collapsedFully.insert(node.id) }
-                    }
-                }
-            }
-        }
-        undoManager.setActionName(kind.actionName)
-    }
-
-    /// 長押しで掴んで動かした 1 回ぶん。掴んだ時点の並びを渡す。動いた間の 1 回ごとには登録しない。
-    static func registerMove(dsp: EffeTuneDSP, undoManager: UndoManager?, from before: [UUID]) {
         guard let undoManager, !RemoteMirror.shared.isRemote,
               before != dsp.chain.map(\.id) else { return }
-        registerOrder(before, dsp: dsp, manager: undoManager)
-        undoManager.setActionName(Kind.move.actionName)
-    }
-
-    /// `order` の並びへ戻す取り消しを登録する。走ったときに、いまの並びへ戻す取り消し（やり直し）を登録し直す。
-    private static func registerOrder(_ order: [UUID], dsp: EffeTuneDSP, manager: UndoManager) {
-        let box = Box(value: manager)
-        manager.registerUndo(withTarget: dsp) { dsp in
-            MainActor.assumeIsolated {
-                guard !RemoteMirror.shared.isRemote else { return }
-                let now = dsp.chain.map(\.id)
-                reorder(dsp, to: order)
-                registerOrder(now, dsp: dsp, manager: box.value)
-                box.value.setActionName(Kind.move.actionName)
-            }
-        }
-    }
-
-    /// 鎖を `order` の並びにする。先頭から順に、いるべき段をその位置へ引き寄せる。
-    /// 消えた段・増えた段は無視する（並びに無い id は飛ばす）。
-    private static func reorder(_ dsp: EffeTuneDSP, to order: [UUID]) {
-        var position = 0
-        for id in order {
-            guard position < dsp.chain.count,
-                  let current = dsp.chain.firstIndex(where: { $0.id == id }) else { continue }
-            if current != position {
-                // 先頭側は並べ終えているので current > position。toOffset が position なら、その手前へ入る。
-                dsp.move(from: IndexSet(integer: current), to: position)
-            }
-            position += 1
-        }
+        undoManager.setActionName(kind.actionName)
     }
 }
