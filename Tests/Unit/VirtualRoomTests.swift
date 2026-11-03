@@ -292,6 +292,110 @@ final class VirtualRoomTests: XCTestCase {
         XCTAssertEqual(projected.remoteIndex, [0], "PC に無いからと落とさず、素通しで送る")
     }
 
+    // MARK: - Speaker Layout（§64）
+
+    private func values(surround: Bool) throws -> [Float] {
+        let spec = try virtualRoom()
+        var v = spec.defaults
+        let p = try XCTUnwrap(spec.params.first { $0.key == ETVirtualRoom.Key.speakerLayout })
+        v[p.offset] = surround ? 1 : 0
+        return v
+    }
+
+    /// 既定は Stereo。Speaker Layout を足す前の短い配列も Stereo として読む。
+    func testSpeakerLayoutDefaultsToStereo() throws {
+        let spec = try virtualRoom()
+        XCTAssertFalse(ETVirtualRoom.isSurround(spec.defaults))
+        XCTAssertFalse(ETVirtualRoom.isSurround(Array(spec.defaults.prefix(24))))
+        XCTAssertTrue(ETVirtualRoom.isSurround(try values(surround: true)))
+        XCTAssertEqual(spec.floatCount, 25)
+    }
+
+    /// 5.1 は All だけ。Stereo は今までどおり Stereo か対だけ。
+    func testSurroundLayoutOnlyAcceptsAll() throws {
+        let surround = try values(surround: true)
+        XCTAssertEqual(ETRoutingConstraint.channelWidth(of: ETVirtualRoom.type, values: surround), 6)
+        XCTAssertTrue(ETRoutingConstraint.allows(-2, width: 6))
+        XCTAssertFalse(ETRoutingConstraint.allows(-1, width: 6))
+        XCTAssertFalse(ETRoutingConstraint.allows(16, width: 6))
+        let type = ETVirtualRoom.type
+        XCTAssertFalse(ETChainEditing.isChannelBypassed(type: type, channelSpec: -2, values: surround))
+        XCTAssertTrue(ETChainEditing.isChannelBypassed(type: type, channelSpec: -1, values: surround))
+        let stereo = try values(surround: false)
+        XCTAssertTrue(ETChainEditing.isChannelBypassed(type: type, channelSpec: -2, values: stereo))
+        XCTAssertFalse(ETChainEditing.isChannelBypassed(type: type, channelSpec: -1, values: stereo))
+    }
+
+    /// 鎖が host に求める幅。入れていて、Section で止められておらず、All に居る 5.1 だけが 6。
+    func testOnlyALiveSurroundRoomWidensTheHost() throws {
+        let spec = try virtualRoom()
+        var node = ETChainNode(spec: spec, values: try values(surround: true))
+        node.channelSpec = -2
+        XCTAssertEqual(ETChainEditing.requiredChannels([node]), 6)
+        var off = node
+        off.enabled = false
+        XCTAssertEqual(ETChainEditing.requiredChannels([off]), 2)
+        var gated = node
+        gated.sectionGate = 0
+        XCTAssertEqual(ETChainEditing.requiredChannels([gated]), 2)
+        var stereoRouted = node
+        stereoRouted.channelSpec = -1
+        XCTAssertEqual(ETChainEditing.requiredChannels([stereoRouted]), 2)
+        var stereo = ETChainNode(spec: spec, values: try values(surround: false))
+        stereo.channelSpec = -1
+        XCTAssertEqual(ETChainEditing.requiredChannels([stereo]), 2)
+        XCTAssertEqual(ETChainEditing.requiredChannels([stereo, node]), 6)
+        XCTAssertEqual(ETChainEditing.requiredChannels([]), 2)
+    }
+
+    /// Speaker Layout を変えたら Ch を合う所へ移す。合っていれば触らない。
+    func testLayoutChangeMovesTheChannel() {
+        XCTAssertEqual(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: true, current: -1), -2)
+        XCTAssertEqual(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: true, current: 17), -2)
+        XCTAssertNil(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: true, current: -2))
+        XCTAssertEqual(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: false, current: -2), -1)
+        XCTAssertNil(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: false, current: 17))
+    }
+
+    private func distance(_ a: CGPoint, _ b: CGPoint) -> Double {
+        let dx = Double(a.x - b.x)
+        let dy = Double(a.y - b.y)
+        return (dx * dx + dy * dy).squareRoot()
+    }
+
+    /// 5.1 の図: C は正面、Ls / Rs は listener より後ろ。5 本とも同じ距離。
+    func testSurroundLayoutPlacesFiveSpeakersOnOneCircle() {
+        let l = ETVirtualRoom.layout(width: 4.2, depth: 3.6, listenerX: 50, listenerY: 36,
+                                     angle: 30, distance: 1.8, surround: true)
+        XCTAssertEqual(l.surround.count, 3)
+        let points = [l.left, l.right] + l.surround
+        for p in points {
+            XCTAssertEqual(distance(p, l.listener), 1.8, accuracy: 1e-9)
+        }
+        XCTAssertEqual(l.surround[0].x, l.listener.x, accuracy: 1e-9)
+        XCTAssertGreaterThan(l.surround[0].y, l.listener.y)
+        XCTAssertLessThan(l.surround[1].y, l.listener.y)
+        XCTAssertLessThan(l.surround[1].x, l.listener.x)
+        XCTAssertGreaterThan(l.surround[2].x, l.listener.x)
+        XCTAssertFalse(l.clamped)
+        let stereo = ETVirtualRoom.layout(width: 4.2, depth: 3.6, listenerX: 50, listenerY: 36,
+                                          angle: 30, distance: 1.8)
+        XCTAssertTrue(stereo.surround.isEmpty)
+    }
+
+    /// 後ろが狭い部屋では Ls / Rs が後ろの壁に当たり、5 本とも同じだけ詰める。
+    func testSurroundLayoutPullsEveryoneInWhenTheBackIsShort() {
+        let l = ETVirtualRoom.layout(width: 6, depth: 6, listenerX: 50, listenerY: 10,
+                                     angle: 30, distance: 2, surround: true)
+        XCTAssertTrue(l.clamped)
+        XCTAssertEqual(distance(l.left, l.listener), distance(l.surround[1], l.listener),
+                       accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(l.surround[1].y, ETVirtualRoom.margin - 1e-9)
+        // Stereo なら同じ部屋で詰めない。
+        XCTAssertFalse(ETVirtualRoom.layout(width: 6, depth: 6, listenerX: 50, listenerY: 10,
+                                            angle: 30, distance: 2).clamped)
+    }
+
     /// 幅の合わない Ch に置いた段は descriptor で切って渡す（Bass Extender と同じ）。
     func testNarrowRoutingBypassesTheKernel() {
         let type = ETVirtualRoom.type

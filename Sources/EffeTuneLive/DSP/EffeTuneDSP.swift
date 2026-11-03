@@ -73,7 +73,11 @@ final class EffeTuneDSP: ObservableObject {
     /// 組んであるレート。IR を送るときの解決に要る（IRLoader）。
     private(set) var sampleRate: Double = 48000
     /// et_engine_prepare に渡した幅。実際の出力IFと同じ（DSPの上限16ch）。
+    /// 鎖が広い幅を求めているとき（5.1 の Virtual Room）はそちら（AudioIO.start）。
     private(set) var maxChannels: UInt32 = 2
+    /// 鎖が host に求める処理の幅（ETChainEditing.requiredChannels）。publish のたびに引き直す。
+    /// 変わると AudioIO が組み直す（AudioIO.followChainWidth。docs/virtual-room-design.md §64）。
+    private(set) var requiredChannels = 2
     private var maxFrames: UInt32 = 4096
     var maximumFrames: UInt32 { maxFrames }
     private var kernelIndex: [String: UInt32] = [:]
@@ -968,7 +972,8 @@ final class EffeTuneDSP: ObservableObject {
     /// 上流が受けない Ch に置かれた段。**descriptor では enabled 0 で渡す**。
     /// 決まりは ETChainEditing.isChannelBypassed。
     static func isChannelBypassed(_ node: Node) -> Bool {
-        ETChainEditing.isChannelBypassed(type: node.spec.type, channelSpec: node.channelSpec)
+        ETChainEditing.isChannelBypassed(type: node.spec.type, channelSpec: node.channelSpec,
+                                         values: node.values)
     }
 
     /// その段で、資産を送り直さないと効かない値の位置（ETChainEditing.assetConfigOffsets）。
@@ -1355,6 +1360,7 @@ final class EffeTuneDSP: ObservableObject {
         }
         guard contains(slot: index),
               self[slot: index].values.indices.contains(offset) else { return }
+        let previous = self[slot: index].values
         self[slot: index].values[offset] = value
         // SFZ Note Player: 上流は slider を動かすたびに setParameters を通り、Highest Note は Lowest Note より
         // 下に、Velocity 127 Level は Velocity 1 Level + 1 dB より下にならない（sfz_note_player.js:59-60）。
@@ -1368,6 +1374,7 @@ final class EffeTuneDSP: ObservableObject {
         settleAfterParams(at: index, changed: offset, before: before)
         // PC へ写すのは main の段だけ（リモートの位置は main の添字。補正はリモートの間は外してある）。
         if index < chain.count { RemoteMirror.shared.paramsChanged(at: index) }
+        settleSpeakerLayout(at: index, previous: previous)
         // publish() は通さない。descriptor に載るのは並びと入切と鎖の形だけで、
         // 値は pushParams が instance へ直に渡している。
         // ただし端末には残す。残さないと、次に鎖を足す/消す/動かすまで
@@ -1426,6 +1433,7 @@ final class EffeTuneDSP: ObservableObject {
         let design = ETDesignParam.applying(params, to: self[slot: index].design,
                                             type: self[slot: index].spec.type)
         let redesign = design != self[slot: index].design
+        let previous = self[slot: index].values
         self[slot: index].values = values
         storeTopKeyframe(at: index)
         if redesign { self[slot: index].design = design }
@@ -1450,8 +1458,28 @@ final class EffeTuneDSP: ObservableObject {
             ETAssetReattach.paramsChanged(self[slot: index])
         }
         if index < chain.count { RemoteMirror.shared.paramsChanged(at: index) }
+        settleSpeakerLayout(at: index, previous: previous)
         // setValue と同じ理由で publish() は通さず、端末にだけ残す。
         persistSoon()
+    }
+
+    /// Virtual Room の Speaker Layout が変わったら、Ch を合う所へ移して出し直す（§64）。
+    ///
+    /// 値の変化はふだん publish() を通さないが、Speaker Layout だけは鎖の形を変える:
+    ///   - 合う Ch が変わる（Stereo は Stereo か対、5.1 は All）。合わない段は descriptor で切る
+    ///   - host が処理する幅が変わる（5.1 で 6 本。requiredChannels → AudioIO.followChainWidth）
+    /// Ch は 5.1 なら All へ、Stereo へ戻したら All を Stereo へ移す
+    /// （ETRoutingConstraint.channelSpecAfterLayoutChange）。どちらも取り消せる。
+    private func settleSpeakerLayout(at index: Int, previous: [Float]) {
+        guard contains(slot: index), self[slot: index].spec.type == ETVirtualRoom.type else { return }
+        let surround = ETVirtualRoom.isSurround(self[slot: index].values)
+        guard surround != ETVirtualRoom.isSurround(previous) else { return }
+        if let spec = ETRoutingConstraint.channelSpecAfterLayoutChange(
+            surround: surround, current: self[slot: index].channelSpec) {
+            setRouting(at: index, channelSpec: spec)   // publish() を通る
+        } else {
+            publish()
+        }
     }
 
     func resetParams(at index: Int) {
@@ -1467,6 +1495,8 @@ final class EffeTuneDSP: ObservableObject {
         }
         guard contains(slot: index) else { return }
         let before = instanceLatency(of: self[slot: index])
+        let previousValues = self[slot: index].values
+        defer { settleSpeakerLayout(at: index, previous: previousValues) }
         self[slot: index].values = self[slot: index].spec.defaults
         // 上流の Reset は constructor の値へ戻すので、足した直後と同じ既定を掛ける。
         applyConstructorValues(&self[slot: index])
@@ -2357,6 +2387,8 @@ final class EffeTuneDSP: ObservableObject {
     /// 有効なものだけを並べて音のスレッドへ渡す。
     private func publish() {
         applySectionGates()
+        // sectionGate を書いた後で数える（Section で止めた 5.1 の Virtual Room は幅を求めない）。
+        requiredChannels = ETChainEditing.requiredChannels(chain + correction)
         var companionsChanged: [UUID] = []
         let retiredCompanions = syncCompanions(changed: &companionsChanged)
         pruneDrives()

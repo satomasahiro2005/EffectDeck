@@ -24,8 +24,21 @@ enum ETAudioSessionRules {
     /// 入力は常に L/R なので、モノラル経路でも DSP までは 2 本を保ち、
     /// ミキサーにダウンミックスさせる。上は DSP の上限の 16。
     /// 出力が 4ch 以上なら同じ本数で処理する（Spatial Mapper 等で広げるため）。
-    static func processingChannels(forOutputChannels actual: Int) -> Int {
-        min(maxChannels, max(2, actual))
+    ///
+    /// `requiredByChain` は鎖が求める幅（EffeTuneDSP.requiredChannels）。5.1 の Virtual Room を
+    /// 入れていると 6 で、2ch のヘッドホンでも 6 本で処理する（docs/virtual-room-design.md §64）。
+    /// **出力の口の本数は変えない**（outputChannels）。余った行は writeOutput が書かずに捨てる。
+    /// **見張り（AudioIO の本数の食い違い）も同じ引数で呼ぶこと。**片方だけ鎖を見ると、
+    /// 組んだ幅と比べる幅が食い違い続けて組み直しが止まらない。
+    static func processingChannels(forOutputChannels actual: Int, requiredByChain: Int = 2) -> Int {
+        min(maxChannels, max(2, actual, requiredByChain))
+    }
+
+    /// AVAudioEngine のミキサーへ渡す本数。ハードウェアの本数から決め、鎖の幅は見ない。
+    /// 6 本をミキサーへ渡すと、2ch の口へミキサーが勝手にダウンミックスする
+    /// （5.1 の Virtual Room は耳の 2 本を 0 番と 1 番へ書いて残りを 0 にしている）。
+    static func outputChannels(forOutputChannels actual: Int) -> Int {
+        processingChannels(forOutputChannels: actual)
     }
 
     /// `setPreferredOutputNumberOfChannels` に出す本数。1〜16。

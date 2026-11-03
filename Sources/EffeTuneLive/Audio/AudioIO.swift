@@ -33,7 +33,11 @@ private final class RenderState {
     let capacity: Int          // 入力レートでのフレーム数の上限
     let factor: Int
     let sampleRate: Double     // 出力（＝入力）レート
-    let channels: Int          // DSP と出力の本数。入力リンクだけは常に stereo
+    let channels: Int          // DSP の本数。入力リンクだけは常に stereo
+    /// ミキサーへ渡す本数（ハードウェアから決めた幅）。ふだんは channels と同じで、
+    /// 鎖が広い幅を求めたとき（5.1 の Virtual Room）だけ channels より少ない。
+    /// 余った行は writeOutput が書かずに捨てる（docs/virtual-room-design.md §64）。
+    let outputs: Int
 
     let interleaved: UnsafeMutablePointer<Float>   // capacity * 2
     let planar: UnsafeMutablePointer<Float>        // capacity * channels
@@ -70,11 +74,12 @@ private final class RenderState {
 
     private var timebase = mach_timebase_info_data_t()
 
-    init(capacity: Int, sampleRate: Double, factor: Int, channels: Int) {
+    init(capacity: Int, sampleRate: Double, factor: Int, channels: Int, outputs: Int) {
         self.capacity = capacity
         self.sampleRate = sampleRate
         self.factor = factor
         self.channels = channels
+        self.outputs = min(outputs, channels)
 
         interleaved = .allocate(capacity: capacity * 2)
         planar      = .allocate(capacity: capacity * channels)
@@ -225,7 +230,10 @@ final class AudioIO: ObservableObject {
             settled: ETOutputCorrectionStoreCore(storage: UserDefaults.standard).currentDevice?.key)
         observeSession()
         // 無音でも回し続ける段を足した・外したら、休むまでの秒数を決め直す。
-        EffeTuneDSP.shared.onPublished = { [weak self] in self?.refreshGateIdle() }
+        EffeTuneDSP.shared.onPublished = { [weak self] in
+            self?.refreshGateIdle()
+            self?.followChainWidth()
+        }
 
         // DSP のエンジンは音と関係なく用意しておく。
         // 音が来るまで待っていると、その間エフェクトを足しても作れず一覧に出ない。
@@ -253,6 +261,23 @@ final class AudioIO: ObservableObject {
     /// External processorの処理フォーマットが変わったときに組み直す。
     func rebuildForExternalProcessor() {
         rebuild()
+    }
+
+    /// 鎖が求める幅（EffeTuneDSP.requiredChannels）が、組んである幅と違えば組み直す。
+    /// 5.1 の Virtual Room が現れた・消えたときだけ食い違う（docs/virtual-room-design.md §64）。一瞬切れる。
+    ///
+    /// **publish の中から直に組み直さない。**組み直しは EffeTuneDSP.prepare → rebuildAll → publish を
+    /// 通るので、publish の途中でもう一度 publish が走る。次の周回へ回す。
+    private func followChainWidth() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.running, let built = self.render?.channels else { return }
+            let want = ETAudioSessionRules.processingChannels(
+                forOutputChannels: AVAudioSession.sharedInstance().outputNumberOfChannels,
+                requiredByChain: EffeTuneDSP.shared.requiredChannels)
+            guard want != built else { return }
+            self.log.notice("chain needs \(want) channels, built \(built), rebuilding")
+            self.rebuild()
+        }
     }
 
     // MARK: - セッション側の出来事
@@ -497,10 +522,15 @@ final class AudioIO: ObservableObject {
             log.notice("device rate \(sr) != 48000, link is fixed at 48k")
         }
         let factor = Int(prefs.processingRate.factor)
+        // 鎖が求める幅（5.1 の Virtual Room で 6）とハードウェアの大きい方で処理し、
+        // ミキサーへはハードウェアの幅で渡す。見張り（tick の本数の食い違い）も同じ式で比べる。
         let channels = ETAudioSessionRules.processingChannels(
+            forOutputChannels: session.outputNumberOfChannels,
+            requiredByChain: EffeTuneDSP.shared.requiredChannels)
+        let outputs = ETAudioSessionRules.outputChannels(
             forOutputChannels: session.outputNumberOfChannels)
         let state = RenderState(capacity: Self.capacity, sampleRate: sr, factor: factor,
-                                channels: channels)
+                                channels: channels, outputs: outputs)
         state.gate.idleSeconds = prefs.powerMode.idleSeconds
         state.gate.thresholdLinear = PowerGate.linearThreshold(decibels: prefs.silenceThresholdDb)
         render = state
@@ -521,13 +551,14 @@ final class AudioIO: ObservableObject {
         refreshGateIdle()
 
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sr,
-                                channels: AVAudioChannelCount(channels))!
+                                channels: AVAudioChannelCount(state.outputs))!
         let src = AVAudioSourceNode { _, _, frameCount, ablPtr -> OSStatus in
             let began = state.now()
             let abl = UnsafeMutableAudioBufferListPointer(ablPtr)
             let n = min(Int(frameCount), state.capacity)
             let f = state.factor
             let channels = state.channels
+            let outputs = state.outputs
 
             // 1. リンクから受ける（インターリーブ・48kHz）
             //    撮影のときはリンクの代わりに作り物を流す。シミュレータには
@@ -590,8 +621,8 @@ final class AudioIO: ObservableObject {
                 state.ringFed = 0   // 輪に穴が空く（下の手順 6 の近道は温め直してから）
                 state.elapsed += Double(n) / state.sampleRate
                 // Mini Meters には無音を渡す。渡さないと図が最後の音のまま止まる。
-                ETMeterTap_Write(Int32(ET_METER_TAP_INPUT), nil, UInt32(channels), UInt32(n))
-                ETMeterTap_Write(Int32(ET_METER_TAP_OUTPUT), nil, UInt32(channels), UInt32(n))
+                ETMeterTap_Write(Int32(ET_METER_TAP_INPUT), nil, UInt32(outputs), UInt32(n))
+                ETMeterTap_Write(Int32(ET_METER_TAP_OUTPUT), nil, UInt32(outputs), UInt32(n))
                 return noErr
             }
 
@@ -602,7 +633,8 @@ final class AudioIO: ObservableObject {
 
             ETPreviewTone_Render(p, UInt32(n), UInt32(channels), state.sampleRate)
             // Mini Meters（PiP）の鎖の入口。写さない設定なら比べて戻るだけ。
-            ETMeterTap_Write(Int32(ET_METER_TAP_INPUT), p, UInt32(channels), UInt32(n))
+            // 本数は出力の口の幅。鎖が広げた分（5.1 の Virtual Room）は入口では 0 なので見せない。
+            ETMeterTap_Write(Int32(ET_METER_TAP_INPUT), p, UInt32(outputs), UInt32(n))
 
             // 6. 本線のバスへ書いて、鎖を通して、読み戻す。
             //    バスの置き場は engine が持っているので、そこへ直接書く。
@@ -684,8 +716,8 @@ final class AudioIO: ObservableObject {
             }
             state.elapsed += Double(n) / state.sampleRate
 
-            // Mini Meters（PiP）の鎖の出口。
-            ETMeterTap_Write(Int32(ET_METER_TAP_OUTPUT), p, UInt32(channels), UInt32(n))
+            // Mini Meters（PiP）の鎖の出口。出力の口に届く行だけ（writeOutput と同じ）。
+            ETMeterTap_Write(Int32(ET_METER_TAP_OUTPUT), p, UInt32(outputs), UInt32(n))
 
             // 7. 出力へ書く。インターリーブの口・本数の過不足・容量を超えたフレームは
             //    ETAudioBufferOps.writeOutput が受け持つ（AudioBufferOpsTests）。
@@ -722,12 +754,12 @@ final class AudioIO: ObservableObject {
         lifecycle.started()
         sampleRate = sr
         processingRate = sr * Double(factor)
-        outputChannels = channels
+        outputChannels = outputs
         resamplerLatency = Int(ETResampler_LatencySamples(state.resampler))
         status = ETAudioSessionRules.runningStatus(sampleRate: sr)
         refreshRoute()
         updateNowPlaying()
-        log.notice("start sr=\(sr) x\(factor) ch=\(channels) route=\(self.route, privacy: .public)")
+        log.notice("start sr=\(sr) x\(factor) ch=\(channels) out=\(outputs) route=\(self.route, privacy: .public)")
     }
 
     func stop(keepListening: Bool = false) {
@@ -947,8 +979,11 @@ final class AudioIO: ObservableObject {
             return
         }
 
+        // **start() と同じ式で比べる**（鎖の幅も入れる）。片方だけ鎖を見ると、5.1 の Virtual Room を
+        // 入れている間ずっと食い違って組み直しを繰り返す。
         let actualChannels = ETAudioSessionRules.processingChannels(
-            forOutputChannels: session.outputNumberOfChannels)
+            forOutputChannels: session.outputNumberOfChannels,
+            requiredByChain: EffeTuneDSP.shared.requiredChannels)
         let channelsOff = ETRouteRebuildRule.channelMismatch(running: running, built: render?.channels,
                                                              actual: actualChannels)
         if channelRebuild.observe(mismatch: channelsOff, now: uptime,

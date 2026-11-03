@@ -117,6 +117,7 @@ struct RoutingRow: View {
                         // §52。幅を要求するエフェクトでは満たすものだけ出す。
                         ForEach(ETRoutingConstraint.options(ETRouting.channelOptions,
                                                             type: node.spec.type,
+                                                            values: node.values,
                                                             current: node.channelSpec),
                                 id: \.0) { value, name in
                             Text(name).tag(value)

@@ -50,7 +50,10 @@ struct VirtualRoomView: View {
                     .padding(.top, 8)
                 }
                 .font(.system(size: 14))
-                exportRow
+                // 5.1 は 6 本を 2 耳へ畳むので、4ch（LL / LR / RL / RR）の BRIR では表せない（§64）。
+                if !surround {
+                    exportRow
+                }
             }
         }
     }
@@ -138,13 +141,16 @@ struct VirtualRoomView: View {
                            high: Float(value(ETVirtualRoom.Key.seedHigh)))
     }
 
+    private var surround: Bool { ETVirtualRoom.isSurround(node.values) }
+
     private var layout: ETVirtualRoom.Layout {
         ETVirtualRoom.layout(width: value(ETVirtualRoom.Key.width),
                              depth: value(ETVirtualRoom.Key.depth),
                              listenerX: value(ETVirtualRoom.Key.listenerX),
                              listenerY: value(ETVirtualRoom.Key.listenerY),
                              angle: value(ETVirtualRoom.Key.speakerAngle),
-                             distance: value(ETVirtualRoom.Key.speakerDistance))
+                             distance: value(ETVirtualRoom.Key.speakerDistance),
+                             surround: surround)
     }
 
     // MARK: - 図から触る

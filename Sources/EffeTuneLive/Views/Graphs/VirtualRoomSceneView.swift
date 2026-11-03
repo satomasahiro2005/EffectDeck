@@ -2,6 +2,7 @@
 //  Virtual Room を真上から見た図（docs/virtual-room-design.md §7）。
 //
 //  描くもの: 部屋の枠、左右の仮想スピーカー、listener、直接音の線、一次反射の線。
+//  5.1 では C と Ls / Rs も描く（§64）。掴めるのは L / R だけで、C と Ls / Rs は付いて動く。
 //  触れるもの: listener と、どちらかのスピーカー。**壁は掴めない。**
 //  寸法は下のスライダーで触る。
 //
@@ -117,14 +118,16 @@ struct VirtualRoomSceneView: View {
                        style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
         // 直接音。
+        let speakers = [left, right] + layout.surround.map(plot.point)
         var direct = Path()
-        direct.move(to: left); direct.addLine(to: listener)
-        direct.move(to: right); direct.addLine(to: listener)
+        for speaker in speakers {
+            direct.move(to: speaker); direct.addLine(to: listener)
+        }
         context.stroke(direct, with: ETGraphShading.muted, lineWidth: 1)
 
         // スピーカー。壁の外へ出ていて寄せたときは中を抜く。
         let shading = ETGraphShading.curve
-        for centre in [left, right] {
+        for centre in speakers {
             let box = CGRect(x: centre.x - 6, y: centre.y - 6, width: 12, height: 12)
             let path = Path(roundedRect: box, cornerRadius: 2)
             if layout.clamped {

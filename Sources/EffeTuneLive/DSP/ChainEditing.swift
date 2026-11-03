@@ -212,10 +212,11 @@ enum ETChainEditing {
     /// 上流のbypassは入力をそのまま出力busへ渡す（offline-processor.js:878-879）。
     /// enabled 0はbusを移さないので、**入力と出力のbusが違う段だけ**音が食い違う。
     ///
-    /// EffectDeckだけの型は幅の決まり（ETRoutingConstraint）で外す。Virtual Roomは2chだけ
-    /// （既定（-1）と対（16以降））。カーネルも2ch以外は素通しする（virtual_room/kernel.cppのprocess）が、
-    /// 外さないと遅延がengineの合計に入る。
-    static func isChannelBypassed(type: String, channelSpec: Int8) -> Bool {
+    /// EffectDeckだけの型は幅の決まり（ETRoutingConstraint）で外す。Virtual RoomはStereoなら2chだけ
+    /// （既定（-1）と対（16以降））、5.1ならAll（-2）だけ。幅は段の値（Speaker Layout）で変わるので
+    /// `values`を渡す（空なら既定のStereo）。カーネルも合わない本数は素通しする
+    /// （virtual_room/kernel.cppのprocess）が、外さないと遅延がengineの合計に入る。
+    static func isChannelBypassed(type: String, channelSpec: Int8, values: [Float] = []) -> Bool {
         switch type {
         case bassExtenderType:
             return !(channelSpec == -1 || channelSpec >= 16)
@@ -224,7 +225,7 @@ enum ETChainEditing {
         case adaptivePredictionType:
             return channelSpec == -2
         default:
-            if let width = ETRoutingConstraint.channelWidth(of: type) {
+            if let width = ETRoutingConstraint.channelWidth(of: type, values: values) {
                 return !ETRoutingConstraint.allows(channelSpec, width: width)
             }
             return false
@@ -242,7 +243,22 @@ enum ETChainEditing {
     static func chainMustProcess(_ nodes: [ETChainNode]) -> Bool {
         nodes.contains {
             $0.enabled && mustProcessWhileSilent(type: $0.spec.type)
-                && !isChannelBypassed(type: $0.spec.type, channelSpec: $0.channelSpec)
+                && !isChannelBypassed(type: $0.spec.type, channelSpec: $0.channelSpec,
+                                      values: $0.values)
+        }
+    }
+
+    /// 鎖が host に求める処理の幅（ETAudioSessionRules.processingChannels の requiredByChain）。
+    /// 入れていて、Section で止められておらず、受ける Ch に居る段だけ数える。
+    /// いまは 5.1 の Virtual Room（6）だけが 2 より広い幅を求める（docs/virtual-room-design.md §64）。
+    /// **sectionGate は publish の applySectionGates が書いた値を読む**ので、publish の中で呼ぶ。
+    static func requiredChannels(_ nodes: [ETChainNode]) -> Int {
+        nodes.reduce(2) { widest, node in
+            guard node.enabled, node.sectionGate != 0,
+                  !isChannelBypassed(type: node.spec.type, channelSpec: node.channelSpec,
+                                     values: node.values) else { return widest }
+            return max(widest, ETRoutingConstraint.requiredProcessingChannels(
+                of: node.spec.type, values: node.values))
         }
     }
 
@@ -345,7 +361,8 @@ enum ETChainEditing {
                                       kind: .native,
                                       externalIndex: 0))
             }
-            let bypassed = isChannelBypassed(type: n.spec.type, channelSpec: n.channelSpec)
+            let bypassed = isChannelBypassed(type: n.spec.type, channelSpec: n.channelSpec,
+                                             values: n.values)
             out.append(Descriptor(instance: n.isExternal ? 0 : n.instance,
                                   enabled: n.enabled && !bypassed ? 1 : 0,
                                   inputBus: n.inputBus,

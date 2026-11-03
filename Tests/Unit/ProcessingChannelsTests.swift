@@ -30,6 +30,35 @@ final class ProcessingChannelsTests: XCTestCase {
         }
     }
 
+    /// 鎖が広い幅を求めたら（5.1 の Virtual Room で 6）、2ch のヘッドホンでも 6 本で処理する。
+    /// ミキサーへ渡す本数はハードウェアのまま（6 本を渡すとミキサーが勝手にダウンミックスする）。
+    /// 6ch 以上の IF ではハードウェアの本数のまま。上は 16。
+    func testChainCanWidenProcessingButNotTheOutput() {
+        XCTAssertEqual(ETAudioSessionRules.processingChannels(forOutputChannels: 2, requiredByChain: 6), 6)
+        XCTAssertEqual(ETAudioSessionRules.processingChannels(forOutputChannels: 1, requiredByChain: 6), 6)
+        XCTAssertEqual(ETAudioSessionRules.processingChannels(forOutputChannels: 8, requiredByChain: 6), 8)
+        XCTAssertEqual(ETAudioSessionRules.processingChannels(forOutputChannels: 2, requiredByChain: 2), 2)
+        XCTAssertEqual(ETAudioSessionRules.processingChannels(forOutputChannels: 2, requiredByChain: 40), 16)
+        XCTAssertEqual(ETAudioSessionRules.outputChannels(forOutputChannels: 2), 2)
+        XCTAssertEqual(ETAudioSessionRules.outputChannels(forOutputChannels: 6), 6)
+        // 鎖を入れない呼び方は前と同じ（既定は 2）。
+        for n in -1...32 {
+            XCTAssertEqual(ETAudioSessionRules.processingChannels(forOutputChannels: n),
+                           ETAudioSessionRules.processingChannels(forOutputChannels: n, requiredByChain: 2))
+        }
+    }
+
+    /// 組んだ幅と見張りが比べる幅は、同じ鎖の幅を入れれば一致する（組み直しが繰り返されない）。
+    func testWatchdogAgreesWithStartWhenTheChainIsWide() {
+        let built = ETAudioSessionRules.processingChannels(forOutputChannels: 2, requiredByChain: 6)
+        let watched = ETAudioSessionRules.processingChannels(forOutputChannels: 2, requiredByChain: 6)
+        XCTAssertFalse(ETRouteRebuildRule.channelMismatch(running: true, built: built, actual: watched))
+        // 鎖を見ない見張りだと、6 と 2 で食い違い続ける。
+        XCTAssertTrue(ETRouteRebuildRule.channelMismatch(
+            running: true, built: built,
+            actual: ETAudioSessionRules.processingChannels(forOutputChannels: 2)))
+    }
+
     func testMaxChannelsIs16() {
         XCTAssertEqual(ETAudioSessionRules.maxChannels, 16)
     }

@@ -48,11 +48,31 @@ enum ETVirtualRoom {
         static let modelVersion = "mv"
         static let seedLow = "s0"
         static let seedHigh = "s1"
+        static let speakerLayout = "sl"
+    }
+
+    // MARK: - Speaker Layout（§64）
+
+    /// 5.1 で読む本数（L, R, C, LFE, Ls, Rs）。host はこの幅以上で処理する。
+    static let surroundChannels = 6
+    /// Ls / Rs の向き（ITU-R BS.775。virtual_room_model.h の kSurroundAzimuthDegrees と同じ）。
+    static let surroundAngle = 110.0
+
+    /// Speaker Layout の float の位置。catalog から引く（ABI の並びは params.json が正）。
+    private static let layoutOffset: Int? = ETCatalog.first { $0.type == type }?
+        .params.first { $0.key == Key.speakerLayout }?.offset
+
+    /// 段の値が 5.1 か。kernel と同じ読み方（0.5 以上 1.5 未満を 5.1、ほかは Stereo）。
+    /// 短い配列（Speaker Layout を足す前の保存値）は Stereo。
+    static func isSurround(_ values: [Float]) -> Bool {
+        guard let offset = layoutOffset, values.indices.contains(offset) else { return false }
+        let v = values[offset]
+        return v >= 0.5 && v < 1.5
     }
 
     /// カードに常に出す 3 節（§8〜§10）。Advanced に入るものは含めない。
     static let roomKeys = [Key.width, Key.depth, Key.height]
-    static let speakerKeys = [Key.speakerAngle, Key.speakerDistance]
+    static let speakerKeys = [Key.speakerLayout, Key.speakerAngle, Key.speakerDistance]
     static let acousticsKeys = [Key.roomAmount, Key.decayScale]
 
     /// §11 Advanced の並び。節ごとに分ける。
@@ -96,6 +116,8 @@ enum ETVirtualRoom {
         var listener: CGPoint
         var left: CGPoint
         var right: CGPoint
+        /// 5.1 だけ。C, Ls, Rs（LFE は向きを持たないので描かない）。Stereo では空。
+        var surround: [CGPoint] = []
         /// 一次反射が壁に当たる点。図の線を引くのに使う。
         var reflections: [CGPoint]
         /// §53 で内側へ寄せたか。寄せたときは図の見た目を変えて知らせる。
@@ -109,9 +131,12 @@ enum ETVirtualRoom {
     ///
     /// `listenerX` / `listenerY` は部屋寸法に対する割合（%）。
     /// `angle` は左右対称で、度。`distance` は listener からの距離（m）。
+    /// `surround` が true なら 5.1。C は正面、Ls / Rs は ±110°。5 本とも同じ距離で、
+    /// どれか 1 本でも壁に当たれば全部を同じだけ詰める（kernel の §53 と同じ）。
     static func layout(width: Double, depth: Double,
                        listenerX: Double, listenerY: Double,
-                       angle: Double, distance: Double) -> Layout {
+                       angle: Double, distance: Double,
+                       surround: Bool = false) -> Layout {
         let w = max(width, 2 * margin + 0.01)
         let d = max(depth, 2 * margin + 0.01)
         let lx = min(max(w * listenerX / 100, margin), w - margin)
@@ -120,16 +145,31 @@ enum ETVirtualRoom {
 
         // スピーカーは listener の正面（+y）を基準に ±angle。
         let radians = angle * .pi / 180
-        let maxDistance = maximumDistance(width: w, depth: d,
+        var maxDistance = maximumDistance(width: w, depth: d,
                                           listener: listener, radians: radians)
+        let rear = surroundAngle * .pi / 180
+        if surround {
+            for other in [0.0, rear] {
+                maxDistance = min(maxDistance, maximumDistance(width: w, depth: d,
+                                                               listener: listener, radians: other))
+            }
+        }
         let effective = min(distance, maxDistance)
         let dx = sin(radians) * effective
         let dy = cos(radians) * effective
         let left = CGPoint(x: lx - dx, y: ly + dy)
         let right = CGPoint(x: lx + dx, y: ly + dy)
+        var extra: [CGPoint] = []
+        if surround {
+            let rx = sin(rear) * effective
+            let ry = cos(rear) * effective
+            extra = [CGPoint(x: lx, y: ly + effective),
+                     CGPoint(x: lx - rx, y: ly + ry),
+                     CGPoint(x: lx + rx, y: ly + ry)]
+        }
 
         return Layout(width: w, depth: d, listener: listener,
-                      left: left, right: right,
+                      left: left, right: right, surround: extra,
                       reflections: firstOrder(width: w, depth: d,
                                               listener: listener,
                                               left: left, right: right),
