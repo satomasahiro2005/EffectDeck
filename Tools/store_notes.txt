@@ -1,33 +1,24 @@
-New since 2026.10.08
+New since 2026.10.16
 
-Remote Control
-- Edit the effect chain of EffeTune 2.14 on a computer on the same network. Allow remote control in EffeTune's settings, then scan its QR code from Settings → Remote. IR Reverb can choose from the computer's IR Library.
+Undo
+- Undo and Redo for the effect chain: parameter changes, adding, removing and moving effects. Shake your iPhone, swipe left or right with three fingers, or press ⌘Z / ⇧⌘Z on a keyboard.
 
-iPad
-- Cards with a graph switch between open and graph only when tapped, in two columns too.
-- Rotating keeps your place in the chain. Cards were misaligned after rotating until you scrolled.
-
-Dragging
-- A card you drag folds to its title until you drop it, so it is easy to move past other cards.
-- Dragging is smoother.
-
-Floating Meters
-- Spectrogram, waveform, spectrum, stereo and level meters of the chain input or output in a Picture in Picture window, over any app. Turn it on from the … menu → Floating Meters.
+Follow Volume
+- An effect can follow the output volume. Choose Follow Volume in the card's ⋯ menu, then add keyframes with the + on the strip under the card name.
+- JSFX can read the output volume through effectdeck_output_volume.
 
 Also new
-- EffeTune 2.14.0 (DSP 0.14.0): Analog Meter Custom mode, Oscilloscope up to 10 seconds (smooth scrolling with Trigger Mode Off), Note Spectrogram instrument colours, Highlight and onsets.
-- SFZ Note Player plays SFZ instruments you import from Files, keeps them in the SFZ Library, and plays a note when you touch its voice display.
-- Adaptive Prediction, Cassette Mode and the new Rhythm Analyzer layout (EffeTune 2.13.0).
-- IR Reverb shows the energy decay curve and RT60 of the loaded impulse response.
-- Settings → About → Reset All Data erases chains, presets, imported files and settings, including the iCloud copy.
-- Share this chain always makes an effectdeck.nemut.ai link that opens in EffectDeck.
-- Less work while idle: no 96/192 kHz resampling while bypassed, and the extension and the app wake only when audio arrives.
+- EffeTune 2.16.0 (DSP 0.16.0): Note Spectrogram Chords & Key, Rhythm Analyzer drums, 10 Mastering presets.
+- EffeTune 2.15.0: SFZ Note Player Detection.
+- Add Effect search groups results into Effects / Plugins / Presets and also finds common names (de-esser, goniometer, brir).
+- An effect you add now goes outside Sections, unless you drop it onto a Section card.
+- Chroma Spiral and Stereo Meter use the space better when collapsed. Note Spectrogram has an opaque keyboard, sharper notes and a legend readable in light mode.
+- Floating Meters and graphs use less CPU.
+- Accessibility: VoiceOver labels, larger text, standard buttons.
 
 Fixes
-- Remote Control: the Scan QR Code sheet closed immediately.
+- iPad (two columns): the top-right buttons could stop responding after closing a sheet by tapping outside it.
 
-Previous updates (2026.10.08):
+Previous update (2026.10.16):
 
-- Output Correction: assign one of your presets to each pair of headphones or speaker. It is applied after the chain and switches automatically when the output changes.
-- Third-party AUv3 plug-ins appear under Plugins, and Apple Audio Units show their own interface.
-- JSFX scripts run about 1.3 to 1.4 times faster on iPhone.
+- Remote Control for EffeTune 2.14 on a computer, Floating Meters (Picture in Picture), SFZ Note Player, and smoother dragging.
