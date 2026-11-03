@@ -2531,7 +2531,7 @@ engine は `channel_count <= max_channels` を受けるので、ほかの段は�
 
 ### 測った数字
 
-48 kHz、block 512、params.json の既定（2 次・天井 Drywall）。`Tools/brir_metrics surround`。
+48 kHz、block 512、params.json の既定（2 次・天井 Drywall）。`brir_metrics surround`（`Tools/brir_metrics.cpp`）。
 曲は `brir_metrics signal` の代わりの曲を、**Spatial Mapper ではなく固定の行列**（L, R, C = 0.7 (L + R)、
 LFE = 0、Ls = 0.5 (L - R)、Rs = 0.5 (R - L)）で広げた。
 
@@ -2619,7 +2619,7 @@ LFE = 0、Ls = 0.5 (L - R)、Rs = 0.5 (R - L)）で広げた。
 
 ### 測った数字
 
-`Tools/brir_metrics surround shapes`（WSL g++ -O2、48 kHz、block 512、params.json の既定）。
+`brir_metrics surround shapes`（`Tools/brir_metrics.cpp`）（WSL g++ -O2、48 kHz、block 512、params.json の既定）。
 同相の正弦 -1 dBFS の峰、入力の峰に対する dB。各チャンネルの倍率は L = R の低音を通した形。
 
 | 鎖 | L, R, C, LFE, Ls, Rs | 40 Hz | 55 Hz | 80 Hz | 120 Hz |
