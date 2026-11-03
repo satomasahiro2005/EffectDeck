@@ -129,7 +129,16 @@ bool VirtualRoomEngine::prepare(double sampleRate, std::uint32_t maxFrames) noex
   ready_.store(kNoSlot, std::memory_order_relaxed);
   released_.store(0u, std::memory_order_relaxed);
 
+  // レートが変わると前の面は別のレートで組んだもの。そこから渡らせると
+  // 違う遅れ・違う耳介が 8 ms 混ざるので、空にして「まだ面が無い」へ戻す。
+  // 次に来た面は adoptPublished が渡りを挟まずに取る。
+  stateA_ = RenderState{};
+  stateB_ = RenderState{};
+  active_ = &stateA_;
+  incoming_ = &stateB_;
   prepared_ = true;
+  takeActiveNow();
+  hasState_ = false;
   reset();
   return true;
 }
@@ -204,6 +213,23 @@ void VirtualRoomEngine::applyImmediate(const Params &params) noexcept {
     return;
   }
   buildRenderState(params, sampleRate_, *active_);
+  applyState(*active_);
+}
+
+void VirtualRoomEngine::applyState(const RenderState &state) noexcept {
+  if (!prepared_) {
+    return;
+  }
+  if (&state != active_) {
+    *active_ = state;
+  }
+  takeActiveNow();
+  clearBuffers();
+}
+
+// active_ に入っている面を、渡りも畳み直しも挟まずに鳴らす形へ揃える。
+// 遅れの束・seed・帰還ゲイン・出力ゲインを全部その面の値にする。
+void VirtualRoomEngine::takeActiveNow() noexcept {
   prepareState(*active_, preparedActive_);
   transitionRemaining_ = 0u;
   seedPhase_ = SeedPhase::Idle;
@@ -225,7 +251,7 @@ void VirtualRoomEngine::applyImmediate(const Params &params) noexcept {
     }
   }
   outputGainCurrent_ = active_->outputGain;
-  clearBuffers();
+  hasState_ = true;
 }
 
 // ---------------------------------------------------------------- 準備
@@ -296,6 +322,16 @@ void VirtualRoomEngine::adoptPublished() noexcept {
   if (slot == kNoSlot) {
     return;
   }
+  if (!hasState_) {
+    // **まだ面が無いなら渡りを挟まない**（stop.md の D）。ゼロの面から渡ると、
+    // 耳介のゲインも出力ゲインも 0 から始まり、その間の入力が丸ごと消えていた
+    // （48 kHz で最低 8 ms、maxFrames 4096 なら 85 ms）。seed も 0 から変わったことに
+    // なり、空の遅延線の上で late を 30 ms 畳んで 30 ms 開き直していた。
+    *active_ = pool_[slot];
+    released_.fetch_or(1u << slot, std::memory_order_release);
+    takeActiveNow();
+    return;
+  }
   *incoming_ = pool_[slot];
   released_.fetch_or(1u << slot, std::memory_order_release);
 
@@ -348,18 +384,32 @@ void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t fra
   for (std::uint32_t frame = 0u; frame < frames; ++frame) {
     const float raw[kSourceCount] = {left[frame], right[frame]};
 
+    // 渡りの重み。cos^2 + sin^2 = 1 なので、同じ面どうしなら元と同じ値になる。
+    const bool fading = transitionRemaining_ != 0u;
+    const auto fadeOut = fading ? static_cast<float>(fadeCos_ * fadeCos_) : 1.0F;
+    const auto fadeIn = fading ? static_cast<float>(fadeSin_ * fadeSin_) : 0.0F;
+
     // ---- 耳介（§17）。**全部の経路へ同じものが掛かる**ので入口で 1 度だけ。
     // 元の JS も 1 本の FIR を全部の到来へ畳んでいる。経路ごとに持たせると
     // 100 本ぶん走らせることになるうえ、像ごとに違う耳介になってしまう。
-    const RenderState &pinna = *active_;
+    // 渡りの間は**古い面と新しい面の両方で掛けて混ぜる**（5 tap が 2 本で安い）。
+    // 差し替えの瞬間に耳介だけ切り替えると、仰角を動かしたときに段差が出る。
     pinnaWrite_ = (pinnaWrite_ + 1u) & 255u;
     float input[kSourceCount];
     for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
       pinnaHistory_[source][pinnaWrite_] = raw[source];
       float value = 0.0F;
       for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
-        const std::uint32_t position = (pinnaWrite_ - pinna.pinnaDelay[tap]) & 255u;
-        value += pinnaHistory_[source][position] * pinna.pinnaGain[tap];
+        const std::uint32_t position = (pinnaWrite_ - active_->pinnaDelay[tap]) & 255u;
+        value += pinnaHistory_[source][position] * active_->pinnaGain[tap];
+      }
+      if (fading) {
+        float next = 0.0F;
+        for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
+          const std::uint32_t position = (pinnaWrite_ - incoming_->pinnaDelay[tap]) & 255u;
+          next += pinnaHistory_[source][position] * incoming_->pinnaGain[tap];
+        }
+        value = value * fadeOut + next * fadeIn;
       }
       input[source] = value;
     }
@@ -382,16 +432,14 @@ void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t fra
     float earA[kEarCount] = {0.0F, 0.0F};
     float earB[kEarCount] = {0.0F, 0.0F};
     accumulatePaths(*active_, preparedActive_, history, earA);
-    if (transitionRemaining_ != 0u) {
+    if (fading) {
       accumulatePaths(*incoming_, preparedIncoming_, history, earB);
     }
 
     float early[kEarCount];
     float gain = outputGainCurrent_;
-    if (transitionRemaining_ != 0u) {
-      // 等電力。cos^2 + sin^2 = 1 なので、無相関でない 2 面を混ぜても山谷が出ない。
-      const auto fadeOut = static_cast<float>(fadeCos_ * fadeCos_);
-      const auto fadeIn = static_cast<float>(fadeSin_ * fadeSin_);
+    if (fading) {
+      // cos^2 + sin^2 = 1 なので、無相関でない 2 面を混ぜても山谷が出ない。
       for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
         early[ear] = earA[ear] * fadeOut + earB[ear] * fadeIn;
       }

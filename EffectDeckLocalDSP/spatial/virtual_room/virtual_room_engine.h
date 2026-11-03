@@ -41,7 +41,16 @@ public:
   void publish(const Params &params) noexcept;
 
   // offline（BRIR export）。移行を挟まずその場で差し替える。
+  // buildRenderState をして applyState へ渡すのと同じ。
   void applyImmediate(const Params &params) noexcept;
+
+  // 組み上がった面をその場で差し替える。移行は挟まず、輪と遅延線も空にする。
+  // **測るための口。**経路の帯域ゲインや late の入力を 0 にした面を渡せば、
+  // direct だけ・early だけ・late だけの BRIR を同じエンジンで取り出せる
+  // （Tools/brir_metrics.cpp、Tests/Native/virtual_room.cpp）。
+  void applyState(const RenderState &state) noexcept;
+  // いま鳴っている面。道具と試験が applyImmediate で組んだ面を読み、部分を 0 にして戻す。
+  [[nodiscard]] const RenderState &activeState() const noexcept { return *active_; }
 
   // 音のスレッド。planar な 2ch。入力を置き換える。
   void process(float *left, float *right, std::uint32_t frames) noexcept;
@@ -57,6 +66,7 @@ private:
 
   void prepareState(const RenderState &state, PreparedPath *out) const noexcept;
   void adoptPublished() noexcept;
+  void takeActiveNow() noexcept;
   void takeLateStructure(const RenderState &state) noexcept;
   void clearBuffers() noexcept;
   [[nodiscard]] const RenderState &newestState() const noexcept;
@@ -82,6 +92,10 @@ private:
   std::uint32_t fdnSize_ = 0u;
   std::uint32_t fdnMask_ = 0u;
   bool prepared_ = false;
+  /// active_ に本物の面が入っているか。prepare で落とし、applyState と最初の
+  /// adoptPublished で立てる。**落ちている間に来た面は渡りを挟まずに取る**（D）。
+  /// ゼロの面から渡ると、耳介のゲインも出力ゲインも 0 から始まって頭が欠ける。
+  bool hasState_ = false;
 
   // ---- 制御 → 音（§28）
   RenderState pool_[kPoolSize]{};
