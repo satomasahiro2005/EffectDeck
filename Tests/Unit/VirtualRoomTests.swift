@@ -348,6 +348,48 @@ final class VirtualRoomTests: XCTestCase {
         XCTAssertEqual(ETChainEditing.requiredChannels([]), 2)
     }
 
+    /// 5.1 を作るのは Spatial Mapper だけではない（docs/virtual-room-design.md §65）。
+    /// 上流の決まり: Matrix は今ある本数の中で振り分けるだけで本数を増やさない
+    /// （Vendor/effetune/docs/dsp/effects/matrix/index.md）。2→6 のような変換は Channel = All
+    /// （Vendor/effetune/docs/faq.md §6）。Bus 1〜4 も Main と同じ幅で、engine は全部のバスを
+    /// 同じ channel_count で回す（engine.cpp の processPipeline）。
+    ///   - 5.1 の Virtual Room があれば、前に置いた Matrix / Multi Channel Panel / Bass Management /
+    ///     Spatial Mapper（All）も 6 本を受ける。Virtual Room がどのバスに居ても同じ
+    ///   - Virtual Room が無ければ、それらだけでは広げない（2ch の機器で上流と同じ 2 本）
+    ///   - Stereo（既定）に置いた Matrix は 2 本しか受けない（上流と同じ。All にする）
+    func testUpstreamProducersSeeTheWidthTheVirtualRoomAsks() throws {
+        func node(_ type: String, channelSpec: Int8 = -2) throws -> ETChainNode {
+            let spec = try XCTUnwrap(ETCatalog.first { $0.type == type }, type)
+            var n = ETChainNode(spec: spec, values: spec.defaults)
+            n.channelSpec = channelSpec
+            return n
+        }
+        let producers = try ["MatrixPlugin", "MultiChannelPanelPlugin", "BassManagementPlugin",
+                             "SpatialMapperPlugin"].map { try node($0) }
+        var room = ETChainNode(spec: try virtualRoom(), values: try values(surround: true))
+        room.channelSpec = -2
+
+        XCTAssertEqual(ETChainEditing.requiredChannels(producers), 2)
+        let width = ETChainEditing.requiredChannels(producers + [room])
+        XCTAssertEqual(width, 6)
+        let engine = ETAudioSessionRules.processingChannels(forOutputChannels: 2, requiredByChain: width)
+        XCTAssertEqual(engine, 6)
+        for p in producers {
+            XCTAssertEqual(ETChannel.processedWidth(spec: p.channelSpec, engineChannels: engine), 6,
+                           p.spec.type)
+        }
+        let stereoMatrix = try node("MatrixPlugin", channelSpec: -1)
+        XCTAssertEqual(ETChannel.processedWidth(spec: stereoMatrix.channelSpec, engineChannels: engine), 2)
+
+        // バスに置いた 5.1 の Virtual Room も幅を求める（Main → Bus 1 へ Matrix、Bus 1 → Main で畳む形）。
+        for (input, output) in [(UInt8(1), UInt8(0)), (1, 1), (0, 2)] {
+            var bussed = room
+            bussed.inputBus = input
+            bussed.outputBus = output
+            XCTAssertEqual(ETChainEditing.requiredChannels(producers + [bussed]), 6, "\(input)→\(output)")
+        }
+    }
+
     /// Speaker Layout を変えたら Ch を合う所へ移す。合っていれば触らない。
     func testLayoutChangeMovesTheChannel() {
         XCTAssertEqual(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: true, current: -1), -2)
