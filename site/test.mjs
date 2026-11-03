@@ -217,15 +217,19 @@ await test("chain page: EffeTune link drops external effects like ETShareLink.ef
     { jsfx: "Tape Wobble" },
     { nm: "Section", cm: "", en: true, rr: true },
     { nm: "Delay", en: true, automation: { src: "outputVolume", sel: 0, kf: [{ at: 50, p: {} }] } },
+    // EffectDeck だけの内蔵（PipelineStore.shortForm が ed を書く）も上流に無い
+    { nm: "Virtual Room", ed: "VirtualRoomPlugin", en: true, rw: 4.2 },
+    { nm: "Virtual Room", ed: "VirtualRoomPlugin", en: true, ib: 0, ob: 3, ch: "A" },
   ];
   const link = effeTuneLink(b64(chain));
-  assert.equal(link.dropped, 3);
+  assert.equal(link.dropped, 5);
   assert.deepEqual(read(link), [
     { nm: "Section", cm: "Main", en: true },
     { nm: "Volume", en: true, vl: -3 },
     { nm: "Volume", en: false, vl: 0, ib: 2, ob: 0, ch: "L" },
     { nm: "Section", cm: "", en: true },
     { nm: "Delay", en: true },
+    { nm: "Volume", en: true, vl: 0, ib: 0, ob: 3, ch: "A" },
   ]);
   // 内蔵だけなら何も落とさない。+ が出る名前でも %2B で書く
   const plain = [{ nm: "Section", cm: "日本語~~>" }, { nm: "Volume~" }];

@@ -57,6 +57,8 @@ export function chainEntries(p) {
 // アプリは共有をいつも effectdeck.nemut.ai のリンクで出すので、PC の EffeTune で開く人はこのページから渡る。
 //   - AU・JSFX（external・名前で指す jsfx）は上流に無い。バスを跨がないものは消し、
 //     跨ぐものは素通しの Volume に置き換えて、残りの鎖の繋がりを切らない
+//   - EffectDeck だけの内蔵（型の印 ed。Virtual Room）も上流に無いので同じに落とす
+//     （アプリの ETDeckEffect.isDeckOnly）。nm だけ見て渡すと EffeTune が知らない段を受け取る
 //   - Section の終端の印（rr）は外す。上流は素の Section("") を組の終わりに使う
 // 返すのは { url, dropped }。dropped は落とした・置き換えた外の段の数（ボタンの字に添える）。
 // 上流が読むのはショート形式の配列だけ（clipboard-manager.js）。ロング形式や、落とした後に
@@ -73,7 +75,8 @@ export function effeTuneLink(p) {
     for (const o of json) {
       if (!o || typeof o !== "object") continue;
       const external = (typeof o.external === "string" && o.external !== "")
-        || (typeof o.jsfx === "string" && o.jsfx !== "");
+        || (typeof o.jsfx === "string" && o.jsfx !== "")
+        || (typeof o.ed === "string" && o.ed !== "");
       if (!external) {
         if (typeof o.nm !== "string" || o.nm === "") continue;
         // rr（終端の印）と automation（音量に追従するキーフレーム）は EffectDeck だけのもの。
