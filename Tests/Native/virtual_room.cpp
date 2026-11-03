@@ -436,6 +436,112 @@ ET_CASE(republish_same_params_is_transparent)
   ET_CHECK_MSG(db20(diff / peak) < -100.0, "diff %+.1f dB", db20(diff / peak));
 }
 
+// seed を変えても、late が満ちたまま 1 サンプルで裏返らない（§32）。
+// 前は出力の符号の並びを面を取った場で差し替え、古い seed の遅延線に新しい並びが
+// 掛かっていた。0.5 の 150 Hz 正弦で 2 階差分が定常の +55 dB（0.033 の段）。
+// いまは畳み切って遅延線を空にする点で取る。空の FDN へ入り直す立ち上がりが残るので
+// 定常よりは上がる（+23 dB）が、段は出ない。
+ET_CASE(seed_change_does_not_click)
+{
+  const std::uint32_t block = 256u;
+  VirtualRoomEngine engine;
+  ET_CHECK(engine.prepare(kRate, block));
+  engine.publish(defaults());
+  std::vector<float> left(block), right(block);
+  double previous = 0.0, beforePrevious = 0.0;
+  double steady = 0.0, after = 0.0;
+  std::uint64_t n = 0u;
+  for (std::uint32_t index = 0u; index < 260u; ++index) {
+    if (index == 200u) {
+      Params params = defaults();
+      params.seedLow = 12345.0F;
+      engine.publish(params);
+    }
+    for (std::uint32_t i = 0u; i < block; ++i) {
+      left[i] = right[i] = 0.5F * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * 150.0 *
+                                                              static_cast<double>(n + i) / kRate));
+    }
+    engine.process(left.data(), right.data(), block);
+    for (std::uint32_t i = 0u; i < block; ++i, ++n) {
+      const double d2 = std::fabs(left[i] - 2.0 * previous + beforePrevious);
+      if (index >= 100u && index < 200u) {
+        steady = std::max(steady, d2);
+      } else if (index >= 200u) {
+        after = std::max(after, d2);
+      }
+      beforePrevious = previous;
+      previous = left[i];
+    }
+  }
+  ET_CHECK(steady > 0.0);
+  ET_CHECK_MSG(db20(after / steady) < 30.0, "2nd diff %+.1f dB over steady", db20(after / steady));
+}
+
+// 畳んでいる途中に元の遅れの面が来ても、遅延線が畳んだ先の長さへ入れ替わったまま
+// 残らない（帰還ゲインと lateGain は元の遅れのものなので RT60 と late の量がずれる）。
+// 前は 4.2→6.0→4.2 m で 16 本とも、4.2→4.21→4.2 m でも 3 本ずれたままだった。
+// 揺らしたあと黙らせてからインパルスを入れ、揺らさなかった engine と比べる。
+ET_CASE(fold_back_to_same_delays_stays_consistent)
+{
+  const std::uint32_t block = 256u;
+  const std::uint32_t frames = 24000u;
+  auto run = [&](float width, std::vector<float> &outLeft, std::vector<float> &outRight) {
+    VirtualRoomEngine engine;
+    ET_CHECK(engine.prepare(kRate, block));
+    engine.publish(defaults());
+    std::vector<float> left, right;
+    for (std::uint32_t index = 0u; index < 20u; ++index) {
+      left = noise(block, 5u + index);
+      right = noise(block, 50u + index);
+      engine.process(left.data(), right.data(), block);
+    }
+    // 30 ms の畳みの中で 2 回出す（256 フレームの block を 2 つ、10.7 ms あける）。
+    if (width > 0.0F) {
+      for (const float w : {width, 4.2F}) {
+        Params params = defaults();
+        params.roomWidth = w;
+        engine.publish(params);
+        for (std::uint32_t index = 0u; index < 2u; ++index) {
+          left = noise(block, 7u + index);
+          right = noise(block, 9u + index);
+          engine.process(left.data(), right.data(), block);
+        }
+      }
+    }
+    // 3 秒黙らせて残響を落とす。
+    for (std::uint32_t index = 0u; index < 3u * 48000u / block; ++index) {
+      std::fill(left.begin(), left.end(), 0.0F);
+      std::fill(right.begin(), right.end(), 0.0F);
+      engine.process(left.data(), right.data(), block);
+    }
+    outLeft.assign(frames, 0.0F);
+    outRight.assign(frames, 0.0F);
+    outLeft[0] = 1.0F;
+    for (std::uint32_t done = 0u; done + block <= frames; done += block) {
+      engine.process(outLeft.data() + done, outRight.data() + done, block);
+    }
+  };
+  std::vector<float> wantLeft, wantRight;
+  run(0.0F, wantLeft, wantRight);
+  double peak = 0.0;
+  for (std::uint32_t i = 0u; i < frames; ++i) {
+    peak = std::max({peak, std::fabs(static_cast<double>(wantLeft[i])),
+                     std::fabs(static_cast<double>(wantRight[i]))});
+  }
+  ET_CHECK(peak > 0.0);
+  for (const float width : {6.0F, 4.21F, 4.5F}) {
+    std::vector<float> gotLeft, gotRight;
+    run(width, gotLeft, gotRight);
+    double diff = 0.0;
+    for (std::uint32_t i = 0u; i < frames; ++i) {
+      diff = std::max({diff, std::fabs(static_cast<double>(gotLeft[i]) - wantLeft[i]),
+                       std::fabs(static_cast<double>(gotRight[i]) - wantRight[i])});
+    }
+    ET_CHECK_MSG(db20(diff / peak) < -100.0, "width %.2f diff %+.1f dB", static_cast<double>(width),
+                 db20(diff / peak));
+  }
+}
+
 // ---------------------------------------------------------------- 5.1（§64）
 //
 // 入力は L, R, C, LFE, Ls, Rs（Spatial Mapper の "5.1 Upmix" の並び）。両耳を 0 番と 1 番へ書き、
@@ -768,6 +874,8 @@ static const et_case cases[] = {
     ET_ENTRY(reprepare_takes_new_state_at_once),
     ET_ENTRY(blocks_match_convolution),
     ET_ENTRY(republish_same_params_is_transparent),
+    ET_ENTRY(seed_change_does_not_click),
+    ET_ENTRY(fold_back_to_same_delays_stays_consistent),
     ET_ENTRY(surround_state_shape),
     ET_ENTRY(surround_pinna_front_back_differ),
     ET_ENTRY(surround_zeroes_extra_channels),

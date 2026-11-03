@@ -174,7 +174,20 @@ void VirtualRoomEngine::reset() noexcept {
     return;
   }
   clearBuffers();
+  // **渡りの途中なら新しい面で終える。**数えを 0 にするだけだと active_ が古い面のまま
+  // 残り、late だけ畳んだ先の束になる。遅延線は上で空にしたので、入れ替えはその場でよい。
+  if (transitionRemaining_ != 0u) {
+    std::swap(active_, incoming_);
+    std::swap(preparedActive_, preparedIncoming_);
+  }
   transitionRemaining_ = 0u;
+  if (seedPhase_ == SeedPhase::FadeOut) {
+    for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+      fdnDelayCurrent_[line] = fdnDelayTarget_[line];
+    }
+    fdnSeedCurrent_ = fdnSeed_;
+    takePendingLate();
+  }
   seedPhase_ = SeedPhase::Idle;
   lateScalar_ = 1.0F;
   outputGainCurrent_ = active_->outputGain > 0.0F ? active_->outputGain : 1.0F;
@@ -237,6 +250,7 @@ void VirtualRoomEngine::takeActiveNow() noexcept {
   seedPhase_ = SeedPhase::Idle;
   lateScalar_ = 1.0F;
   fdnSeed_ = active_->seed;
+  fdnSeedCurrent_ = active_->seed;
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     fdnDelayCurrent_[line] = active_->fdnDelay[line];
     fdnDelayTarget_[line] = active_->fdnDelay[line];
@@ -288,37 +302,79 @@ void VirtualRoomEngine::prepareState(const RenderState &state, PreparedPath *out
 // 変えると読み出しが飛んで必ず鳴る。seed を変えたときも同じ（§32）。
 // 帰還ゲインと入出力の係数だけの変化（材質・Decay・Room Amount）は
 // そのまま差し替えてよい（§31）。
+//
+// **畳むときは係数も入れ替えの点まで待たせる。**出力の符号の並び（fdnOutput）は
+// seed で決まるので、古い seed の中身が鳴っている遅延線に新しい並びを掛けると、
+// late が満ちたまま半分ほどの符号が 1 サンプルで裏返って鳴る（150 Hz の正弦で
+// 2 階差分が定常の 55 dB 上）。入力・帰還ゲインも新しい遅れのためのものなので
+// 一緒に待たせ、advanceSeedFade で遅延線を空にするときに取る。
+//
+// **比べる相手は行き先。**seed も遅れも畳んだ先（fdnSeed_、fdnDelayTarget_）と比べる。
+// 遅れだけ鳴っている方（fdnDelayCurrent_）と比べると、畳んでいる間に元の遅れの面が
+// 来たとき「変わっていない」と見て行き先が前の面のまま残り、遅延線はその長さへ
+// 入れ替わったまま、帰還ゲインと lateGain（Σd で割る、A）だけ元の遅れの値になる。
 void VirtualRoomEngine::takeLateStructure(const RenderState &state) noexcept {
   bool restructure = state.seed != fdnSeed_;
   for (std::uint32_t line = 0u; line < kFdnLines && !restructure; ++line) {
-    restructure = state.fdnDelay[line] != fdnDelayCurrent_[line];
+    restructure = state.fdnDelay[line] != fdnDelayTarget_[line];
   }
 
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     for (std::uint32_t band = 0u; band < kBandCount; ++band) {
-      fdnBandCurrent_[line][band] = state.fdnBand[line][band];
+      fdnBandPending_[line][band] = state.fdnBand[line][band];
     }
     for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
-      fdnInputCurrent_[line][source] = state.fdnInput[line][source];
+      fdnInputPending_[line][source] = state.fdnInput[line][source];
     }
   }
-  lateSources_ = std::min(state.sourceCount, kMaxSources);
+  lateSourcesPending_ = std::min(state.sourceCount, kMaxSources);
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
     for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
-      fdnOutput_[ear][line] = state.fdnOutput[ear][line];
+      fdnOutputPending_[ear][line] = state.fdnOutput[ear][line];
     }
   }
 
-  if (!restructure) {
+  if (restructure) {
+    for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+      fdnDelayTarget_[line] = state.fdnDelay[line];
+    }
+    fdnSeed_ = state.seed;
+    // 畳んでいる途中で、いま遅延線が鳴っている束へ戻ったなら空にしなくてよい。
+    // 遅延線の中身はその束のものなので、係数を取ってそのまま開き直す。
+    bool backToCurrent = seedPhase_ == SeedPhase::FadeOut && state.seed == fdnSeedCurrent_;
+    for (std::uint32_t line = 0u; line < kFdnLines && backToCurrent; ++line) {
+      backToCurrent = state.fdnDelay[line] == fdnDelayCurrent_[line];
+    }
+    if (backToCurrent) {
+      seedPhase_ = SeedPhase::FadeIn;
+      takePendingLate();
+      return;
+    }
+    // 既に畳んでいる最中なら、行き先だけ差し替えて畳み直さない。
+    seedPhase_ = SeedPhase::FadeOut;
     return;
   }
-  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
-    fdnDelayTarget_[line] = state.fdnDelay[line];
-  }
-  fdnSeed_ = state.seed;
-  // 既に畳んでいる最中なら、行き先だけ差し替えて畳み直さない。
+  // 束が変わらない。畳んでいる最中なら行き先は同じなので、入れ替えの点で取る。
   if (seedPhase_ != SeedPhase::FadeOut) {
-    seedPhase_ = SeedPhase::FadeOut;
+    takePendingLate();
+  }
+}
+
+// 待たせていた late の係数を鳴らす方へ移す。
+void VirtualRoomEngine::takePendingLate() noexcept {
+  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+    for (std::uint32_t band = 0u; band < kBandCount; ++band) {
+      fdnBandCurrent_[line][band] = fdnBandPending_[line][band];
+    }
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
+      fdnInputCurrent_[line][source] = fdnInputPending_[line][source];
+    }
+  }
+  lateSources_ = lateSourcesPending_;
+  for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+    for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+      fdnOutput_[ear][line] = fdnOutputPending_[ear][line];
+    }
   }
 }
 
@@ -548,8 +604,10 @@ void VirtualRoomEngine::advanceSeedFade() noexcept {
         fdnMid_[line] = 0.0F;
       }
       std::memset(lines_.data(), 0, lines_.size() * sizeof(float));
+      fdnSeedCurrent_ = fdnSeed_;
+      takePendingLate();
       seedPhase_ = SeedPhase::FadeIn;
-      }
+    }
     return;
   }
   lateScalar_ += step;

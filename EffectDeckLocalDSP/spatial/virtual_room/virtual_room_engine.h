@@ -73,6 +73,7 @@ private:
   void adoptPublished() noexcept;
   void takeActiveNow() noexcept;
   void takeLateStructure(const RenderState &state) noexcept;
+  void takePendingLate() noexcept;
   void clearBuffers() noexcept;
   [[nodiscard]] const RenderState &newestState() const noexcept;
   void renderBlock(float *const *channels, std::uint32_t channelCount,
@@ -157,7 +158,16 @@ private:
   float lateHold_[kEarCount]{};
   /// divider で間引いた late を出力レートへ戻すときの均し（§25）。
   float coherence_[kEarCount]{};
+  /// 待たせている late の係数。takeLateStructure が毎回ここへ書き、畳んでいなければ
+  /// その場で、畳んでいれば遅延線を空にする点で鳴らす方へ移す（§32）。
+  float fdnBandPending_[kFdnLines][kBandCount]{};
+  float fdnInputPending_[kFdnLines][kMaxSources]{};
+  float fdnOutputPending_[kEarCount][kFdnLines]{};
+  std::uint32_t lateSourcesPending_ = kStereoSources;
+  /// 畳んだ先の seed。
   std::uint32_t fdnSeed_ = 0u;
+  /// 遅延線の中身が属している seed（fdnDelayCurrent_ と対）。
+  std::uint32_t fdnSeedCurrent_ = 0u;
   SeedPhase seedPhase_ = SeedPhase::Idle;
   std::uint32_t seedFadeFrames_ = 1u;
   float lateScalar_ = 1.0F;
