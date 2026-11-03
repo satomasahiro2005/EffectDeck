@@ -653,7 +653,10 @@ final class EffeTuneDSP: ObservableObject {
 
     /// 積む先。PipelineView が画面の UndoManager を渡す（振る・3 本指・⌘Z がそこへ来る）。
     /// 渡される前の手は積まない。
-    weak var undoManager: UndoManager?
+    weak var undoManager: UndoManager? {
+        // **50 手まで。**1 手ごとに鎖まるごとを控えるので、上限が無いと長くいじるほどメモリが増える。
+        didSet { undoManager?.levelsOfUndo = 50 }
+    }
 
     /// 最後に積んだ控え。次に鎖が変わったら、ここへ戻す 1 手を積む。
     private var undoBase: ETUndoSnapshot?

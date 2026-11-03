@@ -471,7 +471,6 @@ struct PipelineView: View {
             if old != new {
                 revealNew(old, new)
                 noteAdded(old)
-                dropStaleUndo(old, new)
             }
         }
         // PC の鎖を編集し始める・やめると、手元の鎖の取り消しは指す先が変わる。
@@ -488,21 +487,6 @@ struct PipelineView: View {
                 .accessibilityHidden(true)
                 .allowsHitTesting(false)
         }
-    }
-
-    /// 鎖がまるごと入れ替わったら、積んである取り消しを捨てる。
-    ///
-    /// プリセット・貼り付け・バックアップ・リセット・削除の取り消しは、全部の段に新しい id を振る。
-    /// 前の追加・並べ替えの取り消しは id で段を探すので何も起きないのに、
-    /// 積まれたまま ⌘Z や振る動作で「Undo Move Effect」と出て、押しても変わらない。
-    /// 旧い id が 1 つも残っていなくて、新しい段が入ったときだけを入れ替えとみなす
-    /// （最後の 1 枚を消して空になる・root reset だけが残るのは削除であって入れ替えではない）。
-    private func dropStaleUndo(_ old: [UUID], _ new: [UUID]) {
-        guard !old.isEmpty, let undoManager else { return }
-        let before = Set(old)
-        guard before.isDisjoint(with: new) else { return }
-        let fresh = dsp.chain.contains { !before.contains($0.id) && !$0.isRootReset }
-        if fresh { undoManager.removeAllActions(withTarget: dsp) }
     }
 
     /// ⌘, 。ツールバーの Settings と同じ振る舞い（PipelineToolbar.present）。
