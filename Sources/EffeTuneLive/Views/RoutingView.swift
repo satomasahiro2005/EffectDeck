@@ -63,7 +63,7 @@ struct RoutingView: View {
             Button("Reset routing", role: .destructive) {
                 for i in dsp.chain.indices {
                     dsp.setRouting(at: i, inputBus: 0, outputBus: 0,
-                                   channelSpec: -1, sectionGate: 1)
+                                   channelSpec: dsp.chain[i].defaultChannelSpec, sectionGate: 1)
                 }
             }
             Button("Cancel", role: .cancel) { }
@@ -223,7 +223,8 @@ struct EffectRoutingSheet: View {
                     Section {
                         Button("Reset routing", role: .destructive) {
                             dsp.setRouting(at: index, inputBus: 0, outputBus: 0,
-                                           channelSpec: -1, sectionGate: node.sectionGate)
+                                           channelSpec: node.defaultChannelSpec,
+                                           sectionGate: node.sectionGate)
                         }
                     }
                 }

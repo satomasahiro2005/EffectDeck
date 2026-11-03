@@ -357,6 +357,39 @@ final class VirtualRoomTests: XCTestCase {
         XCTAssertNil(ETRoutingConstraint.channelSpecAfterLayoutChange(surround: false, current: 17))
     }
 
+    /// 音量に追従するカードでも Speaker Layout は音量で切り替わらない（held）。
+    /// 下のキーフレームを 5.1 にすると全キーフレームと鳴らす値（topValues）が 5.1 になり、
+    /// EffeTuneDSP.storeKeyframe → settleSpeakerLayout と同じ順で Ch が All、host が 6ch になる。
+    /// 前は補間で段を踏み、Ch も幅も動かないまま低い音量の所だけ 5.1 になって素通しだった。
+    func testAutomatedSpeakerLayoutIsHeldAndWidensTheHost() throws {
+        let spec = try virtualRoom()
+        let p = try XCTUnwrap(spec.params.first { $0.key == ETVirtualRoom.Key.speakerLayout })
+        XCTAssertEqual(ETAutomation.blend(of: p), .hold)
+        XCTAssertTrue(ETAutomation.isAutomatable(spec))
+        let stereo = try values(surround: false)
+        var a = try XCTUnwrap(ETAutomation(source: .outputVolume,
+                                           keyframes: [.init(position: 50, values: stereo),
+                                                       .init(position: 100, values: stereo)],
+                                           spec: spec))
+        var node = ETChainNode(spec: spec, values: a.topValues)
+        node.channelSpec = -1
+        let previous = node.values
+        a.store(try values(surround: true), at: 0, spec: spec)
+        XCTAssertEqual(a.keyframes.map { ETVirtualRoom.isSurround($0.values) }, [true, true])
+        node.automation = a
+        node.values = a.topValues
+        XCTAssertNotEqual(ETVirtualRoom.isSurround(node.values), ETVirtualRoom.isSurround(previous))
+        node.channelSpec = try XCTUnwrap(ETRoutingConstraint.channelSpecAfterLayoutChange(
+            surround: true, current: node.channelSpec))
+        XCTAssertEqual(node.channelSpec, -2)
+        XCTAssertEqual(ETChainEditing.requiredChannels([node]), 6)
+        // 音量をどこへ動かしても 5.1 のまま。
+        for position in [0.0, 50.0, 75.0, 100.0] {
+            XCTAssertTrue(ETVirtualRoom.isSurround(a.values(at: position, spec: spec, current: node.values)),
+                          "\(position)")
+        }
+    }
+
     private func distance(_ a: CGPoint, _ b: CGPoint) -> Double {
         let dx = Double(a.x - b.x)
         let dy = Double(a.y - b.y)

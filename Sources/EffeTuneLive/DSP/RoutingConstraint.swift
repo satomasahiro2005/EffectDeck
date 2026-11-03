@@ -51,6 +51,13 @@ enum ETRoutingConstraint {
         return max(2, width)
     }
 
+    /// Reset routing で戻す Ch。ふだんは Stereo（EffeTune の既定）、5.1 の Virtual Room だけ All。
+    /// **一律に Stereo へ戻さない。**5.1 に Stereo は合わず（allows）、段が descriptor で外れて
+    /// host も 2ch へ戻る。Speaker Layout は 5.1 のまま黙って鳴らなくなる。
+    static func defaultChannelSpec(type: String, values: [Float]) -> Int8 {
+        channelWidth(of: type, values: values) == ETVirtualRoom.surroundChannels ? -2 : -1
+    }
+
     /// Speaker Layout を変えたときに Ch をどこへ移すか。移さなくてよければ nil。
     /// 5.1 は All でしか鳴らないので All へ、Stereo へ戻したら All を Stereo へ戻す
     /// （6ch の IF では All が 6 本になり、Stereo の Virtual Room が外れるため）。

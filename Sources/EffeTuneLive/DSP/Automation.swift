@@ -381,7 +381,11 @@ struct ETAutomation: Equatable {
     // MARK: - 補間
 
     /// 補間しないパラメータ。遅延を変えるもの（鎖を組み直さないと動かない）と実行時の旗。
-    static let heldNames: Set<String> = ["oversampling", "lookahead", "latencyMode", "latency"]
+    /// Virtual Room の Speaker Layout も鎖の形を変える（合う Ch と host の幅、§64）。
+    /// **音量で切り替えさせない。**切り替わっても Ch も幅も動かないので、5.1 になった所では
+    /// 2ch のまま素通しになり、Stereo の Ch に 5.1 が載ると段ごと外れる。
+    static let heldNames: Set<String> = ["oversampling", "lookahead", "latencyMode", "latency",
+                                         "speakerLayout"]
 
     private static func isHeld(_ p: ETParam) -> Bool {
         p.runtimeOnly || heldNames.contains(p.name)

@@ -689,8 +689,10 @@ struct PresetsView: View {
     private var webSection: some View {
         // 出力補正が入っていれば（入切が切・リモート中は空）、鎖だけか補正込みかを選ばせる。
         let corrected = !dsp.correction.isEmpty
-        let mainExternal = dsp.chain.lazy.filter(\.isExternal).count
-        let externalCount = mainExternal + (corrected ? dsp.correction.lazy.filter(\.isExternal).count : 0)
+        // EffectDeck だけの内蔵（Virtual Room）も上流に無い。effeTuneForm と同じに数える。
+        let notUpstream: (EffeTuneDSP.Node) -> Bool = { $0.isExternal || ETDeckEffect.isDeckOnly($0.spec.type) }
+        let mainExternal = dsp.chain.lazy.filter(notUpstream).count
+        let externalCount = mainExternal + (corrected ? dsp.correction.lazy.filter(notUpstream).count : 0)
         return Section {
             HStack {
                 Text("Compatibility").font(.body)

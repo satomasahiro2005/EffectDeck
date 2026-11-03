@@ -2049,11 +2049,15 @@ final class EffeTuneDSP: ObservableObject {
               var a = self[slot: index].automation, a.keyframes.indices.contains(k),
               values.count == a.keyframes[k].values.count else { return }
         let before = instanceLatency(of: self[slot: index])
+        let previous = self[slot: index].values
         a.store(values, at: k, spec: self[slot: index].spec)
         self[slot: index].automation = a
         self[slot: index].values = a.topValues
         pushParams(self[slot: index], onlyIfChanged: true)
         if instanceLatency(of: self[slot: index]) != before { republish(reason: "遅延が変わった") }
+        // Speaker Layout は held なので全キーフレームへ写って values も変わる。
+        // **ここで Ch と幅を合わせないと、追従しているカードだけ素通しか段ごと外れる。**
+        settleSpeakerLayout(at: index, previous: previous)
         persistSoon()
     }
 

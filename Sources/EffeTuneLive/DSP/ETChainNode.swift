@@ -75,7 +75,13 @@ struct ETChainNode: Identifiable {
         // Routing に「Reset routing」が生えてしまう。
         // それを押しても gate は publish で引き直され、
         // 代わりに全段の bus / channel が既定へ戻る。
-        inputBus == 0 && outputBus == 0 && channelSpec == -1
+        // Ch の既定は型と値で決まる（5.1 の Virtual Room は All。ETRoutingConstraint.defaultChannelSpec）。
+        inputBus == 0 && outputBus == 0 && channelSpec == defaultChannelSpec
+    }
+
+    /// Reset routing で戻す Ch。
+    var defaultChannelSpec: Int8 {
+        ETRoutingConstraint.defaultChannelSpec(type: spec.type, values: values)
     }
 
     /// 音を触らない飾り。DSP の instance を持たない。
