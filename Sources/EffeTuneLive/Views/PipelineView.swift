@@ -650,6 +650,7 @@ struct PipelineView: View {
         guard layoutSplit != split else { return }
         if dragging != nil {
             dragging = nil
+            dsp.undoHeld = false
             dragExternalSnapshot = nil
             dragShift = .zero
             dragFolded = nil
@@ -1429,6 +1430,8 @@ struct PipelineView: View {
             dragExternalSnapshot = nil
         }
         dragging = row.node.id
+        // 掴んでいる間は入れ替えのたびに積まない。離したら 1 手にする。
+        dsp.undoHeld = true
         anchorRect = geometry[row.node.id] ?? .zero
         dragShift = .zero
         // 名前の行だけに畳む。札の大きさは畳んだ行が測れたときに合わせる（measured）。
@@ -1457,6 +1460,7 @@ struct PipelineView: View {
     /// 時間で必ず畳む。
     private func endDrag() {
         guard let id = dragging else { return }
+        dsp.undoHeld = false
         foldGrabY = nil
         let slot = geometry[id] ?? anchorRect
         withAnimation(.snappy(duration: Self.returnDuration)) {
