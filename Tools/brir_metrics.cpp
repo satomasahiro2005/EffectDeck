@@ -17,7 +17,7 @@
 //   ./brir_metrics response [js|app] [direct|early|late]  1/3 オクターブの周波数応答
 //   ./brir_metrics response irs ref.irs                   同じものを元の JS の IRS で
 //   ./brir_metrics signal out.wav                  比べるための曲の代わり（決まった乱数）
-//   ./brir_metrics surround sine|file in.wav|cone|realtime|cpu   5.1（§64）
+//   ./brir_metrics surround sine|file in.wav|cone|realtime|cpu|shapes   5.1（§64、§65）
 //
 // js は brir_render / brir_ab と同じ配置（元の JS に寄せた 1 次・天井 Painted Wall）、
 // app は params.json の既定（2 次・天井 Drywall）。
@@ -966,7 +966,46 @@ int cmdSurround(int argc, char **argv) {
     return 0;
   }
 
-  std::fprintf(stderr, "surround sine | file in.wav | cone | realtime | cpu\n");
+  if (what == "shapes") {
+    // 上流の鎖で 5.1 を作る形ごとの同相の低音（-1 dBFS）の峰（§65）。Spatial Mapper だけではない。
+    // 並びは L, R, C, LFE, Ls, Rs。どれも L = R の低音を通したときの各チャンネルの倍率。
+    struct Shape {
+      const char *name;
+      double weight[vr::kMaxSources];
+    };
+    const double root2 = std::sqrt(2.0);
+    const Shape shapes[] = {
+        {"Spatial Mapper 5.1 Upmix", {1, 1, root2, 0, 0, 0}},
+        {"  + Bass Management (all bass -> LFE)", {0, 0, 0, 2 + root2, 0, 0}},
+        {"Matrix L+R->C, L->Ls, R->Rs", {1, 1, 2, 0, 1, 1}},
+        {"Matrix L->Ls, R->Rs", {1, 1, 0, 0, 1, 1}},
+        {"Matrix L+R->C", {1, 1, 2, 0, 0, 0}},
+        {"Matrix L+R->LFE", {1, 1, 0, 2, 0, 0}},
+        {"all six in phase", {1, 1, 1, 1, 1, 1}},
+    };
+    const double amplitude = std::pow(10.0, -1.0 / 20.0);
+    const auto frames = static_cast<std::uint32_t>(kRate * 0.6);
+    for (const Shape &shape : shapes) {
+      std::printf("  %-40s", shape.name);
+      for (const double f : {40.0, 55.0, 80.0, 120.0}) {
+        std::vector<std::vector<float>> in(vr::kMaxSources, std::vector<float>(frames));
+        for (std::uint32_t i = 0; i < frames; ++i) {
+          const double x = amplitude * std::sin(2.0 * vr::kPi * f * i / kRate);
+          for (std::uint32_t c = 0; c < vr::kMaxSources; ++c) in[c][i] = float(shape.weight[c] * x);
+        }
+        std::vector<float> ol, orr;
+        runSurroundRealtime(params, in, kBlock, ol, orr);
+        double peak = 0.0;
+        for (std::uint32_t i = frames / 2u; i < frames; ++i)
+          peak = std::max({peak, std::fabs(double(ol[i])), std::fabs(double(orr[i]))});
+        std::printf(" %4.0f Hz %+6.2f", f, db20(peak / amplitude));
+      }
+      std::printf("\n");
+    }
+    return 0;
+  }
+
+  std::fprintf(stderr, "surround sine | file in.wav | cone | realtime | cpu | shapes\n");
   return 2;
 }
 
