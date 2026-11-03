@@ -32,7 +32,7 @@ struct LevelMeterView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// カードの頭のボタンで立つ。畳むのは "LEVEL" の見出しだけ。
     ///
@@ -48,10 +48,12 @@ struct LevelMeterView: View {
     /// クリップを見せ続ける終わりの時刻。
     @State private var overloadUntil: Date?
 
-    private static let floorDB: Double = -96
-    private static let fallRate: Double = 20
+    /// 目盛りの下端と落ちる速さ。左の一覧の棒（ChainMinimap）も同じ数を使う。
+    static let floorDB: Double = -96
+    static let fallRate: Double = 20
     private static let holdTime: Double = 1.0
-    private static let overloadTime: Double = 5.0
+    /// OVERLOADを出し続ける長さ。左の一覧の札（ChainMinimap）も同じ。
+    static let overloadTime: Double = 5.0
     private static let ticks: [Double] = [-96, -72, -48, -24, -12, 0]
 
     var body: some View {
@@ -111,7 +113,7 @@ struct LevelMeterView: View {
         }
     }
 
-    private static func label(_ channel: Int, of count: Int) -> String {
+    static func label(_ channel: Int, of count: Int) -> String {
         count == 2 ? (channel == 0 ? "L" : "R") : "\(channel + 1)"
     }
 
@@ -134,15 +136,20 @@ struct LevelMeterView: View {
         bars = next
 
         if let until = overloadUntil, now >= until { overloadUntil = nil }
-        // clipFlags か、振幅が 1 を超えたら（level_meter.js:310）。
-        if r.clipped.contains(true) || r.peaks.contains(where: { $0 > 1 }) {
+        if Self.overloads(r) {
             overloadUntil = now.addingTimeInterval(Self.overloadTime)
         }
     }
 
+    /// この枠でクリップしたか。clipFlagsか、振幅が1を超えたら（level_meter.js:310）。
+    /// 左の一覧の札（ChainMinimap）も同じ決め方で出す。
+    static func overloads(_ r: Reading) -> Bool {
+        r.clipped.contains(true) || r.peaks.contains(where: { $0 > 1 })
+    }
+
     // MARK: 枠を読む
 
-    private struct Reading {
+    struct Reading {
         var peaks: [Float]
         var rms: [Float]
         var clipped: [Bool]
@@ -153,8 +160,12 @@ struct LevelMeterView: View {
     private var sequence: UInt32 { reading?.sequence ?? 0 }
 
     private var reading: Reading? {
-        guard let frame = telemetry.frame(tap: node.tapId, type: .level),
-              frame.matches(version: 1) else { return nil }
+        Self.read(telemetry.frame(tap: node.tapId, type: .level))
+    }
+
+    /// 枠を読む。左の一覧の棒（ChainMinimap）も同じ読み方をする。
+    static func read(_ frame: ETFrame?) -> Reading? {
+        guard let frame, frame.matches(version: 1) else { return nil }
 
         let payload = frame.payloadView
         guard let count32 = payload.u32(at: 0) else { return nil }

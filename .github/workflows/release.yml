@@ -1,0 +1,528 @@
+# 配布: 書庫（ad-hoc）→ 書き出し（手動署名）→ 検査 → App Store Connect へ上げる。
+#
+#   tf-YYYY.MM.DD-NN のタグを push    Beta（紫・ET_BETA）を TestFlight へ。タグの日付 = MARKETING_VERSION。
+#                                      タグは origin のどれかのブランチに入ったコミットに打つ（main でなくてよい。
+#                                      TestFlight は全部入りのブランチから出せる）
+#   Actions → Release → Run workflow   flavor=beta|store、dry_run（既定 true）。main からだけ
+#
+# **dry_run は上げない。**書庫・書き出し・出荷物の検査まで通して、altool --validate-app で止める
+# （版が閉じているときは validate も飛ばす）。タグの push は dry_run なしの本番。
+# 店（store）の審査提出・Public Beta への追加は、ここでは一切しない（beta は asc-ops.yml の beta-submit、
+# store は本人が Tools/asc.py で）。
+#
+# 流れ:
+#   gate     秘密を使わない。store はコミットが origin/main の上にあること、beta は origin のどれかの
+#            ブランチの上にあること（どのブランチかをログに出す）。どちらも同じコミットの CI（ci.yml）が緑なこと
+#            （main 以外のブランチは push では CI が回らないので、gh workflow run CI --ref <branch> で回しておく）。
+#            Environment の承認より前に走るので、通らないものは承認の画面にも出ない。
+#   release  Environment "release"（必須レビュアー = 本人）の承認を待ってから、署名・アップロードをする。
+#            秘密（ASC_KEY_ID・ASC_ISSUER_ID・ASC_KEY_P8 と、配布用証明書の DIST_P12_BASE64・
+#            DIST_P12_PASSWORD）は Environment の secret で、このジョブだけが読む。
+#            ビルド番号は ASC の最大 + 1（コミットせず、ビルド時に CURRENT_PROJECT_VERSION で渡す）。
+#
+# 署名は手動。Apple Distribution の秘密鍵は Environment の secret（p12）にあり、回の間だけ使い捨ての
+# キーチェーンに入れる。App Store のプロファイル（3 つ）は API キーで Tools/asc.py profile が取り、
+# 回の間だけ置く。
+#   書庫     Scripts/archive.sh を ad-hoc 署名（ET_ARCHIVE_ADHOC=1）で。開発用証明書は要らず、
+#            "Apple Development: Created via API" も増えない。-allowProvisioningUpdates と API キーも渡さない。
+#   書き出し Scripts/ExportOptions-ci.plist（manual。Mac の ~/signing/export.plist と同じ中身）。
+#            API キー（-allowProvisioningUpdates）は渡さず、Apple 側に何も作らせない。
+#            ログに "Cloud signing" が出たら（Xcode が自動署名に落ちた）止める。
+# 回の前後で証明書の一覧を取り、増減があれば警告と step summary に出す。キーチェーン・プロファイル・
+# API キーは回の最後に必ず消す（キーチェーンの検索リストと既定も元へ戻す）。
+#
+# **ipa と xcarchive は artifact にしない**（このリポジトリは公開。ログインした人なら artifact を落とせる）。
+# 残すのはログと書き出しの plist だけ。API キーは回の最後に必ず消す。
+#
+# runner のラベル・XCODE_APP・XCODEGEN_* は ci.yml の macos と同じ値（Tests/Tools/test_release_config.py が照合する）。
+name: Release
+
+on:
+  push:
+    tags: ['tf-*']
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: beta は紫（TestFlight）、store は青（店へ出す版）
+        type: choice
+        options: [beta, store]
+        default: beta
+      dry_run:
+        description: 上げずに、書庫・書き出し・検査まで（既定 true）
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+# 2 つの配布が重ならないように。走っている回は止めない（待たせる）。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      sha: ${{ steps.inputs.outputs.sha }}
+      flavor: ${{ steps.inputs.outputs.flavor }}
+      config: ${{ steps.inputs.outputs.config }}
+      dry_run: ${{ steps.inputs.outputs.dry_run }}
+      version: ${{ steps.inputs.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: 何を出すか
+        id: inputs
+        env:
+          IN_FLAVOR: ${{ inputs.flavor }}
+          IN_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "::error::手で回すのは main から（いまの ref: ${GITHUB_REF}）"
+              exit 1
+            fi
+            flavor="$IN_FLAVOR"; dry_run="$IN_DRY_RUN"
+          else
+            # タグの push は Beta の本番。
+            flavor=beta; dry_run=false
+          fi
+          case "$flavor" in
+            beta)  config=Beta ;;
+            store) config=Release ;;
+            *) echo "::error::flavor は beta か store（${flavor}）"; exit 1 ;;
+          esac
+          case "$dry_run" in true|false) ;; *) echo "::error::dry_run が true/false でない（${dry_run}）"; exit 1 ;; esac
+          version=$(sed -n 's/^ *MARKETING_VERSION: "\([^"]*\)".*/\1/p' project.yml | head -1)
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "::error::project.yml の MARKETING_VERSION が読めない（${version}）"
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # tf-YYYY.MM.DD-NN。日付は MARKETING_VERSION と同じでなければならない
+            # （違うタグは、別の日の版を出してしまう打ち間違い）。
+            if ! [[ "$GITHUB_REF_NAME" =~ ^tf-([0-9]{4}\.[0-9]{2}\.[0-9]{2})-[0-9]+$ ]]; then
+              echo "::error::タグは tf-YYYY.MM.DD-NN の形（${GITHUB_REF_NAME}）"
+              exit 1
+            fi
+            if [ "${BASH_REMATCH[1]}" != "$version" ]; then
+              echo "::error::タグの日付 ${BASH_REMATCH[1]} が MARKETING_VERSION $version と違う"
+              exit 1
+            fi
+          fi
+          {
+            echo "sha=$GITHUB_SHA"
+            echo "flavor=$flavor"
+            echo "config=$config"
+            echo "dry_run=$dry_run"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "flavor=$flavor config=$config dry_run=$dry_run version=$version sha=$GITHUB_SHA"
+      # store は main だけ。beta（タグ）は origin のどれかのブランチに入っていればよい。
+      - name: コミットが origin のブランチの上にある（store は main）
+        env:
+          FLAVOR: ${{ steps.inputs.outputs.flavor }}
+        run: |
+          if [ "$FLAVOR" = store ]; then
+            git fetch --no-tags origin main
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::$GITHUB_SHA は origin/main の上にない。store は main に入ったコミットから出す"
+              exit 1
+            fi
+            echo "store: $GITHUB_SHA は origin/main の上にある"
+          else
+            git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+            branches=$(git branch -r --contains "$GITHUB_SHA" | sed 's/^ *//' | grep -v -- '->' || true)
+            if [ -z "$branches" ]; then
+              echo "::error::$GITHUB_SHA は origin のどのブランチにも無い。ブランチを push してからタグを打つ"
+              exit 1
+            fi
+            echo "beta: $GITHUB_SHA を含む origin のブランチ:"
+            echo "$branches"
+            echo "- ブランチ: $(tr '\n' ' ' <<<"$branches")" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: 同じコミットの CI が緑
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # ci.yml は main への push と手での実行（gh workflow run CI --ref <branch>）で回る。まだ走っていれば待つ（最大 50 分）。
+          # push 直後は run がまだ無いことがあるので、空のうちは 5 回まで待つ。
+          for i in $(seq 1 50); do
+            runs=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f head_sha="$GITHUB_SHA" -f per_page=30 \
+              --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch") | {status, conclusion, html_url}]')
+            echo "$runs"
+            if [ "$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$runs")" -gt 0 ]; then
+              echo "CI は緑: $(jq -r '[.[] | select(.conclusion == "success")][0].html_url' <<<"$runs")"
+              exit 0
+            fi
+            if [ "$(jq 'length' <<<"$runs")" -gt 0 ] && [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")" -eq 0 ]; then
+              break
+            fi
+            if [ "$(jq 'length' <<<"$runs")" -eq 0 ] && [ "$i" -ge 5 ]; then
+              break
+            fi
+            echo "CI が走っている。60 秒待つ"
+            sleep 60
+          done
+          echo "::error::$GITHUB_SHA の CI（ci.yml）に成功した回が無い。CI が緑になったコミットにタグを打つ（main 以外は gh workflow run CI --ref <branch>）"
+          exit 1
+
+  release:
+    needs: gate
+    # 必須レビュアーの承認が出るまで、ここから先（署名・アップロード）には入らない。
+    environment: release
+    runs-on: xcode-27
+    timeout-minutes: 120
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      # Scripts/archive.sh が中で setup.sh をもう一度回す。そこも浅い submodule を拒む。
+      ET_STRICT: 1
+      XCODE_APP: /Applications/Xcode_27.0.app
+      XCODEGEN_VERSION: 2.46.0
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+      CONFIG: ${{ needs.gate.outputs.config }}
+      FLAVOR: ${{ needs.gate.outputs.flavor }}
+      DRY_RUN: ${{ needs.gate.outputs.dry_run }}
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+      # job の env には runner.temp が書けないので、置き場はここで決める（以降の段が読む）。
+      - name: 置き場
+        run: |
+          {
+            echo "ARCHIVE_DIR=$RUNNER_TEMP/archive"
+            echo "EXPORT_DIR=$RUNNER_TEMP/export"
+            echo "LOGS=$RUNNER_TEMP/logs"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/logs"
+      - name: Xcode を固定する
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::error::$XCODE_APP が無い。image の Xcode の場所が変わった"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          echo "iphoneos SDK: $sdk"
+          case "$sdk" in
+            27.*) ;;
+            *) echo "::error::iOS 27 の SDK が無い（${sdk}）。配備先が 27.0 なので建たない"; exit 1 ;;
+          esac
+      # ci.yml の macos と同じ取り方。effetune は履歴ごと（dsp-v* のタグが gen_version に要る）。
+      - name: submodule
+        run: |
+          git submodule update --init --filter=blob:none Vendor/effetune
+          if [ "$(git -C Vendor/effetune rev-parse --is-shallow-repository)" = true ]; then
+            git -C Vendor/effetune fetch --unshallow --filter=blob:none --tags origin
+          fi
+          git -C Vendor/effetune fetch --tags --filter=blob:none origin || true
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status
+      - name: xcodegen をキャッシュから戻す
+        uses: actions/cache@v6
+        with:
+          path: ~/.ci-tools/xcodegen
+          key: xcodegen-${{ env.XCODEGEN_VERSION }}-${{ env.XCODEGEN_SHA256 }}
+      - name: xcodegen（版を固定し sha256 を確かめる）
+        run: |
+          dir="$HOME/.ci-tools/xcodegen"
+          if [ ! -x "$dir/bin/xcodegen" ]; then
+            zip="$RUNNER_TEMP/xcodegen.zip"
+            curl -fsSL --retry 3 -o "$zip" \
+              "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+            echo "$XCODEGEN_SHA256  $zip" | shasum -a 256 -c -
+            rm -rf "$dir"
+            mkdir -p "$HOME/.ci-tools"
+            unzip -q "$zip" -d "$HOME/.ci-tools"
+          fi
+          "$dir/bin/xcodegen" --version
+          echo "XCODEGEN=$dir/bin/xcodegen" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Scripts/setup.sh と archive.sh は PATH の先頭に /opt/homebrew/bin を足す。そこから見える
+      # node が 22、python3 が 3.10 以上であること（macOS 付属の 3.9 では embed_models.py が動かない）。
+      - name: node 22 と python3 3.10 以上（setup.sh から見える PATH で）
+        run: |
+          view() { PATH="/opt/homebrew/bin:$PATH" "$@"; }
+          if ! view node --version | grep -q '^v22\.'; then
+            brew install node@22
+            brew unlink node >/dev/null 2>&1 || true
+            brew link --force --overwrite node@22
+          fi
+          view node --version | grep -q '^v22\.' || { echo "::error::node 22 が PATH に無い"; exit 1; }
+          if ! view python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
+            brew install python3
+          fi
+          view python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
+            || { echo "::error::python3 が 3.10 未満: $(view python3 --version)"; exit 1; }
+          echo "node $(view node --version) / $(view python3 --version)"
+      - name: API キーを置く
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        # set -x は使わない。鍵は表示しない（grep -q だけで形を確かめる）。
+        run: |
+          [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ] \
+            || { echo "::error::Environment release の secret（ASC_KEY_ID・ASC_ISSUER_ID・ASC_KEY_P8）が足りない"; exit 1; }
+          umask 077
+          dir="$HOME/.appstoreconnect/private_keys"
+          key="$dir/AuthKey_$ASC_KEY_ID.p8"
+          mkdir -p "$dir"
+          if printf '%s' "$ASC_KEY_P8" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$ASC_KEY_P8" > "$key"
+          else
+            printf '%s' "$ASC_KEY_P8" | base64 -D > "$key"
+          fi
+          grep -q 'BEGIN PRIVATE KEY' "$key" || { echo "::error::ASC_KEY_P8 が .p8 の形でない"; exit 1; }
+          {
+            echo "ASC_KEY_ID=$ASC_KEY_ID"
+            echo "ASC_ISSUER_ID=$ASC_ISSUER_ID"
+          } >> "$GITHUB_ENV"
+          echo "鍵を置いた（中身は出さない）"
+      - name: 版が閉じていない（ASC）
+        run: |
+          rc=0
+          python3 Tools/asc.py train-check "$VERSION" || rc=$?
+          if [ "$rc" -eq 3 ]; then
+            if [ "$DRY_RUN" = true ]; then
+              echo "::warning::MARKETING_VERSION $VERSION は ASC で閉じている。dry run なので続けるが、validate と上げる段は飛ばす"
+              echo "CLOSED=1" >> "$GITHUB_ENV"
+            else
+              exit 1
+            fi
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::ASC に問い合わせられない（exit ${rc}）"
+            exit "$rc"
+          fi
+      - name: ビルド番号 = ASC の最大 + 1
+        id: bn
+        run: |
+          floor=$(sed -n 's/.*CURRENT_PROJECT_VERSION: "\([0-9]*\)".*/\1/p' project.yml | head -1)
+          n=$(python3 Tools/asc.py next-build --floor "${floor:-0}")
+          [[ "$n" =~ ^[0-9]+$ ]] || { echo "::error::ビルド番号が数字でない（${n}）"; exit 1; }
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "ビルド番号 ${n}（project.yml の $floor より上、ASC の最大 + 1。コミットはしない）"
+      - name: 証明書の控え（前）
+        run: python3 Tools/asc.py cert-ids | tee "$LOGS/certs-before.txt"
+      - name: Scripts/setup.sh
+        run: ET_STRICT=1 bash Scripts/setup.sh
+      - name: 書庫（Scripts/archive.sh）
+        env:
+          ET_BUILD_NUMBER: ${{ steps.bn.outputs.n }}
+          ET_XCODEBUILD_LOG: ${{ runner.temp }}/logs/xcodebuild-archive.log
+          # 書庫は ad-hoc 署名。配布用に署名するのは書き出し（手動署名）。
+          ET_ARCHIVE_ADHOC: 1
+        run: |
+          rc=0
+          bash Scripts/archive.sh EffeTuneLive || rc=$?
+          cp archive.log "$LOGS/archive.log" || true
+          tail -n 30 archive.log || true
+          exit "$rc"
+      # 配布用の鍵は回の間だけ。キーチェーンは使い捨て（ランダムなパスワード、6 時間で自動ロック）。
+      # 元の検索リストと既定のキーチェーンは控えておき、最後の always() の段が戻す。
+      - name: 配布用証明書を一時キーチェーンへ
+        env:
+          DIST_P12_BASE64: ${{ secrets.DIST_P12_BASE64 }}
+          DIST_P12_PASSWORD: ${{ secrets.DIST_P12_PASSWORD }}
+        # set -x は使わない。p12 もパスワードも表示しない。
+        run: |
+          [ -n "$DIST_P12_BASE64" ] && [ -n "$DIST_P12_PASSWORD" ] \
+            || { echo "::error::Environment release の secret（DIST_P12_BASE64・DIST_P12_PASSWORD）が足りない"; exit 1; }
+          umask 077
+          kc="$RUNNER_TEMP/release.keychain-db"
+          p12="$RUNNER_TEMP/dist.p12"
+          kcpw=$(openssl rand -base64 24)
+          echo "::add-mask::$kcpw"
+          # 戻す先を先に控える（以降の失敗でも always() の段が戻せるように）。
+          security default-keychain -d user | sed 's/^ *"//; s/"$//' > "$RUNNER_TEMP/default-keychain.txt"
+          security list-keychains -d user | sed 's/^ *"//; s/"$//' > "$RUNNER_TEMP/keychain-list.txt"
+          printf '%s' "$DIST_P12_BASE64" | base64 -D > "$p12"
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$p12" -k "$kc" -P "$DIST_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
+          # 先頭に足す（元の検索リストは残す）。
+          tr '\n' '\0' < "$RUNNER_TEMP/keychain-list.txt" | xargs -0 security list-keychains -d user -s "$kc"
+          security default-keychain -d user -s "$kc"
+          identities=$(security find-identity -v -p codesigning "$kc")
+          echo "$identities"
+          grep -q '"Apple Distribution: Masahiro Sato (C82ST8T9MN)"' <<<"$identities" \
+            || { echo "::error::一時キーチェーンに Apple Distribution の署名鍵が見えない"; exit 1; }
+          echo "KEYCHAIN=$kc" >> "$GITHUB_ENV"
+      - name: App Store のプロファイルを置く（API で取る）
+        run: |
+          stage="$RUNNER_TEMP/profiles"
+          rm -rf "$stage"
+          rm -f "$RUNNER_TEMP/profile-uuids.txt"
+          mkdir -p "$stage"
+          # Scripts/ExportOptions-ci.plist の provisioningProfiles と同じ 3 つ。
+          for pair in "EffeTuneLive-AppStore ai.nemut.effetune" \
+                      "EffeTuneLiveExt-AppStore ai.nemut.effetune.extension" \
+                      "EffectDeckShare-AppStore ai.nemut.effetune.share"; do
+            name=${pair% *}; bundle=${pair#* }
+            uuid=$(python3 Tools/asc.py profile "$name" "$bundle" "$stage") \
+              || { echo "::error::プロファイル $name を取れない（asc.py profile）"; exit 1; }
+            echo "$uuid" >> "$RUNNER_TEMP/profile-uuids.txt"
+            echo "プロファイル $name → $uuid"
+          done
+          # Xcode が見る場所は版で違う。両方に置く。
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" \
+                     "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$stage"/*.mobileprovision "$dir/"
+          done
+          [ "$(wc -l < "$RUNNER_TEMP/profile-uuids.txt" | tr -d ' ')" = 3 ] \
+            || { echo "::error::置いたプロファイルが 3 つでない"; exit 1; }
+      - name: 書き出し（手動署名）
+        # -allowProvisioningUpdates と API キーは渡さない（Apple 側に何も作らせない）。
+        run: |
+          rm -rf "$EXPORT_DIR"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_DIR/EffeTuneLive.xcarchive" \
+            -exportPath "$EXPORT_DIR" \
+            -exportOptionsPlist Scripts/ExportOptions-ci.plist 2>&1 | tee "$LOGS/export.log"
+          if grep -qi 'cloud signing' "$LOGS/export.log"; then
+            echo "::error::書き出しのログに Cloud signing が出た（手動署名で通っていない）"
+            exit 1
+          fi
+          test -f "$EXPORT_DIR/EffectDeck.ipa" || { echo "::error::EffectDeck.ipa ができていない"; ls -la "$EXPORT_DIR"; exit 1; }
+          ls -lh "$EXPORT_DIR/EffectDeck.ipa"
+      - name: ipa の版とビルド番号
+        env:
+          BUILD_NUMBER: ${{ steps.bn.outputs.n }}
+        run: |
+          unzip -p "$EXPORT_DIR/EffectDeck.ipa" Payload/EffectDeck.app/Info.plist > "$RUNNER_TEMP/Info.plist"
+          got_build=$(plutil -extract CFBundleVersion raw -o - "$RUNNER_TEMP/Info.plist")
+          got_version=$(plutil -extract CFBundleShortVersionString raw -o - "$RUNNER_TEMP/Info.plist")
+          echo "ipa: 版 $got_version / ビルド ${got_build}（期待: $VERSION / ${BUILD_NUMBER}）"
+          [ "$got_build" = "$BUILD_NUMBER" ] || { echo "::error::ipa のビルド番号が違う"; exit 1; }
+          [ "$got_version" = "$VERSION" ] || { echo "::error::ipa の版が違う"; exit 1; }
+      - name: 出荷物の検査（Tools/check_release_binary.py）
+        # beta は紫＋追跡している見本、store は青で見本なし。署名済みであること。
+        run: |
+          python3 Tools/check_release_binary.py --flavor "$FLAVOR" --require-signed \
+            "$EXPORT_DIR/EffectDeck.ipa" 2>&1 | tee "$LOGS/check_release_binary.log"
+      - name: 証明書の控え（後）と差分
+        run: |
+          python3 Tools/asc.py cert-ids > "$LOGS/certs-after.txt"
+          {
+            echo "### 証明書（回の前後）"
+            if diff "$LOGS/certs-before.txt" "$LOGS/certs-after.txt" > "$LOGS/certs.diff"; then
+              echo "増減なし"
+            else
+              echo "::warning::証明書の一覧が回の前後で変わった（certs.diff）"
+              echo '増減あり（手動署名なら増減しないはず）'
+              echo '```'
+              cat "$LOGS/certs.diff"
+              echo '```'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: 検証だけ（dry run。上げない）
+        if: env.DRY_RUN == 'true' && env.CLOSED != '1'
+        run: |
+          xcrun altool --validate-app -f "$EXPORT_DIR/EffectDeck.ipa" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$LOGS/altool-validate.log"
+      - name: 上げる（altool）
+        if: env.DRY_RUN != 'true'
+        run: |
+          xcrun altool --upload-app -f "$EXPORT_DIR/EffectDeck.ipa" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$LOGS/altool-upload.log"
+          grep -q 'UPLOAD SUCCEEDED' "$LOGS/altool-upload.log" || { echo "::error::UPLOAD SUCCEEDED が出ていない"; exit 1; }
+      - name: 処理が終わるのを待つ（最大 30 分）
+        if: env.DRY_RUN != 'true'
+        id: wait
+        env:
+          BUILD_NUMBER: ${{ steps.bn.outputs.n }}
+        run: |
+          rc=0
+          id=$(python3 Tools/asc.py wait-build "$VERSION" "$BUILD_NUMBER" 1800) || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "build_id=$id" >> "$GITHUB_OUTPUT"
+            echo "build $BUILD_NUMBER = $id (VALID)"
+          elif [ "$rc" -eq 4 ]; then
+            echo "::warning::build $BUILD_NUMBER の処理が 30 分で終わらない。Internal へは手で足す（python3 Tools/asc.py builds → add-internal）"
+          else
+            echo "::error::build $BUILD_NUMBER の処理が失敗した（exit ${rc}）"
+            exit "$rc"
+          fi
+      # 内部グループ（Internal）だけ。外部グループ（EffectDeck Public Beta）への追加と審査の提出はしない。
+      - name: Internal に足す（内部グループのみ）
+        if: env.DRY_RUN != 'true' && steps.wait.outputs.build_id != ''
+        env:
+          BUILD_ID: ${{ steps.wait.outputs.build_id }}
+        run: |
+          echo "build ${{ steps.bn.outputs.n }} ($BUILD_ID) を内部グループ Internal に足す"
+          python3 Tools/asc.py add-internal "$BUILD_ID"
+      - name: まとめ
+        env:
+          BUILD_NUMBER: ${{ steps.bn.outputs.n }}
+        run: |
+          {
+            echo "### Release"
+            echo "- flavor: ${FLAVOR}（構成 ${CONFIG}）"
+            echo "- 版 / ビルド: $VERSION / $BUILD_NUMBER"
+            echo "- コミット: ${{ needs.gate.outputs.sha }}"
+            echo "- dry run: ${DRY_RUN}（版が閉じていた: ${CLOSED:-0}）"
+            if [ "$DRY_RUN" = true ]; then
+              echo "- 上げていない。上げるのは tf-* のタグ（beta）か、dry_run を外した手動の回"
+            else
+              echo "- 次: beta は Actions の ASC ops（op=beta-submit）で外部テストの審査へ。store は本人が手で版に結んで審査へ（Tools/asc.py）"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: ログを残す
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-logs-${{ github.run_id }}
+          # ipa・xcarchive・鍵は載せない（公開リポジトリ）。
+          path: |
+            ${{ runner.temp }}/logs/**
+            ${{ runner.temp }}/export/*.plist
+            ${{ runner.temp }}/export/*.log
+          retention-days: 30
+          if-no-files-found: ignore
+      - name: キーチェーン・プロファイルを消す
+        if: always()
+        run: |
+          # 検索リストと既定を戻してから、使い捨てのキーチェーンを消す（元のものは触らない）。
+          if [ -s "$RUNNER_TEMP/keychain-list.txt" ]; then
+            tr '\n' '\0' < "$RUNNER_TEMP/keychain-list.txt" | xargs -0 security list-keychains -d user -s || true
+          fi
+          if [ -s "$RUNNER_TEMP/default-keychain.txt" ]; then
+            security default-keychain -d user -s "$(cat "$RUNNER_TEMP/default-keychain.txt")" || true
+          fi
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/dist.p12"
+          # 置いたプロファイルだけ（uuid で）。ほかのものは触らない。
+          if [ -f "$RUNNER_TEMP/profile-uuids.txt" ]; then
+            while read -r uuid; do
+              [ -n "$uuid" ] || continue
+              rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision" \
+                    "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$uuid.mobileprovision"
+            done < "$RUNNER_TEMP/profile-uuids.txt"
+          fi
+          rm -rf "$RUNNER_TEMP/profiles"
+      - name: 鍵を消す
+        if: always()
+        run: |
+          rm -f "$HOME"/.appstoreconnect/private_keys/AuthKey_*.p8
+          rm -rf "$HOME/.appstoreconnect"
+          rm -rf "$EXPORT_DIR" "$ARCHIVE_DIR"

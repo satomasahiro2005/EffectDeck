@@ -21,8 +21,9 @@ final class EffectPresetTests: XCTestCase {
     /// その ETEffect が保存形式で読める鍵の集合。
     /// ETParamCoding.decode が見る場所と同じ数え方
     /// （オブジェクト配列は外側の名前・添字付きは `f0 f1 …`）。
+    /// 表示の設定（DisplayParams。Analog Meter の rl / rg など）も、プリセットが運ぶので読める鍵。
     private func readableKeys(of spec: ETEffect) -> Set<String> {
-        var keys: Set<String> = []
+        var keys: Set<String> = Set(ETDisplayParam.table(for: spec.type).keys)
         for p in spec.params {
             if p.isObjectMember, let group = p.objectArrayKey {
                 keys.insert(group)
@@ -47,8 +48,9 @@ final class EffectPresetTests: XCTestCase {
             XCTAssertNotNil(ETCatalog.first { $0.name == name }, "\(name) が catalog に無い")
         }
         // 数が変わったら、上流を進めたということ。意図した変更か確かめる。
-        XCTAssertEqual(names.count, 28)
-        XCTAssertEqual(ETEffectPresetList.count, 146)
+        XCTAssertEqual(names.count, 30)
+        // 167 → 170 は EffeTune 2.14.0 の Analog Meter の Custom の 3 件（Bouncy VU・Slow RMS・Fast Peak）。
+        XCTAssertEqual(ETEffectPresetList.count, 170)
     }
 
     /// 131 件の params が全部読めて、鍵が catalog に届いていること。
@@ -113,7 +115,11 @@ final class EffectPresetTests: XCTestCase {
         // **数を留める。**上の `bad` が空でも、数えた口が減っていれば
         // 見ていないものが増えたということ。416 → 449 は EffeTune 2.10.0 で
         // 効果が 3 本増えたぶん（Pitch Meter / Spatial Mapper / TV Audio Simulator）。
-        XCTAssertEqual(checked, 449, "数えた文字列の数が変わった")
+        // 449 → 466 は EffeTune 2.12.0 の Analog Meter の 17 件（Mode の文字）。
+        // 466 → 471 は EffeTune 2.13.0 の Cassette Artifacts の 5 件（Mode の文字 "All"）。
+        // 471 → 494 は EffeTune 2.14.0 の Analog Meter。20 件全部に Detector（de）の文字が入り、Custom の 3 件は
+        // Mode も Custom。
+        XCTAssertEqual(checked, 494, "数えた文字列の数が変わった")
     }
 
     // MARK: - 適用
@@ -155,7 +161,9 @@ final class EffectPresetTests: XCTestCase {
             let s = try spec(named: preset.effect)
             let applied = EffectPresetApply.values(for: s, params: preset.params,
                                                    current: s.defaults)
-            XCTAssertEqual(EffectPresetApply.matchingPresetId(for: s, current: applied),
+            // 表示の設定（Analog Meter の 17 件は Mode 以外が全部これ）も一緒に当てて比べる。
+            let display = ETDisplayParam.read(preset.params, type: s.type)
+            XCTAssertEqual(EffectPresetApply.matchingPresetId(for: s, current: applied, display: display),
                            preset.presetId, "\(preset.id) が往復しない")
         }
     }

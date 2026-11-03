@@ -1,0 +1,14 @@
+desc:State
+author:nemut.ai
+slider1:0<0,100,1>Value
+
+@init
+kept = 0;
+
+@serialize
+file_var(0, kept);
+
+@slider
+kept = slider1;
+
+@sample

@@ -1,0 +1,12 @@
+# Tools/check_repo.py が「無い」と言わないもの。1行に1つ、`パス  # 理由`（理由は必須）。
+# `url:接頭辞  # 理由` は URL の検査（urls）から外す。
+#
+# **消したファイルを直す代わりにここへ足さない。**足してよいのは、リポジトリの外を指すものと、
+# 経緯としてわざと古い名前を書いているものだけ。.gitignore に当たるもの（docs/connect-log.md、
+# Generated/note-models など手元のログや生成物）は、ここに書かなくても在るものとして扱う。
+
+docs/plugins  # 上流 EffeTune の docs/plugins（CHAIN.md が dsp-v* のタグの上流を指す）。このリポジトリのものではない
+docs/plugins/control.md  # 上流 EffeTune の docs（SectionSupport.swift が説明の出典として挙げる）
+Tests/Native/jsfx_host.cpp  # jsfx-host-test-design.md の経緯（当初の推奨配置で、作らずに Logic へ入れた）
+Scripts/sim.sh  # 消したスクリプト。Scripts/lib/sim.sh が置き換えた理由として名指しする
+Licenses/easyeffects-presets.LICENSE  # 142c217 で足して外したファイル。gen_licenses.py が Virtual Room を戻すときに一緒に戻すものとして名指しする

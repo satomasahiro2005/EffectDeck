@@ -39,6 +39,8 @@ enum ETSliderScale {
     private static let logKeys: Set<String> = [
         // delay/delay.js:318,323
         "DelayPlugin.hd", "DelayPlugin.ld",
+        // analyzer/analog_meter.js（2.14.0）の Needle Response。createParameterControl の logarithmic = true
+        "AnalogMeterPlugin.nr",
         // dynamics/compressor.js:797、expander.js:754（どちらも Ratio）
         "CompressorPlugin.rt", "ExpanderPlugin.rt",
         // eq/band_pass_filter.js:340,352
@@ -114,13 +116,21 @@ struct ParameterRow: View {
     let values: [Float]
 
     @ObservedObject var dsp: EffeTuneDSP
+    /// 数値欄の末尾の 0 を出さない（Analog Meter の Attack 5・Release 1.5）。既定は他の行と同じ桁。
+    var trimsZeros = false
+    /// 保存値と違う値を見せる行（Adaptive Prediction: Hold の間は Autonomy を 1、Weight Decay が無限大の間は覚えている有限の値）。
+    /// 触ったときに書くのは今までどおり保存値の位置。
+    var shown: Float? = nil
+    /// つまみと打ち込みの下端を引き上げる行（Adaptive Prediction の Weight Decay は 0.5 から。0 は Infinity が持つ）。
+    var lowerBound: Float? = nil
     @State private var slot = 0
     @State private var editing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var offset: Int { param.offset + (param.isArray ? slot : 0) }
-    private var value: Float { values.indices.contains(offset) ? values[offset] : 0 }
+    private var value: Float { shown ?? (values.indices.contains(offset) ? values[offset] : 0) }
 
     private func set(_ v: Float) {
         dsp.setValue(v, at: nodeIndex, offset: offset)
@@ -147,6 +157,23 @@ struct ParameterRow: View {
             valueSlider
         }
         .padding(.vertical, 2)
+        .disabled(isGatedOff)
+    }
+
+    /// 決まった値しか取らない数か。取るなら、その値の並び。
+    private var choices: [Float]? {
+        guard case .number = param.kind, !param.isArray else { return nil }
+        return ETAllowedValues.upstream(type: effectType, key: param.key)
+    }
+
+    /// ETParamGate の規則で触れない行か。
+    private var isGatedOff: Bool {
+        guard let params = dsp.node(at: nodeIndex)?.spec.params else { return false }
+        return ETParamGate.isDisabled(type: effectType, key: param.key) { key in
+            guard let owner = params.first(where: { $0.key == key }),
+                  values.indices.contains(owner.offset) else { return nil }
+            return values[owner.offset]
+        }
     }
 
     /// 名前と、値そのものを触る所。
@@ -155,13 +182,14 @@ struct ParameterRow: View {
         switch param.kind {
         case .toggle:
             Toggle(isOn: Binding(get: { value >= 0.5 }, set: { set($0 ? 1 : 0) })) {
-                Text(title).font(.system(size: 14))
+                Text(title).etFont(size: 14)
             }
 
         case .enumeration(let options):
-            HStack {
-                Text(title).font(.system(size: 14))
-                Spacer(minLength: 8)
+            // 文字を大きくした人には、名前とメニューを縦に積む（横に並べると値が切れる）。
+            rowLayout(spacing: nil) {
+                Text(title).etFont(size: 14)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 Picker(title, selection: Binding(
                     get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
                     set: { set(Float($0)) })
@@ -172,24 +200,45 @@ struct ParameterRow: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+                // 隣の題（14）と揃える。指定しないと本文の 17 になる。
+                .etFont(size: 14)
             }
 
         case .number:
-            HStack(spacing: 8) {
-                Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 4)
-                valueField
+            if choices != nil {
+                // 選ぶ所は下の段。数値欄は置かない（打てるのは選択肢の値だけなので）。
+                Text(title).etFont(size: 14)
+            } else {
+                rowLayout(spacing: 8) {
+                    Text(title)
+                        .etFont(size: 14)
+                        // 文字を大きくした人には縮めず、折り返して全部読ませる。
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                    valueField
+                }
             }
         }
+    }
+
+    /// 名前と操作子の並べ方。通常は横一列、アクセシビリティサイズでは縦に積む。
+    private func rowLayout<Content: View>(spacing: CGFloat?,
+                                          @ViewBuilder content: () -> Content) -> some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        return layout { content() }
     }
 
     /// つまみ。数値のパラメータだけが持つ。
     @ViewBuilder
     private var valueSlider: some View {
-        if case .number(let lo, let hi, let step, _, let isInteger) = param.kind, hi > lo {
+        if let choices {
+            choicePicker(choices)
+        } else if case .number(let catalogLo, let hi, let step, _, let isInteger) = param.kind,
+                  hi > (lowerBound ?? catalogLo) {
+            let lo = lowerBound ?? catalogLo
             // step に 0 を渡すと Slider は落ちる。刻みが無いものは
             // step を取らない方を使う。params.json に step が無い
             // パラメータがあるので、ここを分けないと開いた瞬間に死ぬ。
@@ -204,18 +253,43 @@ struct ParameterRow: View {
                 // 黙っていると 0-1 や 0-1000 の位置が読まれる）。
                 // 単位は名前の側に付いているので、ここも欄と同じ displayValue。
                 ETLogSlider(value: binding, range: Double(lo)...Double(hi))
+                    .accessibilityLabel(title)
                     .accessibilityValue(displayValue)
             case .zeroAwareLog:
                 ETZeroAwareLogSlider(value: binding, maximum: Double(hi))
+                    .accessibilityLabel(title)
                     .accessibilityValue(displayValue)
             case .linear:
+                // 名前と値を付けないと「45 パーセント」としか読まれない。隣の数値欄と同じ文字列にする。
                 if stride > 0 {
                     Slider(value: binding, in: Double(lo)...Double(hi), step: stride)
+                        .accessibilityLabel(title)
+                        .accessibilityValue(displayValue)
                 } else {
                     Slider(value: binding, in: Double(lo)...Double(hi))
+                        .accessibilityLabel(title)
+                        .accessibilityValue(displayValue)
                 }
             }
         }
+    }
+
+    /// 決まった値から選ぶ。**書くのは値そのもの**（添字ではない）。
+    ///
+    /// 1〜8 のスライダーのままだと 3/5/6/7 を選べてしまい、カーネルは黙って 1x で処理する。
+    /// 上流は select で "1x" 〜 と出している（saturation.js:229-232、hard_clipping.js:315-318）。
+    /// 表に無い値が載っているときは先頭（1x）を選んだ形で出す。カーネルもそう処理する。
+    private func choicePicker(_ choices: [Float]) -> some View {
+        Picker(title, selection: Binding(
+            get: { choices.contains(value) ? value : choices[0] },
+            set: { set($0) })
+        ) {
+            ForEach(choices, id: \.self) { v in
+                Text("\(Int(v))x").tag(v)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 
     /// 行の名前。単位はここに付ける。上流も名前の側だけに付けていて、数値の欄には付けない
@@ -249,7 +323,7 @@ struct ParameterRow: View {
 
     /// 上流のプラグイン名。
     private var effectType: String {
-        dsp.chain.indices.contains(nodeIndex) ? dsp.chain[nodeIndex].spec.type : ""
+        dsp.node(at: nodeIndex)?.spec.type ?? ""
     }
 
     private var unitSuffix: String {
@@ -273,9 +347,11 @@ struct ParameterRow: View {
         // 保存値と表示値がずれるものを通す（いまは Tilt EQ の Pivot Freq だけ）。
         let v = param.display(value)
         if isInteger { return String(Int(v.rounded())) }
-        if abs(v) >= 100 { return String(format: "%.0f", v) }
-        if abs(v) >= 10 { return String(format: "%.1f", v) }
-        return String(format: "%.2f", v)
+        let text: String
+        if abs(v) >= 100 { text = String(format: "%.0f", v) }
+        else if abs(v) >= 10 { text = String(format: "%.1f", v) }
+        else { text = String(format: "%.2f", v) }
+        return trimsZeros ? ETAnalogMeter.trimZeros(text) : text
     }
 
     /// 数値欄。触ると打ち込める。
@@ -289,9 +365,9 @@ struct ParameterRow: View {
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true, shrinks: false)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: editing ? 1 : 0))
             .submitLabel(.done)
@@ -312,6 +388,8 @@ struct ParameterRow: View {
                     commit()
                 }
             }
+            // 何も無い所・カードの名前・2列の左の一覧を触ったときも確定させる（ETTapOutside）。
+            .etCommitsOnTapOutside($focused) { commit() }
             // 読み上げも画面と同じ切り方にする。単位は名前、数だけが値。
             .accessibilityLabel(title)
             .accessibilityValue(displayValue)
@@ -324,8 +402,8 @@ struct ParameterRow: View {
         // **挟むのは戻してから。** Tilt EQ の Pivot は 3.0〜9.9 の自然対数なので、
         // 打たれた 1000(Hz) をそのまま挟むと 9.9 = 約 19930Hz に飛ぶ。
         let v = param.store(typed)
-        if case .number(let lo, let hi, _, _, let isInteger) = param.kind {
-            let clamped = min(max(v, lo), hi)
+        if case .number(let catalogLo, let hi, _, _, let isInteger) = param.kind {
+            let clamped = min(max(v, lowerBound ?? catalogLo), hi)
             set(isInteger ? clamped.rounded() : clamped)
         } else {
             set(v)
@@ -345,22 +423,37 @@ struct ParameterRow: View {
     /// 名前は上の行が出す（"Balance 3 (%)"）。ここで見出しとして繰り返さない。
     private var bandPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
+            // 端の札の当たり（左右 3pt）が ScrollView の外に出て切られないよう、
+            // 中身の両端に 3pt を足す。外側で同じだけ引いて、見た目の位置は変えない。
             HStack(spacing: 6) {
                 ForEach(0..<param.count, id: \.self) { i in
                     Button {
                         slot = i
                     } label: {
                         Text("\(i + 1)")
-                            .font(.system(size: 12, weight: slot == i ? .bold : .regular))
+                            .etFont(size: 12, weight: slot == i ? .bold : .regular)
                             .foregroundStyle(slot == i ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                             .frame(minWidth: 30, minHeight: 26)
                             .background(slot == i ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                                         in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+                            // 見た目は 30x26 のまま、押せる面だけを 44pt まで広げる。
+                            // 縦は広げた分を ScrollView 側で引く（下）。札の側で引くと、
+                            // ScrollView が 26pt の高さになり、外にはみ出た 9pt には触りが届かない。
+                            // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 3)
+                            .contentShape(.rect)
+                            .padding(.horizontal, -3)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(param.label) \(i + 1)")
+                    .accessibilityAddTraits(slot == i ? .isSelected : [])
                 }
             }
+            .padding(.horizontal, 3)
         }
+        // ScrollView 自身を 44pt の高さにしたまま、並びには 26pt として数える。
+        .padding(.vertical, -9)
+        .padding(.horizontal, -3)
     }
 }

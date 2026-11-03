@@ -1,9 +1,45 @@
 # EffectDeck JSFX Host Test Design
 
-**Status:** Proposed  
-**Scope:** `codex/jsfx-host` で追加された JSFX Host 全体  
+**Status:** 一部を実装済み（2026-09-21 `6f394d7`、2026-09-26 `41ca430`、2026-09-27 `e5c933a` で追加）。下の「実装の状況」  
+**Scope:** JSFX Host 全体（`codex/jsfx-host` で入り、いまは main にある）  
 **Target:** EffectDeck  
 **Primary goal:** JSFX Host を「手動で一通り触る」状態から、互換性・安全性・リアルタイム性・ライフサイクルを自動テストで継続的に保証できる状態へ移す。
+
+---
+
+## 実装の状況（2026-09-27）
+
+| 設計 | テスト（`Tests/Unit/`） |
+|---|---|
+| §4.1・§22 読み込みの門・sandbox・大きさの上限 | `JSFXSourceTests` |
+| §5・§6 音と descriptor | `JSFXAudioTests` |
+| §8 slider | `JSFXSliderTests` |
+| §9 trigger | `JSFXTriggerTests` |
+| §10・§14 state と保守 | `JSFXStateTests` |
+| §11 PDC | `JSFXLatencyTests` |
+| §13 締切と自動バイパス | `JSFXDeadlineTests` |
+| §15.1・§15.2 同時に触る | `JSFXRaceTests` |
+| §16 の一部（`@gfx` から壊れた値が届いても落ちない） | `JSFXGFXCrashTests` |
+| §10.3・§11・§13・§14 の境界（出力の NaN、`@serialize` の 16 MiB、`pdc_delay` の上限、保守の直列） | `JSFXStabilityTests` |
+| §24 の一部（`ETJSFXLoader` のスレッドと列挙つまみ） | `JSFXLoaderTests` |
+| §28・§30・§31 の一部（取り込み直したときに前の版を置き換える規則: `desc:`・`author:` の読み方、同じ1本かの判定、別名の付け替えと戻し、保存の形、つまみの持ち越し） | `JSFXReplaceTests` |
+| 設計の外: 物理の出力の音量を読み取り専用の `effectdeck_output_volume` で渡す口（読めていない = -1、@init / @slider / @block への届き方と 1 ブロックの中で動かないこと、再設定・復元の @init、保存しない・変更の通知を立てない、範囲の切り詰め） | `JSFXOutputVolumeTests` |
+| 設計の外: ソース表示の行分けと色分け | `JSFXSourceSyntaxTests` |
+
+どれも Mac の Logic（`bash Scripts/test.sh`）で走る。Linux の `Tests/Linux/run.sh` は
+`JSFX*Tests` を落とす（ysfx を建てるのは Mac だけ）。走らせ方は `CONTRIBUTING.md`。
+
+決めて変えたこと:
+
+- §2・§50・§56 の「JSFX native test target」は作らない。`Tests/Native/CMakeLists.txt` は
+  ysfx を知らず、`Vendor/ysfx` は submodule なので、あちらへ足すとビルド系の持ち主が 2 つになる。
+  代わりに `ETJSFXHost.cpp` と YSFX をテストのバンドルへ入れ、Swift から C API を直接叩く
+  （`Tests/Unit/JSFXHostSupport.swift` の頭）。
+- §50 の CI の形は、実際の CI（`CONTRIBUTING.md` の CI）に置き換わった。
+- §55.1 は不一致ではなかった（§55.1 の追記）。
+
+まだ無いもの: §33〜§44 の pipeline 結合（channel・bus・Section・preset・共有リンク）、
+§45・§46 の stateful fuzz と property test、§47 の実機、§48 の性能の基準。
 
 ---
 
@@ -101,14 +137,27 @@ fixture はなるべく 1 つの仕様だけを検証する。
 
 # 4. L1 — JSFX Core Tests
 
-推奨配置:
+当初の推奨配置は `Tests/Native/jsfx_host.cpp` だったが、**実際は Xcode の
+`EffeTuneLiveUnitTests`（scheme `Logic`）へ入れた。**
 
 ```text
-Tests/Native/jsfx_host.cpp
-Tests/Native/jsfx_fixtures/
+Tests/Unit/JSFXHostSupport.swift   足場（fixture の在り処・host の持ち主）
+Tests/Unit/JSFXSourceTests.swift   §4.1 / §22
+Tests/Unit/JSFXAudioTests.swift    §5 / §6
+Tests/Unit/JSFXSliderTests.swift   §8
+Tests/Unit/JSFXTriggerTests.swift  §9
+Tests/Unit/JSFXStateTests.swift    §10 / §14
+Tests/Unit/JSFXLatencyTests.swift  §11
+Tests/Unit/JSFXDeadlineTests.swift §13
+Tests/Unit/JSFXRaceTests.swift     §15
+Tests/Fixtures/JSFX/               fixture（テストバンドルの resources）
 ```
 
-`ETJSFXHost.h` の public API を直接叩く。
+`Tests/Native/CMakeLists.txt` は ysfx を知らず、`Vendor/ysfx` は submodule
+なので、あちらへ足すとビルド系の持ち主が 2 つになる。代わりに `project.yml` の
+`EffeTuneLiveUnitTests` へ `YSFX` 依存と `Sources/Shared/ETJSFXHost.cpp`
+（＋ LICE の字を外へ出している `ETLICEFont.mm`）を足し、Swift から
+`ETJSFXHost.h` の public C API を直接叩く。`bash Scripts/test.sh` がそのまま回る。
 
 ---
 
@@ -1678,6 +1727,9 @@ deadlineTrips
 
 # 50. CI 構成
 
+（2026-09-27 追記）実際の CI は `CONTRIBUTING.md` の CI を正とする。`JSFX*Tests` は
+Mac の Logic（CI では `macos (logic)`）でだけ走る。以下は設計したときの推奨。
+
 推奨:
 
 ```text
@@ -1832,7 +1884,7 @@ JSFX 周辺では、個別ケースより以下を強い invariant として持�
 
 # 54. 既存手動チェックから自動化できる項目
 
-`docs/test-2026-09-20.md` の JSFX 手動チェックのうち、以下は自動化へ移す。
+`docs/notes/test-2026-09-20.md` の JSFX 手動チェックのうち、以下は自動化へ移す。
 
 ```text
 値が指数表記にならない
@@ -1869,6 +1921,10 @@ global:        64 MiB
 に不一致がある。
 
 実装か文書のどちらを正とするか決めてからテスト値を固定する。
+
+（2026-09-27 追記）**不一致ではなかった。**パッチの `2 * 1024 * 1024` は
+`NSEEL_VM_setramsize` へ渡す要素（`EEL_F` = double）の数で、2M × 8 byte = 16 MiB。
+`JSFX.md` の 16 MiB / instance と合っている。
 
 ---
 
@@ -1973,5 +2029,5 @@ JSFX.md
 Patches/ysfx-effectdeck-ios.diff
 Debug/JSFXFactory/EffectDeck JSFX Conformance.jsfx
 Tests/Native/external_processor.c
-docs/test-2026-09-20.md
+docs/notes/test-2026-09-20.md
 ```

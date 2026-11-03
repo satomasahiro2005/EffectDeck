@@ -36,6 +36,166 @@ struct ETEffectPreset: Identifiable {
 /// グループの中の順も、上流が返したとおり。
 let ETEffectPresetList: [ETEffectPreset] = [
     ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "studio-vu",
+      label: "Studio VU (-18 dBFS)",
+      group: "",
+      json: #"""
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-18,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "smpte-vu",
+      label: "SMPTE VU (-20 dBFS)",
+      group: "",
+      json: #"""
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-20,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "hot-vu",
+      label: "Hot VU (-14 dBFS)",
+      group: "",
+      json: #"""
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "loud-master-vu",
+      label: "Loud Master VU (-8 dBFS)",
+      group: "",
+      json: #"""
+      {"md":"VU","it":0.3,"at":5,"rt":1.5,"rl":-8,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "din-ppm",
+      label: "DIN PPM",
+      group: "",
+      json: #"""
+      {"md":"PPM","it":0.3,"at":5,"rt":1.5,"rl":-18,"rg":50,"sc":0,"ph":0,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "bbc-ppm",
+      label: "BBC PPM",
+      group: "",
+      json: #"""
+      {"md":"PPM","it":0.3,"at":10,"rt":2.33,"rl":-18,"rg":40,"sc":1,"ph":0,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "nagra-modulometer",
+      label: "Nagra Modulometer",
+      group: "",
+      json: #"""
+      {"md":"PPM","it":0.3,"at":7.5,"rt":1.5,"rl":-18,"rg":30,"sc":2,"ph":0,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "k-20",
+      label: "K-20",
+      group: "",
+      json: #"""
+      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-20,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "k-14",
+      label: "K-14",
+      group: "",
+      json: #"""
+      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":46,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "k-12",
+      label: "K-12",
+      group: "",
+      json: #"""
+      {"md":"RMS","it":0.3,"at":5,"rt":1.5,"rl":-12,"rg":48,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "digital-peak",
+      label: "Digital Peak",
+      group: "",
+      json: #"""
+      {"md":"Sample Peak","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":60,"sc":0,"ph":2,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "true-peak-clip-watch",
+      label: "True Peak Clip Watch",
+      group: "",
+      json: #"""
+      {"md":"True Peak","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":20,"sc":0,"ph":10,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "ebu-r128",
+      label: "EBU R128 (-23 LUFS)",
+      group: "",
+      json: #"""
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "ebu-r128-wide",
+      label: "EBU R128 +18 Scale",
+      group: "",
+      json: #"""
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":1,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "tv-24-lkfs",
+      label: "TV (-24 LKFS)",
+      group: "",
+      json: #"""
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-24,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "streaming-14-lufs",
+      label: "Streaming (-14 LUFS)",
+      group: "",
+      json: #"""
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":1,"tg":-14,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "streaming-16-lufs",
+      label: "Streaming (-16 LUFS)",
+      group: "",
+      json: #"""
+      {"md":"Loudness","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":1,"tg":-16,"ls":0,"de":"Average Rectified","nr":300,"os":1.25,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "bouncy-vu",
+      label: "Bouncy VU",
+      group: "",
+      json: #"""
+      {"md":"Custom","it":0.3,"at":5,"rt":1.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"Average Rectified","nr":300,"os":15,"dc":0}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "slow-rms",
+      label: "Slow RMS",
+      group: "",
+      json: #"""
+      {"md":"Custom","it":3,"at":5,"rt":1.5,"rl":-18,"rg":42,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"RMS","nr":1000,"os":0,"dc":3}
+      """#),
+    ETEffectPreset(
+      effect: "Analog Meter",
+      presetId: "fast-peak",
+      label: "Fast Peak",
+      group: "",
+      json: #"""
+      {"md":"Custom","it":0.3,"at":5,"rt":0.5,"rl":-14,"rg":40,"sc":0,"ph":1,"ln":0,"tg":-23,"ls":0,"de":"True Peak","nr":10,"os":0,"dc":4}
+      """#),
+    ETEffectPreset(
       effect: "Power Amp Sag",
       presetId: "vintage-tube-sag",
       label: "Vintage Tube Sag",
@@ -153,7 +313,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Flagship Deck Metal",
       group: "",
       json: #"""
-      {"dg":"Reference","tp":"Type IV","nr":"Dolby C","bs":0,"rl":6,"wf":0.04,"hs":-70,"dp":0,"az":0,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Reference","tp":"Type IV","nr":"Dolby C","bs":0,"rl":6,"wf":0.04,"hs":-70,"dp":0,"az":0,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -161,7 +321,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Hi-Fi Chrome",
       group: "",
       json: #"""
-      {"dg":"Hi-Fi","tp":"Type II","nr":"Dolby B","bs":0,"rl":8,"wf":0.1,"hs":-64,"dp":0.5,"az":1,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Hi-Fi","tp":"Type II","nr":"Dolby B","bs":0,"rl":8,"wf":0.1,"hs":-64,"dp":0.5,"az":1,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -169,7 +329,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Pocket Cassette Player",
       group: "",
       json: #"""
-      {"dg":"Portable","tp":"Type I","nr":"Off","bs":0,"rl":12,"wf":0.4,"hs":-54,"dp":4,"az":4,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Portable","tp":"Type I","nr":"Off","bs":0,"rl":12,"wf":0.4,"hs":-54,"dp":4,"az":4,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -177,7 +337,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Worn Mixtape",
       group: "",
       json: #"""
-      {"dg":"Consumer","tp":"Type I","nr":"Off","bs":-3,"rl":15,"wf":0.65,"hs":-50,"dp":12,"az":-5,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Consumer","tp":"Type I","nr":"Off","bs":-3,"rl":15,"wf":0.65,"hs":-50,"dp":12,"az":-5,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "Cassette Artifacts",
@@ -185,7 +345,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Hot Deck Saturation",
       group: "",
       json: #"""
-      {"dg":"Consumer","tp":"Type II","nr":"Off","bs":1,"rl":18,"wf":0.2,"hs":-58,"dp":1,"az":1,"dl":0,"og":0,"mx":100}
+      {"md":"All","dg":"Consumer","tp":"Type II","nr":"Off","bs":1,"rl":18,"wf":0.2,"hs":-58,"dp":1,"az":1,"dl":0,"og":0,"mx":100}
       """#),
     ETEffectPreset(
       effect: "FM Radio Simulator",
@@ -660,6 +820,38 @@ let ETEffectPresetList: [ETEffectPreset] = [
       {"rt":0.3,"dp":30,"rn":25,"rc":3,"rs":-4,"cp":30,"cs":80}
       """#),
     ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "surprise",
+      label: "Surprise",
+      group: "",
+      json: #"""
+      {"gap":1,"learn":0.02,"weightDecay":0,"autonomy":0,"original":0,"residual":1,"prediction":0,"freeze":false,"hold":false}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "prediction",
+      label: "Prediction",
+      group: "",
+      json: #"""
+      {"gap":5,"learn":0.02,"weightDecay":0,"autonomy":0,"original":0,"residual":0,"prediction":1,"freeze":false,"hold":false}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "resonator",
+      label: "Resonator",
+      group: "",
+      json: #"""
+      {"gap":10,"learn":0.02,"weightDecay":0,"autonomy":0.98,"original":0.6,"residual":0,"prediction":0.6,"freeze":false,"hold":false}
+      """#),
+    ETEffectPreset(
+      effect: "Adaptive Prediction",
+      presetId: "hold",
+      label: "Hold",
+      group: "",
+      json: #"""
+      {"gap":10,"learn":0.02,"weightDecay":0,"autonomy":1,"original":0,"residual":0,"prediction":1,"freeze":true,"hold":true}
+      """#),
+    ETEffectPreset(
       effect: "Horn Resonator",
       presetId: "gramophone",
       label: "Gramophone",
@@ -833,7 +1025,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Subtle Cone Color",
       group: "",
       json: #"""
-      {"sd":2,"ss":1.5,"sp":0.8,"sm":1,"dd":1.2,"db":0.1,"dm":60,"cm":10,"og":0}
+      {"os":1,"sd":2,"ss":1.5,"sp":0.8,"sm":1,"dd":1.2,"db":0.1,"dm":60,"cm":10,"og":0}
       """#),
     ETEffectPreset(
       effect: "Dynamic Saturation",
@@ -841,7 +1033,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Pushed Speaker",
       group: "",
       json: #"""
-      {"sd":5,"ss":3,"sp":1.5,"sm":1.5,"dd":2,"db":0.16,"dm":100,"cm":25,"og":-0.6}
+      {"os":1,"sd":5,"ss":3,"sp":1.5,"sm":1.5,"dd":2,"db":0.16,"dm":100,"cm":25,"og":-0.6}
       """#),
     ETEffectPreset(
       effect: "Dynamic Saturation",
@@ -849,7 +1041,7 @@ let ETEffectPresetList: [ETEffectPreset] = [
       label: "Ragged Cone",
       group: "",
       json: #"""
-      {"sd":8,"ss":5,"sp":2.5,"sm":2,"dd":3,"db":0.3,"dm":100,"cm":35,"og":-1.7}
+      {"os":1,"sd":8,"ss":5,"sp":2.5,"sm":2,"dd":3,"db":0.3,"dm":100,"cm":35,"og":-1.7}
       """#),
     ETEffectPreset(
       effect: "Tube Simulator",

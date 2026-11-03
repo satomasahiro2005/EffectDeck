@@ -1,0 +1,32 @@
+desc:Fuzz Strings
+author:nemut.ai
+slider1:0<0,2,1{Plain,Upper,Wide}>Mode
+slider2:0<0,1,0.01>Amount
+
+@init
+#a = "EffectDeck";
+strcpy(#b, #a);
+strcat(#b, " JSFX");
+sprintf(#c, "%s %d %.3f %x %c", #b, 42, 3.14159, 255, 'Z');
+str_setchar(#c, 0, 'e');
+str_setlen(#c, 12);
+str_insert(#c, "[", 0);
+str_delsub(#c, 1, 2);
+strncpy(#d, #c, 4);
+strcpy_substr(#e, #c, 2, 5);
+strcpy_from(#f, #c, 3);
+len = strlen(#c);
+cmp = strcmp(#a, #b) + stricmp(#a, "effectdeck") + strncmp(#a, #b, 3);
+ok = match("Eff*", #a) + matchi("*deck", #a);
+ch = str_getchar(#a, 1);
+strcpy_fromslider(#g, slider1);
+
+@slider
+sprintf(#h, "%0.2f", slider2);
+
+@sample
+spl0 *= 1 - slider2;
+spl1 *= 1 - slider2;
+
+@serialize
+file_string(0, #c);

@@ -1,5 +1,3 @@
-!docs/shot.png
-!docs/connect-log.md
 *.dSYM/
 *.ipa
 *.log
@@ -14,18 +12,30 @@ build/
 out-sim/
 out/
 project-sim.yml
-shots-all/
-shots-render/
-shots-store/
 xcuserdata/
 node_modules/
-package-lock.json
+__pycache__/
+# SwiftPM の出力（Tests/Linux・Tests/Fuzz の包みを手元で建てたとき）。
+.build/
+# 根に残っている textlint の残骸だけ。site/package-lock.json は追跡する（CI の npm ci が読む）。
+/package-lock.json
+# swiftly が置く手元の版。project.yml の SWIFT_VERSION とは別物。
+.swift-version
+
+# 撮った画面。どれも Scripts の出力先で、撮るたびに変わる。
+/shots/
+/shot.png
+/shots-all/
+/shots-render/
+/shots-screens/
+/shots-store/
 
 # 手元の記録。公開しない。
 docs/connect-log.md
 docs/next.md
 docs/session-*.md
 docs/which-apps.md
+docs/ipad-ui.md
 docs/altstore/timing.md
 
 # エージェントの作業場。

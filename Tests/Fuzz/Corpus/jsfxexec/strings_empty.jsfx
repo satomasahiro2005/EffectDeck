@@ -1,0 +1,13 @@
+desc:Fuzz strings empty（空の字を自分へ足す: strcat・strncat が空の WDL_FastString を写し、memcpy に NULL を渡していた）
+out_pin:L
+out_pin:R
+
+@init
+// 自分へ足すときは一度写しを作る（WDL の _eel_strncat）。空の写しで memcpy(NULL, NULL, 0)（UBSan の止め）
+strcat(#e, #e);
+strncat(#f, #f, 2);
+strncat(0, 0, 3);
+n = strlen(#e) + strlen(#f);
+
+@sample
+spl0 = spl1 = n;

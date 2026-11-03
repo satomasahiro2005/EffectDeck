@@ -1,7 +1,7 @@
 //  RouteEscapeTests.swift
 //  ETRouteEscape の判断。**実機もシミュレータの音も要らない。**
 //
-//  ここが在る理由は docs/connect-log.md の B-3。
+//  ここが在る理由は docs/connect-log.md の B-3（手元だけの記録で、追跡していない）。
 //  出力先が仮想デバイスへ戻ったときに引き剥がしを掛け直さない穴があり、
 //  判断が AVAudioSession に触る関数の中に埋まっていたせいで、
 //  実機で 25 秒のログを取るまで見つけられなかった。

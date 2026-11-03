@@ -1,0 +1,7 @@
+desc:Forbidden Include
+author:nemut.ai
+
+@init
+include(other.jsfx-inc);
+
+@sample

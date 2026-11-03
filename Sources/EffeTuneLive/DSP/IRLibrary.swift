@@ -8,12 +8,13 @@
 //  鍵は sha256 の先頭 24 桁（小文字の16進）。
 //  ステレオ対は左右それぞれの digest を連結して、もう一度 sha256 を取る。
 //  出典: js/ir-library/ir-library-id.js
+//  **鍵とファイル名の規則は IRLibraryFiles.swift。**Foundation だけで単体テストに入り、
+//  鍵は上流が作った見本と照合している。ここは置き場の出し入れと画面への公開だけ。
 //
 //  取り込んだファイルはアプリの Documents に鍵の名前で置く。
 //  Documents に置くのは、ファイルアプリから見えて中身を差し替えられるようにするため。
 
-import AVFoundation
-import CryptoKit
+import Combine
 import Foundation
 import os
 
@@ -24,57 +25,37 @@ final class IRLibrary: ObservableObject {
 
     private let log = Logger(subsystem: "ai.nemut.effetune", category: "ir")
 
-    struct Entry: Identifiable, Hashable {
-        let id: String        // 鍵（sha256 の先頭24桁）
-        let name: String      // 取り込んだときのファイル名
-        let url: URL
-        let bytes: Int
-    }
+    typealias Entry = IRLibraryEntry
 
     @Published private(set) var entries: [Entry] = []
 
-    private var root: URL {
+    /// 置き場のフォルダ。ふつうは Documents/IR（documentsFolder）。
+    /// **差し替えられるようにしてある**のは、本物の Documents を汚さずに出し入れを試すため。
+    private let root: URL
+
+    nonisolated static var documentsFolder: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appendingPathComponent("IR", isDirectory: true)
     }
 
-    private init() {
+    init(root: URL = IRLibrary.documentsFolder) {
+        self.root = root
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
     }
 
-    // MARK: - 鍵
-
-    /// web 版と同じ鍵。sha256 の先頭 24 桁。
-    static func key(for data: Data) -> String {
-        String(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined().prefix(24))
-    }
-
-    /// 左右で 1 つの IR を成すときの鍵。
-    /// それぞれの digest を連結して、もう一度 sha256 を取る。
-    static func key(left: Data, right: Data) -> String {
-        var joined = Data()
-        joined.append(contentsOf: SHA256.hash(data: left))
-        joined.append(contentsOf: SHA256.hash(data: right))
-        return key(for: joined)
-    }
-
     // MARK: - 出し入れ
 
+    /// 名前は <鍵>__<元のファイル名> にしてある（IRLibraryFiles.entry）。
     func reload() {
-        let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(at: root,
-                                                 includingPropertiesForKeys: [.fileSizeKey])) ?? []
-        entries = files.compactMap { url in
-            // 名前は <鍵>__<元のファイル名> にしてある。
-            let stem = url.deletingPathExtension().lastPathComponent
-            let parts = stem.components(separatedBy: "__")
-            guard parts.count >= 2, parts[0].count == 24 else { return nil }
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            let name = parts.dropFirst().joined(separator: "__") + "." + url.pathExtension
-            return Entry(id: parts[0], name: name, url: url, bytes: size)
-        }
-        .sorted { $0.name < $1.name }
+        entries = IRLibraryFiles.entries(in: root)
+    }
+
+    /// 取り込んだ IR を全部消す（ETFactoryReset）。
+    func eraseAll() {
+        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reload()
     }
 
     /// ファイルを取り込む。すでに同じ中身があれば、その鍵を返すだけ。
@@ -98,16 +79,11 @@ final class IRLibrary: ObservableObject {
             log.notice("音ではない \(source.lastPathComponent, privacy: .public)")
             return nil
         }
-        let id = Self.key(for: data)
+        let id = IRLibraryFiles.key(for: data)
         if let existing = entries.first(where: { $0.id == id }) { return existing.id }
 
         // 名前に使えない文字を落とす。鍵で引くので名前は見出しにすぎない。
-        let safe = source.deletingPathExtension().lastPathComponent
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
-        let ext = source.pathExtension.isEmpty ? "bin" : source.pathExtension
-        let dest = root.appendingPathComponent("\(id)__\(safe).\(ext)")
+        let dest = root.appendingPathComponent(IRLibraryFiles.storedName(id: id, source: source))
 
         do {
             try data.write(to: dest, options: .atomic)
@@ -120,17 +96,10 @@ final class IRLibrary: ObservableObject {
         return id
     }
 
-    /// 音のファイルか。**開けるかどうかで決める。**
-    ///
-    /// 読むのは ETIRLoader.load の AVAudioFile 一本なので、そこが開ければ音、
-    /// 開けなければ音ではない。形を並べて数える必要が無く、扱える形が増えても
-    /// ここを直さなくてよい。
-    ///
-    /// 頭だけ読んで済ませたくなるが、**m4a や mp3 は先頭が印にならない**
-    /// （ftyp は 4 バイト目から、mp3 は ID3 のことも生フレームのこともある）。
-    /// 取り込みのときしか通らないので、開く手間は払ってよい。
+    /// 音のファイルか。**開けるかどうかで決める。**読むのと同じ AVAudioFile に訊く
+    /// （ETIRDecode.canOpen。m4a や mp3 は先頭が印にならないので、頭では振らない）。
     static func looksLikeAudio(at url: URL) -> Bool {
-        (try? AVAudioFile(forReading: url)) != nil
+        ETIRDecode.canOpen(url)
     }
 
     func remove(_ entry: Entry) {

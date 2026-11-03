@@ -1,0 +1,69 @@
+name: Add existing TestFlight build to Internal
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Uploaded app version
+        required: true
+        type: string
+      build_number:
+        description: Uploaded build number
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  add-internal:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 10
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      VERSION: ${{ inputs.version }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Place API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        shell: bash
+        run: |
+          test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID" && test -n "$ASC_KEY_P8"
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          key="$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          if printf '%s' "$ASC_KEY_P8" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$ASC_KEY_P8" > "$key"
+          else
+            printf '%s' "$ASC_KEY_P8" | base64 --decode > "$key"
+          fi
+          grep -q 'BEGIN PRIVATE KEY' "$key"
+      - name: Find processed build, add to Internal and verify
+        shell: bash
+        run: |
+          build_id=$(python3 Tools/asc.py wait-build "$VERSION" "$BUILD_NUMBER" 1)
+          python3 Tools/asc.py add-internal "$build_id"
+          export BUILD_ID="$build_id"
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'Tools')
+          import asc
+          gid = asc.internal_group_id()
+          builds = asc.pages(f'/v1/betaGroups/{gid}/builds?limit=200')
+          if not any(b['id'] == os.environ['BUILD_ID'] for b in builds):
+              raise SystemExit('Build membership verification failed')
+          print(f"Verified {os.environ['VERSION']} build {os.environ['BUILD_NUMBER']} in Internal")
+          PY
+      - name: Remove API key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8"

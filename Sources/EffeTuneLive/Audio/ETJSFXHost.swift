@@ -7,23 +7,83 @@ private final class ETJSFXMenuResult: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int32 = 0
     private var finished = false
+    /// 出した action sheet。畳むときに閉じる。main からしか触らない。
+    weak var alert: UIAlertController?
     func finish(_ newValue: Int32) {
         lock.lock(); defer { lock.unlock() }
         guard !finished else { return }
         finished = true; value = newValue; semaphore.signal()
     }
     func read() -> Int32 { lock.withLock { value } }
+    var isFinished: Bool { lock.withLock { finished } }
+    /// 0 で返して、出ていれば閉じる。
+    func cancel() {
+        finish(0)
+        DispatchQueue.main.async { [self] in alert?.presentingViewController?.dismiss(animated: true) }
+    }
+}
+
+/// 保守の前に `gfx_showmenu` を畳む。
+///
+/// **開いている間 GFX スレッドは gfxActive を立てたまま待つ。**beginMaintenance は
+/// それが降りるまで回り続けるので、状態保存・再設定・破棄が最長 30 秒止まり、
+/// その間このスクリプトは素通しになっていた。保守に入る側が先にここを閉じる。
+/// 閉じている間に開こうとした menu は即 0 を返す。
+///
+/// **畳むのは止められない保守（再設定・破棄）だけ。**状態保存は holdIfIdle で入り、
+/// 出ている menu は畳まずに閉じるのを待つ（snapshotState を読むこと）。
+final class ETJSFXMenuGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var holds = 0
+    private var shown: ETJSFXMenuResult?
+
+    fileprivate func open(_ result: ETJSFXMenuResult) -> Bool {
+        lock.withLock {
+            guard holds == 0 else { return false }
+            shown = result
+            return true
+        }
+    }
+    fileprivate func close(_ result: ETJSFXMenuResult) {
+        lock.withLock { if shown === result { shown = nil } }
+    }
+    func hold() {
+        let current: ETJSFXMenuResult? = lock.withLock { holds += 1; return shown }
+        current?.cancel()
+    }
+    /// menu が出ていなければ閉じて true。出ていれば何もせず false。
+    func holdIfIdle() -> Bool {
+        lock.withLock {
+            guard shown == nil else { return false }
+            holds += 1
+            return true
+        }
+    }
+    var isShowing: Bool { lock.withLock { shown != nil } }
+    func release() { lock.withLock { holds -= 1 } }
+}
+
+/// 状態保存の結果。menuShown は書かずに戻った（menu が出ていた）。
+private enum Snapshot: Sendable {
+    case menuShown
+    case saved(Data?)
 }
 
 /// `gfx_showmenu` is synchronous by definition. Only the calling instance's
 /// private GFX queue waits; audio and other JSFX instances keep running.
+/// context は instance の ETJSFXMenuGate（host より長く生かしてある）。
 private let etJSFXMenuCallback: @convention(c)
-    (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { _, menu, _, _ in
-        guard let menu else { return 0 }
+    (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { context, menu, _, _ in
+        guard let menu, let context else { return 0 }
+        let gate = Unmanaged<ETJSFXMenuGate>.fromOpaque(context).takeUnretainedValue()
         let spec = String(cString: menu)
         let result = ETJSFXMenuResult()
+        guard gate.open(result) else { return 0 }
+        defer { gate.close(result) }
         DispatchQueue.main.async {
-            guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            // 出す前に畳まれていたら出さない。
+            guard !result.isFinished,
+                  let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                     .first(where: { $0.activationState == .foregroundActive }),
                   let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else {
                 result.finish(0); return
@@ -57,9 +117,14 @@ private let etJSFXMenuCallback: @convention(c)
                 popover.sourceRect = CGRect(x: presenter.view.bounds.midX,
                                             y: presenter.view.bounds.midY, width: 1, height: 1)
             }
-            presenter.present(alert, animated: true)
+            result.alert = alert
+            // 出している途中で畳まれたら、出し終えてから閉じる（途中の dismiss は効かない）。
+            presenter.present(alert, animated: true) {
+                if result.isFinished { alert.presentingViewController?.dismiss(animated: true) }
+            }
         }
-        _ = result.semaphore.wait(timeout: .now() + 30)
+        // 時間切れのときも閉じる。残すと、押しても何も起きない sheet が居座る。
+        if result.semaphore.wait(timeout: .now() + 30) == .timedOut { result.cancel() }
         return result.read()
     }
 
@@ -75,6 +140,9 @@ final class ETJSFXHost: ObservableObject {
         let author: String
         let url: URL
         let isDebugFixture: Bool
+        /// 同じ1本かを決める鍵（desc:とauthor:。JSFXReplace.Identity）。desc:が無ければnil。
+        /// 一覧を作るときに読んだ頭から作る（取り込むたびに全部のソースを読み直さない）。
+        let identity: JSFXReplace.Identity?
     }
 
     struct Parameter: Identifiable {
@@ -91,7 +159,7 @@ final class ETJSFXHost: ObservableObject {
         var isEnumeration: Bool { !enumNames.isEmpty }
     }
 
-    private struct RenderConfiguration: Sendable {
+    private struct RenderConfiguration: Sendable, Equatable {
         let sampleRate: Double
         let outputChannels: Int
         let maxFrames: Int
@@ -107,6 +175,13 @@ final class ETJSFXHost: ObservableObject {
         var error: String?
         var loadTask: Task<Void, Never>?
         var stateTask: Task<Void, Never>?
+        /// 人の操作で保存を頼まれてから、まだ書いていない最初の時刻。snapshotState を読むこと。
+        var snapshotSince: ContinuousClock.Instant?
+        /// 最後の保存のあとに @gfx へ指か鍵が来た。そのあとの sliderchange は人の操作として扱う。
+        var userTouched = false
+        /// 保守（状態保存・再設定）の列の最後尾。enqueue を読むこと。
+        var nativeTail: Task<Void, Never>?
+        let menuGate = ETJSFXMenuGate()
         var ready: ((Result<UInt8, Error>) -> Void)?
         let gfxQueue: DispatchQueue
         var lastGFXImage: CGImage?
@@ -116,6 +191,12 @@ final class ETJSFXHost: ObservableObject {
         var pendingRelease: (Int32, Int32)?
         var visibleGFXOwners: Set<UUID> = []
         var focusedGFXOwners: Set<UUID> = []
+        /// 置き換えた前の版（rebuild）。**この版をinstallするまでslotに載って鳴っている。**
+        /// 片付けるのはslotが替わった・空いたとき（retirePredecessor / dropPredecessor）。
+        /// この版が建たなければ表へ戻す（fail → readopt）。
+        var predecessor: Instance?
+        /// 前の版のつまみ。建てたときに数と範囲が合えば移す（carrySliders）。
+        var carriedSliders: [Parameter]?
 
         init(id: String, entry: Entry, state: Data?, channels: Int) {
             self.id = id; self.entry = entry; self.state = state; self.channels = channels
@@ -127,13 +208,32 @@ final class ETJSFXHost: ObservableObject {
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var revision = 0
     private var entryAliases: [String: Entry] = [:]
+    /// 取り込み直して置き換えた前の版のid → いまのid（JSFXReplace）。JSFX/aliases.jsonに残す。
+    /// 同梱の見本の古いid（entryAliases）とは別。あちらは建てるときに決まる。
+    private var replacedAliases = JSFXReplace.Aliases()
+    /// 置き場（JSFX/Replaced）で前の版が待っている、新しい版のid。1度建てば前の版を消し
+    /// （commitReplacement）、建たなければ前の版を戻す（rollBackReplacement）。
+    private var pendingTargets: Set<String> = []
     private var instances: [String: Instance] = [:]
-    private var retired: [OpaquePointer] = []
     private var renderConfiguration: RenderConfiguration?
     private var latencyTimer: Timer?
 
-    private init() {
+    /// 取り込んだものを全部消す（ETFactoryReset）。鎖の段は呼ぶ前に外してある。
+    /// 同梱の見本（DebugFactory）は refresh が写し直す。
+    func eraseImported() {
+        for path in ["JSFX/Sources", "JSFX/Replaced"] {
+            if let url = try? Self.storageURL(path) { try? FileManager.default.removeItem(at: url) }
+        }
+        if let url = Self.replacedAliasesURL() { try? FileManager.default.removeItem(at: url) }
+        replacedAliases = JSFXReplace.Aliases()
+        pendingTargets.removeAll()
         refresh()
+    }
+
+    private init() {
+        replacedAliases = Self.loadReplacedAliases()
+        refresh()
+        tidyShelf()
         // **init では張らない。**この型は singleton で、ピッカーを開くだけで
         // 生成される（EffectPickerView が生成式で shared を読む）。init から張ると、
         // JSFX を 1 つも読んでいなくても 10 回/秒でメインスレッドを起こし、
@@ -167,28 +267,105 @@ final class ETJSFXHost: ObservableObject {
         // 消せなかったら一覧はそのまま。押しても消えない形になるが、
         // 消えたふりをして次の refresh で戻ってくるより分かりやすい。
         guard (try? FileManager.default.removeItem(at: entry.url)) != nil else { return false }
+        Self.setStalled(entry.id, false)
+        // 置き場でこの1本が建つのを待っていた前の版も消す。消したものの前の版を黙って戻さない。
+        discardShelved(for: entry.id)
+        // **付け替え（前の版のid → この1本）は残す。**引く先が無いので段は建たない（消したものを
+        // 直接指していた鍵と同じ）。同じ1本をもう一度取り込めば、前の版のidで保存した鎖・
+        // プリセットもまた建つ。消すと、入れ直しても戻らない。
         refresh()
         return true
     }
 
+    /// 取り込んだ 1 本を `https://effectdeck.nemut.ai/j#…` にする（ETFXDLink）。
+    /// **同梱の見本は出さない（nil）。**人が自分で入れたものだけを渡せる。
+    ///
+    /// 一覧の行を描くたびに呼ばれるので覚えておく。id はソースの sha256
+    /// （ownedCopy の置き場の名前）なので、id が同じなら中身も同じ。
+    func shareURL(for entry: Entry) -> Result<URL, ETFXDLink.Failure>? {
+        guard !entry.isDebugFixture else { return nil }
+        if let known = shareURLs[entry.id] { return known }
+        let result: Result<URL, ETFXDLink.Failure>
+        // 大きさは読む前に見る。置き場には 1 MB まで入る。
+        let size = (try? entry.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if size > ETFXDLink.sourceLimit {
+            result = .failure(.tooLarge)
+        } else if let data = try? Data(contentsOf: entry.url),
+                  // entry(for:) と同じく Latin-1 も読む。載せるときは UTF-8 になる。
+                  let text = String(data: data, encoding: .utf8)
+                    ?? String(data: data, encoding: .isoLatin1) {
+            do { result = .success(try ETFXDLink.jsfxURL(source: text)) }
+            catch { result = .failure(error as? ETFXDLink.Failure ?? .unreadableSource) }
+        } else {
+            result = .failure(.unreadableSource)
+        }
+        shareURLs[entry.id] = result
+        return result
+    }
+    private var shareURLs: [String: Result<URL, ETFXDLink.Failure>] = [:]
+
+    /// JSFX の口を開けるか。**いまは全部の版で開けている（店に出す版も）。**
+    ///
+    /// 閉じる形は残す。また閉じるときは false を返せば、ツールバー・空のときの案内・
+    /// 一覧の頭の行・設定の JSFX canvas の節・importFile（共有シートもここへ来る）が
+    /// まとめて閉じる。
+    ///
+    /// 店の版で閉じていた理由は中身で、開ける前に要ると書いていたのは次の 3 つ。
+    /// - `ETJSFX_LoadState` が `ysfx_load_state` の後に `ysfx_init` を呼び、
+    ///   `@init` と `@serialize` を両方使うスクリプトが復元した値を即座に失っていた。
+    ///   **直した**（つまみ → @init → @serialize 読み → @slider。JSFXStateTests の
+    ///   testInitDoesNotOverwriteSerializedStateOnLoad）。
+    /// - 実機で長く回すこと。開けた時点で長時間運転の記録はリポジトリに無い。
+    /// - **締切の閾値（続けて 3 回で自動バイパス）はまだ実測から決めていない。**
+    ///   測る器具（deadlineReading、Details に出る）は在るが、数字は採っていない。
+    static var isEnabled: Bool { true }
+
+    /// 同梱の見本を出すか。**TestFlight と開発ビルドだけ。**
+    ///
+    /// 見本は配った相手が JSFX を試すための手がかりで、店で売る版に並べるものではない。
+    /// **建てるときに決まる。**受領書（`appStoreReceiptURL`）は開発ビルドでも
+    /// `sandboxReceipt` を返すので、店に出す側の挙動を手元で確かめられない。
+    /// project.yml の Beta 構成がアイコン（紫）と同じ所で ET_BETA を立てる。
+    /// **紫のアイコンなら見本が在る**、が必ず成り立つ。
+    static var showsBundledSamples: Bool {
+        #if DEBUG || ET_BETA
+        return true
+        #else
+        return false
+        #endif
+    }
+
     func refresh() {
-        let debugRoot = try? Self.storageURL("JSFX/DebugFactory")
-        if let debugRoot { try? FileManager.default.removeItem(at: debugRoot) }
-        #if DEBUG
-        if let debugRoot { try? FileManager.default.createDirectory(at: debugRoot, withIntermediateDirectories: true) }
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
-           let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
-                                                       options: [.skipsHiddenFiles]) {
-            for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
-                _ = try? Self.debugCopy(of: source, root: debugRoot)
+        // 閉じた版では JSFX を出さない（isEnabled）。一覧が空なら、
+        // 取り込みの口も検索も vendor の段もまとめて消える。
+        guard Self.isEnabled else {
+            entries = []
+            entryAliases = [:]
+            return
+        }
+        // 同梱の見本。**TestFlight と開発ビルドだけに出す**（showsBundledSamples）。
+        // 積んであるのは自前の 3 本だけで、第三者の実物は Debug のときしか
+        // 写していない（Scripts/embed_debug_jsfx.sh。再配布しない）。
+        // 毎回消してから写し直すのは、同梱の側を直したときに古いものが残らないため。
+        // 出さない版でも消すのは、ベータから店の版へ入れ替えた端末に残さないため。
+        let bundledRoot = try? Self.storageURL("JSFX/DebugFactory")
+        if let bundledRoot { try? FileManager.default.removeItem(at: bundledRoot) }
+        let showsBundled = Self.showsBundledSamples
+        if showsBundled {
+            if let bundledRoot { try? FileManager.default.createDirectory(at: bundledRoot, withIntermediateDirectories: true) }
+            if let bundled = Bundle.main.resourceURL?.appendingPathComponent("DebugJSFXFactory", isDirectory: true),
+               let files = FileManager.default.enumerator(at: bundled, includingPropertiesForKeys: nil,
+                                                           options: [.skipsHiddenFiles]) {
+                for case let source as URL in files where source.pathExtension.lowercased() == "jsfx" {
+                    _ = try? Self.debugCopy(of: source, root: bundledRoot)
+                }
             }
         }
-        #endif
         Self.removeLegacyDebugCopies()
         var discovered = Self.ownedEntries(at: try? Self.storageURL("JSFX/Sources"), debug: false)
-        #if DEBUG
-        discovered += Self.ownedEntries(at: debugRoot, debug: true)
-        #endif
+        if showsBundled {
+            discovered += Self.ownedEntries(at: bundledRoot, debug: true)
+        }
         entries = Dictionary(grouping: discovered, by: \.id).compactMap { $0.value.first }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         entryAliases = Self.debugAliases(for: entries)
@@ -198,6 +375,13 @@ final class ETJSFXHost: ObservableObject {
     /// Runtime code never retains or reopens the original URL.
     @discardableResult
     func importFile(_ source: URL) throws -> Entry {
+        // 閉じた版では受けない（isEnabled）。画面の口は閉じてあるが、
+        // 共有シートからも同じ関数へ来るので、ここでも止める。
+        guard Self.isEnabled else {
+            throw NSError(domain: "ETJSFX", code: 12, userInfo: [
+                NSLocalizedDescriptionKey: "JSFX is not available in this build."])
+        }
+
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
 
@@ -232,15 +416,180 @@ final class ETJSFXHost: ObservableObject {
             throw NSError(domain: "ETJSFX", code: 11,
                           userInfo: [NSLocalizedDescriptionKey: "The JSFX source is not valid UTF-8."])
         }
+        // 取り込み直したら 1 度は試す（同じ中身なら id も同じ）。
+        Self.setStalled(entry.id, false)
+        // 前の版を入れ直した。置き場で待っていた同じ中身の写しは要らない（一覧の写しが勝つ）。
+        if let shelf = Self.shelfURL(create: false) {
+            try? FileManager.default.removeItem(at: shelf.appendingPathComponent(owned.lastPathComponent))
+        }
+        // **同じdesc:とauthor:の前の版は置き換える**（JSFXReplace）。取り込みの口は
+        // From Files・From Link・From Clipboard・共有の拡張／このアプリで開く（ETInbox）・
+        // /jのリンク（importSource）の全部がここを通るので、ここ1か所で足りる。
+        let replaced = replaceOlderVersions(with: entry)
         refresh()
+        if let current = entries.first(where: { $0.id == entry.id }) {
+            // 前の版で建っている（建てている途中も含む）段は、新しい版で建て直す。
+            for instance in Array(instances.values) where replaced.contains(instance.entry.id) {
+                rebuild(instance, as: current)
+            }
+            // 外れている段も拾う。コンパイルできなかった版を直して入れ直した・消した1本を
+            // 入れ直したときがこれで、fail()がinstanceを外しているのでhostには何も残っていない。
+            reviveDeadCards(resolvingTo: [current.id])
+        }
         return entry
     }
 
-    func entry(id: String) -> Entry? { entries.first { $0.id == id } ?? entryAliases[id] }
+    /// 同じ1本の前の版（desc:とauthor:が同じで中身が違う、人が入れたもの）を置き場
+    /// （JSFX/Replaced）へ移して、前のid → 新しいidを控える。移したidを返す。
+    ///
+    /// **消さない。**新しい版が1度建ったら消し（commitReplacement）、建たなければ戻す
+    /// （rollBackReplacement）。直させた版が壊れていても、前の版は端末から無くならない。
+    /// 同梱の見本は置き換えない（JSFXReplace.replaced）。
+    ///
+    /// **付け替えを先に書く。**書けなければ何も動かさない（前の版は一覧に残り、並ぶだけ）。
+    /// 動かしてから書けないと、前のidが引けないまま前の版が置き場に隠れる。動かせなかった
+    /// ものは一覧に残る。付け替えは残るが、entry(id:)は一覧を先に引くので自分のidで建つ。
+    private func replaceOlderVersions(with entry: Entry) -> Set<String> {
+        // 一覧の名前はdesc:が無いとファイル名になるので、名前ではなくソースの頭で比べる。
+        let candidates = entries.map {
+            JSFXReplace.Candidate(id: $0.id, identity: $0.identity, isBundled: $0.isDebugFixture)
+        }
+        let doomed = Set(JSFXReplace.replaced(by: entry.id, identity: entry.identity, among: candidates))
+        let olds = entries.filter { doomed.contains($0.id) }
+        guard !olds.isEmpty, let shelf = Self.shelfURL(create: true) else { return [] }
+        var next = replacedAliases
+        for old in olds { next.redirect(from: old.id, to: entry.id) }
+        guard Self.saveReplacedAliases(next) else { return [] }
+        replacedAliases = next
+        var moved: Set<String> = []
+        for old in olds {
+            let destination = shelf.appendingPathComponent(old.url.lastPathComponent)
+            try? FileManager.default.removeItem(at: destination)
+            guard (try? FileManager.default.moveItem(at: old.url, to: destination)) != nil else { continue }
+            shareURLs[old.id] = nil
+            moved.insert(old.id)
+        }
+        // 前の版が待たせていたさらに前の版も、付け替えを潰したのでいまの版を待つ。
+        pendingTargets.subtract(olds.map(\.id))
+        if !shelvedVersions(for: entry.id).isEmpty { pendingTargets.insert(entry.id) }
+        return moved
+    }
+
+    /// 鎖に居るのに中身の無い段（建てられなかった・一覧に無かった）のうち、`ids`のどれかへ
+    /// 引けるものを建てる。取り込んだ・置き換えを戻したときに呼ぶ。状態は鎖のもの（restoreと同じ）。
+    ///
+    /// 鳴らすには、鎖の記述子が控えている番号（externalIndex）と同じslotが要る。**段のslotは
+    /// 鎖に居る間は取ったまま**（fail()は返さない）なので揃う。揃わなければ触らない
+    /// （取ったのが別の番号なら返す。次の起動で建つ）。
+    private func reviveDeadCards(resolvingTo ids: Set<String>) {
+        let bridge = ETAUExternalBridge.shared
+        let dead = EffeTuneDSP.shared.nodes.filter { node in
+            guard node.isExternal, let componentID = node.externalID, componentID.hasPrefix("jsfx:"),
+                  instances[node.externalInstanceID] == nil,
+                  let resolved = entry(id: componentID) else { return false }
+            return ids.contains(resolved.id)
+        }
+        for node in dead {
+            let held = bridge.index(for: node.externalInstanceID)
+            guard (try? bridge.reserve(instanceID: node.externalInstanceID)) == node.externalIndex else {
+                if held == nil { bridge.remove(instanceID: node.externalInstanceID) }
+                continue
+            }
+            restore(componentID: node.externalID ?? "", instanceID: node.externalInstanceID,
+                    state: node.externalState, channels: EffeTuneDSP.externalChannels(of: node))
+        }
+    }
+
+    /// 建っている段を、置き換えた新しい版で建て直す。**段のid・slotの番号・画面は同じまま。**
+    ///
+    /// remove(instanceID:)は通さない。slotを返すと取り直したときに番号が変わりうるうえ、
+    /// 新しい版が建つまで素通しになる。前の版はslotに載せたまま鳴らし、新しい版をinstallした
+    /// ところで替わる（build → retirePredecessor）。**建てられなかったら前の版のまま**
+    /// （fail → readopt。slotは替わっていないので音は途切れない）。
+    ///
+    /// - つまみは数と範囲が合えば持ち越す（carrySliders）。合わなければ新しい版の既定。
+    /// - **@serializeの状態は持ち越さない。**読み込むと、新しい版の@serializeが前の版の並びの
+    ///   バイト列を読む。足りない分は0で埋まる（ysfx_serializer_t::var）ので、@serializeを
+    ///   足した版では@initが置いた値まで0になる。新しい版の@initから始める。
+    private func rebuild(_ old: Instance, as entry: Entry) {
+        let id = old.id
+        instances.removeValue(forKey: id)
+        old.loadTask?.cancel(); old.stateTask?.cancel()
+        let ready = old.ready
+        old.ready = nil
+        create(entry, instanceID: id, state: nil, channels: old.channels, ready: ready, replacing: old)
+    }
+
+    /// 貼られた字から取り込む。ChatGPTなどに書かせたものをコピーして戻ってきたとき用。
+    /// 判定も写し方もimportFileと同じ道を通すため、一度ファイルに書いてから渡す。
+    @discardableResult
+    func importText(_ text: String) throws -> Entry {
+        try importSource(ETCodeBlock.first(in: text) ?? text)
+    }
+
+    /// ソースそのものを取り込む。**囲いは外さない。**
+    /// 共有リンク（ETFXDLink）の中身は送り手のソースそのままで、コメントに```があっても
+    /// そこで切ると送り手のものと違う1本になる（ページの表示とも食い違う）。
+    @discardableResult
+    func importSource(_ source: String) throws -> Entry {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("pasted.jsfx")
+        try? FileManager.default.removeItem(at: file)
+        try Data(source.utf8).write(to: file, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: file) }
+        return try importFile(file)
+    }
+
+    /// `jsfx:<id>`から1本を引く。鎖の復元・プリセット・バックアップ・共有リンク・
+    /// 鎖へのドラッグ・作者の表示がみなここを通る。
+    ///
+    /// **置き換えた前の版のidは、付け替えを辿っていまの版を返す**（JSFXReplace.Aliases）。
+    /// 鎖やプリセットは前のidのまま保存してあるので、辿らないと直した版を入れた途端に
+    /// 段が建たなくなる。保存してある状態はそのまま新しい版へ渡る（restore）。同梱の見本の
+    /// 古いid（entryAliases）と同じ扱いで、REAPERがJSFXのファイルを書き換えた後に
+    /// プロジェクトを開いたときとも同じ（つまみは番号で、@serializeは新しいコードが読む）。
+    func entry(id: String) -> Entry? {
+        if let found = entries.first(where: { $0.id == id }) ?? entryAliases[id] { return found }
+        guard let current = replacedAliases.resolve(id) else { return nil }
+        return entries.first { $0.id == current }
+    }
+
+    /// 鎖の字が`{"jsfx":"<desc:の名前>"}`で指すものを、取り込んである一覧から引く（CHAIN.md）。
+    /// 引き方（綴りが同じもの → 大文字小文字を無視）はETChainText.jsfxResolverが持つ。
+    /// 名前で引くので付け替えは要らない。置き換えた前の版は一覧から消えている。
+    ///
+    /// **同じ名前が2本あれば最後に取り込んだほう。**desc:とauthor:が両方同じなら
+    /// 取り込んだときに置き換わる（importFile）ので、並ぶのは作者が違うものか同梱の見本。
+    /// 取り込んだ時刻はファイルの更新日時で、同じ中身を入れ直したときもownedCopyが進める。
+    /// **同梱の見本は後ろへ。**refreshのたびに写し直すので、日時で並べると常に一番新しくなる。
+    /// 一覧はこの時点で写し取るので、閉包が後からこのクラスに触ることは無い。
+    func chainResolver() -> ETChainText.JSFXResolver {
+        let dated = entries.map { entry -> (entry: Entry, date: Date) in
+            let values = try? entry.url.resourceValues(forKeys: [.contentModificationDateKey])
+            return (entry, values?.contentModificationDate ?? .distantPast)
+        }
+        let library = dated
+            .sorted { a, b in
+                if a.entry.isDebugFixture != b.entry.isDebugFixture { return !a.entry.isDebugFixture }
+                return a.date > b.date
+            }
+            .map { (id: $0.entry.id, name: $0.entry.name) }
+        return ETChainText.jsfxResolver(library)
+    }
 
     func sourceText(instanceID: String) -> String? {
         guard let entry = instances[instanceID]?.entry else { return nil }
-        return try? String(contentsOf: entry.url, encoding: .utf8)
+        return Self.sourceText(for: entry)
+    }
+
+    /// 1本のソースを字にする。**Latin-1も読む**（entry(for:)・shareURL(for:)と同じ）。
+    /// UTF-8だけで読むと、取り込めたものが見る画面では「Source Unavailable」になる。
+    /// ファイルを読むだけなので、どのスレッドからでも呼べる。
+    nonisolated static func sourceText(for entry: Entry) -> String? {
+        guard let data = try? Data(contentsOf: entry.url) else { return nil }
+        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
     }
 
     func debugPresetItems() -> [PipelineStore.Loaded] {
@@ -278,11 +627,31 @@ final class ETJSFXHost: ObservableObject {
         create(entry, instanceID: instanceID, state: state, channels: channels, ready: completion)
     }
 
+    /// `previous`は置き換える前の版（rebuild）。表からは外してあり、slotには載ったまま。
     private func create(_ entry: Entry, instanceID: String, state: Data?, channels: Int,
-                        ready: ((Result<UInt8, Error>) -> Void)?) {
+                        ready: ((Result<UInt8, Error>) -> Void)?, replacing previous: Instance? = nil) {
         guard instances[instanceID] == nil else { return }
         let instance = Instance(id: instanceID, entry: entry, state: state, channels: channels)
         instance.ready = ready
+        if let previous {
+            instance.carriedSliders = previous.host.map(Self.readParameters) ?? previous.carriedSliders
+            if previous.host == nil {
+                // 建てている途中。建ち終えた側が壊す（build）。slotにはさらに前の版が
+                // 載っているかもしれない（続けて2回置き換えた）ので、それを引き継ぐ。
+                instance.predecessor = previous.predecessor
+                previous.predecessor = nil
+            } else if previous.loadTask == nil {
+                // 鳴っている。新しい版をinstallするまでslotに載せておく。
+                instance.predecessor = previous
+            } else {
+                // 組み直しの途中（resumeの後）。終わっても表に居ないので載せ直されず、slotの
+                // 記述子は前のmaxFramesのまま残る。今すぐ外して素通しにする（壊すのは組み直しの後）。
+                if let index = ETAUExternalBridge.shared.index(for: instanceID) {
+                    ETPipeline_ClearExternalProcessorAt(UInt32(index))
+                }
+                retire(previous)
+            }
+        }
         instances[instanceID] = instance
         startLatencyTimerIfNeeded()
         do { _ = try ETAUExternalBridge.shared.reserve(instanceID: instanceID) }
@@ -290,6 +659,7 @@ final class ETJSFXHost: ObservableObject {
             instance.error = error.localizedDescription
             instance.ready?(.failure(error)); instance.ready = nil
             instances.removeValue(forKey: instanceID)
+            retirePredecessor(of: instance)
             revision &+= 1
             return
         }
@@ -303,10 +673,12 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func remove(instanceID: String) {
+        // 先に slot を空ける。retire の「音のスレッドが読み終えた」はここから数える。
         ETAUExternalBridge.shared.remove(instanceID: instanceID)
         if let instance = instances.removeValue(forKey: instanceID) {
             instance.loadTask?.cancel(); instance.stateTask?.cancel()
-            if let host = instance.host { retired.append(host) }
+            retirePredecessor(of: instance)
+            retire(instance)
         }
         revision &+= 1
     }
@@ -314,12 +686,64 @@ final class ETJSFXHost: ObservableObject {
     func removeAll() { for id in Array(instances.keys) { remove(instanceID: id) } }
     func suspend() {
         renderConfiguration = nil
-        // AudioIO stops AVAudioEngine before this call, so descriptors retired
-        // after graph swaps can finally be destroyed without an RT reader.
-        let garbage = retired
-        retired.removeAll(keepingCapacity: true)
+        // 置き換えの途中なら前の版を外す。ETAUHost.suspendがslotを全部空けていて、
+        // resumeが載せ直すのは表にあるものだけ（前の版は表に居ない）。
+        for instance in instances.values { dropPredecessor(of: instance) }
+    }
+
+    /// 置き換えた前の版を片付ける。**slotが新しい版に替わった・空いた後に呼ぶ**（音のスレッドが
+    /// 読み終えるのはretireが待つ）。載ったまま呼ぶと、壊したhostをslotが指す。
+    private func retirePredecessor(of instance: Instance) {
+        guard let previous = instance.predecessor else { return }
+        instance.predecessor = nil
+        retire(previous)
+    }
+
+    /// 置き換えた前の版を今すぐ外す。slotを空け、新しい版が建つまで素通しにする。
+    ///
+    /// 前の版は表に居ないのでresumeが組み直さない。古いsrate / maxFramesのままslotに残すと、
+    /// ブロックがmaxFramesを超えたところで鎖ごと落ちる（followRenderConfiguration）。
+    private func dropPredecessor(of instance: Instance) {
+        guard instance.predecessor != nil else { return }
+        if let index = ETAUExternalBridge.shared.index(for: instance.id) {
+            ETPipeline_ClearExternalProcessorAt(UInt32(index))
+        }
+        retirePredecessor(of: instance)
+    }
+
+    /// 外した host を、誰も触らなくなった時点で壊す。
+    ///
+    /// **音が止まるまで待たない。**前は suspend() でしか壊さず、AudioIO は
+    /// 起動中ずっと回っているので、消した段もプリセットで入れ替えた段も
+    /// 生き残っていた。EEL の RAM は全体 64 MiB（NSEEL_RAM_limitmem）で数えるので、
+    /// 重いスクリプトを 4 回入れ替えると上限に届き、以後の確保は全部
+    /// 1 つの共有セル（nseel_ramalloc_onfail）へ落ちて音が壊れた（診断なし）。
+    ///
+    /// 壊してよいのは次の 3 つが済んでから:
+    /// 1. 走っている状態保存・再設定（nativeTail）。途中で壊すと解放後に読む。
+    /// 2. 音のスレッドが 2 周（EffeTuneDSP.retire と同じ数え方）。slot は
+    ///    remove() で空けてあるので、その後に始まった周は古い descriptor を読まない。
+    ///    鳴っていなければ周は進まないので 0.5 秒で諦める（鳴っていない＝誰も読んでいない）。
+    /// 3. GFX の列に積まれた描画・マウス・鍵。**壊すのもその列で行う**ので、順番で済む。
+    /// menu は先に畳む（開いたままだと 3 が最長 30 秒詰まる）。
+    ///
+    /// host がまだ無い（建てている最中）なら、建て終えた側が壊す（build を読むこと）。
+    private func retire(_ instance: Instance) {
+        guard let host = instance.host else { return }
+        let gate = instance.menuGate, queue = instance.gfxQueue
+        let pending = instance.nativeTail
+        let mark = ETPipeline_ProcessCount()
+        gate.hold()   // 戻さない。以後この host で menu は開かない。
         Task.detached(priority: .utility) {
-            for host in garbage { ETJSFX_Destroy(host) }
+            await pending?.value
+            let deadline = Date().addingTimeInterval(0.5)
+            while ETPipeline_ProcessCount() < mark + 2 && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            queue.async {
+                ETJSFX_Destroy(host)
+                withExtendedLifetime(gate) {}
+            }
         }
     }
 
@@ -329,6 +753,7 @@ final class ETJSFXHost: ObservableObject {
                                                 maxFrames: maxFrames)
         renderConfiguration = configuration
         for instance in instances.values {
+            dropPredecessor(of: instance)
             if let host = instance.host { reconfigure(host, instance: instance, configuration: configuration) }
             else { build(instance, configuration: configuration) }
         }
@@ -353,19 +778,23 @@ final class ETJSFXHost: ObservableObject {
     }
 
     func setParameter(instanceID: String, parameterID: UInt32, value: Double) {
-        guard let instance = instances[instanceID], let host = instance.host,
+        // **NaN と無限は受けない。**Double("nan") は通り、min/max は NaN を素通しする。
+        // 渡すと次の描画で列挙つまみの Int() が落ちていた。
+        guard value.isFinite, let instance = instances[instanceID], let host = instance.host,
               let offset = instance.parameters.firstIndex(where: { $0.id == parameterID }) else { return }
         let p = instance.parameters[offset]
         let clamped = min(max(value, p.minimum), p.maximum)
         ETJSFX_SetSlider(host, parameterID, clamped)
         instance.parameters[offset].value = clamped
         revision &+= 1
-        snapshotState(instance)
+        snapshotState(instance, user: true)
     }
 
     func normalizedValue(instanceID: String, parameterID: UInt32, value: Double) -> Double {
         guard let host = instances[instanceID]?.host else { return 0 }
-        return ETJSFX_SliderToNormalized(host, parameterID, value)
+        // 値はスクリプトが NaN や無限を書ける。Slider へは 0...1 の有限値だけ渡す。
+        let normalized = ETJSFX_SliderToNormalized(host, parameterID, value)
+        return normalized.isFinite ? min(max(normalized, 0), 1) : 0
     }
 
     func setNormalizedParameter(instanceID: String, parameterID: UInt32, value: Double) {
@@ -415,6 +844,9 @@ final class ETJSFXHost: ObservableObject {
     /// trigger を送る。**受け取られたかを返す。**
     /// running でない（自動バイパス中・状態保存中・再設定中）ときは捨てられる。
     /// 呼び出し側はそれを見せる（黙って溜めると再開時に一斉に鳴る）。
+    /// 鎖がこの段を飛ばしている間（無音で休んでいる間も）はtrueが返るが、再開した最初の
+    /// ブロックで捨てられる（ETJSFX_SendTrigger）。札はisProcessingとAudioIO.restingで先に
+    /// 押せなくしてある（EffectCardView）。
     @discardableResult
     func sendTrigger(instanceID: String, index: UInt32) -> Bool {
         guard let host = instances[instanceID]?.host else { return false }
@@ -534,6 +966,7 @@ final class ETJSFXHost: ObservableObject {
     /// （`down && !last_down`）を要る**ので、そこだけが落ちていた。
     func updateMouse(instanceID: String, point: CGPoint, buttons: UInt32) {
         guard let instance = instances[instanceID], let host = instance.host else { return }
+        instance.userTouched = true
         let x = Int32(point.x), y = Int32(point.y)
         guard buttons == 0 else {
             instance.pressSeen = false
@@ -562,6 +995,7 @@ final class ETJSFXHost: ObservableObject {
 
     func updateKey(instanceID: String, modifiers: UInt32, key: UInt32, pressed: Bool) {
         guard let instance = instances[instanceID], let host = instance.host else { return }
+        instance.userTouched = true
         instance.gfxQueue.async { ETJSFX_GFXKey(host, modifiers, key, pressed) }
     }
 
@@ -580,95 +1014,320 @@ final class ETJSFXHost: ObservableObject {
         instance.gfxQueue.async { ETJSFX_GFXWindowState(host, anyFocused, anyVisible, false) }
     }
 
+    /// 建てきるまでの上限。**コンパイルと @init と状態の復元の合計。**
+    ///
+    /// コンパイルは C 側が 2 秒で切るが、測るのは終わった後で、@init には門が無い。
+    /// EEL の実行を途中で切る口も無いので、REAPER 向けに書かれた重い @init は
+    /// 帰ってこない。そのたびに段は "Compiling…" のまま、鎖は保存済みなので
+    /// 次の起動でまた建て、スレッドを 1 本ずつ塞いでいた。
+    /// 越えたら印（stalled）を付けて表示に出す。外さずに待ち、帰ってきたら載せて印を消す。
+    /// 印が残ったまま終わった（帰ってこなかった）ものは、次の起動で建てない。
+    /// スレッドは止められないので残るが、専用スレッドなので他の仕事は塞がない。
+    private static let loadLimit: Duration = .seconds(10)
+    private static let stalledMessage = "JSFX did not finish loading."
+
     private func build(_ instance: Instance, configuration: RenderConfiguration) {
         guard instance.loadTask == nil else { return }
         let path = instance.entry.url.path, state = instance.state, id = instance.id
-        instance.loadTask = Task.detached(priority: .userInitiated) {
-            var message = [CChar](repeating: 0, count: 4096)
-            var host = path.withCString {
-                ETJSFX_Create($0, configuration.sampleRate, UInt32(configuration.maxFrames),
-                              &message, message.count)
+        let entryID = instance.entry.id
+        // 前に建ちきらなかったものは建てない。建てるたびに 1 本回り続ける。
+        guard !Self.isStalled(entryID) else {
+            fail(instance, Self.loadError(Self.stalledMessage), scriptFailed: true); return
+        }
+        // **時間切れでも外さない。**印と表示だけにして、帰ってきたら普通に載せる。
+        // 外すと、PORTABLE で @init が重いだけのスクリプトが毎回ここで捨てられ、
+        // 印も完了で消えるので、起動のたびに建てては捨てて二度と載らない。
+        // 印は「建ちきらないまま終わった」ときだけ残り、次の起動で建てない理由になる。
+        // 数えるのは起きている間だけ（SuspendingClock）。裏に回った間は数えない。
+        let limit = Task { @MainActor [weak self] in
+            try? await Task.sleep(until: .now + Self.loadLimit, clock: .suspending)
+            guard !Task.isCancelled, let self,
+                  let current = self.instances[id], current === instance, current.host == nil else { return }
+            Self.setStalled(entryID, true)
+            // 置き換えの途中なら、建たなかった扱いにして前の版のまま鳴らす（置き換えも戻す）。
+            // 遅れて帰ってきても表に居ないので、載せずに壊す（loadTaskの「外された」）。
+            if current.predecessor != nil {
+                self.fail(current, Self.loadError(Self.stalledMessage), scriptFailed: true)
+                return
             }
-            var restoreFailed = false
-            if let created = host, let state {
-                restoreFailed = !state.withUnsafeBytes { raw in
-                    if let base = raw.bindMemory(to: UInt8.self).baseAddress {
-                        return ETJSFX_LoadState(created, base, state.count)
+            current.error = Self.stalledMessage
+            // 足すのを待っている picker には段を出させる。建ち終われば同じ slot に入る
+            // （restore と同じ、段はあって中身がまだの形）。
+            if let ready = current.ready, let index = ETAUExternalBridge.shared.index(for: id) {
+                current.ready = nil
+                ready(.success(index))
+            }
+            self.revision &+= 1
+        }
+        instance.loadTask = Task { @MainActor in
+            // **協調プールで回さない。**ETJSFXLoader を読むこと（スタックと、帰ってこない @init）。
+            let (created, failure) = await ETJSFXLoader.run { () -> (OpaquePointer?, String?) in
+                var message = [CChar](repeating: 0, count: 4096)
+                var host = path.withCString {
+                    ETJSFX_Create($0, configuration.sampleRate, UInt32(configuration.maxFrames),
+                                  &message, message.count)
+                }
+                var restoreFailed = false
+                if let created = host, let state {
+                    restoreFailed = !state.withUnsafeBytes { raw in
+                        if let base = raw.bindMemory(to: UInt8.self).baseAddress {
+                            return ETJSFX_LoadState(created, base, state.count)
+                        }
+                        return false
                     }
-                    return false
+                    if restoreFailed { ETJSFX_Destroy(created); host = nil }
                 }
-                if restoreFailed { ETJSFX_Destroy(created); host = nil }
+                let error = restoreFailed ? "Could not restore JSFX state."
+                    : (host == nil ? String(cString: message) : nil)
+                return (host, error)
             }
-            let error = restoreFailed ? "Could not restore JSFX state."
-                : (host == nil ? String(cString: message) : nil)
-            await MainActor.run {
-                guard let current = self.instances[id], current === instance else {
-                    if let host { ETJSFX_Destroy(host) }; return
-                }
-                current.loadTask = nil
-                guard let host else {
-                    let failure = NSError(domain: "ETJSFX", code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: error ?? "Could not load JSFX."])
-                    current.error = failure.localizedDescription
-                    current.ready?(.failure(failure)); current.ready = nil
-                    ETAUExternalBridge.shared.remove(instanceID: id)
-                    self.instances.removeValue(forKey: id)
-                    self.revision &+= 1; return
-                }
-                do {
-                    let index = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
-                    ETJSFX_SetGFXMenuCallback(host, etJSFXMenuCallback, nil)
-                    current.host = host; current.parameters = Self.readParameters(host); current.error = nil
-                    self.snapshotState(current)
-                    current.ready?(.success(index)); current.ready = nil
-                } catch {
-                    current.error = error.localizedDescription; self.retired.append(host)
-                    current.ready?(.failure(error)); current.ready = nil
-                    ETAUExternalBridge.shared.remove(instanceID: id)
-                    self.instances.removeValue(forKey: id)
+            limit.cancel()
+            // 遅れてでも帰ってきたなら、止まらないスクリプトではない。
+            Self.setStalled(entryID, false)
+            guard let current = self.instances[id], current === instance else {
+                // 外された。slot にも載せていないのでそのまま壊す。
+                if let created { Task.detached(priority: .utility) { ETJSFX_Destroy(created) } }
+                return
+            }
+            current.loadTask = nil
+            guard let host = created else {
+                self.fail(current, Self.loadError(failure ?? "Could not load JSFX."), scriptFailed: true)
+                return
+            }
+            // 置き換えた前の版のつまみを移す。**installの前に。**置いた値は最初のブロックの頭で
+            // 渡る（applySliders）ので、新しい版の既定の値で鳴る瞬間が無い。
+            if let carried = current.carriedSliders {
+                current.carriedSliders = nil
+                Self.carrySliders(carried, into: host)
+            }
+            do {
+                let replacing = current.predecessor != nil
+                let index = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
+                // slotは新しい版に替わった。前の版はもう呼ばれない。
+                self.retirePredecessor(of: current)
+                ETJSFX_SetGFXMenuCallback(host, etJSFXMenuCallback,
+                                          Unmanaged.passUnretained(current.menuGate).toOpaque())
+                current.host = host; current.parameters = Self.readParameters(host); current.error = nil
+                // 見回りは生きたhostが1つも無いと止まる（pollRuntimeChanges）。建てている間に
+                // 止まっていれば、ここで回し直す（置き換えでは前の版が表に居ないので止まりやすい）。
+                self.startLatencyTimerIfNeeded()
+                self.snapshotState(current)
+                let picking = current.ready != nil
+                current.ready?(.success(index)); current.ready = nil
+                // 建った。置き換えの途中だったなら、置き場の前の版はもう戻さない。
+                self.commitReplacement(of: current.entry.id)
+                // 鎖の段が前の版のid（付け替えで引いた）を控えていれば、いま鳴っている版のidへ。
+                // ピッカーが足した段もここで直る（readyの中で足す。足したidは前の版のことがある）。
+                EffeTuneDSP.shared.externalComponentDidChange(instanceID: id, to: current.entry.id)
+                // 遅延補正は鎖を組むときにslotから読む（ETPipelineのexternal latency callback）。
+                // installは組み直さないので、前の版から替わった・空のslotに遅れのある版が入ったときは
+                // 組み直す。ピッカーの段は足すときに組む。hostの最初の遅れは「変わった」の印を
+                // 立てないので、見回り（pollRuntimeChanges）では拾えない。
+                if replacing || (!picking && Self.latency(of: host) > 0) {
+                    EffeTuneDSP.shared.republish(reason: "JSFX installed")
                 }
                 self.revision &+= 1
+                self.followRenderConfiguration(current, built: configuration)
+            } catch {
+                // install は slot を取る前に投げる。音のスレッドは読んでいない。
+                Task.detached(priority: .utility) { ETJSFX_Destroy(host) }
+                self.fail(current, error)
             }
         }
+    }
+
+    /// 建てられなかった instance を外す。鎖の段は残る（status は "JSFX unavailable"）。
+    ///
+    /// - **置き換えの途中なら前の版へ戻す**（readopt）。前の版はslotに載ったまま鳴っている。
+    /// - **鎖に居る段のslotは返さない。**段は番号（externalIndex）を控えたまま鎖に残り、
+    ///   publishはその番号を出し続ける。返すと次に足したものが同じ番号を取り、1つの処理が
+    ///   鎖の2か所で回る。返すのは段を消したとき（remove(instanceID:)）。外れた段を建て直す
+    ///   ときも同じ番号のまま（reviveDeadCards）。ピッカーが待っている（ready）ものはまだ
+    ///   鎖に居ないので返す。
+    /// - `scriptFailed`（コンパイルできない・状態を読めない・時間切れ）で、その版が置き換えの
+    ///   途中なら置き換えを戻す（rollBackReplacement）。slotが足りないのは版のせいではないので戻さない。
+    private func fail(_ instance: Instance, _ error: Error, scriptFailed: Bool = false) {
+        let id = instance.id, bridge = ETAUExternalBridge.shared
+        instance.error = error.localizedDescription
+        instances.removeValue(forKey: id)
+        let ready = instance.ready
+        instance.ready = nil
+        if let previous = instance.predecessor {
+            instance.predecessor = nil
+            readopt(previous, ready: ready)
+        } else if let ready {
+            bridge.remove(instanceID: id)
+            ready(.failure(error))
+        } else if let index = bridge.index(for: id) {
+            // 載っているものは無いはずだが、番号だけ残して素通しにしておく。
+            ETPipeline_ClearExternalProcessorAt(UInt32(index))
+        }
+        if scriptFailed { rollBackReplacement(of: instance.entry.id) }
+        revision &+= 1
+    }
+
+    /// 置き換えに失敗した段を前の版へ戻す。**前の版はslotに載ったまま鳴っている**ので表へ
+    /// 戻すだけで、音も番号も替わらない。置き換えを始めたとき（rebuild）に取り消した状態保存は
+    /// ここで頼み直す。ピッカーが待っていれば、前の版の段として出させる。
+    private func readopt(_ previous: Instance, ready: ((Result<UInt8, Error>) -> Void)?) {
+        instances[previous.id] = previous
+        startLatencyTimerIfNeeded()
+        snapshotState(previous)
+        guard let ready else { return }
+        if let index = ETAUExternalBridge.shared.index(for: previous.id) {
+            ready(.success(index))
+        } else {
+            ready(.failure(Self.loadError(previous.error ?? "Could not load JSFX.")))
+        }
+    }
+
+    private static func loadError(_ message: String) -> Error {
+        NSError(domain: "ETJSFX", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func reconfigure(_ host: OpaquePointer, instance: Instance,
                              configuration: RenderConfiguration) {
         guard instance.loadTask == nil else { return }
-        let id = instance.id
-        instance.loadTask = Task.detached(priority: .userInitiated) {
-            let ok = ETJSFX_Reconfigure(host, configuration.sampleRate, UInt32(configuration.maxFrames))
-            await MainActor.run {
-                guard let current = self.instances[id], current === instance else { return }
-                current.loadTask = nil
-                do {
-                    guard ok else { throw NSError(domain: "ETJSFX", code: 2,
-                                                  userInfo: [NSLocalizedDescriptionKey: "JSFX reconfiguration failed."]) }
-                    _ = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
-                    current.parameters = Self.readParameters(host); current.error = nil
-                } catch { current.error = error.localizedDescription }
-                self.revision &+= 1
+        let id = instance.id, entryID = instance.entry.id
+        // ysfx_init が @init を回し直すので、建てるときと同じく帰ってこないことがある。
+        // host は @init の途中なので壊せない。印と表示だけにして、loadTask は残す
+        // （残せば resume が重ねない）。
+        let limit = Task { @MainActor [weak self] in
+            try? await Task.sleep(until: .now + Self.loadLimit, clock: .suspending)
+            guard !Task.isCancelled, let self,
+                  let current = self.instances[id], current === instance else { return }
+            Self.setStalled(entryID, true)
+            current.error = Self.stalledMessage
+            self.revision &+= 1
+        }
+        let operation = enqueue(instance, onLoader: true) {
+            ETJSFX_Reconfigure(host, configuration.sampleRate, UInt32(configuration.maxFrames))
+        }
+        instance.loadTask = Task { @MainActor in
+            let ok = await operation.value
+            limit.cancel()
+            Self.setStalled(entryID, false)
+            guard let current = self.instances[id], current === instance else { return }
+            current.loadTask = nil
+            do {
+                guard ok else { throw NSError(domain: "ETJSFX", code: 2,
+                                              userInfo: [NSLocalizedDescriptionKey: "JSFX reconfiguration failed."]) }
+                _ = try ETAUExternalBridge.shared.install(ETJSFX_Processor(host), instanceID: id)
+                current.parameters = Self.readParameters(host); current.error = nil
+            } catch { current.error = error.localizedDescription }
+            self.revision &+= 1
+            if ok { self.followRenderConfiguration(current, built: configuration) }
+        }
+    }
+
+    /// 建てた・組み直した設定が、いまの設定と違えば組み直す。
+    ///
+    /// **走っている間に来た resume は捨てられる**（build / reconfigure の頭の
+    /// loadTask の門）。そのままだと古い srate / maxFrames で回り、ブロックが
+    /// maxFrames を超えると ETExternalProcessor_Process が -2 を返して鎖ごと落ちる。
+    /// 違わなければ何もしないので、繰り返しは設定が変わった回数で止まる。
+    private func followRenderConfiguration(_ instance: Instance, built: RenderConfiguration) {
+        guard let current = renderConfiguration, current != built, let host = instance.host else { return }
+        reconfigure(host, instance: instance, configuration: current)
+    }
+
+    /// 保守を instance ごとの列に並べる。**頼んだ順に 1 本ずつ流す。**
+    ///
+    /// 状態保存と再設定は別々の Task から来る。C 側は入口を通ったものを 1 本ずつ
+    /// 通すが、ETJSFX_Destroy が守れるのは「もう入口を通ったもの」だけで、
+    /// これから呼ばれるものは守れない（ETJSFXHost.h）。retire はこの列の最後尾を
+    /// 待ってから壊すので、頼んだのに走っていないものを置き去りにしない。
+    /// 順番が決まるので、古い保存が新しい保存の後に書き戻すこともない。
+    /// 入る前に menu を畳む（ETJSFXMenuGate）。onLoader は @init を回すもの。
+    /// holdsMenu が false なら gate に触らない（状態保存。work の側で holdIfIdle する）。
+    /// **並べるのは呼んだその場で**（await の後にすると、間に来た remove が取りこぼす）。
+    private func enqueue<T: Sendable>(_ instance: Instance, onLoader: Bool = false,
+                                      holdsMenu: Bool = true,
+                                      _ work: @escaping @Sendable () -> T) -> Task<T, Never> {
+        let previous = instance.nativeTail, gate = instance.menuGate
+        let operation = Task.detached(priority: .utility) { () -> T in
+            await previous?.value
+            if holdsMenu { gate.hold() }
+            defer { if holdsMenu { gate.release() } }
+            if onLoader { return await ETJSFXLoader.run(work) }
+            return work()
+        }
+        instance.nativeTail = Task.detached(priority: .utility) { _ = await operation.value }
+        return operation
+    }
+
+    /// 状態を控える。つまみの連打をまとめるため 250 ms 待つ。
+    ///
+    /// **人の操作（user）には上限がある（最初に頼まれてから 2 秒）。**前は頼まれるたびに
+    /// 待ちを捨てて測り直していた。毎ブロック sliderchange() を撃つメーター型の
+    /// スクリプトでは 10Hz の見回りが 100 ms ごとに頼むので 250 ms が満ちず、
+    /// つまみを動かしても保存されなかった（起動し直すと戻る）。
+    /// **スクリプトからの頼みには上限を掛けない。**掛けるとメーター型が鳴っている間
+    /// 2 秒ごとに保存し（そのたび素通し）、値が動くので persist と iCloud まで毎回走る。
+    /// 人の操作が待っていれば、その期限を後ろへずらさないだけ。
+    /// @gfx の中のつまみは sliderchange でしか分からないので、指か鍵が来たあと
+    /// （userTouched）の頼みを人の操作として扱う。
+    ///
+    /// **menu を畳まない。**出ていれば閉じるまで待ってから書く。状態保存は急ぐものではなく、
+    /// 開いたまま書けば SaveState は gfxActive を待って素通しが続く。
+    ///
+    /// 書き始めたら取り消さない。後から来た頼みは次の保存として後ろに並ぶ。
+    private func snapshotState(_ instance: Instance, user: Bool = false) {
+        guard instance.host != nil else { return }
+        let now = ContinuousClock.now
+        if user || instance.userTouched { instance.snapshotSince = instance.snapshotSince ?? now }
+        var due = now + .milliseconds(250)
+        if let since = instance.snapshotSince { due = min(due, since + .seconds(2)) }
+        let id = instance.id, gate = instance.menuGate
+        instance.stateTask?.cancel()
+        instance.stateTask = Task { @MainActor in
+            try? await Task.sleep(until: due, clock: .continuous)
+            while true {
+                guard !Task.isCancelled, let host = instance.host,
+                      self.instances[id] === instance else { return }
+                if !gate.isShowing {
+                    let since = instance.snapshotSince, touched = instance.userTouched
+                    instance.snapshotSince = nil; instance.userTouched = false
+                    let result = await self.enqueue(instance, holdsMenu: false) { () -> Snapshot in
+                        // 並んでいる間に開いたら書かない（畳まない）。
+                        guard gate.holdIfIdle() else { return .menuShown }
+                        defer { gate.release() }
+                        var bytes: UnsafeMutablePointer<UInt8>?, size = 0
+                        guard ETJSFX_SaveState(host, &bytes, &size), let bytes else { return .saved(nil) }
+                        defer { ETJSFX_FreeBytes(bytes) }
+                        return .saved(Data(bytes: bytes, count: size))
+                    }.value
+                    if case .saved(let data) = result {
+                        // 同じ中身なら鎖を書き直さない（メーター型は値が動かなくても頼んでくる）。
+                        guard let current = self.instances[id], current === instance,
+                              let data, data != current.state else { return }
+                        current.state = data
+                        EffeTuneDSP.shared.externalStateDidChange(instanceID: id)
+                        return
+                    }
+                    // 書けなかったので、人の操作の期限を戻す。
+                    instance.snapshotSince = instance.snapshotSince ?? since
+                    instance.userTouched = instance.userTouched || touched
+                }
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
     }
 
-    private func snapshotState(_ instance: Instance) {
-        instance.stateTask?.cancel()
-        guard let host = instance.host else { return }
-        let id = instance.id
-        instance.stateTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            let data = await Task.detached(priority: .utility) { () -> Data? in
-                var bytes: UnsafeMutablePointer<UInt8>?, size = 0
-                guard ETJSFX_SaveState(host, &bytes, &size), let bytes else { return nil }
-                defer { ETJSFX_FreeBytes(bytes) }
-                return Data(bytes: bytes, count: size)
-            }.value
-            guard let current = self.instances[id], current === instance else { return }
-            current.stateTask = nil
-            if let data { current.state = data; EffeTuneDSP.shared.externalStateDidChange(instanceID: id) }
-        }
+    // MARK: - 建ちきらなかったもの
+
+    /// 時間切れになった source の id（中身の sha256 から作るので、直せば別の id になる）。
+    private static let stalledKey = "jsfx.stalled"
+
+    private static func isStalled(_ entryID: String) -> Bool {
+        (UserDefaults.standard.stringArray(forKey: stalledKey) ?? []).contains(entryID)
+    }
+
+    private static func setStalled(_ entryID: String, _ stalled: Bool) {
+        var list = UserDefaults.standard.stringArray(forKey: stalledKey) ?? []
+        guard list.contains(entryID) != stalled else { return }
+        if stalled { list.append(entryID) } else { list.removeAll { $0 == entryID } }
+        UserDefaults.standard.set(list, forKey: stalledKey)
     }
 
     private func pollRuntimeChanges() {
@@ -711,6 +1370,155 @@ final class ETJSFXHost: ObservableObject {
         }
     }
 
+    /// hostがいま名乗っている遅れ（標本）。鎖を組むときにETPipelineがslotから読むのと同じ値。
+    private static func latency(of host: OpaquePointer) -> UInt32 {
+        var processor = ETJSFX_Processor(host)
+        return ETExternalProcessor_Latency(&processor)
+    }
+
+    /// 置き換えた前の版のつまみを、建てたばかりの新しい版へ置く。
+    /// **数と範囲が全部同じときだけ**（JSFXReplace.carriedSliderValues）。合わなければ何もしない
+    /// ＝新しい版の既定から始まる。隠しつまみも数に入れる（readParametersは全部を返す）。
+    private static func carrySliders(_ previous: [Parameter], into host: OpaquePointer) {
+        let fresh = readParameters(host)
+        let values = JSFXReplace.carriedSliderValues(
+            from: previous.map { JSFXReplace.Slider(index: $0.id, minimum: $0.minimum,
+                                                    maximum: $0.maximum, value: $0.value) },
+            to: fresh.map { JSFXReplace.SliderRange(index: $0.id, minimum: $0.minimum,
+                                                    maximum: $0.maximum) })
+        for slider in values { ETJSFX_SetSlider(host, slider.index, slider.value) }
+    }
+
+    // MARK: - 置き換えた前の版の付け替え
+
+    /// 置き場（JSFX/Sources）の隣。**Sourcesの中には置かない。**あちらは中の`.jsfx`を
+    /// 全部一覧に出す場所で、名前で掃除しない。
+    private static func replacedAliasesURL() -> URL? {
+        (try? storageURL("JSFX"))?.appendingPathComponent("aliases.json")
+    }
+
+    /// 読めなければ空。壊れた表で起動を止めない（次に置き換えたときに書き直す）。
+    private static func loadReplacedAliases() -> JSFXReplace.Aliases {
+        guard let url = replacedAliasesURL(), let data = try? Data(contentsOf: url) else { return .init() }
+        return JSFXReplace.Aliases(data: data) ?? .init()
+    }
+
+    /// 書けたらtrue。**置き換えは書けてからファイルを動かす**（replaceOlderVersions）。
+    @discardableResult
+    private static func saveReplacedAliases(_ aliases: JSFXReplace.Aliases) -> Bool {
+        guard let url = replacedAliasesURL() else { return false }
+        let data = aliases.encoded()
+        guard !data.isEmpty else { return false }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        return (try? data.write(to: url, options: .atomic)) != nil
+    }
+
+    /// 置き換えた前の版の置き場。**Sourcesの隣で、中の`.jsfx`は一覧に出さない。**
+    /// 新しい版が1度建つまでここで待つ（commitReplacement / rollBackReplacement）。
+    private static func shelfURL(create: Bool) -> URL? {
+        guard let url = try? storageURL("JSFX/Replaced") else { return nil }
+        if create { try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
+        return url
+    }
+
+    /// 置き場の前の版。**新しく取り込んだ順**（ファイルの更新日時。移しても変わらない）。
+    private static func shelvedFiles() -> [(id: String, url: URL)] {
+        guard let shelf = shelfURL(create: false),
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: shelf, includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]) else { return [] }
+        func date(_ url: URL) -> Date {
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            return values?.contentModificationDate ?? .distantPast
+        }
+        return files.filter { $0.pathExtension.lowercased() == "jsfx" }
+            .map { (url: $0, date: date($0)) }
+            .sorted { $0.date > $1.date }
+            .map { (id: "jsfx:" + $0.url.deletingPathExtension().lastPathComponent, url: $0.url) }
+    }
+
+    /// 置き場で`target`が建つのを待っている前の版（新しい順）。
+    private func shelvedVersions(for target: String) -> [(id: String, url: URL)] {
+        Self.shelvedFiles().filter { replacedAliases.resolve($0.id) == target }
+    }
+
+    /// `target`が1度建った。置き場で待っていた前の版を消す（もう戻さない）。
+    /// **付け替えは残す**（前のidで保存したプリセット・バックアップはこれで引く）。
+    /// 消せなかったものは置き場に残り、次の起動で待ち直す（tidyShelf）。
+    private func commitReplacement(of target: String) {
+        guard pendingTargets.remove(target) != nil else { return }
+        for shelved in shelvedVersions(for: target) {
+            guard (try? FileManager.default.removeItem(at: shelved.url)) != nil else { continue }
+            Self.setStalled(shelved.id, false)
+        }
+    }
+
+    /// `target`が建たなかった（コンパイルできない・状態を読めない・時間切れ）。置き換えを戻す。
+    ///
+    /// 置き場の前の版を一覧へ戻し、付け替えを外す（JSFXReplace.Aliases.rollBack）。
+    /// **建たなかった新しい版は一覧に残す。**取り込んだものを黙って消さない。同じ名前が2本並ぶが、
+    /// 直した版を入れれば両方まとめて置き換わる。鳴っていた段は、置き換えに失敗した時点で
+    /// 前の版のまま（fail → readopt）。外れていた段は戻した版で建て直す。
+    /// **ファイルを先に戻す。**付け替えを書く前に落ちても、戻した版は一覧を先に引く
+    /// entry(id:)で自分のidのまま建つ。
+    private func rollBackReplacement(of target: String) {
+        guard pendingTargets.remove(target) != nil,
+              let sources = try? Self.storageURL("JSFX/Sources") else { return }
+        var restored: [String] = []
+        for shelved in shelvedVersions(for: target) {
+            let destination = sources.appendingPathComponent(shelved.url.lastPathComponent)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try? FileManager.default.removeItem(at: shelved.url)
+            } else {
+                guard (try? FileManager.default.moveItem(at: shelved.url, to: destination)) != nil else { continue }
+            }
+            restored.append(shelved.id)
+        }
+        guard !restored.isEmpty else { return }
+        replacedAliases.rollBack(target: target, restored: restored)
+        Self.saveReplacedAliases(replacedAliases)
+        refresh()
+        reviveDeadCards(resolvingTo: Set(restored))
+    }
+
+    /// `target`を消した。置き場で待っていた前の版も消す。
+    private func discardShelved(for target: String) {
+        pendingTargets.remove(target)
+        for shelved in shelvedVersions(for: target) {
+            try? FileManager.default.removeItem(at: shelved.url)
+        }
+    }
+
+    /// 起動のときに置き場を見直す（JSFXReplace.shelfFate）。行き先が一覧に居るものは待たせ、
+    /// 行き先を消した・同じ中身が一覧に居るものは消し、付け替えの無いものは一覧へ戻す。
+    ///
+    /// 一覧はJSFX/Sourcesを直に読む。読めなければ何もしない（空の一覧で見直すと、
+    /// 待っている前の版を「行き先を消した」と読んで消す）。閉じた版（isEnabled）でも触らない。
+    private func tidyShelf() {
+        guard Self.isEnabled else { return }
+        let shelved = Self.shelvedFiles()
+        guard !shelved.isEmpty,
+              let sources = try? Self.storageURL("JSFX/Sources"),
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: sources, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+        let live = Set(files.filter { $0.pathExtension.lowercased() == "jsfx" }
+            .map { "jsfx:" + $0.deletingPathExtension().lastPathComponent })
+        var restored = false
+        for file in shelved {
+            switch JSFXReplace.shelfFate(of: file.id, aliases: replacedAliases, live: live) {
+            case .waiting(let target):
+                pendingTargets.insert(target)
+            case .discard:
+                try? FileManager.default.removeItem(at: file.url)
+            case .restore:
+                let destination = sources.appendingPathComponent(file.url.lastPathComponent)
+                if (try? FileManager.default.moveItem(at: file.url, to: destination)) != nil { restored = true }
+            }
+        }
+        if restored { refresh() }
+    }
+
     private static func ownedEntries(at root: URL?, debug: Bool) -> [Entry] {
         guard let root,
               let files = try? FileManager.default.contentsOfDirectory(at: root,
@@ -738,7 +1546,8 @@ final class ETJSFXHost: ObservableObject {
             identifier = "jsfx:" + owned.deletingPathExtension().lastPathComponent
         }
         return Entry(id: identifier, name: metadata.name ?? fallbackName,
-                     author: metadata.author ?? "", url: owned, isDebugFixture: debug)
+                     author: metadata.author ?? "", url: owned, isDebugFixture: debug,
+                     identity: JSFXReplace.Identity(metadata: metadata))
     }
 
     /// Bundled debug fixtures are developer-owned files, not user imports.
@@ -812,6 +1621,11 @@ final class ETJSFXHost: ObservableObject {
         let destination = root.appendingPathComponent(hash).appendingPathExtension("jsfx")
         if !FileManager.default.fileExists(atPath: destination.path) {
             try data.write(to: destination, options: .atomic)
+        } else {
+            // 同じ中身を入れ直したら、取り込んだ時刻だけ進める。鎖の`{"jsfx":"<名前>"}`は
+            // 同じ名前なら最後に取り込んだ1本を指す（chainResolver）。
+            try? FileManager.default.setAttributes([.modificationDate: Date()],
+                                                   ofItemAtPath: destination.path)
         }
         return destination
     }
@@ -837,18 +1651,9 @@ final class ETJSFXHost: ObservableObject {
         }
     }
 
+    /// 読み方はJSFXReplace.metadataが持つ。置き換えの判定（desc:とauthor:）と一覧の名前を
+    /// 同じ読み方にするため（BOMと見えない字の扱いもあちら）。
     private static func metadata(_ source: String) -> (name: String?, author: String?) {
-        var name: String?, author: String?
-        for raw in source.split(whereSeparator: { $0.isNewline }).prefix(80) {
-            // **見えない字も落とす。**looksLikeJSFX と同じ扱いにしないと、
-            // BOM 付きの `.txt` は取り込めるのに 1 行目の `desc:` が読めず、
-            // 一覧に題ではなくファイル名が並ぶ。U+FEFF は空白ではないので
-            // .whitespaces だけでは落ちない。
-            let line = raw.trimmingCharacters(in: .whitespaces)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\u{FEFF}\u{200B}"))
-            if line.hasPrefix("desc:") { name = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces) }
-            if line.hasPrefix("author:") { author = String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces) }
-        }
-        return (name, author)
+        JSFXReplace.metadata(source)
     }
 }

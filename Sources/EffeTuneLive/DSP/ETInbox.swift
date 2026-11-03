@@ -2,7 +2,8 @@
 //  外から渡されたファイルの振り分け。
 //
 //  共有シートや他のアプリの「このアプリで開く」から来る URL を、どこへ入れるかだけ決める。
-//  View は持たない。呼ぶのは PipelineView の `.onOpenURL` 1 か所だけにしてある。
+//  View は持たない。呼ぶのは PipelineView の `.onOpenURL` と drainShared
+//  （共有の拡張が App Group に置いたもの。ETShareInbox）、EffectPickerView のリンク取り込み。
 //
 //  **宣言（Info.plist の CFBundleDocumentTypes）と受け口は組でしか入れられない。**
 //  宣言だけ足すと共有シートに出るのに押しても何も起きない、という新しい症状になる。
@@ -16,19 +17,13 @@
 //  JSFX も受ける。**拡張子では振らない。**JSFX には拡張子が無いことがあり、
 //  メールや Files が付けた `.txt` でも来る。中身で判定するのは
 //  ETJSFXHost.importFile（looksLikeJSFX）なので、ここは順に試すだけにする。
+//
+//  **順番と断りの読み方は ETInboxRouting.swift（route）。**ここは本物の取り込み 2 つを
+//  渡すだけで、単体テストは偽の 2 つを route に渡して試す（InboxTests）。
 
 import Foundation
 
-enum ETInbox {
-
-    /// 受け取った結果。呼び出し側がどの画面を出すかを決める。
-    enum Received {
-        case ir(String)
-        case jsfx(String)
-        /// JSFX らしいが受けられなかった。理由を出すために持つ。
-        case failed(String)
-        case unsupported
-    }
+extension ETInbox {
 
     /// 1 本受ける。
     ///
@@ -41,27 +36,8 @@ enum ETInbox {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-        // **どちらも中身で判定する。拡張子では振らない。**
-        //
-        // 前は音を先に試していた。IRLibrary.importFile は読めさえすれば何でも
-        // 受けていたので（拡張子は複製先の名前に使うだけ）、**JSFX を渡しても
-        // IR として取り込まれて終わっていた。**いまは両方が頭の印と中身を見る。
-
-        // 音（IRLibrary.looksLikeAudio が AVAudioFile で開けるかを見る）。
-        if let id = IRLibrary.shared.importFile(at: url) { return .ir(id) }
-
-        // JSFX（ETJSFXHost.importFile の looksLikeJSFX が `desc:` と `@…` を見る）。
-        // 拡張子が無いもの、`.txt` が付いたものも同じ道を通る。
-        do {
-            let entry = try ETJSFXHost.shared.importFile(url)
-            return .jsfx(entry.id)
-        } catch let error as NSError where error.domain == "ETJSFX" && error.code == 10 {
-            // JSFX でも音でもなかった。
-            return .unsupported
-        } catch {
-            // JSFX らしいが受けられなかった（大きすぎる、字に起こせない、写せない）。
-            // 黙って落とすと「押しても何も起きない」になるので、理由を返す。
-            return .failed(error.localizedDescription)
-        }
+        return route(url,
+                     importIR: { IRLibrary.shared.importFile(at: $0) },
+                     importJSFX: { try ETJSFXHost.shared.importFile($0).id })
     }
 }

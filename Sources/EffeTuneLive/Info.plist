@@ -29,6 +29,17 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- PoC: 同じ LAN の PC で動く EffeTune へ WebSocket でつなぐ（DSP/RemoteMirror.swift）。
+	     つなぐ先は ws://<LAN の IP>:47300 で暗号が無いので、ローカルだけ ATS を外す。 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>EffectDeck connects to EffeTune on your computer to control it.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>EffectDeck uses the camera to scan the pairing code shown by EffeTune on your computer.</string>
 	<!-- 暗号を使わない。入れておかないと、アップロードのたびに
 	     App Store Connect 側で「輸出コンプライアンスが無い」と言われ、
 	     API か web で答えるまでベータ審査へ出せない。 -->

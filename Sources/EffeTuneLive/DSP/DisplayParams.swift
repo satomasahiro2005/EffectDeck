@@ -1,10 +1,17 @@
 //  DisplayParams.swift
 //  音に関わらない表示の設定で、**上流がプリセットに書いているもの**。
 //
-//  上流は getParameters() でこれらを返している:
-//      note_spectrogram.js:155-169   cl / pr / ly / vl / ts
-//      spectrogram.js:345-356        sc
-//      spectrum_analyzer.js:276-288  sc / dm
+//  上流は getParameters() でこれらを返している（v2.11.0 の行）:
+//      note_spectrogram.js:190-204   cl / pr / ly / vl / ts
+//      spectrogram.js:364-376        cl / kb / sc
+//      spectrum_analyzer.js:295-308  kb / sc / dm / cl
+//      pitch_meter.js:96-107         ly / cl
+//      stereo_meter.js:271-279       gn
+//      chroma_spiral.js:92-96        dm / lo / hi / ft / lr / df
+//      analog_meter.js:295-311       rl / rg / sc / ph / ln / tg / ls（v2.12.0）
+//      rhythm_analyzer.js:164-178    sp / vt / vm / ve / vl（v2.12.0。mn / mx / ck は DSP 側。2.13.0 は vt / ve の既定が false）
+//  **画面で使っていないもの（kb）も表に入れる。**
+//  入れないと web 版から来た値が往復で消える。
 //
 //  DSP のパラメータではないので params.json に席が無く、こちらの values
 //  （float の並び）にも載らない。Section の名前（`cm`）や IR の鍵（`ir`）と
@@ -34,14 +41,88 @@ enum ETDisplayParam {
     static func table(for type: String) -> [String: Kind] {
         switch type {
         case "NoteSpectrogramPlugin":
-            return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number]
+            // hl（Highlight）と os（Onsets）は 2.14.0。cl に Instrument3 / Instrument9 が増えた。
+            return ["cl": .text, "pr": .text, "ly": .text, "vl": .flag, "ts": .number, "hl": .text, "os": .flag]
         case "SpectrogramPlugin":
-            return ["sc": .text]
+            return ["sc": .text, "cl": .text, "kb": .flag]
         case "SpectrumAnalyzerPlugin":
-            return ["sc": .text, "dm": .text]
+            return ["sc": .text, "dm": .text, "cl": .text, "kb": .flag]
+        case "PitchMeterPlugin":
+            return ["ly": .text, "cl": .text]
+        case "StereoMeterPlugin":
+            return ["gn": .number]
+        case "ChromaSpiralPlugin":
+            // dm はここでは数（0/1/2）。上流は `=== 0` で比べる（chroma_spiral.js:103）。
+            return ["dm": .number, "lo": .number, "hi": .number,
+                    "ft": .number, "lr": .number, "df": .number]
+        case "AnalogMeterPlugin":
+            // 全部数。sc（PPM Scale 0/1/2）・ln（Needle 0/1）・ls（Scale 0/1）は
+            // 上流が数のまま持つ（analog_meter.js:14-16、:323-336 の Number.isInteger・=== 0/1）。
+            // 保存形式で文字にすると上流は読まない。
+            // dc（Custom の Dial 0〜4）は 2.14.0。
+            return ["rl": .number, "rg": .number, "sc": .number, "ph": .number,
+                    "ln": .number, "tg": .number, "ls": .number, "dc": .number]
+        case "RhythmAnalyzerPlugin":
+            // sp は 4/6/8/12/16 のどれか（上流は最寄りへ寄せる、rhythm_analyzer.js:10・:179-187）。
+            return ["sp": .number, "vt": .flag, "vm": .flag, "ve": .flag, "vl": .flag]
+        case "SFZNotePlayerPlugin":
+            // 2.14.0 の声の図の色。Normal か Rainbow（画面では Note Colors、sfz_note_player.js:77）。
+            return ["cl": .text]
         default:
             return [:]
         }
+    }
+
+    /// 上流の既定（constructor の値）。**プリセットとの一致を見るために持つ**
+    /// （display に鍵が無いのは「触っていない＝既定」）。持つのは、プリセットが表示の設定を運ぶ型だけ。
+    /// Analog Meter の 17 個の出荷時プリセットは、Mode のほかは全部この表示の設定の違い
+    /// （analog_meter.js:15-17 の ANALOG_METER_DEFAULTS と 26-46 の analogMeterPreset）。
+    static func defaults(for type: String) -> [String: String] {
+        switch type {
+        case "AnalogMeterPlugin":
+            return ["rl": "-14.0", "rg": "40.0", "sc": "0.0", "ph": "1.0",
+                    "ln": "0.0", "tg": "-23.0", "ls": "0.0", "dc": "0.0"]
+        case "RhythmAnalyzerPlugin":
+            // 2.13.0 で Tempogram と Echo rows は既定で隠す（rhythm_analyzer.js の RHYTHM_ANALYZER_DEFAULTS）。
+            return ["sp": "8.0", "vt": "false", "vm": "true", "ve": "false", "vl": "true"]
+        default:
+            return [:]
+        }
+    }
+
+    /// 鎖の保存で、触っていない鍵も既定で書く型。上流は getParameters() で毎回全部書くので、
+    /// 書いておけば「鍵が無い＝2.12 以前の保存」と見分けられる（legacyRead）。
+    static func writesDefaultsInChain(_ type: String) -> Bool { type == "RhythmAnalyzerPlugin" }
+
+    /// 2.13.0 より前の EffectDeck が保存した鎖には Rhythm Analyzer の vt / ve が無い。
+    /// あの頃の既定は両方 true なので、どちらの鍵も無い保存はそれで読む（2.13.0 の既定 false のままだと、
+    /// 触っていない段が更新後に Tempogram と Echo の行を隠す）。2.13.0 以降は writesDefaultsInChain で
+    /// 必ず書くので、この補いは古い保存にだけ効く。
+    static func legacyRead(_ params: [String: Any], type: String) -> [String: String] {
+        var out = read(params, type: type)
+        if type == "RhythmAnalyzerPlugin", params["vt"] == nil, params["ve"] == nil {
+            out["vt"] = "true"
+            out["ve"] = "true"
+        }
+        return out
+    }
+
+    /// プリセットの表示の設定が、いまの display と一致するか。
+    /// 上流の一致は「プリセットが書いた鍵だけ」を比べる（plugin-preset-dialog.js:64-72）。
+    /// 既定を持たない型・鍵は比べない（比べられないものを不一致にしない）。
+    static func matches(_ presetParams: [String: Any], display: [String: String], type: String) -> Bool {
+        let fallback = defaults(for: type)
+        for (key, kind) in table(for: type) {
+            guard let raw = presetParams[key], let want = decode(raw, kind: kind),
+                  let have = display[key] ?? fallback[key] else { continue }
+            switch kind {
+            case .number:
+                guard let a = Double(want), let b = Double(have), abs(a - b) < 1e-9 else { return false }
+            default:
+                if want != have { return false }
+            }
+        }
+        return true
     }
 
     /// 持っている文字列を、上流の型へ。

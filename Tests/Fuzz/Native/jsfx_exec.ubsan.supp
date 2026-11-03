@@ -1,0 +1,8 @@
+# jsfx_exec.ubsan.supp（Tests/Fuzz/Native）
+# 的 jsfxexec が見つけて、まだ直していない UB。**直したら行を消す。**
+# run.sh がこの的のときだけ UBSAN_OPTIONS の suppressions に渡す（FUZZ_UBSAN_SUPPRESSIONS= で外せる）。
+# 効くのは写しの側で recover にしてある検査だけ（run.sh の compile_one: signed-integer-overflow と shift）。
+# ここに無いものは今までどおり 1 回目で止まる。
+#
+# 今は無い（run.sh が読むのでファイルは残す）。前にここに居た 4 件（EEL2 の memset、文字列の番号、
+# gfx_lineto の ClipLine、gfx_arc / gfx_circle の lice_arc.cpp）は Patches/ysfx-effectdeck-ios.diff で直した。

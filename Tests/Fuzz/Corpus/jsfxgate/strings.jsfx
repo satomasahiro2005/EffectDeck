@@ -1,0 +1,5 @@
+desc:s
+@init
+s = "a\"b // not a comment ( [ {";
+// include("x")
+t = "unterminated

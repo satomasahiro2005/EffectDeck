@@ -62,8 +62,10 @@ typedef struct {
 /// （engine.cpp:219-222, 119-129）ので、こちら側も合わせないと嘘の ET_OK が残る。
 void ETPipeline_SetEngine(uint32_t engine);
 
-/// 鎖を差し替える。UI スレッドから呼ぶ。
+/// 鎖を差し替える。UI スレッドから呼ぶ（**書き手は 1 つのスレッドだけ**。面の持ち主を
+/// スレッドで分けているので、2 つのスレッドから呼ぶと同じ面を書き合う）。
 /// 実際に engine へ渡すのは、次に音のスレッドが回ってきたとき。
+/// 音のスレッドが configure で読んでいる面には書かない（三重バッファ。ETPipeline.c）。
 void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count);
 
 /// 鎖全体を素通しにする。
@@ -90,6 +92,24 @@ int32_t ETPipeline_LastStatus(void);
 /// ETPipeline_Process が呼ばれた回数。
 /// instance を壊す前に、この値が 2 つ進むのを待てば読み終えたと分かる。
 uint64_t ETPipeline_ProcessCount(void);
+
+/// instance を壊す。**音のスレッドが engine の外に居るあいだに壊す。**
+///
+/// et_instance_destroy は壊した instance だけでなく、invalidatePipeline() で
+/// pipeline_ と遅延補正の線まで作り直す（engine.cpp:395-401, 119-129）。
+/// ProcessCount を 2 つ待っても守れるのは壊す instance だけで、
+/// 音のスレッドが processPipeline の途中ならその線や kernel を解放後に読む。
+/// ここは音のスレッドを入口で止め、中に居るのが抜けるのを待ってから壊す。
+/// 止めている間の Process / ApplyPending は何もせず戻る（そのブロックは素通し）。
+///
+/// UI スレッドから呼ぶ。待つのはいま走っているブロックが終わるまでで、**50 ms まで。**
+/// JSFX の 1 ブロックには上限が無いので、抜けてこなければ何も壊さずに 0 を返す。
+/// そのときは間を置いて呼び直す。壊したら 1。
+/// 壊すと engine の鎖は組めていない状態に戻るので、HasConfigured() は 0、
+/// LastStatus() は ET_ERR_STATE、ActiveNodes() は 0、Latency() は鎖の分が 0 になる。
+/// 次の Publish で組み直す。
+/// **音のスレッドから呼ばない**（自分を待って戻らない）。
+int ETPipeline_DestroyInstances(uint32_t engine, const uint32_t *instances, uint32_t count);
 
 /// et_pipeline_configure を呼んだ回数。成功・失敗の両方を数える。
 /// 0 なら Publish が音のスレッドに一度も拾われていない。

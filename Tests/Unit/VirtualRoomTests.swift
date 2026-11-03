@@ -8,7 +8,9 @@
 //
 //  図の描画と DSP はここでは見ない（前者は画面、後者は実機）。
 
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import XCTest
 
 
@@ -225,5 +227,77 @@ final class VirtualRoomTests: XCTestCase {
         for preset in ETVirtualRoomPresets.list {
             XCTAssertEqual((preset.params["mv"] as? NSNumber)?.intValue, 1, preset.presetId)
         }
+    }
+
+    // MARK: - 保存形式と上流へ渡す形（§39）
+
+    private func loaded(_ spec: ETEffect, inputBus: UInt8 = 0, outputBus: UInt8 = 0,
+                        channelSpec: Int8 = -1) -> PipelineStore.Loaded {
+        PipelineStore.Loaded(spec: spec, values: spec.defaults, enabled: true,
+                             inputBus: inputBus, outputBus: outputBus, channelSpec: channelSpec)
+    }
+
+    /// 書くときは `ed` の印を付け、読むときは `nm` より先に印で引く。
+    /// 名前が上流のものとぶつかっても Virtual Room へ戻る。
+    func testShortFormCarriesTheMarkerAndReadsItBack() throws {
+        let spec = try virtualRoom()
+        var entry = try XCTUnwrap(PipelineStore.shortForm([loaded(spec)]).first)
+        XCTAssertEqual(entry[ETDeckEffect.markerKey] as? String, ETVirtualRoom.type)
+        entry["nm"] = "Volume"
+        let back = PipelineStore.parse([entry], catalog: ETCatalog)
+        XCTAssertEqual(back.map(\.spec.type), [ETVirtualRoom.type])
+    }
+
+    /// 上流のエフェクトには印を書かない。
+    func testUpstreamEffectsGetNoMarker() throws {
+        let volume = try XCTUnwrap(ETCatalog.first { $0.type == "VolumePlugin" })
+        let entry = try XCTUnwrap(PipelineStore.shortForm([loaded(volume)]).first)
+        XCTAssertNil(entry[ETDeckEffect.markerKey])
+    }
+
+    /// 貼られた鎖の下ごしらえも印を段の鍵として通し、ignored に出さない。
+    func testChainTextKeepsTheMarkerQuietly() throws {
+        let spec = try virtualRoom()
+        let entry = try XCTUnwrap(PipelineStore.shortForm([loaded(spec)]).first)
+        let data = try JSONSerialization.data(withJSONObject: [entry])
+        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+        let checked = ETShareLink.parseChecked(text, catalog: ETCatalog)
+        XCTAssertEqual(checked.items.map(\.spec.type), [ETVirtualRoom.type])
+        XCTAssertFalse(checked.report.ignored.contains { $0.hasSuffix(".\(ETDeckEffect.markerKey)") },
+                       "\(checked.report.ignored)")
+    }
+
+    /// effetune.frieve.com へ渡す形では外部の段と同じ扱い。同じバスなら消え、
+    /// バスを跨ぐなら素通しの Volume に替わる。名前も印も上流へ出さない。
+    func testUpstreamLinkProjectsVirtualRoomOut() throws {
+        let spec = try virtualRoom()
+        XCTAssertTrue(ETShareLink.effeTuneForm([loaded(spec)]).isEmpty)
+        let routed = ETShareLink.effeTuneForm([loaded(spec, inputBus: 1, outputBus: 2)])
+        XCTAssertEqual(routed.count, 1)
+        XCTAssertEqual(routed.first?["nm"] as? String, "Volume")
+        XCTAssertNil(routed.first?[ETDeckEffect.markerKey])
+    }
+
+    /// PC の EffeTune へも名前のまま送らない（送ると鎖ごと断られる）。
+    /// PC の一覧に無いことを食い違いとも言わない。
+    func testRemoteProjectionReplacesVirtualRoom() throws {
+        let spec = try virtualRoom()
+        XCTAssertNil(ETRemoteProjection.entry(for: loaded(spec)))
+        XCTAssertEqual(ETRemoteProjection.entry(for: loaded(spec, inputBus: 1, outputBus: 2))?["nm"] as? String,
+                       "Volume")
+        XCTAssertNil(ETRemoteProjection.params(for: loaded(spec)))
+        XCTAssertFalse(ETRemoteHostInfo.localEffectNames.contains(spec.name))
+        let host = ETRemoteHostInfo(state: ["app": "2.16.0", "effects": ["Volume"]])
+        let projected = ETRemoteProjection.project([loaded(spec, inputBus: 1, outputBus: 2)], host: host)
+        XCTAssertEqual(projected.remoteIndex, [0], "PC に無いからと落とさず、素通しで送る")
+    }
+
+    /// 幅の合わない Ch に置いた段は descriptor で切って渡す（Bass Extender と同じ）。
+    func testNarrowRoutingBypassesTheKernel() {
+        let type = ETVirtualRoom.type
+        XCTAssertFalse(ETChainEditing.isChannelBypassed(type: type, channelSpec: -1))
+        XCTAssertFalse(ETChainEditing.isChannelBypassed(type: type, channelSpec: 16))
+        XCTAssertTrue(ETChainEditing.isChannelBypassed(type: type, channelSpec: 0))
+        XCTAssertTrue(ETChainEditing.isChannelBypassed(type: type, channelSpec: -2))
     }
 }

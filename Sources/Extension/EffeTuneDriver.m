@@ -17,10 +17,11 @@
 //    'pinp' ProcessInput / 'pout' ProcessOutput / 'mixo' MixOutput /
 //    'pmix' ProcessMix / 'cmix' ConvertMix / 'rite' WriteMix
 //  各クライアントの音は MixOutput でミックスされ、**WriteMix で書き出される**。
-//  そこが EffeTune の挿入点になる。
+//  そこが EffectDeck の挿入点になる。
 
 #import "EffeTuneDriver.h"
 #import "ETNames.h"
+#import "ETZeroTimeStamp.h"
 #import <CoreAudio/AudioServerPlugIn.h>
 #import <os/log.h>
 #import <pthread.h>
@@ -71,30 +72,39 @@ static Boolean          gRegistered = false;  // 直近の登録が生きてい�
 // kAudioDevicePropertyDeviceIsAlive を 0 にして PropertiesChanged で知らせると、
 // 手放すどころか activate の途中でデバイスを切られて Unable to Connect になる。
 // 実機で確かめた。ここは常に 1 を返す。
-static Boolean          gIORunning  = false;
 static UInt64           gIOCount    = 0;
 
-// ゼロタイムスタンプ用
-static Float64  gZeroSampleTime = 0;
-static UInt64   gZeroHostTime   = 0;
-static UInt64   gAnchorHostTime = 0;
-static UInt64   gPeriodCount    = 0;
-/// タイムラインの世代。**StartIO で張り直したときだけ進める。**
+/// WriteMix の累計。**gIOCount と違って 0 に戻らない。**
+/// gIOCount は StartIO と startCapture で 0 に戻るので、そこから取る増分は負になりうる。
+/// 報告の行（EffeTuneLiveExtension.swift）はこちらの増分を使う。
+/// 数えるのは常に行う（relaxed の足し算とフレームの走査だけで軽い）。
+/// 出すかどうかだけが報告の側で決まる。
+/// gSilentFrames は中身が厳密に 0.0f だけだった WriteMix のフレーム数。
+/// 「無音の PCM が流れ続けているか」を実機で見分けるための数で、
+/// フレーム数での表現を考える前にこれで確かめる（docs/battery-log.md の 5）。
+static _Atomic uint64_t gWriteMixFramesTotal = 0;
+static _Atomic uint64_t gWriteMixCalls       = 0;
+static _Atomic uint64_t gSilentFrames        = 0;
+
+/// ゼロタイムスタンプの状態と、走っている印（kAudioDevicePropertyDeviceIsRunning）。
+/// 計算は ETZeroTimeStamp.c にあり、Tests/Native/driver で確かめている。
+/// タイムラインの世代（seed）は **StartIO で張り直したときだけ進める。**
 /// 周期ごとに進めるとホストが毎回再同期し、後続の活性化が '!pla' で落ちる。
-/// かといって固定にすると、StartIO で gAnchorHostTime を 0 に戻して
-/// 時刻が巻き戻っているのに同じ seed を名乗ることになる。
-/// AudioServerPlugIn.h は「タイムラインが変わったら seed を変えろ」と書いている。
-static UInt64   gTimelineSeed   = 1;
+/// かといって固定にすると、StartIO で基準を 0 に戻して時刻が巻き戻って
+/// いるのに同じ seed を名乗ることになる（経緯は ETZeroTimeStamp.h）。
+/// StartIO / StopIO は gStateMutex の中で書き、GetZeroTimeStamp は HAL の
+/// IO スレッド 1 本からロック無しで触る。
+static ETZeroTimeStamp  gTimeline   = ET_ZERO_TIMESTAMP_INIT;
 
 /// システム音声の渡し先。**ARC の strong 変数にしない。**
 ///
 /// 理由は 2 つある。
 ///
 /// 1. ET_DoIOOperation は AudioServerPlugIn.h:1115-1123 で CA_REALTIME_API 付き
-///    ＝ CoreAudioBaseTypes.h:44 の [[clang::nonblocking]]。project.yml:14 が
+///    ＝ CoreAudioBaseTypes.h:44 の [[clang::nonblocking]]。project.yml の settings が
 ///    CLANG_ENABLE_OBJC_ARC: YES なので、strong な static をローカルへ読むだけで
 ///    objc_retain と objc_release が入る。release は side table のロックを取り得るから、
-///    EffeTuneDriver.h:28「リアルタイムスレッドなので確保も待ちもしないこと」を
+///    EffeTuneDriver.h の EffeTuneSampleHandler「リアルタイムスレッドなので確保も待ちもしないこと」を
 ///    自分で踏むことになる。推測ではなく IR を見た結果:
 ///      xcrun --sdk iphoneos clang -S -emit-llvm -O0 -target arm64-apple-ios27.0 \
 ///        -fobjc-arc -I Sources/Extension -x objective-c EffeTuneDriver.m -o -
@@ -188,7 +198,7 @@ static OSStatus ET_Initialize(AudioServerPlugInDriverRef inDriver,
                               AudioServerPlugInHostRef inHost) {
     if (inDriver != gDriverRef) return kAudioHardwareBadObjectError;
     gHost = inHost;
-    gAnchorHostTime = 0;
+    ETZeroTimeStamp_Initialize(&gTimeline);
     os_log(gLog, "Initialize");
     return noErr;
 }
@@ -428,7 +438,7 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 case kAudioObjectPropertyClass:     PUT(AudioClassID, kAudioPlugInClassID);
                 case kAudioObjectPropertyOwner:     PUT(AudioObjectID, kAudioObjectUnknown);
                 case kAudioObjectPropertyManufacturer:
-                    PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR("nemut.ai")));
+                    PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR(ET_MANUFACTURER)));
                 case kAudioObjectPropertyOwnedObjects:
                 case kAudioPlugInPropertyDeviceList:
                     if (inDataSize < sizeof(AudioObjectID)) { *outDataSize = 0; return noErr; }
@@ -451,20 +461,21 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 case kAudioObjectPropertyBaseClass: PUT(AudioClassID, kAudioObjectClassID);
                 case kAudioObjectPropertyClass:     PUT(AudioClassID, kAudioDeviceClassID);
                 case kAudioObjectPropertyOwner:     PUT(AudioObjectID, kObjectID_PlugIn);
-                // 仮想デバイスの名前。**アプリと同じ「EffectDeck」を名乗る。**
+                // 仮想デバイスの名前（ET_DRIVER_NAME）。**アプリと同じ「EffectDeck」を名乗る。**
                 // 出るのは出力先を出す所（アプリの Settings の Device、音量の
                 // 表示など）。MediaOutputDevice.displayName（ルートピッカーに
-                // 出る「EffeTune」）とは別系統で、コントロールセンターの行は
-                // こちらを見ていない（2026-09-17 に測った。docs/connect-log.md）。
+                // 出る ET_ROUTE_NAME）とは別系統で、コントロールセンターの行は
+                // こちらを見ていない（2026-09-17 に測った。手元のログ
+                // docs/connect-log.md。リポジトリには入っていない）。
                 //
-                // 帰還ループの判定はこの名前を
-                // localizedCaseInsensitiveContains("EffeTune") で見ている
-                // （AudioIO.swift:336, 681, 767）ので、"EffeTune" を含む限り効く。
-                // 含まない名前にするならそちらも直す。
+                // 帰還ループの判定は、本体の ETAudioSessionRules.isOwnDevice
+                // （AudioSessionRules.swift）がこの名前を ET_NAME_STEM の写しで
+                // localizedCaseInsensitiveContains して見ているので、ET_NAME_STEM を
+                // 含む限り効く。含まない名前にするならそちらも直す（ETNames.h の頭）。
                 case kAudioObjectPropertyName:
                     PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR(ET_DRIVER_NAME)));
                 case kAudioObjectPropertyManufacturer:
-                    PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR("nemut.ai")));
+                    PUT(CFStringRef, (CFStringRef)CFRetain(CFSTR(ET_MANUFACTURER)));
                 case kAudioDevicePropertyDeviceUID:
                     PUT(CFStringRef, gDeviceUID ? (CFStringRef)CFRetain(gDeviceUID)
                                                 : (CFStringRef)CFRetain(CFSTR("")));
@@ -480,7 +491,7 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                     return noErr;
                 case kAudioDevicePropertyClockDomain:       PUT(UInt32, 0);
                 case kAudioDevicePropertyDeviceIsAlive:     PUT(UInt32, 1);
-                case kAudioDevicePropertyDeviceIsRunning:   PUT(UInt32, gIORunning ? 1 : 0);
+                case kAudioDevicePropertyDeviceIsRunning:   PUT(UInt32, gTimeline.running ? 1 : 0);
                 // どちらも 0。このデバイスは MediaDevice のルートピッカーで
                 // 明示的に選ばれたときだけ使えればよく、既定の出力の候補に入る必要は無い。
                 //
@@ -491,7 +502,7 @@ static OSStatus ET_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID o
                 // ループバックが起動ごとに出たり出なかったりする、という観測の
                 // 説明になりうる。頻度は測っていない。
                 //
-                // 副作用を見ること: ルートピッカーから EffeTune が消えたら戻す。
+                // 副作用を見ること: ルートピッカーから EffectDeck（ET_ROUTE_NAME）が消えたら戻す。
                 // MediaDevice のピッカーは MediaOutputDevice の広告で出るので、
                 // このプロパティとは別系統のはずだが、測っていない。
                 case kAudioDevicePropertyDeviceCanBeDefaultDevice:       PUT(UInt32, 0);
@@ -633,15 +644,13 @@ static OSStatus ET_StartIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt
     (void)d; (void)client;
     if (dev != kObjectID_Device) return kAudioHardwareBadObjectError;
     pthread_mutex_lock(&gStateMutex);
-    gIORunning = true;
+    // 走っている印を立て、時刻の基準を巻き戻して seed を進める。
+    // タイムラインが不連続になるので、seed を進めないとホストは前の続きと
+    // 思って飛んだ時刻を受け取る。
+    // **数えない。**StopIO を挟まずにもう一度来ても同じことをし、最初の StopIO で
+    // 止まったことになる（Apple の NullAudio はクライアントを数える。ETZeroTimeStamp.h）。
+    ETZeroTimeStamp_StartIO(&gTimeline);
     gIOCount = 0;
-    // ここで時刻の基準を巻き戻すので、タイムラインは不連続になる。
-    // seed を進めないと、ホストは前の続きと思って飛んだ時刻を受け取る。
-    gTimelineSeed++;
-    gAnchorHostTime = 0;
-    gZeroSampleTime = 0;
-    gZeroHostTime = 0;
-    gPeriodCount = 0;
     pthread_mutex_unlock(&gStateMutex);
     os_log(gLog, "ET StartIO");
     return noErr;
@@ -651,22 +660,17 @@ static OSStatus ET_StopIO(AudioServerPlugInDriverRef d, AudioObjectID dev, UInt3
     (void)d; (void)client;
     if (dev != kObjectID_Device) return kAudioHardwareBadObjectError;
     pthread_mutex_lock(&gStateMutex);
-    gIORunning = false;
+    ETZeroTimeStamp_StopIO(&gTimeline);
     pthread_mutex_unlock(&gStateMutex);
-    os_log(gLog, "StopIO frames=%llu", (unsigned long long)gIOCount);
+    os_log(gLog, "StopIO frames=%llu 無音累計=%llu", (unsigned long long)gIOCount,
+           (unsigned long long)atomic_load_explicit(&gSilentFrames, memory_order_relaxed));
     return noErr;
 }
 
 // ゼロタイムスタンプ。仮想デバイスなのでホストクロックから作る。
-//
-// seed の扱い。
-// 以前は周期ごとに増やしていて、それは
-//   HALS_IORawClock::Update: Re-anchoring IO timeline. Zero timestamp seed changed
-// をホストに毎回起こさせ、後続のセッション活性化が
-//   AudioSessionServerImp_iOS.mm:899 "early exit due to failure" ('!pla') で落ちていた。
-// そのあと 1 固定にしたが、今度は StartIO で時刻を巻き戻しているのに
-// 同じ seed を名乗ることになっていた。
-// 正しいのは「連続しているあいだは同じ、張り直したときだけ進める」。
+// kRingFrames ごとに 1 段ずつ進む階段で、計算は ETZeroTimeStamp_Get。
+// seed の扱い（連続しているあいだは同じ、張り直したときだけ進める）の経緯は
+// ETZeroTimeStamp.h の頭。
 static OSStatus ET_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID dev,
                                     UInt32 client, Float64 *outSampleTime,
                                     UInt64 *outHostTime, UInt64 *outSeed) {
@@ -677,32 +681,15 @@ static OSStatus ET_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID 
     if (tb.denom == 0) mach_timebase_info(&tb);
 
     // 1 フレームあたりのホストティック数
-    const Float64 nsPerFrame = 1.0e9 / kSampleRate;
-    const Float64 hostTicksPerFrame = nsPerFrame * (Float64)tb.denom / (Float64)tb.numer;
-    const Float64 hostTicksPerRing = hostTicksPerFrame * (Float64)kRingFrames;
+    const Float64 hostTicksPerFrame =
+        ETZeroTimeStamp_HostTicksPerFrame(kSampleRate, tb.numer, tb.denom);
 
     UInt64 now = mach_absolute_time();
 
     // ここはリアルタイムスレッド。ロックも確保もしない。
     // 呼び出しは HAL の IO スレッド 1 本からなので素の変数で足りる。
-    if (gAnchorHostTime == 0) {
-        gAnchorHostTime = now;
-        gPeriodCount = 0;
-    }
-    // 次の周期の開始時刻を超えていたら 1 周期進める。
-    Float64 offset = ((Float64)(gPeriodCount + 1)) * hostTicksPerRing;
-    UInt64 nextHostTime = gAnchorHostTime + (UInt64)offset;
-    if (nextHostTime <= now) {
-        gPeriodCount++;
-    }
-    Float64 st = (Float64)(gPeriodCount * (UInt64)kRingFrames);
-    UInt64 ht = gAnchorHostTime + (UInt64)(((Float64)gPeriodCount) * hostTicksPerRing);
-    gZeroSampleTime = st;
-    gZeroHostTime = ht;
-
-    if (outSampleTime) *outSampleTime = st;
-    if (outHostTime)   *outHostTime   = ht;
-    if (outSeed)       *outSeed       = gTimelineSeed;
+    ETZeroTimeStamp_Get(&gTimeline, now, hostTicksPerFrame, kRingFrames,
+                        outSampleTime, outHostTime, outSeed);
     return noErr;
 }
 
@@ -750,6 +737,22 @@ static OSStatus ET_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID dev
     if (op != kAudioServerPlugInIOOperationWriteMix) return noErr;
 
     gIOCount += frames;
+
+    // 数えるだけ。ロックも確保も ObjC も無い（relaxed の足し算と読むだけの走査）。
+    // handler を入れていないときも数える（gIOCount と同じ）。
+    // 音が鳴っているあいだは最初の 1 サンプルで走査が終わる。無音のときは
+    // 全サンプルを 1 回比べるが、直後のリングへの写しが同じ量を読むのと同じ程度。
+    // **厳密な 0 だけ**を無音とするのは、フレーム数で表すなら損なく置き換えられるのが
+    // 厳密な 0 だけだから（-0.0 は無音、ディザの非正規数は音）。
+    atomic_fetch_add_explicit(&gWriteMixFramesTotal, frames, memory_order_relaxed);
+    atomic_fetch_add_explicit(&gWriteMixCalls, 1, memory_order_relaxed);
+    {
+        const float *sp = (const float *)ioMainBuffer;
+        const size_t ns = (size_t)frames * kChannelCount;
+        size_t i = 0;
+        while (i < ns && sp[i] == 0.0f) i++;
+        if (i == ns) atomic_fetch_add_explicit(&gSilentFrames, frames, memory_order_relaxed);
+    }
 
     // atomic に読んで __unsafe_unretained で受ける。理由は gHandlerPtr の宣言のところ。
     // ここで strong なローカルに受け直すと retain/release が復活するので書き換えないこと。
@@ -805,6 +808,9 @@ static OSStatus ET_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID de
 - (double)sampleRate { return kSampleRate; }
 - (uint32_t)channelCount { return kChannelCount; }
 - (uint64_t)framesDelivered { return gIOCount; }
+- (uint64_t)writeMixFramesTotal { return atomic_load_explicit(&gWriteMixFramesTotal, memory_order_relaxed); }
+- (uint64_t)writeMixCalls       { return atomic_load_explicit(&gWriteMixCalls, memory_order_relaxed); }
+- (uint64_t)silentFrames        { return atomic_load_explicit(&gSilentFrames, memory_order_relaxed); }
 
 /// vtable を埋めるのはプロセスに 1 回だけ。
 ///
@@ -849,8 +855,9 @@ static void ETFillInterfaceOnce(void) {
 
     // ======== 2 回目以降が繋がらない理由。ここを触る前に読むこと ========
     //
-    // 症状: ルートピッカーで EffeTune → スピーカー → EffeTune と往復すると、
+    // 症状: ルートピッカーで EffectDeck → スピーカー → EffectDeck と往復すると、
     // 2 回目から "Unable to Connect"。端末を再起動すると直る。
+    // （下に引くログは、仮想デバイスがまだ "EffeTune" を名乗っていた頃のもの）
     //
     // 分岐しているのは audiomxd の 1 行で、しかも拡張の activateDevice が呼ばれる
     // **4ms 前**に決まっている（gate 02:40:01.489240 / activateDevice 02:40:01.493678）。

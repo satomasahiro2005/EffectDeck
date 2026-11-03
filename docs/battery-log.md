@@ -2,7 +2,7 @@
 
 issue #5「画面を消したまま放置すると電池が大きく減る」の台帳。
 
-書く規則（connect-log と同じ）:
+書く規則（connect-log と同じ。`docs/connect-log.md` は手元だけの記録で、追跡していない）:
 - 測っていないことを確定として書かない。推測には「推測」と書く
 - ログの行は逐語で貼る。要約しない
 - 外れたものも消さない。同じ道を二度歩かないため
@@ -103,7 +103,7 @@ TCP の 3 way handshake はカーネルが backlog で受け切るので、
 狙いの溜まりは 1024 フレーム＝21.3ms で、送り手自身が 2ms の塊で送っている。
 1ms のゆらぎはその塊より細かい。
 
-**それでも、ここがいちばん先に疑う所。**深くなったなら Diagnostics に出る:
+**それでも、ここがいちばん先に疑う所。**深くなったならSettings > Audio > Detailsに出る:
 
 - `Ran dry` が 0 でなくなる
 - `Extension link` が 1024 から 2048 へ逃げている
@@ -166,9 +166,9 @@ on にした人だけが「たまに音が出ない」を踏むことになり�
 Mac は要らない。アプリの中のログ（`ETLogTap`）が `tick` の行を持っていて、
 上限 1 MB ＝ 約 8 時間ぶん。**一晩は保つ。**
 
-朝に Settings → いちばん下の **Attach log** から書き出す。
-`Diagnostics` の数字も一緒に控える（`Frames received` / `Ran dry` /
-`Extension link` / `Output`）。
+朝にSettings > About > Report a problem > **Attach log**から書き出す。
+Settings > Audio > Detailsの数字も一緒に控える（Copy detailsで写せる。
+`Frames received` / `Ran dry` / `Extension link` / `Output`）。
 
 Mac が USB で見えているなら生ログも並行して録る:
 
@@ -260,7 +260,7 @@ ioreg -c IOUSBHostDevice -r -l -w 0 | grep -c "USB Product Name"
 
 | | |
 |---|---|
-| アプリの中のログ | Settings → Attach log（約 8 時間ぶん・1 MB） |
-| 数字 | Settings → Diagnostics |
+| アプリの中のログ | Settings > About > Report a problem > Attach log（約 8 時間ぶん・1 MB） |
+| 数字 | Settings > Audio > Details（Copy details） |
 | 生ログ | `idevicesyslog -u <udid> > battery-<日付>.log` |
 | 1 往復だけ測る | `bash Scripts/bridge_probe.sh 30`（Mac 上・実機が要る） |

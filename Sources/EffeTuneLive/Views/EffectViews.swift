@@ -16,9 +16,8 @@ enum ETEffectViews {
     /// 増えたらここに足す。
     private static let withoutGraph: Set<String> = [
         "SpatialMapperPlugin",
-        // 取り込む口と状態行だけ。曲線は IR が無いと描けない
-        // （IRReverbView.swift の冒頭に理由がある）。
-        "IRReverbPlugin",
+        // （IRReverbPlugin は2026-10にここから外した。EDC のグラフを足したため。
+        //  畳んだ形では IRReverbView がグラフだけを返す。IRReverbView.swift の冒頭を読むこと。）
         // 資産を送り込む 6 種。操作するのは設計の設定で、描く材料
         // （測定や設計した応答）はテレメトリでは来ない。
         "CrosstalkCancellationPlugin",
@@ -33,6 +32,10 @@ enum ETEffectViews {
         // collapsedFully が空なので、一度も操作しなくてもその状態から始まる）。
         "MatrixPlugin",
         "OscillatorPlugin",
+        // 状態の一語とつまみだけ（BassExtenderView.swift）。
+        "BassExtenderPlugin",
+        // つまみと Reset だけ（AdaptivePredictionView.swift）。
+        "AdaptivePredictionEffectPlugin",
     ]
 
     /// 畳んだときに図だけを出せるか。
@@ -43,12 +46,17 @@ enum ETEffectViews {
     static func has(_ type: String) -> Bool { types.contains(type) }
 
     private static let types: Set<String> = [
+        "AdaptivePredictionEffectPlugin",
+        "AnalogMeterPlugin",
         "PitchMeterPlugin",
         // EffectDeck 独自。図（真上から見た部屋）を持つので withoutGraph には入れない。
         ETVirtualRoom.type,
         "SpatialMapperPlugin",
         "AutoLevelerPlugin",
+        "BassExtenderPlugin",
+        "BassManagementPlugin",
         "ChannelDividerPlugin",
+        "ChromaSpiralPlugin",
         "CompressorPlugin",
         "CrosstalkCancellationPlugin",
         "DynamicSaturationPlugin",
@@ -79,13 +87,16 @@ enum ETEffectViews {
         "OscilloscopePlugin",
         "PhaseSelectEqPlugin",
         "PowerAmpSagPlugin",
+        "RhythmAnalyzerPlugin",
         "RoomEqPlugin",
+        "SFZNotePlayerPlugin",
         "SaturationPlugin",
         "SpectrogramPlugin",
         "SpectrumAnalyzerPlugin",
         "StereoMeterPlugin",
         "SubSynthPlugin",
         "SWRadioSimulatorPlugin",
+        "TonalBalanceEQPlugin",
         "TubeSimulatorPlugin",
     ]
 
@@ -94,6 +105,12 @@ enum ETEffectViews {
     static func view(index: Int, node: EffeTuneDSP.Node,
                      dsp: EffeTuneDSP) -> some View {
         switch node.spec.type {
+        case "AdaptivePredictionEffectPlugin":
+            AdaptivePredictionView(index: index, node: node, dsp: dsp)
+        case "SFZNotePlayerPlugin":
+            SFZNotePlayerView(index: index, node: node, dsp: dsp)
+        case "AnalogMeterPlugin":
+            AnalogMeterView(index: index, node: node, dsp: dsp)
         case "PitchMeterPlugin":
             PitchMeterView(index: index, node: node, dsp: dsp)
         case "SpatialMapperPlugin":
@@ -102,8 +119,14 @@ enum ETEffectViews {
             VirtualRoomView(index: index, node: node, dsp: dsp)
         case "AutoLevelerPlugin":
             AutoLevelerView(index: index, node: node, dsp: dsp)
+        case "BassExtenderPlugin":
+            BassExtenderView(index: index, node: node, dsp: dsp)
+        case "BassManagementPlugin":
+            BassManagementView(index: index, node: node, dsp: dsp)
         case "ChannelDividerPlugin":
             ChannelDividerView(index: index, node: node, dsp: dsp)
+        case "ChromaSpiralPlugin":
+            ChromaSpiralView(index: index, node: node, dsp: dsp)
         case "CompressorPlugin":
             CompressorView(index: index, node: node, dsp: dsp)
         case "CrosstalkCancellationPlugin":
@@ -164,6 +187,8 @@ enum ETEffectViews {
             PhaseSelectEqView(index: index, node: node, dsp: dsp)
         case "PowerAmpSagPlugin":
             PowerAmpSagView(index: index, node: node, dsp: dsp)
+        case "RhythmAnalyzerPlugin":
+            RhythmAnalyzerView(index: index, node: node, dsp: dsp)
         case "RoomEqPlugin":
             RoomEQView(index: index, node: node, dsp: dsp)
         case "SaturationPlugin":
@@ -178,6 +203,8 @@ enum ETEffectViews {
             SubSynthView(index: index, node: node, dsp: dsp)
         case "SWRadioSimulatorPlugin":
             SWRadioSimulatorView(index: index, node: node, dsp: dsp)
+        case "TonalBalanceEQPlugin":
+            TonalBalanceEQView(index: index, node: node, dsp: dsp)
         case "TubeSimulatorPlugin":
             TubeSimulatorView(index: index, node: node, dsp: dsp)
         default:

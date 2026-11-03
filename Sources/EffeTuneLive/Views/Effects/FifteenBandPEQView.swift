@@ -14,8 +14,8 @@
 //    - 下の番号の帯で直に選べる。選んだ番号は勝手に見える位置まで送る
 //    - 選んでいる 1 本だけ、合成曲線の脇に破線で出す
 //
-//  web にあって、ここに無いもの: Import（.txt の EQ 設定の読み込み）。
-//  ファイルを開く口がまだ無いので付けていない。Inverse は付けた。
+//  Import と Inverse は web と同じく両方ある（fifteen_band_peq.js:472-508）。
+//  Import の読み方は DSP/ETPEQTextImport.swift。**書き込みは Inverse と同じ setValue を通す。**
 //
 //  図に重ねるスペクトラムについて:
 //    web にも同じものが在るが、PEQ のプラグインの中には無い。ホスト側の共通機能
@@ -31,6 +31,7 @@
 
 import SwiftUI
 import Foundation
+import UniformTypeIdentifiers
 
 // MARK: - バンド 1 本ぶん
 
@@ -238,55 +239,33 @@ private struct PEQ15SliderRow: View {
     let unit: String
     let onChange: (Double) -> Void
 
-    @State private var editing = false
-    @State private var draft = ""
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
+            // 文字を大きくした人には、名前の下に数値欄を積む（横だと名前が "Fr…" に切れる）。
+            ETAdaptiveStack { stacked in
                 Text(title)
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                field
+                if !stacked { Spacer(minLength: 4) }
+                // ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
+                // 下書きは単位なしの数だけ。
+                ETValueField(text: text, label: title,
+                             editText: { String(format: "%.\(decimals)f", value) }) { typed in
+                    onChange(min(max(typed, range.lowerBound), range.upperBound))
+                }
             }
+            // 0...1 に正規化した位置のままだと「37%」としか読まれない。名前と実値を渡す。
             Slider(value: Binding(get: { position },
                                   set: { onChange(denormalized($0)) }),
                    in: 0...1)
+                .accessibilityLabel(title)
+                .accessibilityValue(text)
         }
     }
 
     private var text: String {
         let s = String(format: "%.\(decimals)f", value)
         return unit.isEmpty ? s : "\(s) \(unit)"
-    }
-
-    private var field: some View {
-        Group {
-            if editing {
-                TextField("", text: $draft)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: 1))
-                    .submitLabel(.done)
-                    .onSubmit { commit() }
-            } else {
-                ValueBox(text: text)
-                    .onTapGesture {
-                        draft = String(format: "%.\(decimals)f", value)
-                        editing = true
-                    }
-            }
-        }
-    }
-
-    private func commit() {
-        editing = false
-        guard let v = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
-        onChange(min(max(v, range.lowerBound), range.upperBound))
     }
 
     /// スライダーは 0〜1 で持つ。
@@ -326,9 +305,24 @@ struct FifteenBandPEQView: View {
 
     /// 畳んでいて図だけのとき。カードが環境で渡してくる。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// BANDS の行を、アクセシビリティサイズだけ 2 段にするため。
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// 音量に追従しているとき、もう1台が鳴らしている帯（EffeTuneDSP.soundingPEQ）。曲線に足して薄い印で出す。
+    @Environment(\.etPEQCompanionValues) private var companionValues
 
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
+    /// 帯を選んだときの音量（ETVolumeFollower.position）。音量に追従している段では、選んだあと音量が
+    /// 動いたら選んだ帯の点線を消す（鳴っている帯の組が替わるので、前の帯の内訳は残しておくと紛らわしい）。
+    /// 選んでいないときは -1、音量が読めないときに選んだら -2。
+    @State private var pickedAt: Double = -1
+    @ObservedObject private var volume = ETVolumeFollower.shared
+
+    /// 図に重ねるスペクトラムの出し方。上流と同じく保存しない（SpectrumOverlayLayer の頭）。
+    @State private var spectrumMode: ETSpectrumOverlayMode = .after
+
+    @State private var importing = false
+    @State private var importFailure: String?
 
     /// 生成されたカタログは配列の既定値を拾えていない
     /// （Tools/gen_catalog.py:101 で list を float に直せず 0 になる）。
@@ -351,9 +345,14 @@ struct FifteenBandPEQView: View {
         }
         // 畳むとこの View ごと消えるので、選んでいるバンドは外に覚えておく。
         .etRemembers($selected, key: "band", node: node.id)
+        .etRemembers($pickedAt, key: "bandAt", node: node.id)
+        // 畳んでも・一覧を払っても After / Compare が戻らないように。アプリを終うと消える。
+        .etRemembers($spectrumMode, key: "spectrum", node: node.id)
     }
 
     // MARK: 図
+
+    private var probeTaps: EffeTuneDSP.ProbeTaps? { dsp.probeTaps(at: index) }
 
     private var graph: some View {
         FrequencyResponseGraph(
@@ -363,10 +362,19 @@ struct FifteenBandPEQView: View {
             decibelRange: -20...20,
             decibelStep: 6,
             height: 190,
-            caption: "Drag the nearest marker, or pick a band below",
-            spectrumTap: dsp.probeTap(at: index),
+            // 段の前後に置いた探り（EffeTuneDSP.probeTaps）。線は段から出た音、
+            // Compare のときだけ入る音も読む。
+            spectrumTap: probeTaps?.after,
+            spectrumBeforeTap: probeTaps?.before,
+            spectrumMode: $spectrumMode,
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
-            onMarkerSelected: { selected = $0 })
+            onMarkerSelected: { if $0 < layout.count { selected = $0; pickedAt = volume.position ?? -2 } })
+    }
+
+    /// 選んだ帯の点線を出すか。追従していなければいつも。追従していれば、選んだときから音量が動いていないあいだだけ。
+    private var showsPicked: Bool {
+        guard node.automation != nil else { return true }
+        return pickedAt != -1 && pickedAt == (volume.position ?? -2)
     }
 
     /// 合成した特性と、選んでいるバンド 1 本ぶん。
@@ -377,8 +385,10 @@ struct FifteenBandPEQView: View {
             guard let c = PEQ15Math.coefficients(pair.element, sampleRate: rate) else { return nil }
             return (pair.offset, c)
         }
+        // 追従しているときの相方（もう1台）の帯。合成にだけ足す。
+        let other = companionBands.compactMap { PEQ15Math.coefficients($0, sampleRate: rate) }
         var result: [ETFrequencyCurve] = []
-        if designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
+        if showsPicked, designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
             let c = picked.1
             result.append(ETFrequencyCurve.sampled(id: "band", count: 160,
                                                    width: 1, dashed: true, subdued: true) { hz in
@@ -389,16 +399,25 @@ struct FifteenBandPEQView: View {
             let w = hz * 2 * Double.pi / rate
             var total = 0.0
             for entry in designed { total += PEQ15Math.magnitudeDB(entry.1, w: w) }
+            for c in other { total += PEQ15Math.magnitudeDB(c, w: w) }
             return total
         })
         return result
     }
 
     private var markers: [ETFrequencyMarker] {
-        bands.enumerated().map { i, item in
+        let own = bands.enumerated().map { i, item in
             ETFrequencyMarker(id: i, hz: item.frequency, db: item.gain,
                               label: "\(i + 1)", isActive: item.enabled)
         }
+        // 相方の帯は、音に効いているものだけを薄く（id は本体の帯と重ならない 1000 番台）。
+        let rate = sampleRate
+        let other = companionBands.enumerated().compactMap { i, item -> ETFrequencyMarker? in
+            guard PEQ15Math.coefficients(item, sampleRate: rate) != nil else { return nil }
+            return ETFrequencyMarker(id: 1000 + i, hz: item.frequency, db: item.gain,
+                                     label: "\(i + 1)", isActive: false)
+        }
+        return own + other
     }
 
     /// 印を動かすと、web と同じく周波数とゲインが同時に変わる
@@ -413,19 +432,53 @@ struct FifteenBandPEQView: View {
     // MARK: バンドを選ぶ帯
 
     private var bandStrip: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("BANDS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Button("Invert Gains") { invertGains() }
-                    .font(.system(size: 12))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
+        // 文字を大きくした人には、見出しとボタンを 2 段にする。1 行のままだと
+        // "BAN… Invert… Imp…" と全部が切れて、何のボタンか読めなくなる。
+        let bandsLabel = Text("BANDS")
+            .etFont(size: 10, weight: .semibold)
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+        let invertButton = ETTextActionButton(title: "Invert Gains") { invertGains() }
+        // web は accept='.txt'（fifteen_band_peq.js:483）。
+        let importButton = ETTextActionButton(title: "Import") { importing = true }
+            .fileImporter(isPresented: $importing,
+                          allowedContentTypes: [.plainText],
+                          allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first { importEQ(url) }
+                case .failure(let error):
+                    // **取り消しは黙る。**それ以外の失敗は読めなかったのと同じ扱い。
+                    if (error as? CocoaError)?.code != .userCancelled {
+                        importFailure = "Could not read that file."
+                    }
+                }
+            }
+        return VStack(alignment: .leading, spacing: 6) {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    bandsLabel
+                    HStack(spacing: 16) {
+                        invertButton
+                        importButton
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    bandsLabel
+                    Spacer(minLength: 0)
+                    invertButton
+                    importButton
+                }
             }
             numbers
+        }
+        .alert("Import Failed", isPresented: Binding(
+            get: { importFailure != nil },
+            set: { if !$0 { importFailure = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importFailure ?? "")
         }
     }
 
@@ -439,10 +492,13 @@ struct FifteenBandPEQView: View {
                         chip(i).id(i)
                     }
                 }
-                .padding(.vertical, 1)
+                // 押せる面を 44pt にするぶんの余白（chip 側で 7pt 広げる）。
+                // 外側で同じだけ引くので、並びの高さは今までと同じ。
+                .padding(.vertical, 8)
             }
+            .padding(.vertical, -7)
             .onChange(of: selected) { _, new in
-                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
+                etWithAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
             }
         }
     }
@@ -452,17 +508,29 @@ struct FifteenBandPEQView: View {
         let isPicked = selected == i
         return Button {
             selected = i
+            pickedAt = volume.position ?? -2
         } label: {
             Text("\(i + 1)")
-                .font(.system(size: 13, weight: isPicked ? .bold : .regular))
+                .etFont(size: 13, weight: isPicked ? .bold : .regular)
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(minWidth: 34, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（5pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 2.5)
+                .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -2.5)
         }
         .buttonStyle(.plain)
+        // 切ってあるバンドは不透明度だけで表しているので、VoiceOver には値として伝える。
+        .accessibilityLabel("Band \(i + 1)")
+        .accessibilityValue(isOn ? "" : "Off")
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいるバンド
@@ -471,12 +539,8 @@ struct FifteenBandPEQView: View {
         let l = layout
         let current = band(selected)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("BAND \(selected + 1)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-
+            // 文字を大きくした人には、見出しと入切の下にメニューを出す（ETMenuHeader）。
+            ETMenuHeader(title: "BAND \(selected + 1)") {
                 Picker("", selection: Binding(get: { current.type },
                                               set: { setType($0) })) {
                     ForEach(Array(PEQ15Math.typeNames.indices), id: \.self) { i in
@@ -484,9 +548,8 @@ struct FifteenBandPEQView: View {
                     }
                 }
                 .pickerStyle(.menu)
-
-                Spacer(minLength: 0)
-
+                .etFont(size: 14)
+            } trailing: {
                 Toggle("Enabled", isOn: Binding(
                     get: { current.enabled },
                     set: { _ in dsp.setValue(current.enabled ? 0 : 1, at: index, offset: l.enabled + selected) }))
@@ -530,6 +593,36 @@ struct FifteenBandPEQView: View {
         }
     }
 
+    /// web の Import（fifteen_band_peq.js:1279-1355）。読み方は ETPEQTextImport。
+    /// **1 本も当たらなければ何も書かない。**上流は全バンドを切って終わるが、
+    /// 読めないファイルで今の EQ を消さないようにした。
+    private func importEQ(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            importFailure = "Could not read that file."
+            return
+        }
+        let result = ETPEQTextImport.parse(ETPEQTextImport.decode(data))
+        guard result.imported > 0 else {
+            importFailure = "No filters found."
+            return
+        }
+
+        let l = layout
+        // Inverse と同じ setValue。値の変わらない所は撃たない（1 回ごとに instance へ送るため）。
+        func write(_ v: Float, _ offset: Int) {
+            if value(offset) != v { dsp.setValue(v, at: index, offset: offset) }
+        }
+        for (i, b) in result.bands.prefix(l.count).enumerated() {
+            write(Float(b.type), l.type + i)
+            write(Float(b.frequency), l.frequency + i)
+            write(Float(b.gain), l.gain + i)
+            write(Float(b.q), l.q + i)
+            write(b.enabled ? 1 : 0, l.enabled + i)
+        }
+    }
+
     // MARK: 値の出し入れ
 
     private var layout: PEQ15Layout { PEQ15Layout(node.spec) }
@@ -548,6 +641,20 @@ struct FifteenBandPEQView: View {
 
     private func value(_ offset: Int) -> Float {
         node.values.indices.contains(offset) ? node.values[offset] : 0
+    }
+
+    /// 相方が鳴らしている帯（無ければ空）。
+    private var companionBands: [PEQ15Band] {
+        guard let values = companionValues else { return [] }
+        let l = layout
+        func at(_ offset: Int) -> Float { values.indices.contains(offset) ? values[offset] : 0 }
+        return (0..<l.count).map { i in
+            PEQ15Band(frequency: Double(at(l.frequency + i)),
+                      gain: Double(at(l.gain + i)),
+                      q: Double(at(l.q + i)),
+                      type: min(max(Int(at(l.type + i).rounded()), 0), PEQ15Math.typeNames.count - 1),
+                      enabled: at(l.enabled + i) >= 0.5)
+        }
     }
 
     /// 音が通るレート。EffeTune は _sampleRate をそのまま曲線に使っている

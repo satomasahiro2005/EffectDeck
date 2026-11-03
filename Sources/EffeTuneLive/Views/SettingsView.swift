@@ -1,7 +1,7 @@
 //  SettingsView.swift
 //  右上の ⋯ から出す 1 枚。EffeTune も設定は右上に置いてある。
 //
-//  **画面は 1 枚。押して進むのはライセンス本文の 1 回だけ。**
+//  **画面は 1 枚。押して進むのは 1 段だけ（Remote Control・Licenses・Report a problem・Known limitations）。**
 //  以前はシート（Settings）→ Status →（戻って）About → Licenses → 本文 と、
 //  シートの中で 3 回潜っていた。Status も About も読むだけの画面で、
 //  行数が足りないものを画面に昇格させた結果そうなっていた。
@@ -15,7 +15,7 @@
 //  設定の節は Preferences しか見ない。
 //
 //  設定を変えると音の経路を組み直す（Preferences.onAudioChange）。一瞬止まる。
-//  その断りは Processing rate の footer に 1 回だけ置いてある。繰り返さない。
+//  画面では断らない（説明文は置かない方針）。
 
 import SwiftUI
 import UIKit
@@ -32,17 +32,23 @@ struct SettingsView: View {
     /// 下位画面へ押し出すと、よく見る Status まで 1 タップ遠くなる。
     /// バーの真ん中でセグメントを切り替える形なら、どちらも起きない。
     enum Pane: String, CaseIterable, Identifiable {
-        case audio, about
+        case audio, remote, about
         var id: String { rawValue }
         var label: String {
             switch self {
             case .audio:  return "Audio"
+            case .remote: return "Remote"
             case .about:  return "About"
             }
         }
     }
 
+    /// 並べる面。Remote は店の版では出さない（ETFeatures.remoteControl）。
+    private static let panes = Pane.allCases.filter { $0 != .remote || ETFeatures.remoteControl }
+
     @State private var pane: Pane = .audio
+    /// Remote の面の Scan QR Code。シートは List に付ける（RemoteContent の頭）。
+    @State private var scanning = false
 
     var body: some View {
         NavigationStack {
@@ -62,8 +68,18 @@ struct SettingsView: View {
                     // 出力先なので、探しに来るのはこの面。報告に貼る値でもあるが、
                     // 貼る前に読むのは音の話として読む。畳んであるので 1 行で済む。
                     DetailsSection(io: io, dsp: dsp, prefs: prefs)
+                case .remote:
+                    // PC の EffeTune を操る設定（ツールバーのシートと同じ節）。音の設定ではないので
+                    // Audio に混ぜず、面を分ける。面の名前は Remote（EffeTune では何の面か読めない）。
+                    RemoteRows(scan: { scanning = true })
                 case .about:
                     about
+                }
+            }
+            .sheet(isPresented: $scanning) {
+                RemoteScannerView { url in
+                    scanning = false
+                    RemoteMirror.shared.pair(url)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -73,7 +89,7 @@ struct SettingsView: View {
                 // ここは当たらない（SettingsRows.swift の頭）。
                 ToolbarItem(placement: .principal) {
                     Picker("", selection: $pane) {
-                        ForEach(Pane.allCases) { Text($0.label).tag($0) }
+                        ForEach(Self.panes) { Text($0.label).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -88,15 +104,24 @@ struct SettingsView: View {
     /// 読めなかった。名前を付けて、同じ見た目の設定である Plug-ins と並べる。
     private var graphs: some View {
         Section {
+            // 行の字は 15（ETNoticeRow の題と同じ）。指定しないと本文の 17 で、同じ Form の中で浮く。
             Toggle("Sync Visuals to Audio", isOn: $prefs.syncVisualsToAudio)
+                .font(.body)
         } header: {
             Text("Graphs")
-        } footer: {
-            Text("Delay graphs to match the audio output latency.")
         }
     }
 
+    // JSFX が無い版ではこの節ごと消える（ETJSFXHost.isEnabled）。
+    // 節の中身が JSFX の設定 1 つしか無いので、空の見出しだけが残らないようにする。
+    @ViewBuilder
     private var plugins: some View {
+        if ETJSFXHost.isEnabled {
+            pluginsSection
+        }
+    }
+
+    private var pluginsSection: some View {
         Section {
             ETSegmentedChoice(title: "JSFX canvas",
                               values: ETJSFXCanvasMode.allCases,
@@ -104,8 +129,6 @@ struct SettingsView: View {
                               selection: $prefs.jsfxCanvasMode)
         } header: {
             Text("Plug-ins")
-        } footer: {
-            Text("Adaptive scales the canvas up to fill the card. Pixel Perfect stops at one canvas pixel per screen pixel, so most canvases look smaller and sharper. Either way the whole canvas stays on screen.")
         }
     }
 
@@ -147,6 +170,7 @@ struct SettingsView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
+            .font(.body)
             // **遅れの大半はここ。**選ばせるものではないので操作子は無いが、
             // 出さないと 21.3 ms がどこから来たのか辿れない。枯れて 2048 へ
             // 逃げたときに、それが見えるのもこの行だけ。
@@ -198,8 +222,10 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .font(.body)
             .disabled(prefs.powerMode == .continuous)
             Toggle("Keep the screen on", isOn: $prefs.keepScreenAwake)
+                .font(.body)
         } header: {
             Text("Power")
         }
@@ -213,10 +239,12 @@ struct SettingsView: View {
         Section {
             // 下の行と並ぶので、どちらの版かを名前で言い切る。
             LabeledContent("App version", value: ETAppInfo.display)
+                .font(.body)
             // 積んでいる EffeTune の版。いまは上のアプリの版と同じ数字に
             // 揃えてあるが（Tools/gen_version.py）、指しているものが違う。
             // 効果の本数は出さない。増えても減っても使う人の判断は変わらない。
             LabeledContent("EffeTune DSP", value: ETUpstreamVersion)
+                .font(.body)
             // **Special Thanks はまだ置かない。**一度 4 件（EffeTune / ysfx /
             // JSFX・WDL・EEL2 / PFFFT）を並べたが、全部ライブラリで、下の
             // Licenses が作者名つきで既に出しているものだった。EffeTune は
@@ -226,19 +254,31 @@ struct SettingsView: View {
             // 載せたいのは**人**（Twitter で不具合を知らせてくれた人）。
             // その人がライブラリの下に並ぶのは性質が違う。最初の 1 人が
             // 出たときに、人だけのページとして作る。
+            //
+            // **既知の制限は About に置く（2026-09-27、オーナーの判断）。**
+            // Status の中には入れない。あちらは 3.3Hz で作り直されるので、
+            // 押して進む行を置くと提示の途中で作り直すことになる。
+            NavigationLink("Known limitations") { ConnectionTipsView() }
+                .font(.body)
             NavigationLink("Licenses") { LicensesView() }
+                .font(.body)
         } header: {
             Text("About")
         } footer: {
             // **権利の話はここで終える。**Privacy policy を押せる行にすると、
             // 版と並んで「設定の項目」に見える。読む物なので、同じ段落の続きに
             // リンクとして置く（Text の markdown リンクはそのまま開く）。
+            // 行き先はeffectdeck.nemut.ai（site/src/worker.js）。App Store Connectの登録も同じURLにする。
+            // 前のnemut.ai/effetune-live/privacy.htmlはJSFXもリンクの取得も書いていない。
+            // 「手を入れずに」とは書かない。Scripts/setup.shがPatches/effetune-external-*.diffを
+            // dsp/coreに当てている。ポリシー（site/src/text.js）の書き方に合わせる。
             Text("""
-                 The effects are EffeTune's own DSP by Yoshiyuki Kobayashi, running \
-                 unmodified under the MIT license. This app is a separate project by \
+                 The effects are EffeTune's own DSP by Yoshiyuki Kobayashi, used under \
+                 the MIT license with small patches that connect it to the app. \
+                 This app is a separate project by \
                  nemut.ai. It is not affiliated with, endorsed by, or supported by \
                  EffeTune or its author. \
-                 [Privacy policy](https://nemut.ai/effetune-live/privacy.html)
+                 [Privacy policy](https://effectdeck.nemut.ai/privacy)
                  """)
         }
 
@@ -258,21 +298,29 @@ struct SettingsView: View {
             NavigationLink("Report a problem") {
                 ETReportView(io: io, dsp: dsp, prefs: prefs)
             }
+            .font(.body)
             // **軽いほうの口。**GitHub の口座を持っていない人と、
             // 「なんか変」までしか言えない段階の話はここへ来る。
             //
             // **上の報告先と同じ節には入れない。**診断もログも付かないので、
             // Where to send it に並べると、いちばん押しやすい口がいちばん
             // 情報の付かない口になる。報告すると決めた人は上の行へ入るので、
-            // こちらはその下に 1 行だけ置く。
+            // こちらはその下に置く。
+            //
+            // Discord は招待リンクでなく fxdb.nemut.ai へ飛ばす（招待を替えても
+            // アプリを出し直さずに済む。site/src/links.js）。**JSFX や鎖の画面からは
+            // リンクしない。**審査メモの「スクリプトの配り場を持たない」と食い違う。
+            ETReportDestinationButton(title: "Ask on Discord", detail: "EffectDeck Base") {
+                URL(string: "https://fxdb.nemut.ai")
+            }
             ETReportDestinationButton(title: "Ask on Twitter", detail: "@ainemut") {
                 URL(string: "https://twitter.com/ainemut")
             }
         } header: {
             Text("Feedback")
-        } footer: {
-            Text("Report a problem opens with the diagnostics already filled in.")
         }
+
+        ETResetAllDataSection(done: { dismiss() })
 
         // 名前が 1 つも無いうちは節ごと出さない。
         if !ETReporterThanks.isEmpty {
@@ -280,6 +328,39 @@ struct SettingsView: View {
             } footer: {
                 Text(ETReporterThanks.line)
             }
+        }
+    }
+}
+
+/// 全部消す（ETFactoryReset、#15）。About のいちばん下に置く。押す前に必ず 1 度聞く。
+///
+/// **聞くのは alert。**この節の外にある sheet（Remote の Scan QR Code）とは
+/// 付ける View が別なので潰し合わない。消せたらシートを閉じる。開いたままだと、
+/// 消えた設定が並んでいて何が起きたのか読めない。
+private struct ETResetAllDataSection: View {
+    let done: () -> Void
+
+    @State private var confirming = false
+    /// 手元は消せたが iCloud を消し切れなかった。
+    @State private var cloudFailed = false
+
+    var body: some View {
+        Section {
+            Button("Reset All Data", role: .destructive) { confirming = true }
+                .font(.body)
+                .alert("Reset All Data?", isPresented: $confirming) {
+                    Button("Reset", role: .destructive) {
+                        if ETFactoryReset.run() { done() } else { cloudFailed = true }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This erases your chain, presets, imported IRs, JSFX and SFZ files, output corrections and settings on this device and in iCloud. This can't be undone.")
+                }
+                .alert("Couldn't erase iCloud data", isPresented: $cloudFailed) {
+                    Button("OK") { done() }
+                } message: {
+                    Text("Data on this device was erased. EffectDeck will erase its iCloud copy the next time it starts.")
+                }
         }
     }
 }
@@ -359,8 +440,6 @@ private struct ETReportView: View {
                 }
             } header: {
                 Text("Where to send it")
-            } footer: {
-                Text("Either one opens with the diagnostics and the end of the log already written in.")
             }
 
             // **Copy details をここに置かない。**診断は上の 2 つが本文へ
@@ -372,11 +451,9 @@ private struct ETReportView: View {
             // ここに残るのは、本文に入りきらないもの＝ログの全体だけ。
             Section {
                 ETShareLogButton()
-            } footer: {
-                Text("Only a few kilobytes of the log fit in a link.")
             }
         }
-        .navigationTitle("Report a problem")
+        .etNavigationTitle("Report a problem")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -405,6 +482,7 @@ private struct StatusSection: View {
 /// 締切に対してどれだけ使ったか。名前と言い回しは ETLoadReading が持っている。
 private struct ProcessingTimeRow: View {
     @ObservedObject var io: AudioIO
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     var body: some View {
         // **行を消さない。** 休んでいる間 nil になるので、以前はここだけ
@@ -412,10 +490,19 @@ private struct ProcessingTimeRow: View {
         // 同じ踏み方を既に直している）。出ないときは薄く "—"。
         let reading = ETLoadReading(io: io)
         LabeledContent("CPU") {
-            Text(reading?.value ?? "—")
-                .monospacedDigit()
-                .foregroundStyle(reading.map { style($0.level) } ?? AnyShapeStyle(.secondary))
+            HStack(spacing: 4) {
+                // 色だけだった high / over の印。「色の区別なし」の設定のときだけ出す。
+                if differentiateWithoutColor, let level = reading?.level, level != .normal {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .imageScale(.small)
+                        .accessibilityHidden(true)
+                }
+                Text(reading?.value ?? "—")
+                    .monospacedDigit()
+            }
+            .foregroundStyle(reading.map { style($0.level) } ?? AnyShapeStyle(.secondary))
         }
+        .font(.body)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(reading?.accessibility ?? "CPU")
     }
@@ -446,6 +533,7 @@ private struct InputBufferRow: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
+        .font(.body)
     }
 }
 
@@ -458,7 +546,7 @@ private struct DelayRow: View {
         // 同じ値が 2 度並ぶ。合計と足し算を 1 行にまとめる。
         if let d = ETDelayReading(io: io) {
             Text(d.summary)
-                .font(.system(size: 12))
+                .font(.footnote)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
@@ -480,7 +568,7 @@ private struct DetailsSection: View {
             DisclosureGroup(isExpanded: $open) {
                 if open { DetailsRows(io: io, dsp: dsp, prefs: prefs) }
             } label: {
-                Text("Details")
+                Text("Details").font(.body)
             }
         }
     }
@@ -526,6 +614,7 @@ private struct ETReportDestinationButton: View {
             if let url = make() { UIApplication.shared.open(url) }
         } label: {
             LabeledContent(title, value: detail)
+                .font(.body)
         }
     }
 }
@@ -634,6 +723,7 @@ private struct ETShareLogButton: View {
                 }
             } label: {
                 LabeledContent("Attach log", value: Self.size(ETLogTap.byteCount))
+                    .font(.body)
             }
             .sheet(item: $sharing) { attachment in
                 ETActivityView(items: attachment.items) { sharing = nil }
@@ -700,7 +790,7 @@ private struct ETCopyDiagnosticsButton: View {
                 copied = false
             }
         } label: {
-            Text(copied ? "Copied" : "Copy details")
+            Text(copied ? "Copied" : "Copy details").font(.body)
         }
     }
 }

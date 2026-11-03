@@ -7,8 +7,15 @@ Vendor/effetune/presets/<category>/<name>.effetune_preset をそのまま持ち�
 
 リソースとして同梱しないのは、.xcassets の外のファイルを束ねると
 名前の衝突で「Multiple commands produce」に当たるため。
+
+**読めないファイルは黙って落とさない。**いつもは stderr に !! で出して残りを書き、
+ET_STRICT=1（CI）か --strict では何も書かずに 1 で止める（17 本が 16 本になっても
+終了コードが 0 のままだった）。
+
+  python Tools/gen_presets.py [--strict]
 """
 import json
+import os
 import pathlib
 import sys
 
@@ -20,6 +27,7 @@ LABEL = {
     "4ch": "4 Channel",
     "amp_sim": "Amp Simulation",
     "lofi": "Lo-Fi",
+    "mastering": "Mastering",
     "others": "Others",
     "processor": "Processor",
     "spatial": "Spatial",
@@ -29,14 +37,40 @@ LABEL = {
 }
 
 
-def title(stem: str) -> str:
+# 2.16.0 で増えた mastering は、上流の表示名（presets/presets.txt）で出す。
+# 既存のプリセットは今の名前のまま（ScreenshotSeed の id と drop の payload が名前に依る）。
+TITLE_OVERRIDE = {
+    "mastering/edm": "EDM",
+    "mastering/hip_hop": "Hip-Hop",
+    "mastering/jpop_dense": "J-Pop Dense",
+    "mastering/rnb_soul": "R&B and Soul",
+}
+
+
+def title(stem: str, category: str = "") -> str:
+    override = TITLE_OVERRIDE.get(category + "/" + stem)
+    if override:
+        return override
     return " ".join(w.capitalize() if w.islower() else w for w in stem.split("_"))
 
 
-def swift_string(s: str) -> str:
-    # 生文字列で囲む。中身に "### が出ないことを確かめてから使う。
-    assert '"###' not in s
-    return '#"""#'.join([])  # 使わない
+def strict_mode() -> bool:
+    return os.environ.get("ET_STRICT", "") not in ("", "0") or "--strict" in sys.argv[1:]
+
+
+def raw_hashes(text: str) -> str:
+    """text を Swift の生文字列 #…#\"\"\"…\"\"\"#…# に書いたとき、書いたとおりに読まれる # の数。
+
+    生文字列でも、\\ に同じ数の # が続けばエスケープ（\\#n は改行、\\#( は埋め込み）、
+    \"\"\" に同じ数の # が続けばそこで閉じる。JSON の "C:\\\\#x" は中身に \\# を持つので、
+    # 1 つでは Swift が別の字に読んで JSON が壊れる（プリセットが黙って読めなくなる）。
+    どちらも中身に出ない数まで増やす。要らなければ 1 つ（今の生成物と同じ字）。
+    Tools/gen_effect_presets.py に同じものがある。
+    """
+    hashes = "#"
+    while "\\" + hashes in text or '"""' + hashes in text:
+        hashes += "#"
+    return hashes
 
 
 def main() -> int:
@@ -45,20 +79,28 @@ def main() -> int:
         return 1
 
     items = []
+    broken = []
     for path in sorted(SRC.rglob("*.effetune_preset")):
         category = path.parent.name
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:  # noqa: BLE001
-            print("!! 読めない", path, e, file=sys.stderr)
+            broken.append("読めない %s: %s" % (path.relative_to(SRC).as_posix(), e))
             continue
         if not isinstance(data, dict) or not isinstance(data.get("pipeline"), list):
-            print("!! 形が違う", path, file=sys.stderr)
+            broken.append("形が違う（pipeline の配列が無い） %s" % path.relative_to(SRC).as_posix())
             continue
         # 余分な空白を落として埋める。往復はしないので整形は不要。
         compact = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        items.append((LABEL.get(category, category), title(path.stem), compact,
+        items.append((LABEL.get(category, category), title(path.stem, category), compact,
                       len(data["pipeline"])))
+
+    for b in broken:
+        print("!! 落とした:", b, file=sys.stderr)
+    if broken and strict_mode():
+        print("!! 落としたプリセットが %d 本ある（ET_STRICT）。何も書いていない" % len(broken),
+              file=sys.stderr)
+        return 1
 
     lines = [
         "//  SystemPresets.swift",
@@ -85,15 +127,17 @@ def main() -> int:
         lines.append('      name: "%s",' % name)
         lines.append("      effectCount: %d," % count)
         # Swift の複数行文字列は、中身の行が閉じ記号より浅いとエラーになる。
-        lines.append('      json: #"""')
+        hashes = raw_hashes(compact)
+        lines.append('      json: %s"""' % hashes)
         lines.append('      ' + compact)
-        lines.append('      """#),')
+        lines.append('      """%s),' % hashes)
     lines.append("]")
     lines.append("")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")
-    print("presets: %d 本 / %d カテゴリ" % (len(items), len({i[0] for i in items})))
+    print("presets: %d 本 / %d カテゴリ%s" % (len(items), len({i[0] for i in items}),
+                                             "（%d 本を落とした）" % len(broken) if broken else ""))
     return 0
 
 

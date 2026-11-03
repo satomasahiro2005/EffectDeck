@@ -352,6 +352,8 @@ struct PhaseSelectEqView: View {
     /// 雲を描くのに要る。枠が来るまでは 48k / 4096 として扱う（js:187-188 と同じ既定）。
     @State private var sampleRate: Double = 48000
     @State private var fftSize: Double = 4096
+    /// 図の枠の実寸の横幅（目盛りの余白を除く）。描いて測るまではnil。
+    @State private var plotWidth: Double?
 
     private static let bandCount = 5
     private static let graphHeight: CGFloat = 190
@@ -378,7 +380,7 @@ struct PhaseSelectEqView: View {
                 DisclosureGroup("Band Boundaries", isExpanded: $showsBoundaries) {
                     boundaryRows
                 }
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
             }
         }
         .onChange(of: frameSequence) { _, _ in appendHistory() }
@@ -477,11 +479,15 @@ struct PhaseSelectEqView: View {
     }
 
     private var constraints: ETPhaseConstraints {
-        // 図の実寸は描くときにしか分からないので、iPhone の幅でできる寸法を置いている。
-        ETPhaseConstraints(plotWidth: 390 - Double(insets.leading + insets.trailing) - 32,
-                           plotHeight: Double(Self.graphHeight - insets.top - insets.bottom),
-                           maximumFrequency: maximumFrequency,
-                           sampleRate: sampleRate, fftSize: fftSize)
+        // iPadは測った実寸を使う。390pt決め打ちだと、iPhoneより広い所では
+        // 最小幅が実際より太く効いて、帯を狭められなかった。
+        // **iPhoneは今までの見積もりのまま**（iPhoneの手触りは変えない）。測る前もこの見積もり。
+        let estimate = 390 - Double(insets.leading + insets.trailing) - 32
+        let measured = UIDevice.current.userInterfaceIdiom == .pad ? plotWidth : nil
+        return ETPhaseConstraints(plotWidth: measured ?? estimate,
+                                  plotHeight: Double(Self.graphHeight - insets.top - insets.bottom),
+                                  maximumFrequency: maximumFrequency,
+                                  sampleRate: sampleRate, fftSize: fftSize)
     }
 
     private var xAxis: ETAxis {
@@ -528,16 +534,25 @@ struct PhaseSelectEqView: View {
                     drawRegion(&context, plot, slot, selected: false)
                 }
                 drawRegion(&context, plot, band, selected: true)
-                drawHandles(&context, plot)
+                // 畳んだカードでは取っ手を描かない（FrequencyResponseGraph の印と同じ理由）。
+                if !graphOnly { drawHandles(&context, plot) }
             },
             overlay: { plot in
                 // バンドが切ってあるときは面を置かない。置くと一覧の縦スクロールを食う。
-                if displayRegion(band).enabled {
+                // 畳んだカードでも置かない（FrequencyResponseGraph と同じ）。取っ手が無いので
+                // 使えないうえ、etOwnsDragの印が図の上の払いと長押しを止めてしまう。
+                if displayRegion(band).enabled && !graphOnly {
                     Color.clear
                         .contentShape(Rectangle())
                         .gesture(dragGesture(in: plot))
+                        // 取っ手を横へ引いたときに行が払われないように。
+                        .etOwnsDrag()
                 }
             })
+        // ETPlotと同じ引き算（GraphMath.swiftのETPlot.init）。
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            plotWidth = Double(max(1, width - insets.leading - insets.trailing))
+        }
     }
 
     private func segments(_ r: ETPhaseRegion, outer: Bool) -> [ETPhaseSegment] {
@@ -910,17 +925,25 @@ struct PhaseSelectEqView: View {
             band = slot
         } label: {
             Text("\(slot + 1)")
-                .font(.system(size: 13, weight: picked ? .bold : .regular))
+                .etFont(size: 13, weight: picked ? .bold : .regular)
                 .foregroundStyle(picked ? AnyShapeStyle(.white)
                                         : (on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(picked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(on ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
                 .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Band \(slot + 1)")
+        // 切ってあるバンドは不透明度だけで表しているので、VoiceOver には値として伝える。
+        .accessibilityValue(on ? "" : "Off")
         .accessibilityAddTraits(picked ? [.isSelected] : [])
     }
 
@@ -931,7 +954,7 @@ struct PhaseSelectEqView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("BAND \(band + 1)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
 
@@ -950,7 +973,7 @@ struct PhaseSelectEqView: View {
                 set("gn", band, $0)
             }
             Toggle(isOn: Binding(get: { r.solo }, set: { set("so", band, $0 ? 1 : 0) })) {
-                Text("Solo").font(.system(size: 14))
+                Text("Solo").etFont(size: 14)
             }
         }
     }
@@ -979,7 +1002,7 @@ struct PhaseSelectEqView: View {
 
     private func groupHeading(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 9, weight: .semibold))
+            .etFont(size: 9, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
     }
@@ -1087,9 +1110,8 @@ private struct ETPhaseSliderRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(unit.isEmpty ? label : "\(label) (\(unit))")
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 13)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 // 打ち込みも受ける。**下書きに text を渡さない**——"1.50 k" のような
                 // 字は Double(_:) が nil を返して黙って捨てられる。挟むのは range で。
@@ -1100,6 +1122,10 @@ private struct ETPhaseSliderRow: View {
             }
             Slider(value: Binding(get: { normalized }, set: { onChange(denormalized($0)) }),
                    in: 0...1)
+                // 0...1 に正規化した位置のままだと「50%」としか読まれない。名前と実値を渡す。
+                // 画面の題と同じく単位つきで読ませる（値には単位が付かない）。
+                .accessibilityLabel(unit.isEmpty ? label : "\(label) (\(unit))")
+                .accessibilityValue(text)
         }
     }
 

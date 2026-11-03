@@ -1,0 +1,26 @@
+desc:Fuzz MIDI And Functions
+author:nemut.ai
+options:gmem=fuzzshared
+slider1:0.5<0,1,0.01>Mix
+slider2:0<0,127,1>Note
+
+@init
+function lerp(a, b, t) ( a + (b - a) * t; );
+function add(v) instance(sum, count) ( sum += v; count += 1; sum / count; );
+function scale(v) local(k) ( k = 2; v * k; );
+gmem[0] = 1;
+
+@block
+while (midirecv(ofs, msg1, msg2, msg3)) (
+  midisend(ofs, msg1, msg2, msg3);
+);
+midisend(0, $x90, slider2, 100);
+midisend_buf(0, 4096, 3);
+midisend_str(0, "\x90\x40\x7f");
+midisyx(0, 4096, 4);
+
+@sample
+m = lerp(spl0, spl1, slider1);
+avg = left.add(m);
+spl0 = scale(m) * 0.5;
+spl1 = avg;

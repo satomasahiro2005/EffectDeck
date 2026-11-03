@@ -18,54 +18,6 @@
 import Foundation
 import os
 
-/// EffeTune の TelemetryFrameType と同じ番号。
-enum ETFrameType: UInt16 {
-    case level              = 1
-    case gainReduction      = 2
-    case scopeSnapshot      = 3
-    case spectrum           = 4
-    case spectrogramColumn  = 5
-    case stereoField        = 6
-    case loudnessLevels     = 7
-    case transientGain      = 8
-    case channelCount       = 9
-    case multiChannelLevels = 10
-    case dsd64IMD           = 11
-    case powerAmpSag        = 12
-    case multibandDynamics  = 13
-    case fiveBandDynamicEQ  = 14
-    case vinylSimulator     = 15
-    case fmRadioSimulator   = 16
-    case amRadioSimulator   = 17
-    case swRadioSimulator   = 18
-    case tubeSimulator      = 19
-    case phaseSelectMap     = 20
-    case pitchMeter         = 26
-}
-
-struct ETFrame {
-    let type: UInt16
-    let version: UInt16
-    let tapId: UInt32
-    let sequence: UInt32
-    let dropped: Bool
-    let payload: [UInt8]
-
-    /// ペイロードを Float の並びとして読む。
-    var floats: [Float] {
-        let n = payload.count / 4
-        guard n > 0 else { return [] }
-        return payload.withUnsafeBytes { raw in
-            (0..<n).map { raw.loadUnaligned(fromByteOffset: $0 * 4, as: Float.self) }
-        }
-    }
-
-    func u32(at offset: Int) -> UInt32 {
-        guard offset + 4 <= payload.count else { return 0 }
-        return payload.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self) }
-    }
-}
-
 @MainActor
 final class Telemetry: ObservableObject {
 
@@ -81,14 +33,35 @@ final class Telemetry: ObservableObject {
     ///
     /// **輪と同じ大きさにする。** 64KB だと 1 回の poll で汲み切れず、
     /// 残りは次の poll まで輪に積まれたままになる。スペアナの枠は 1 本で
-    /// 16KB あり（FFT 4096 → bin 2049 → `12 + 2049*8`）、それが 60Hz で出る。
-    /// 図を持つ段が数枚並ぶと 1 回ぶんで 64KB を越えるので、汲み残しが
-    /// 次の枠に上書きされて `droppedFrames` が増える。
+    /// 16KB あり（FFT 4096 → bin 2049 → `12 + 2049*8`）、新しい解析ができるたびに
+    /// 出る（FFT 4096 なら 2048 サンプルごと、kernel.cpp:359-368）。
+    /// 図を持つ段と PEQ の探り（段 1 つに 2 台）が並ぶと 1 回ぶんで 64KB を越えるので、
+    /// 汲み残しが次の枠に上書きされて `droppedFrames` が増える。
     private var buffer = [UInt8](repeating: 0, count: Int(EffeTuneDSP.telemetryRingBytes))
 
     private init() {}
 
-    private var pending: [(time: TimeInterval, frames: [UInt64: ETFrame])] = []
+    private var pending: [(time: TimeInterval, frames: [UInt64: ETFrame], queued: [ETFrame])] = []
+
+    /// 畳まずに届いた順に全部取っておく枠（Rhythm Analyzer と Note Spectrogram）。
+    ///
+    /// Rhythm Analyzer: 枠 1 つは、前の枠からの onset（最大 16 個）と取りこぼした数を運ぶ
+    /// （rhythm_analyzer/kernel.cpp の kMaxEvents と droppedEvents）。1 回の poll に 2 枠以上
+    /// 入ると、最新だけ残す `latest` では前の枠の onset が消える。
+    /// Note Spectrogram: カーネルは 20 ms ごと（50 fps）に枠を出し、こちらの poll は 30Hz なので、
+    /// 最新だけだと 4 割が落ちる。2・4・8 枠前の確からしさの直しは枠の番号で当て先を探すので、
+    /// 落ちた枠の列へは直しが届かない（2.13.0）。
+    /// 上流のハブは枠ごとに購読者へ配るので落とさない。tap と種類ごとに持ち、描く側が drainFrames で取り出す。
+    private var frameQueue: [UInt64: [ETFrame]] = [:]
+    /// 溜める種類。Note Spectrogram（24）と Rhythm Analyzer（28）の枠（ETFrameType.noteSpectrogram / .rhythmAnalyzer）。
+    // 31 は Note Spectrogram の音色の知らせ（2.14.0）。1 音ずつの出来事なので落とせない。
+    // 32 は和音と調（2.16.0）。型 24 と同じ 50 fps で来るので、30Hz の読みだと 4 割落ちる。
+    static let queuedTypes: Set<UInt16> = [ETFrameType.noteSpectrogram.rawValue,
+                                           ETFrameType.rhythmAnalyzer.rawValue, 31,
+                                           ETFrameType.noteChordKey.rawValue]
+    /// tap と種類ごとの上限。30Hz なら 8 秒ぶん（Note Spectrogram は 50 fps なので 5 秒）。
+    /// 描く側が止まっていた間に溜め続けない。
+    static let queueLimit = 256
     private var synchronized = false
 
     static func key(tap: UInt32, type: ETFrameType) -> UInt64 {
@@ -99,7 +72,22 @@ final class Telemetry: ObservableObject {
         latest[Self.key(tap: tap, type: type)]
     }
 
+    /// 溜まっている枠を、届いた順に全部渡して空にする。
+    func drainFrames(tap: UInt32, type: UInt16) -> [ETFrame] {
+        frameQueue.removeValue(forKey: UInt64(tap) << 16 | UInt64(type)) ?? []
+    }
+
+    func drainRhythmFrames(tap: UInt32) -> [ETFrame] {
+        drainFrames(tap: tap, type: ETFrameType.rhythmAnalyzer.rawValue)
+    }
+
+    /// clear した回数。エンジンを作り直すと枠の番号も世代も数え直しになる（Rhythm Analyzer は
+    /// 世代で古い枠を見分けるので、出どころが替わったことをこの数で知る）。
+    private(set) var clearCount = 0
+
     func clear() {
+        clearCount &+= 1
+        frameQueue.removeAll()
         latest.removeAll()
         droppedFrames = 0
         pending.removeAll()
@@ -124,6 +112,7 @@ final class Telemetry: ObservableObject {
         var offset = 0
         let bytes = Int(read)
         var found: [UInt64: ETFrame] = [:]
+        var queued: [ETFrame] = []
 
         while offset + 16 <= bytes {
             let type    = load16(offset)
@@ -138,23 +127,34 @@ final class Telemetry: ObservableObject {
 
             let start = offset + 16
             let payload = Array(buffer[start..<(start + payloadBytes)])
-
             let frame = ETFrame(type: type, version: version, tapId: tap, sequence: seq,
                                 dropped: flags & 1 != 0, payload: payload)
             found[UInt64(tap) << 16 | UInt64(type)] = frame
+            if Self.queuedTypes.contains(type) { queued.append(frame) }
 
             offset += frameBytes
         }
 
-        if !found.isEmpty { pending.append((now + delay, found)) }
+        if !found.isEmpty { pending.append((now + delay, found, queued)) }
         var ready: [UInt64: ETFrame] = [:]
         while let first = pending.first, first.time <= now {
             ready.merge(first.frames) { _, new in new }
+            for frame in first.queued { enqueue(frame) }
             pending.removeFirst()
         }
         // Bound memory even if the output route changes to an unusually long delay.
         if pending.count > 180 { pending.removeFirst(pending.count - 180) }
         if !ready.isEmpty { latest.merge(ready) { _, new in new } }
+    }
+
+    private func enqueue(_ frame: ETFrame) {
+        let key = UInt64(frame.tapId) << 16 | UInt64(frame.type)
+        var queue = frameQueue[key] ?? []
+        queue.append(frame)
+        if queue.count > Self.queueLimit {
+            queue.removeFirst(queue.count - Self.queueLimit)
+        }
+        frameQueue[key] = queue
     }
 
     private func load16(_ o: Int) -> UInt16 {

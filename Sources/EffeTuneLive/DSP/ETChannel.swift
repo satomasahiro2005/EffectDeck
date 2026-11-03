@@ -10,6 +10,11 @@
 //    - "1" "2" は UI から出ない。1ch 目と 2ch 目は "L" / "R" が担当する
 //    - 読み込み側の正規表現は "3"〜"16" しか通さないので、"1" を書くと
 //      web 版では Stereo に落ちる。1ch 目を指すなら "L" を書くこと
+//
+//  **その段が何本を処理するか（processedWidth）もここだけに置く。**前は同じ決まりの写しが
+//  4 つあって食い違っていた（EffeTuneDSP.routedChannels・BandFIRPEQDesigner・GroupDelayEQDesigner・
+//  GroupDelayPEQSettings）。ETChannelTests が表の全部で見張るのは processedWidth だけ。
+//  designer の 3 つはまだ自前の写しを持っていて、ここへ寄せるまでは表で見張られていない。
 
 import Foundation
 
@@ -61,5 +66,58 @@ enum ETChannel {
     static func pairName(_ spec: Int8) -> String {
         let first = (Int(spec) - 16) * 2 + 1
         return "\(first)+\(first + 1)"
+    }
+
+    /// その段をengineが実際に回す幅。**回さないなら0。**
+    ///
+    /// engine.cpp:757-769（build_plan）と:990-1000（processPipeline）の飛ばし方をそのまま写す:
+    ///
+    ///     routed_channels = channelSpec == -1 || channelSpec >= 16 ? 2 : 1;   // -2 は全部
+    ///     first_channel   = channelSpec >= 16 ? (channelSpec - 16) * 2 : max(channelSpec, 0);
+    ///     if (first_channel + routed_channels > channel_count) continue;      // 回さない
+    ///
+    ///   - -2（All）: engineの幅そのもの
+    ///   - -1（Stereo、既定）: 1ch目と2ch目。出力1chでは回さない
+    ///   - 0〜15（L / R / "3"〜"16"）: その1本。engineの幅より外なら回さない
+    ///   - 16〜23（対）: 1+2 / 3+4 / … 。対がengineの幅に収まらなければ回さない
+    ///
+    /// engineの幅が1〜16の外、engineが拒むCh（validChannelSpec、engine.cpp:111-113）も0。
+    ///
+    /// 上流の selectedIrChannelCount（ir-plugin-contract.js:26-39）は1本を幅を見ずに1と数え、
+    /// Stereoを出力1chで1と数える。どちらもengineは回さないので、こちらはengineに合わせる
+    /// （ETChannelTestsが表の全部で照らす）。
+    static func processedWidth(spec: Int8, engineChannels: Int) -> Int {
+        guard (1...16).contains(engineChannels) else { return 0 }
+        let first: Int
+        let routed: Int
+        switch spec {
+        case -2:
+            return engineChannels
+        case -1:
+            first = 0
+            routed = 2
+        case 0...15:
+            first = Int(spec)
+            routed = 1
+        case 16...23:
+            first = Int(spec - 16) * 2
+            routed = 2
+        default:
+            return 0
+        }
+        return first + routed > engineChannels ? 0 : routed
+    }
+
+    /// 置いたChが名乗る幅。**はみ出しを見ない。**engineの幅が1以上なら0を返さない。
+    ///
+    /// 外部の段（AU / JSFX）のhostに組ませる形に使う。engineが飛ばす段でもhostはバスの形を作るので、
+    /// 0は渡せない。値はprocessedWidthを入れる前のEffeTuneDSP.routedChannelsと同じ。
+    static func nominalWidth(spec: Int8, engineChannels: Int) -> Int {
+        switch spec {
+        case -2: return engineChannels
+        case -1: return min(2, engineChannels)
+        case 16...: return 2
+        default: return 1
+        }
     }
 }

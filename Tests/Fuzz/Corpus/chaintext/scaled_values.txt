@@ -1,0 +1,1 @@
+[{"nm":"Tilt EQ","pivotExponent":1000},{"nm":"Digital Error Emulator","bitErrorRateExponent":1e-06},{"nm":"Volume","vl":"  -3 "},{"nm":"5Band PEQ","f0":101.47}]

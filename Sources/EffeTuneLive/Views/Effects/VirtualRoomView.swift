@@ -28,7 +28,8 @@ struct VirtualRoomView: View {
             VStack(alignment: .leading, spacing: 12) {
                 VirtualRoomSceneView(layout: layout, interactive: true,
                                      moveListener: moveListener,
-                                     moveSpeaker: moveSpeaker)
+                                     moveSpeaker: moveSpeaker,
+                                     holdUndo: { dsp.undoHeld = $0 })
                 if layout.clamped {
                     Text("The speakers do not fit in this room, so they are being placed as far out as the walls allow. Widen the room to get the distance back.")
                         .font(.caption).foregroundStyle(.secondary)

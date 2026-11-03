@@ -39,11 +39,13 @@
 //  横軸は 10Hz〜40kHz の対数（同 36 GRAPH_FREQUENCY_RANGE, 943-948 freqToX）。
 //  Swift 側の横軸は GroupDelayPEQDesignCore.responseFrequencies が同じ 128 点を返す。
 //
-//  --- 保存されないもの ---
-//  バンドと Taps はプリセットに乗らない。node.values には lt と fd しか入らないので、
-//  保存して読み直すと設計が消えて素通しに戻る。遅延の申告は資産が無ければ 0 なので
-//  （kernel.cpp:162-163）、鎖の頭合わせが狂うことはない。消えるのは効果そのもの。
+//  --- 保存の仕方 ---
+//  バンドとTapsはnode.valuesに席が無い（ltとfdしか入らない）。前は置き場にしか無く、
+//  保存して読み直すと設計が消えて素通しに戻っていた。いまはNode.designに上流と同じ綴り
+//  （tp / t0-4 / f0-4 / d0-4 / q0-4 / e0-4）で持ち、置き場が作るときにそこから組み、
+//  変わるたびに書き戻す（DSP/DesignParams.swift）。
 
+import Combine
 import SwiftUI
 
 // MARK: - designer の置き場
@@ -66,6 +68,8 @@ final class GroupDelayPEQDesigners {
     static let shared = GroupDelayPEQDesigners()
 
     private var designers: [UUID: GroupDelayPEQDesigner] = [:]
+    /// settingsが変わるたびにNode.designへ書き戻す見張り。designerと一緒に捨てる。
+    private var watches: [UUID: AnyCancellable] = [:]
     /// いまどの instance へ繋いであるか。繋ぎ直しを 1 回だけにする。
     /// attach は毎回 start(debounce: 0) を回す（GroupDelayPEQDesigner.swift:810）ので、
     /// body が走るたびに呼ぶと音が細かく途切れる。
@@ -73,13 +77,57 @@ final class GroupDelayPEQDesigners {
 
     private init() {}
 
-    /// 段の designer。無ければ作る。`initial` は**作るときだけ**使う。
-    func designer(for id: UUID, initial: GroupDelayPEQSettings) -> GroupDelayPEQDesigner {
-        if let existing = designers[id] { return existing }
+    /// 段のdesigner。無ければ段の材料から作る（initialSettings）。
+    func designer(for node: EffeTuneDSP.Node) -> GroupDelayPEQDesigner {
+        if let existing = designers[node.id] { return existing }
         prune()
-        let made = GroupDelayPEQDesigner(settings: initial)
-        designers[id] = made
+        let made = GroupDelayPEQDesigner(settings: Self.initialSettings(of: node))
+        designers[node.id] = made
+        let id = node.id
+        // @Publishedは書く直前に新しい値を流すので、受けた値をそのまま書く。
+        // 最初の1回（今の値）は落とす。レートや処理幅だけが変わっても材料は同じなので、
+        // setDesignが同じ辞書を見て黙って戻る。
+        watches[node.id] = made.$settings.dropFirst().sink { settings in
+            EffeTuneDSP.shared.setDesign(settings.designParams, nodeID: id)
+        }
         return made
+    }
+
+    /// designerを初めて作るときの設定。
+    ///
+    /// レートは**dsp.sampleRate**。engineに渡った値がそれで（EffeTuneDSP.swift:117-118が
+    /// 控えて:137でet_engine_prepareへ渡している）、カーネルはペイロードの+12を
+    /// その値と突き合わせる（kernel.cpp:286 `readU32(bytes+12) == (uint32)(sample_rate_ + 0.5F)`）。
+    /// AudioIO.processingRateは音が始まるまで48000のままなので、こちらは使わない。
+    /// バンドとTapsはNode.designから（DesignParams.swift）。
+    static func initialSettings(of node: EffeTuneDSP.Node) -> GroupDelayPEQSettings {
+        let dsp = EffeTuneDSP.shared
+        return GroupDelayPEQSettings(latencySamples: seededLatency(of: node),
+                                     sampleRate: dsp.sampleRate,
+                                     processingChannels: GroupDelayPEQSettings.routedChannels(
+                                         channelSpec: node.channelSpec,
+                                         engineChannels: Int(dsp.maxChannels)))
+            .applying(designParams: node.design)
+    }
+
+    /// ltの初期値。node.valuesのltは選択肢の添字（EffectCatalog.swift:541）。
+    static func seededLatency(of node: EffeTuneDSP.Node) -> Int {
+        let choices = GroupDelayPEQDesignCore.latencyChoices
+        guard let param = node.spec.params.first(where: { $0.key == "lt" }),
+              node.values.indices.contains(param.offset) else { return 128 }
+        let i = Int(node.values[param.offset].rounded())
+        return choices.indices.contains(i) ? choices[i] : 128
+    }
+
+    /// 段の材料が外から変わった（プリセットの適用・既定へ戻す）。
+    /// ltとNode.designから組み直してdesignerへ渡し、遅延があれば繋ぐ。
+    func adopt(node: EffeTuneDSP.Node) {
+        if let designer = designers[node.id] {
+            var next = designer.settings.applying(designParams: node.design)
+            next.latencySamples = Self.seededLatency(of: node)
+            designer.update(next, debounce: 0)
+        }
+        sync(node: node)
     }
 
     /// instance に繋ぎ直す。**送るものがあるときだけ。**
@@ -95,6 +143,9 @@ final class GroupDelayPEQDesigners {
     func sync(node: EffeTuneDSP.Node) {
         let dsp = EffeTuneDSP.shared
         guard dsp.engine != 0, node.instance != 0 else { return }
+        // カードがまだ出ていなくても、段が材料を持っていれば作る（鎖を読んだ直後・
+        // instanceの作り直し。ETAssetReattach.one）。遅延が無ければ下のguardで繋がない。
+        if designers[node.id] == nil, !node.design.isEmpty { _ = designer(for: node) }
         guard let designer = designers[node.id], designer.settings.hasDelay else { return }
         guard attachedInstance(for: node.id) != node.instance else { return }
 
@@ -108,7 +159,7 @@ final class GroupDelayPEQDesigners {
         designer.update(next.clampingDelaysToLimit(), debounce: 0)
 
         markAttached(node.id, instance: node.instance)
-        let at = dsp.chain.firstIndex(where: { $0.instance == node.instance })
+        let at = dsp.nodes.firstIndex(where: { $0.instance == node.instance })
         designer.attach(instance: node.instance, nodeIndex: at ?? 0)
     }
 
@@ -120,8 +171,9 @@ final class GroupDelayPEQDesigners {
     /// instance は EffeTuneDSP が壊している（EffeTuneDSP.swift:689 の et_instance_destroy）ので、
     /// ここでは参照を外すだけでよい。detach を呼ぶと死んだ instance へ触りに行く。
     private func prune() {
-        let live = Set(EffeTuneDSP.shared.chain.map(\.id))
+        let live = Set(EffeTuneDSP.shared.nodes.map(\.id))
         designers = designers.filter { live.contains($0.key) }
+        watches = watches.filter { live.contains($0.key) }
         attached = attached.filter { live.contains($0.key) }
     }
 }
@@ -144,30 +196,7 @@ struct GroupDelayPEQView: View {
 
     var body: some View {
         GroupDelayPEQBody(index: index, node: node, dsp: dsp,
-                          designer: GroupDelayPEQDesigners.shared.designer(for: node.id,
-                                                                          initial: initialSettings))
-    }
-
-    /// designer を初めて作るときの設定。
-    ///
-    /// レートは **dsp.sampleRate**。engine に渡った値がそれで（EffeTuneDSP.swift:117-118 が
-    /// 控えて :137 で et_engine_prepare へ渡している）、カーネルはペイロードの +12 を
-    /// その値と突き合わせる（kernel.cpp:286 `readU32(bytes+12) == (uint32)(sample_rate_ + 0.5F)`）。
-    /// AudioIO.processingRate は音が始まるまで 48000 のままなので、こちらは使わない。
-    private var initialSettings: GroupDelayPEQSettings {
-        GroupDelayPEQSettings(latencySamples: seededLatency,
-                              sampleRate: dsp.sampleRate,
-                              processingChannels: GroupDelayPEQSettings.routedChannels(
-                                  channelSpec: node.channelSpec, engineChannels: Int(dsp.maxChannels)))
-    }
-
-    /// lt の初期値。node.values の lt は選択肢の添字（EffectCatalog.swift:541）。
-    private var seededLatency: Int {
-        let choices = GroupDelayPEQDesignCore.latencyChoices
-        guard let param = node.spec.params.first(where: { $0.key == "lt" }),
-              node.values.indices.contains(param.offset) else { return 128 }
-        let i = Int(node.values[param.offset].rounded())
-        return choices.indices.contains(i) ? choices[i] : 128
+                          designer: GroupDelayPEQDesigners.shared.designer(for: node))
     }
 }
 
@@ -200,10 +229,10 @@ private struct GroupDelayPEQBody: View {
     private var content: some View {
         if graphOnly {
             // 畳んだカード。触れないので状態だけ出す。
-            statusBox
+            statusBox.etLocalAudioOnly()
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                statusBox
+                statusBox.etLocalAudioOnly()
                 bandPicker
                 bandControls
                 tapsRow
@@ -228,7 +257,7 @@ private struct GroupDelayPEQBody: View {
     /// attach は即 start(debounce: 0) を回す（GroupDelayPEQDesigner.swift:810）。
     /// 遅延が 1 本も無ければ .flat の経路へ行って AssetUpload.clear を呼び
     /// （同 902-911）、clear は master bypass を上げて音のスレッドが 2 ブロック進むまで
-    /// 待つ（AssetUpload.swift:553-558, 676-692）。送るものが無いのに繋ぐと、
+    /// 待つ（AssetUpload.swift:533-538, 631-649）。送るものが無いのに繋ぐと、
     /// カードを出しただけで鎖全体の音が一瞬切れる。
     /// 中身は置き場が持っている（畳んだ状態からも呼ばれるので外に出してある）。
     private func connect() { GroupDelayPEQDesigners.shared.sync(node: node) }
@@ -308,15 +337,15 @@ private struct GroupDelayPEQBody: View {
     private var statusBox: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(headline)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
             Text(message)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(messageStyle)
                 .fixedSize(horizontal: false, vertical: true)
             if designer.design != nil {
                 // group_delay_peq.js:616-629 の details 行。
                 Text(designer.detailText)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -359,7 +388,7 @@ private struct GroupDelayPEQBody: View {
                 ForEach(0..<GroupDelayPEQDesignCore.bandCount, id: \.self) { i in
                     Button { band = i } label: {
                         Text("\(i + 1)")
-                            .font(.system(size: 12, weight: band == i ? .bold : .regular))
+                            .etFont(size: 12, weight: band == i ? .bold : .regular)
                             .foregroundStyle(band == i ? AnyShapeStyle(.white)
                                                        : AnyShapeStyle(.secondary))
                             .frame(minWidth: 30, minHeight: 26)
@@ -367,13 +396,23 @@ private struct GroupDelayPEQBody: View {
                                                   : AnyShapeStyle(.quaternary),
                                         in: .rect(cornerRadius: ETMetrics.innerRadius,
                                                   style: .continuous))
+                            // 見た目は 30x26 のまま、押せる面だけを 44pt まで広げる。
+                            // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 3)
+                            .contentShape(.rect)
+                            .padding(.vertical, -9)
+                            .padding(.horizontal, -3)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Band \(i + 1)")
                     .accessibilityAddTraits(band == i ? [.isSelected] : [])
                 }
             }
+            // 押せる面を 44pt にするぶんの余白。外側で同じだけ引くので並びの高さは変わらない。
+            .padding(.vertical, 9)
         }
+        .padding(.vertical, -9)
     }
 
     /// 選んだバンドのつまみ。名前は上流に合わせた
@@ -390,12 +429,13 @@ private struct GroupDelayPEQBody: View {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle(isOn: Binding(get: { current.enabled },
                                      set: { on in edit(band) { $0.enabled = on } })) {
-                    Text("Band \(band + 1)").font(.system(size: 14))
+                    Text("Band \(band + 1)").etFont(size: 14)
                 }
 
-                HStack {
-                    Text("Type").font(.system(size: 14))
-                    Spacer(minLength: 8)
+                // 文字を大きくした人には、名前の下にメニューを積む（横だと値が 1 字ずつ折り返す）。
+                ETAdaptiveStack(spacing: nil) { stacked in
+                    Text("Type").etFont(size: 14)
+                    if !stacked { Spacer(minLength: 8) }
                     Picker("Type", selection: Binding(
                         get: { current.shape },
                         set: { shape in edit(band) { $0.shape = shape } })
@@ -406,6 +446,8 @@ private struct GroupDelayPEQBody: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .etFont(size: 14)
+                    .fixedSize(horizontal: stacked, vertical: false)
                 }
 
                 valueRow("Freq (Hz)", text: String(Int(current.frequency.rounded())),
@@ -478,9 +520,8 @@ private struct GroupDelayPEQBody: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 if let value, let range, let commit {
                     ETValueField(text: text, label: title,
@@ -503,7 +544,7 @@ private struct GroupDelayPEQBody: View {
                            selected: Int,
                            action: @escaping (Int) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 14))
+            Text(title).etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -511,7 +552,7 @@ private struct GroupDelayPEQBody: View {
                     let isSelected = option.id == selected
                     Button { action(option.id) } label: {
                         Text(option.label)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)

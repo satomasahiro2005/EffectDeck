@@ -1,0 +1,180 @@
+# 先の Xcode でも建って試験が通るかを毎晩見る canary。
+#
+# image（xcode-27）にある Xcode のうち beta も含めていちばん新しいものを選び、それで使える
+# いちばん新しい iOS のシミュレータで、ci.yml の macos と同じ 2 つを回す。
+#
+#   logic      Logic の単体テスト
+#   sim-build  拡張を外したアプリの build（シミュレータ）
+#
+# 選んだ Xcode・SDK・ランタイムはログと回の要約（notice）に出す。いちばん新しいものが ci.yml の
+# 固定と同じでも回す（同じだと書き残すだけ。安いので飛ばさない）。
+#
+# **push・PR の CI は落とさない。**別のファイルにしてあり、毎晩と手で回すときだけ走るので、
+# push・PR の checks には出てこない。落ちても Actions に赤が残って知らせが来るだけ。
+# branch protection の必須の checks にも入れない。
+#
+# 道具は ci.yml と同じもの（Scripts/setup.sh・Tools/gen_sim_spec.py・.github/scripts/pick_simulator.py・
+# .github/scripts/check_xcresult_skips.py・版を固定した xcodegen）。Xcode とランタイムの選び方だけ
+# .github/scripts/pick_xcode.py。
+# runner のラベルと下の env（STABLE_XCODE_APP・SIM_NAME・XCODEGEN_*）は ci.yml の macos と同じ値
+# （release.yml も同じラベル・XCODE_APP・XCODEGEN_* を持つ）。
+# 入れ替えるときは両方直す（先の Xcode を持つ image が先に出たら、ラベルはこちらだけ進めてよい）。
+#
+# 署名はしない（CODE_SIGNING_ALLOWED=NO）。秘密も使わない。
+name: Canary
+
+on:
+  schedule:
+    - cron: "43 19 * * *"   # 毎日 04:43（日本時間）。dsp.yml の 03:17 とずらす
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# concurrency は置かない。push・PR では走らず、毎晩の回と手で回した回が重なっても両方残してよい。
+
+# shell を名指しすると pipefail が付く（名指ししないと bash -e だけで、`xcodebuild | tee` の失敗が消える）。
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  canary:
+    name: canary (${{ matrix.task }})
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [logic, sim-build]
+    # ci.yml と同じく、ワークフローの env に上げない（SIM_* は Scripts/lib/sim.sh も読む）。
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      # ci.yml の macos が固定している Xcode。同じものを選んだかを書き残すためだけに使う。
+      STABLE_XCODE_APP: /Applications/Xcode_27.0.app
+      SIM_NAME: iPad Pro 13-inch (M5)
+      XCODEGEN_VERSION: 2.46.0
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+    steps:
+      - uses: actions/checkout@v7
+      - name: いちばん新しい Xcode を選ぶ（beta も含む）
+        id: xcode
+        run: |
+          app=$(python3 .github/scripts/pick_xcode.py xcode)
+          sudo xcode-select -s "$app/Contents/Developer"
+          xcodebuild -version
+          xcode=$(xcodebuild -version | paste -sd ' ' -)
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          echo "iphonesimulator SDK: $sdk"
+          # 配備先が 27.0 なので、それより古い SDK では建たない（いちばん新しいものなら起きないはず）。
+          if ! [ "${sdk%%.*}" -ge 27 ] 2>/dev/null; then
+            echo "::error::$app に iOS 27 以降の SDK が無い（${sdk}）"
+            exit 1
+          fi
+          stable=""
+          if [ -d "$STABLE_XCODE_APP" ]; then stable=$(cd "$STABLE_XCODE_APP" && pwd -P); fi
+          if [ "$app" = "$stable" ]; then
+            echo "::notice title=canary::いちばん新しい Xcode は ci.yml の固定（${STABLE_XCODE_APP}）と同じ。それでも回す"
+          fi
+          echo "::notice title=canary の Xcode::${xcode}・iphonesimulator SDK ${sdk}（${app}）"
+          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+      - name: submodule
+        run: |
+          git submodule update --init --filter=blob:none Vendor/effetune
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status
+      - name: xcodegen をキャッシュから戻す
+        uses: actions/cache@v6
+        with:
+          path: ~/.ci-tools/xcodegen
+          key: xcodegen-${{ env.XCODEGEN_VERSION }}-${{ env.XCODEGEN_SHA256 }}
+      - name: xcodegen（版を固定し sha256 を確かめる）
+        run: |
+          dir="$HOME/.ci-tools/xcodegen"
+          if [ ! -x "$dir/bin/xcodegen" ]; then
+            zip="$RUNNER_TEMP/xcodegen.zip"
+            curl -fsSL --retry 3 -o "$zip" \
+              "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+            echo "$XCODEGEN_SHA256  $zip" | shasum -a 256 -c -
+            rm -rf "$dir"
+            mkdir -p "$HOME/.ci-tools"
+            unzip -q "$zip" -d "$HOME/.ci-tools"
+          fi
+          "$dir/bin/xcodegen" --version
+          echo "XCODEGEN=$dir/bin/xcodegen" >> "$GITHUB_ENV"
+      # パッチ・生成物・note-models。logic はここで project.yml から .xcodeproj まで組む。
+      - name: Scripts/setup.sh
+        env:
+          SKIP_XCODEGEN: ${{ matrix.task == 'sim-build' && '1' || '0' }}
+        run: bash Scripts/setup.sh
+
+      - name: いちばん新しい iOS のシミュレータを選んで起こす
+        if: matrix.task == 'logic'
+        id: sim
+        env:
+          SDK: ${{ steps.xcode.outputs.sdk }}
+        run: |
+          # 選んだ Xcode で使えて、その SDK より新しくないランタイムのうちいちばん新しいもの。
+          picked=$(python3 .github/scripts/pick_xcode.py runtime --sdk "$SDK")
+          read -r ios runtime_id <<<"$picked"
+          # 出たばかりのランタイムで image が端末を作っていなければ、ci.yml と同じ機種を作る。
+          if ! udid=$(python3 .github/scripts/pick_simulator.py --name "$SIM_NAME" --os "$ios"); then
+            echo "::warning::iOS $ios の端末が無いので $SIM_NAME を作る"
+            udid=$(xcrun simctl create "$SIM_NAME (canary)" "$SIM_NAME" "$runtime_id")
+          fi
+          echo "::notice title=canary のシミュレータ::iOS ${ios}（${runtime_id}）・$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl bootstatus "$udid" -b
+      - name: Logic の単体テスト
+        if: matrix.task == 'logic'
+        id: logic
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        # 取り直しは ci.yml と同じ 1 回だけ（取り直した記録は xcresult に残る）。
+        run: |
+          mkdir -p build
+          xcodebuild test \
+            -project EffeTuneLive.xcodeproj -scheme Logic \
+            -destination "id=$UDID" \
+            -only-testing:EffeTuneLiveUnitTests \
+            -parallel-testing-enabled NO \
+            -retry-tests-on-failure -test-iterations 2 \
+            -resultBundlePath build/Logic.xcresult \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/logic.log | xcbeautify --renderer github-actions
+      # ci.yml と同じ照合（XCTSkip で飛んだ試験が allowed_skips.txt に無い、または 1 本も走っていなければ落とす）。
+      # 新しい Xcode・ランタイムで試験が黙って飛ぶようになったのを、ここで拾う。
+      - name: 予定外の skip が無いこと（xcresult）
+        if: ${{ !cancelled() && matrix.task == 'logic' && steps.logic.outcome != 'skipped' && hashFiles('.github/scripts/check_xcresult_skips.py') != '' }}
+        run: python3 .github/scripts/check_xcresult_skips.py --xcresult build/Logic.xcresult
+
+      - name: シミュレータ用の仕様を組む（拡張を外す）
+        if: matrix.task == 'sim-build'
+        run: |
+          python3 Tools/gen_sim_spec.py
+          "$XCODEGEN" generate --spec project-sim.yml
+      - name: アプリを建てる（シミュレータ）
+        if: matrix.task == 'sim-build'
+        run: |
+          mkdir -p build
+          xcodebuild build \
+            -project EffeTuneLiveSim.xcodeproj -scheme EffeTuneLive -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -resultBundlePath build/SimBuild.xcresult \
+            -jobs 3 \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/out-sim" \
+            2>&1 | tee build/sim-build.log | xcbeautify --renderer github-actions
+          test -d out-sim/EffectDeck.app
+
+      - name: 結果を残す
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: canary-${{ matrix.task }}
+          path: |
+            build/*.xcresult
+            build/*.log
+          retention-days: 14
+          if-no-files-found: ignore

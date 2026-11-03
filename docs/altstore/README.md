@@ -29,7 +29,7 @@ python3 ~/asc.py adp-show <version-id>         ADP → その版 → 変種ま�
 
 ## 順番
 
-1. **上げる**（`Scripts/archive.sh` → `xcodebuild -exportArchive` → `xcrun altool --upload-app`）
+1. **上げる**（ふだんの配布は GitHub Actions の release.yml。ローカルの非常用は `Scripts/archive.sh`〈`-configuration Beta` / `Release`〉 → `xcodebuild -exportArchive` → `xcrun altool --upload-app`）
    `altool` は `--apiKey` / `--apiIssuer` で通る。`asc` は要らない。
 2. **`usesNonExemptEncryption` を false に**。一度立てると二度目は 409 になる（`You cannot update when the value is already set.`）
 3. **版に結びつける**。**審査待ちの間は差し替えられない**

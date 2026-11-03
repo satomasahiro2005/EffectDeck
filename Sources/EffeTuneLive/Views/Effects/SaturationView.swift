@@ -39,8 +39,7 @@ struct SaturationView: View {
                 shape: { x in
                     let wet = tanh(drive * (x + bias)) - biasOffset
                     return (x * (1 - mix) + wet * mix) * gain
-                },
-                caption: "Drive, bias and mix shape the curve. Gain scales it.")
+                })
 
             ForEach(node.spec.params) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)

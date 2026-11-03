@@ -66,7 +66,6 @@ struct MultibandSaturationView: View {
                 decibelRange: -24...6,
                 decibelStep: 6,
                 height: ETGraphMetrics.compactHeight,
-                caption: "Drag 1 or 2 to move a crossover",
                 onMarkerChanged: { marker, hz, _ in
                     moveCrossover(marker, to: hz, f1: f1, f2: f2)
                 })
@@ -112,9 +111,9 @@ struct MultibandSaturationView: View {
                 } label: {
                     VStack(spacing: 2) {
                         Text(Self.names[i])
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                         Text(ranges[i])
-                            .font(.system(size: 9, design: .monospaced))
+                            .etFont(size: 9, design: .monospaced)
                     }
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)

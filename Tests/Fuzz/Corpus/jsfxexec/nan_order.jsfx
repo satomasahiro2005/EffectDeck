@@ -1,0 +1,19 @@
+desc:jsfxexec: + * のオペランドが 2 つとも NaN のとき、残る NaN を実行系ごとに同じにする（パッチの effectdeck_nan_order）
+// 既定の実行系と portable の出力を 1 ビットまで比べる回（jsfx_exec.cpp の 9）で、NaN の符号の違いを出力に出す。
+// 字（sprintf の %f は nan と -nan で長さが違う）・関数の引数の升・^= の書き戻し（どれもフィルタを通らない）。
+in_pin:L
+in_pin:R
+out_pin:L
+out_pin:R
+@init
+function nanp() ( z / z );
+function nann() ( -(z / z) );
+function k1(p) ( sprintf(#k, "%f", p); strlen(#k) );
+z = 0;
+@sample
+sprintf(#s, "%f %f", nanp() + nann(), nann() * nanp()); a = strlen(#s);
+b = k1(nann() + nanp()) + k1(nanp() * nann());
+w = 2; w ^= nann() + nanp(); sprintf(#w, "%f", w); c = strlen(#w);
+sprintf(#t, "%f %f", spl0 + -spl0, -spl1 * spl1); d = strlen(#t);
+spl0 = (a + b) / 64;
+spl1 = (c + d) / 64;

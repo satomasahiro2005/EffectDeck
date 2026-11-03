@@ -6,6 +6,13 @@
 #
 # .xcodeproj は追跡していない（project.yml が正）。Xcode で開く前と、
 # Vendor/effetune を進めたあとに叩く。Scripts/build.sh もこれを呼ぶ。
+#
+# 環境変数（どれも付けなければ今までと同じ動き。手元の Mac は何も付けない）:
+#   SKIP_XCODEGEN=1  最後の xcodegen を叩かない。生成物だけ作る
+#                    （Linux の CI。xcodegen が無い。シミュレータ用は project-sim.yml を別に組む）
+#   ET_STRICT=1      gen_version.py の失敗でも止める（CI。浅い submodule でタグが無いと落ちる）。
+#                    生成スクリプトも同じ変数を環境から読む（引数では渡さない）
+#   XCODEGEN=<path>  使う xcodegen（CI は版を固定したものを渡す。既定は PATH の xcodegen）
 set -u
 export PATH="/opt/homebrew/bin:$PATH"   # xcodegen と、3.10 以降の python3
 cd "$(dirname "$0")/.." || exit 1
@@ -15,10 +22,12 @@ if [ ! -d Vendor/effetune/dsp ]; then
   exit 1
 fi
 
+# **--recursive は付けない。**ysfx の中の submodule（dr_libs・clap-juce-extensions）は
+# 使わない。dr_libs を引くのは project.yml が外している ysfx_audio_{flac,wav}.cpp だけ。
 if [ ! -f Vendor/ysfx/include/ysfx.h ]; then
   echo "--- JSFX runtime ---"
-  git submodule update --init --recursive Vendor/ysfx || {
-    echo "!! Vendor/ysfx を取得できない。git submodule update --init --recursive Vendor/ysfx を確認すること。"
+  git submodule update --init Vendor/ysfx || {
+    echo "!! Vendor/ysfx を取得できない。git submodule update --init Vendor/ysfx を確認すること。"
     exit 1
   }
 fi
@@ -30,16 +39,67 @@ YSFX_REV="5c3452fee62583aa3d1b7e877d0c758c4024af89"
 YSFX_ACTUAL="$(git -C Vendor/ysfx rev-parse HEAD 2>/dev/null || true)"
 if [ -n "$YSFX_ACTUAL" ] && [ "$YSFX_ACTUAL" != "$YSFX_REV" ]; then
   echo "!! Vendor/ysfx is not the reviewed revision $YSFX_REV"
-  echo "   run: git submodule update --init --recursive Vendor/ysfx"
+  echo "   run: git submodule update --init Vendor/ysfx"
   exit 1
 fi
-if grep -q "g_effectdeck_lice_image_bytes" Vendor/ysfx/sources/ysfx_api_gfx_lice.hpp 2>/dev/null; then
+# **目印はこの版のパッチが初めて足すものにする。**前の版にもある印だと、
+# 前の版が当たった木（一度でも build.sh を通した Mac）を「当たっている」と
+# 見て黙って飛ばし、新しく足した分（gfx の座標の切り詰めなど）が建たない。
+# パッチを変えたら、目印もその版で足したものに替えること（Tests/Fuzz/run.sh も同じ目印を見る）。
+# 目印は include/ysfx.h の YSFX_EFFECTDECK_OUTPUT_VOLUME（Tests/Fuzz/run.sh の門の写しは見出しだけなので include/ に置く）。
+if grep -q "YSFX_EFFECTDECK_OUTPUT_VOLUME" Vendor/ysfx/include/ysfx.h 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
+  YSFX_PATCHED=1
+else
+  YSFX_PATCHED=0
+  # 目印が無いのに木が変わっている＝前の版のパッチが当たっている。
+  # 新しい版はその上には当たらないので、固定した版へ戻してから当てる。
+  # 手を入れているのはこのパッチだけなので、戻して失うものは無い。
+  git -C Vendor/ysfx diff --quiet 2>/dev/null
+  YSFX_DIFF=$?
+  if [ $YSFX_DIFF -eq 1 ]; then
+    echo "--- Vendor/ysfx を $YSFX_REV に戻す（前の版のパッチが当たっている） ---"
+    git -C Vendor/ysfx checkout -- . || {
+      echo "!! Vendor/ysfx を戻せない。git -C Vendor/ysfx status を確かめること"
+      exit 1
+    }
+    # パッチが新しく作るファイル（追跡していないので checkout では消えない）。
+    rm -f Vendor/ysfx/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
+  elif [ $YSFX_DIFF -ne 0 ] \
+      && grep -q "YSFX_EFFECTDECK_SANDBOX" Vendor/ysfx/sources/ysfx_api_file.cpp 2>/dev/null; then
+    # **git が開けない写しでは、前の版の差分を逆に当てて外す。**Mac へ送った木は
+    # .git が無いか Windows を指したままの gitlink で、diff は 128／129 を返す。
+    # 前の版の印（sandbox の分岐）が居て新しい目印が無いのがその木。
+    # --ignore-whitespace は Windows から写した CRLF の木のため。-F 0 は別の版を
+    # 半端に外さないため。
+    echo "--- Vendor/ysfx から前の版のパッチを外す（git が開けない写し） ---"
+    if patch --batch --forward --ignore-whitespace -F 0 -R -p1 -d Vendor/ysfx --dry-run \
+        <Patches/ysfx-effectdeck-ios.old.diff >/dev/null 2>&1; then
+      patch --batch --forward --ignore-whitespace -F 0 -R -p1 -d Vendor/ysfx \
+        <Patches/ysfx-effectdeck-ios.old.diff >/dev/null || {
+        echo "!! 前の版のパッチを外しきれない。Vendor/ysfx を送り直すこと"
+        exit 1
+      }
+    else
+      echo "!! 前の版のパッチを外せない（ysfx-effectdeck-ios.old.diff と版が違う）。"
+      echo "   Vendor/ysfx を固定した版 $YSFX_REV で送り直すこと"
+      exit 1
+    fi
+  fi
+fi
+if [ "$YSFX_PATCHED" = 1 ]; then
+  :
 elif git -C Vendor/ysfx apply --check ../../Patches/ysfx-effectdeck-ios.diff 2>/dev/null; then
   git -C Vendor/ysfx apply ../../Patches/ysfx-effectdeck-ios.diff \
     && echo "当てた: ysfx-effectdeck-ios.diff"
 elif git -C Vendor/ysfx apply --reverse --check ../../Patches/ysfx-effectdeck-ios.diff 2>/dev/null; then
   echo "当たっている: ysfx-effectdeck-ios.diff"
+elif patch --batch --forward --ignore-whitespace -F 0 -p1 -d Vendor/ysfx --dry-run \
+    <Patches/ysfx-effectdeck-ios.diff >/dev/null 2>&1; then
+  # git が開けない写し用の逃げ道。当てる中身は同じ。
+  patch --batch --forward --ignore-whitespace -F 0 -p1 -d Vendor/ysfx \
+    <Patches/ysfx-effectdeck-ios.diff >/dev/null \
+    && echo "当てた: ysfx-effectdeck-ios.diff (patch)"
 else
   echo "!! ysfx-effectdeck-ios.diff が当たらない。Vendor/ysfx の版を確かめること"
   exit 1
@@ -134,26 +194,6 @@ else
   exit 1
 fi
 
-echo "--- エフェクトのカタログを作る ---"
-python3 Tools/gen_catalog.py 2>&1 | tail -5
-python3 Tools/gen_presets.py 2>&1 | tail -1
-# カードごとの出荷時プリセット。**node が要る**（Tube Simulator のグループだけ
-# 静的な表ではなく組み立てなので、評価しないと取れない）。無ければ飛ばして、
-# 追跡してある Generated/EffectPresets.swift をそのまま使う。
-python3 Tools/gen_effect_presets.py 2>&1 | tail -1
-python3 Tools/gen_licenses.py 2>&1 | tail -1
-
-echo "--- Note Spectrogram のモデルを埋め込む ---"
-# upstream の models.cmake と同じことをする。
-# kernel.cpp が読む *.generated.h と、中身を持つアセンブリを吐く。
-NS="Vendor/effetune/dsp/plugins/analyzer/note_spectrogram"
-rm -rf Generated/note-models && mkdir -p Generated/note-models
-for m in learned_model fine_model octave_model; do
-  python3 "$NS/embed_models.py" "$NS/$m.json" Generated/note-models --target macho 2>&1 | tail -2
-done
-ls Generated/note-models
-
-
 # EffectDeck 自前の kernel を registry へ足す口。docs/virtual-room-design.md §48。
 # Vendor の中へ EffectDeck のコードを置かず、ET_EFFECTDECK_EXTENSIONS を立てた
 # ときだけ外側の EffectDeckLocalDSP/effectdeck_registry.inc を読ませる。
@@ -162,14 +202,71 @@ if grep -q "ET_EFFECTDECK_EXTENSIONS" Vendor/effetune/dsp/core/registry.cpp 2>/d
 elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --check ../../Patches/effetune-local-kernels.diff 2>/dev/null; then
   git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace ../../Patches/effetune-local-kernels.diff \
     && echo "当てた: effetune-local-kernels.diff"
+elif git -C Vendor/effetune apply --ignore-space-change --ignore-whitespace --reverse --check ../../Patches/effetune-local-kernels.diff 2>/dev/null; then
+  echo "当たっている: effetune-local-kernels.diff"
 elif patch --batch --dry-run --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-local-kernels.diff >/dev/null 2>&1; then
   patch --batch --ignore-whitespace -p1 -d Vendor/effetune < Patches/effetune-local-kernels.diff \
     && echo "当てた: effetune-local-kernels.diff (patch)"
+elif patch --batch --dry-run --ignore-whitespace -R -p1 -d Vendor/effetune < Patches/effetune-local-kernels.diff >/dev/null 2>&1; then
+  echo "当たっている: effetune-local-kernels.diff (patch)"
 else
   echo "!! effetune-local-kernels.diff が当たらない。Vendor/effetune の版を確かめること"
   exit 1
 fi
 
+# **生成の失敗で止める。**`| tail` の終了値は tail のものなので、gen_catalog が
+# SystemExit しても古いカタログのまま建ってしまう（2.11.0 の Bass Management で
+# 起きた。os が増えた 6 種の set_params が全部 ET_ERR_HASH になる）。
+# 呼び方: パイプの直後に gen_ok "${PIPESTATUS[0]}" 名前
+gen_ok() {
+  if [ "$1" -ne 0 ]; then
+    echo "!! $2 が失敗した (exit $1)"
+    exit 1
+  fi
+}
+
+echo "--- エフェクトのカタログを作る ---"
+python3 Tools/gen_catalog.py 2>&1 | tail -5
+gen_ok "${PIPESTATUS[0]}" gen_catalog.py
+python3 Tools/gen_presets.py 2>&1 | tail -1
+gen_ok "${PIPESTATUS[0]}" gen_presets.py
+# カードごとの出荷時プリセット。**node が要る**（Tube Simulator のグループだけ
+# 静的な表ではなく組み立てなので、評価しないと取れない）。無ければ飛ばして、
+# 追跡してある Generated/EffectPresets.swift をそのまま使う（そのときも 0 で戻る）。
+python3 Tools/gen_effect_presets.py 2>&1 | tail -1
+gen_ok "${PIPESTATUS[0]}" gen_effect_presets.py
+python3 Tools/gen_licenses.py 2>&1 | tail -1
+gen_ok "${PIPESTATUS[0]}" gen_licenses.py
+
+echo "--- 解析のモデルを埋め込む ---"
+# upstream の tree_models/models.cmake と同じことをする。
+# kernel.cpp が読む *.generated.h と、中身を持つアセンブリを吐く。
+# 2.12.0 で embed_models.py が analyzer/tree_models/ に移り、Note Spectrogram の 3 本に
+# Rhythm Analyzer の 5 本が加わった。2.13.0 で Note Spectrogram はコンパイル済みの
+# HarmNet の重み（harmnet_weights.h）に替わり、G2 は無くなったので、残りは Rhythm
+# Analyzer の 3 本（oblivious 形式）だけ。出力先は Generated/note-models のまま（名前を
+# 変えると project.yml・check_release_binary・.gitignore が動く）。
+AN="Vendor/effetune/dsp/plugins/analyzer"
+rm -rf Generated/note-models && mkdir -p Generated/note-models
+for entry in rhythm_analyzer/rhythm_d_low rhythm_analyzer/rhythm_d_mid rhythm_analyzer/rhythm_d_high; do
+  python3 "$AN/tree_models/embed_models.py" "$AN/$entry.json" Generated/note-models --target macho 2>&1 | tail -2
+  gen_ok "${PIPESTATUS[0]}" "embed_models.py $entry"
+done
+ls Generated/note-models
+
 echo "--- プロジェクトを作る ---"
+# gen_version は既定では止めない。git の無い写し（Mac へ送った作業ツリー）では
+# git describe が落ちるが、追跡してある UpstreamVersion.swift をそのまま使える。
+# **CI（ET_STRICT=1）では止める。**浅い submodule でタグが無いと落ちるのに、
+# 止めないと版の照合を何もしないまま緑になる。
 python3 Tools/gen_version.py 2>&1 | tail -1
-xcodegen generate --spec project.yml 2>&1 | tail -5
+GEN_VERSION_STATUS=${PIPESTATUS[0]}
+if [ "${ET_STRICT:-0}" = 1 ]; then
+  gen_ok "$GEN_VERSION_STATUS" gen_version.py
+fi
+if [ "${SKIP_XCODEGEN:-0}" = 1 ]; then
+  echo "xcodegen は叩かない（SKIP_XCODEGEN=1）"
+else
+  "${XCODEGEN:-xcodegen}" generate --spec project.yml 2>&1 | tail -5
+  gen_ok "${PIPESTATUS[0]}" xcodegen
+fi

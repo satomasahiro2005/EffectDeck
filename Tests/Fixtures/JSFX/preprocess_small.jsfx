@@ -1,0 +1,6 @@
+desc:Preprocess Small
+author:nemut.ai
+slider1:1<0,2,0.01>Gain
+
+@sample
+<? i = 0; loop(2, printf("spl%d *= slider1;\n", i); i += 1) ?>

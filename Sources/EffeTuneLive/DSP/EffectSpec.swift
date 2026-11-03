@@ -72,7 +72,9 @@ struct ETParam: Identifiable {
     /// objectArrayKey を持つのは params.json 8 本・57 フィールド。
     var objectArrayKey: String? = nil
 
-    /// Spatial Mapper 2.10.0 stores each 16×16 routing matrix as a flat array.
+    /// 平らな配列 `"dm": [...]` で書くもの。gen_catalog.py の FLAT_ARRAYS の表が正。
+    /// Spatial Mapper (2.10.0) の 16×16 行列 dm / fm / rm と、
+    /// Bass Management (2.11.0) の 16ch 分の ro / fc / sl / rt / ri。
     var flatArrayKey: String? = nil
 
     /// そのオブジェクトの中での名前。
@@ -80,6 +82,11 @@ struct ETParam: Identifiable {
 
     /// 保存している値と画面に出す値がずれるもの。
     var scale: ETParamScale = .direct
+
+    /// DSP の float には載るが、保存形式（プリセット・共有リンク・鎖）には書かず、読みもしないもの。
+    /// gen_catalog.py の RUNTIME_ONLY の表が正。Tonal Balance EQ の mp（測定の一時停止）。
+    /// 上流のプリセットにも画面の操作にも無く、ライブラリの bindings だけが立てる実行時の旗。
+    var runtimeOnly: Bool = false
 
     var id: String { name }
 

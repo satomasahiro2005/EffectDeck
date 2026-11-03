@@ -1,0 +1,202 @@
+# 上流の DSP（Vendor/effetune/dsp）に、こちらのパッチ（Patches/*.diff）を当てたものの ctest。
+#
+#   debug  Debug。上流の実時間の確保の見張り（-Wl,--wrap=malloc）が生きる
+#   asan   RelWithDebInfo + ASan + UBSan。UBSan は halt_on_error で本当に落とす
+#          （既定は印字だけで、ctest は通ったテストの出力を隠すので、付けないと何も見ていない）。
+#          外すのは 2 つだけ: vptr（コアは -fno-rtti で建つので全部偽陽性）と、
+#          上流の試験の道具 graph_test.cpp の memcpy(dst, nullptr, 0)
+#   fuzz-long  毎晩と手で回した回だけ。Tests/Fuzz/run.sh を的ごとに 240 秒。上流の DSP とは関わらないが、
+#              毎晩の回の置き場としてここに置く（PR ごとの短い回は ci.yml の fuzz）
+#
+# 重いので（asan は 4 vCPU で 10 分台）、パッチ・上流の版・Sources/Shared・Tests/Native が
+# 変わったときと、毎晩だけ回す。
+# Tests/Native に上流のエンジンを繋ぐ試験（ET_NATIVE_WITH_ENGINE）があれば、同じ木で続けて走らせる。
+name: DSP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Patches/**
+      - Vendor/**
+      - Sources/Shared/**
+      - Tests/Native/**
+      - Scripts/setup.sh
+      - .github/workflows/dsp.yml
+  pull_request:
+    paths:
+      - Patches/**
+      - Vendor/**
+      - Sources/Shared/**
+      - Tests/Native/**
+      - Scripts/setup.sh
+      - .github/workflows/dsp.yml
+  schedule:
+    - cron: "17 18 * * *"   # 毎日 03:17（日本時間）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ci.yml と同じ決まり。PR は新しく押せば前の回を止める（group は PR ごと）。
+# main に押した回・毎晩の回・手で回した回は、回ごとに別の group にして止めない（上流を壊した
+# コミットにもそのコミットの結果を残す）。**ref で束ねない。**毎晩の回も main の ref で走るので、
+# 束ねると押した回と毎晩の回が互いを止め、cancel-in-progress が false でも同じ group で待てる回は
+# 1 つだけなので、並んだ回が後から来た回に取り消される。
+concurrency:
+  group: dsp-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upstream:
+    name: upstream ctest (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    # debug の上流の試験は最適化なしで重い（WSL で md_simulator 589 秒・pitch_shifter_hq 531 秒）。
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [debug, asan]
+    env:
+      MODE: ${{ matrix.mode }}
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v7
+      # ysfx は setup.sh が無いと取りに行くので、先に浅く入れておく。
+      - name: submodule
+        run: |
+          git submodule update --init --filter=blob:none Vendor/effetune
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status
+      - name: ccache
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ccache >/dev/null
+          ccache --version | sed -n 1p
+      # ccache は中身で引くので、古いものが戻っても結果は変わらない（速さだけが変わる）。
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: dsp-ccache-${{ matrix.mode }}-${{ github.sha }}
+          restore-keys: dsp-ccache-${{ matrix.mode }}-
+      # パッチを当てる（生成物も作り直すが、ここでは使わない）。
+      - name: Scripts/setup.sh
+        env:
+          SKIP_XCODEGEN: 1
+        run: bash Scripts/setup.sh
+      - name: configure
+        run: |
+          case "$MODE" in
+            debug) BT=Debug;          SAN="" ;;
+            asan)  BT=RelWithDebInfo; SAN="-fsanitize=address,undefined -fno-omit-frame-pointer" ;;
+            *) echo "::error::知らない MODE: $MODE"; exit 1 ;;
+          esac
+          cmake -S Vendor/effetune/dsp -B build/dsp -G Ninja -DBUILD_TESTING=ON \
+            -DCMAKE_BUILD_TYPE="$BT" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_FLAGS="$SAN" -DCMAKE_CXX_FLAGS="$SAN" \
+            -DCMAKE_EXE_LINKER_FLAGS="$SAN" -DCMAKE_SHARED_LINKER_FLAGS="$SAN"
+      - name: build
+        run: |
+          cmake --build build/dsp --parallel
+          ccache --show-stats
+      - name: ctest
+        run: |
+          supp="$RUNNER_TEMP/ubsan.supp"
+          printf 'vptr:*\nnonnull-attribute:graph_test.cpp\n' > "$supp"
+          export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:suppressions=$supp"
+          ctest --test-dir build/dsp --parallel 4 --output-on-failure
+
+      # パッチの当たったエンジンと ETPipeline.c を繋いだ試験（外部ノード・遅延・経路）。
+      # Tests/Native が ET_NATIVE_WITH_ENGINE を持っているときだけ走る。
+      - name: Tests/Native（上流のエンジンつき）
+        if: hashFiles('Tests/Native/CMakeLists.txt') != ''
+        run: |
+          if ! grep -rq ET_NATIVE_WITH_ENGINE Tests/Native --include=CMakeLists.txt; then
+            echo "Tests/Native に ET_NATIVE_WITH_ENGINE が無いので飛ばす"
+            exit 0
+          fi
+          SAN=""
+          if [ "$MODE" = asan ]; then SAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"; fi
+          cmake -S Tests/Native -B build/native-engine -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DET_NATIVE_WITH_ENGINE=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_FLAGS="$SAN" -DCMAKE_CXX_FLAGS="$SAN" \
+            -DCMAKE_EXE_LINKER_FLAGS="$SAN" -DCMAKE_SHARED_LINKER_FLAGS="$SAN"
+          cmake --build build/native-engine --parallel
+          if [ -f Tests/Native/lsan.supp ]; then
+            export LSAN_OPTIONS="suppressions=$PWD/Tests/Native/lsan.supp:print_suppressions=0"
+          fi
+          # 環境は Tests/Native/CMakePresets.json の engine（asan を継ぐ）と同じ。debug の回では読まれない。
+          export ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:strict_string_checks=1
+          export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          # engine の印の付いたものだけ（ほかは ci.yml の native が毎回走らせている）。
+          ctest --test-dir build/native-engine -L engine --no-tests=error --parallel 4 --output-on-failure
+
+  # 長い fuzz（Tests/Fuzz/run.sh を的ごとに 240 秒。--target all なので足した的も入る）。
+  # 押した回・PR では走らない（on: の push・pull_request は上の upstream のため）。
+  # 育った corpus は actions/cache で夜から夜へ持ち越す。**キャッシュの鍵は書き換えられない**ので、
+  # 回ごとに新しい鍵（run_id と run_attempt）で残し、戻すときは頭（fuzz-corpus-）で一番新しいものを引く。
+  # 何か見つけて落ちた回でも残す（run.sh は的が 1 つ落ちても次の的へ進むので、ほかの的の育ちを捨てない）。
+  # ci.yml の fuzz も同じ置き場（--name ci）から戻して続きから回る。
+  fuzz-long:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    # 建てるのに数分、的が 10 個なら 40 分。fuzz の段は 70 分で切って、corpus と落ちた入力を残す段に時間を残す。
+    timeout-minutes: 90
+    # ci.yml の linux-swift・fuzz と同じツールチェーン。
+    container: swift:6.4.0-noble
+    env:
+      CORPUS_KEY: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      # make_package.py が使う。swift の image には入っていない。
+      - name: python3
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends python3 >/dev/null
+          fi
+          python3 --version
+      - uses: actions/checkout@v7
+      # ci.yml の fuzz と同じ。jsfxexec のパッチは run.sh が ysfx の写しに当てるので setup.sh は要らない。
+      - name: submodule（Vendor/ysfx）
+        run: |
+          # checkout した木の持ち主はコンテナの外の利用者で、コンテナの root の git は持ち主の違いで断る。
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status Vendor/ysfx
+      # 戻せなくても（初回・7 日使われずに消えた）残す段が空で落ちないよう、置き場を先に作る。
+      - name: corpus の置き場
+        run: mkdir -p ~/.cache/effectdeck-fuzz/ci/corpus
+      - name: 育った corpus を戻す
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/effectdeck-fuzz/ci/corpus
+          key: ${{ env.CORPUS_KEY }}
+          restore-keys: fuzz-corpus-
+      - name: fuzz（Tests/Fuzz/run.sh、的ごとに 240 秒）
+        timeout-minutes: 70
+        run: |
+          echo "戻した corpus: $(find ~/.cache/effectdeck-fuzz/ci/corpus -type f | wc -l) 個"
+          FUZZ_JOBS="$(nproc)" bash Tests/Fuzz/run.sh --name ci --target all --time 240
+      # 落ちた回・fuzz の段が時間で切られた回も残す。戻す段まで来ていなければ残すものが無い。
+      - name: 育った corpus を残す（落ちた回も）
+        if: always() && steps.restore.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/effectdeck-fuzz/ci/corpus
+          key: ${{ env.CORPUS_KEY }}
+      - name: 落ちた入力とログを残す
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-long
+          path: |
+            build/fuzz/
+            build/fuzz-*.log
+          retention-days: 14

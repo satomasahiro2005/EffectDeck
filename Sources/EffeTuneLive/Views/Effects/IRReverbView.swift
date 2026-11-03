@@ -4,13 +4,19 @@
 //  上流はカードの頭に「Import file… / Choose from library…」と状態行・情報行を置き、
 //  その下に EDC（エネルギー減衰）グラフを出す
 //  （Vendor/effetune/plugins/reverb/ir_reverb.js:1952-1987）。
-//  ここで作ったのは IR を取り込む口までで、グラフは出していない。
+//  ここも同じ並びで、取り込む口・名前と情報行・グラフ・つまみの順に置く。
 //
-//  --- グラフを出していない理由 ---
-//  上流のグラフは IR の PCM から包絡と EDC を計算して描いている
-//  （ir_reverb.js:1787-1934）。テレメトリでは来ない値なので、材料は IR そのもの。
-//  ETIRLoader が読んだ面はカーネルへ送ったあと手放していて、描く用に
-//  持ち続けてはいない。出すなら包絡を先に畳んでから残す形になる。
+//  --- グラフ ---
+//  描くのは IRReverbDecayGraph.swift。点は送った IR（カーネルが受け取った面）と、
+//  decay・trim の前の面から ETIRGraphStore が裏で計算して持つ。
+//  以前は出していなかった。ETIRLoader が読んだ面を送ったあとで手放していて、描く材料が
+//  残っていなかったため。今は load が送ったあとに、送った面と decay・trim の前の面を
+//  解析へ渡す（DSP/IRLoader.swift）。曲線は IR が無ければ描けないので、入っていないときは枠だけ。
+//
+//  **畳んだカード（etGraphOnly）ではグラフだけを返す。** 取り込む口・状態行・選択肢・つまみを
+//  ここで返すと、畳んでいるのに隣のカードに重なってボタンを塞いだ（実機で確認。
+//  EffectCardView の showsCollapsedGraph の注釈）。ParameterRow は畳むと自分で消えるが、
+//  choiceRow・Toggle・スライダーは消えないので、行ごとでなく editor 丸ごと外す。
 //
 //  上流の metadata 行（ir_reverb.js:1719-1741。秒数・ch 数・トポロジ・レート変換・
 //  レイテンシ・MiB）に当たるのが notice の 2 行目で、送り込めたときに
@@ -32,6 +38,12 @@
 //  ParameterRow はそれを Text にそのまま出す。上流は表示名を別に持っている
 //  （ir_reverb.js:1995-2001 / 2010-2016 / 2017-2022）ので、ここで引き当てて出す。
 //  切り替えは Menu ではなく直のボタン。
+//
+//  --- 下ごしらえのつまみ ---
+//  Direct Cut / Cut Offset / Decay / Trim（dc / co / dt / tr）は上流と同じ並びで
+//  Pre Delay の後に置く（ir_reverb.js:2035-2038）。カタログ（params.json）に席が無いので
+//  ParameterRow は使えず、値は Node.design に持つ（DSP/DesignParams.swift）。
+//  変えたら EffeTuneDSP.setIRPreparation が少し待ってから下ごしらえをやり直して送り直す。
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -45,18 +57,52 @@ struct IRReverbView: View {
     @StateObject private var library = IRLibrary.shared
     @State private var picking = false
     @State private var browsing = false
+    /// PC の鎖を編集しているとき、Choose from library… は PC の IR Library を開く（2.14.0 の selectIR）。
+    /// 取り込みと消すのは PC でやる（上流の remote の画面と同じ）ので Import file… は出さない。
+    @ObservedObject private var remote = RemoteMirror.shared
+    @State private var browsingPC = false
     /// 送り込めたときの 1 行。nil なら入っていない。
     @State private var loaded: String?
     /// 送り込めなかった理由。上流の文をそのまま出す。
     @State private var failure: String?
+    /// 畳んだカードのとき true。グラフだけを出す（上の「グラフ」の注釈）。
+    @Environment(\.etGraphOnly) private var graphOnly
 
     /// ボタンの帯で出す選択肢。残りは ParameterRow に任せる。
     private static let stripKeys: Set<String> = ["cm", "lt", "cr"]
 
     var body: some View {
+        if graphOnly {
+            decayGraph.etLocalAudioOnly()
+        } else {
+            editor
+        }
+    }
+
+    /// 上流の順（metadata → グラフ → Channel Mode…、ir_reverb.js:2018-2034）。
+    private var decayGraph: some View {
+        IRReverbDecayGraph(nodeID: node.id,
+                           preDelayMs: value("pd"),
+                           directCut: preparation.directCut)
+    }
+
+    /// Pre Delay などカタログのつまみの値。無ければ 0。
+    private func value(_ key: String) -> Double {
+        guard let param = node.spec.params.first(where: { $0.key == key }),
+              node.values.indices.contains(param.offset) else { return 0 }
+        return Double(node.values[param.offset])
+    }
+
+    private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
             source
-            notice
+            // **何も入っていなければ箱ごと出さない。**「No impulse response loaded」の 1 行のために
+            // ファイル名の箱が場所を取っていた。入っていない段は Import file… の行だけで分かる。
+            // 送り込めなかった理由は出すので、failure があるときは残す。
+            // 名前・形・減衰の図・ライブラリの数は手元の IR の話。PC の鎖を編集しているあいだは
+            // 出さない（上流 2.14.0 の local-audio-only）。IR は Choose from library… で PC から選ぶ。
+            if hasNotice { notice.etLocalAudioOnly() }
+            decayGraph.etLocalAudioOnly()
 
             ForEach(node.spec.params) { param in
                 if case .enumeration(let options) = param.kind,
@@ -67,10 +113,18 @@ struct IRReverbView: View {
                                  values: node.values, dsp: dsp)
                 }
             }
+
+            preparationControls
         }
         .sheet(isPresented: $browsing) {
             IRLibraryView { entry in apply(entry.url, id: entry.id) }
         }
+        .sheet(isPresented: $browsingPC) {
+            ETRemoteIRLibraryView(index: index)
+        }
+        // 下ごしらえや cm / lt / cr で DSP が入れ直すと、新しい 1 行は assetInfo に入る。
+        // この画面で入れたときの `loaded` が残っていると前の 1 行を出し続けるので捨てる。
+        .onChange(of: dsp.assetInfo[node.id]) { _, _ in loaded = nil }
     }
 
     // MARK: IR を取り込む
@@ -80,37 +134,42 @@ struct IRReverbView: View {
             HStack(spacing: 8) {
                 // fileImporter と sheet を同じビューに重ねない。
                 // 重ねると後から付けた方しか出ない（PipelineView.swift:29-32）。
-                actionButton("Import file…") { picking = true }
-                    .fileImporter(isPresented: $picking,
-                                  // **全部選べるようにする。**型で絞ると、拡張子が
-                                  // 無いものや別の型を名乗るものが灰色になって選べない。
-                                  // 音かどうかは IRLibrary が中身の頭を見て判じる。
-                                  allowedContentTypes: [.item],
-                                  allowsMultipleSelection: true) { result in
-                        if case .success(let urls) = result {
-                            // 複数選べるのはライブラリへ溜めるため。
-                            // 畳み込みへ渡すのは最後の 1 本だけ（上流も同じ）。
-                            // 取り込みは鍵を返す。最後の 1 本をそのまま使う。
-                            var lastKey: String?
-                            for url in urls { lastKey = library.importFile(at: url) }
-                            if let url = urls.last { apply(url, id: lastKey) }
+                if !remote.canSelectPCIR {
+                    actionButton("Import file…") { picking = true }
+                        .fileImporter(isPresented: $picking,
+                                      // **全部選べるようにする。**型で絞ると、拡張子が
+                                      // 無いものや別の型を名乗るものが灰色になって選べない。
+                                      // 音かどうかは IRLibrary が中身の頭を見て判じる。
+                                      allowedContentTypes: [.item],
+                                      allowsMultipleSelection: true) { result in
+                            if case .success(let urls) = result {
+                                // 複数選べるのはライブラリへ溜めるため。
+                                // 畳み込みへ渡すのは最後の 1 本だけ（上流も同じ）。
+                                // 取り込みは鍵を返す。最後の 1 本をそのまま使う。
+                                var lastKey: String?
+                                for url in urls { lastKey = library.importFile(at: url) }
+                                if let url = urls.last { apply(url, id: lastKey) }
+                            }
                         }
-                    }
+                }
 
-                actionButton("Choose from library…") { browsing = true }
+                actionButton("Choose from library…") {
+                    if remote.canSelectPCIR { browsingPC = true } else { browsing = true }
+                }
             }
 
             Text(status)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .etLocalAudioOnly()
         }
     }
 
     /// 上流の status 行（ir_reverb.js:1963-1970）に当たるもの。
     private var status: String {
         switch library.entries.count {
-        case 0:  return "Import an impulse response to use IR Reverb."
+        case 0:  return "No impulse responses in the library."
         case 1:  return "1 impulse response in the library."
         case let n: return "\(n) impulse responses in the library."
         }
@@ -119,31 +178,26 @@ struct IRReverbView: View {
     /// 上流の metadata 行（ir_reverb.js:1719-1741）に当たるもの。
     /// 入っていれば「4ch True Stereo / 48000 Hz / 1.23 s」、
     /// 入っていなければ上流と同じ 1 行（:1721）を出す。
+    private var hasNotice: Bool {
+        !node.irId.isEmpty || loaded != nil || failure != nil || dsp.assetInfo[node.id] != nil
+    }
+
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
             // 名前が先。何を使っているかが分からないと、聴き比べのときに困る。
             if let name = fileName {
                 Text(name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .etFont(size: 12, weight: .semibold)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(caption)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(fileName == nil ? .primary : .secondary)
             if let failure {
                 Text(failure)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if node.irId.isEmpty {
-                Text("""
-                     Import a file or choose one from the library. Four-channel true \
-                     stereo impulse responses work: with Channel Mode on Auto they are \
-                     routed as True Stereo.
-                     """)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -197,13 +251,15 @@ struct IRReverbView: View {
         failure = nil
         do {
             loaded = try ETIRLoader.load(url: url,
+                                         nodeID: node.id,
                                          engine: dsp.engine,
                                          instance: node.instance,
                                          processingRate: dsp.sampleRate,
                                          routedChannels: routedChannels,
                                          channelMode: choice("cm"),
                                          latency: choice("lt"),
-                                         convolutionRate: choice("cr"))
+                                         convolutionRate: choice("cr"),
+                                         options: preparation)
             // 鍵は取り込んだときの戻り値か、ライブラリから選んだ entry の id。
             // どちらも無ければ、いま置いた中身から引き直す。
             let key = id ?? IRLibrary.shared.entries
@@ -217,11 +273,70 @@ struct IRReverbView: View {
         }
     }
 
+    // MARK: 下ごしらえ
+
+    /// いまの dc / co / dt / tr。鍵が無ければ上流の既定（ir_reverb.js:37-40）。
+    private var preparation: ETIRPreparation.Options {
+        ETIRPreparation.Options(designParams: node.design)
+    }
+
+    /// 範囲・刻み・名前・単位は上流の行のまま（ir_reverb.js:2035-2038）。
+    @ViewBuilder
+    private var preparationControls: some View {
+        let o = preparation
+        Toggle(isOn: Binding(get: { o.directCut },
+                             set: { setPreparation(ETDesignParam.flag($0), key: "dc") })) {
+            Text("Direct Cut").etFont(size: 14)
+        }
+        .padding(.vertical, 2)
+        preparationSlider("Cut Offset", unit: "ms", key: "co", value: o.cutOffsetMs,
+                          range: -20...50, step: 0.1)
+        preparationSlider("Decay", unit: "%", key: "dt", value: o.decayPercent,
+                          range: 10...400, step: 1)
+        preparationSlider("Trim", unit: "%", key: "tr", value: o.trimPercent,
+                          range: 1...100, step: 1)
+    }
+
+    /// ParameterRow と同じ 2 段（名前と数が上、つまみが下）。
+    /// あちらは ETParam と鎖の値に繋がっているので、ここは同じ形を素で書く
+    /// （CrosstalkCancellationView.controlRow と同じ）。
+    private func preparationSlider(_ label: String, unit: String, key: String, value: Double,
+                                   range: ClosedRange<Double>, step: Double) -> some View {
+        let title = "\(label) (\(unit))"
+        let text = ETNumberText.stepped(value, step: step)
+        // 刻みの格子へ寄せてから書く。0.1 刻みを掛け算で戻すと 0.30000000000000004 が残るので、
+        // 刻みが 1 より細かいときは割り算で戻す（1 / 0.1 は 10 ちょうど）。
+        let store: (Double) -> Void = { v in
+            let clamped = min(max(v, range.lowerBound), range.upperBound)
+            let n = (clamped / step).rounded()
+            let snapped = step < 1 ? n / (1 / step).rounded() : n * step
+            setPreparation(ETDesignParam.format(snapped), key: key)
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .etFont(size: 14)
+                    .etRowTitle()
+                Spacer(minLength: 4)
+                ETValueField(text: text, label: title,
+                             editText: { ETNumberText.draft(value) },
+                             commit: store)
+            }
+            Slider(value: Binding(get: { value }, set: store), in: range, step: step)
+                .accessibilityValue(text)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func setPreparation(_ raw: String, key: String) {
+        dsp.setIRPreparation(raw, key: key, at: index)
+    }
+
     private func actionButton(_ title: String,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(.tint)
@@ -240,7 +355,7 @@ struct IRReverbView: View {
         let current = min(max(intValue(param), 0), max(options.count - 1, 0))
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text(param.label).font(.system(size: 14))
+            Text(param.label).etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -251,7 +366,7 @@ struct IRReverbView: View {
                         dsp.setValue(Float(i), at: index, offset: param.offset)
                     } label: {
                         Text(name)
-                            .font(.system(size: 13, weight: selected ? .bold : .regular))
+                            .etFont(size: 13, weight: selected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(selected ? AnyShapeStyle(.white)
@@ -287,5 +402,69 @@ struct IRReverbView: View {
     private func intValue(_ param: ETParam) -> Int {
         guard node.values.indices.contains(param.offset) else { return 0 }
         return Int(node.values[param.offset].rounded())
+    }
+}
+
+/// PC の IR Library から選ぶ（2.14.0 の selectIR。上流 remote-ir-library.js）。選ぶだけで、取り込みと消すのは PC。
+/// 2 本組（True Stereo の 2 ファイル）も選べる。選んだら PC が入れ、その鎖の state で手元も追う。
+private struct ETRemoteIRLibraryView: View {
+    let index: Int
+    @Environment(\.dismiss) private var dismiss
+    @State private var items: [ETRemoteIRItem]?
+    @State private var query = ""
+    @State private var failed = false
+    @State private var working = false
+
+    private var shown: [ETRemoteIRItem] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return (items ?? []).filter { needle.isEmpty || $0.name.lowercased().contains(needle) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if failed {
+                    Text("EffeTune could not apply this change. Try again.")
+                        .etFont(size: 13)
+                        .foregroundStyle(.red)
+                }
+                if items == nil {
+                    ProgressView()
+                } else if shown.isEmpty {
+                    Text("No impulse responses in the library.")
+                        .etFont(size: 13)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(shown) { item in
+                    Button {
+                        pick(item)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name).etFont(size: 15).lineLimit(2)
+                            Text(item.detail).etFont(size: 11).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(working)
+                }
+            }
+            .searchable(text: $query)
+            .etNavigationTitle(RemoteMirror.shared.host?.name ?? "IR Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            .task { items = await RemoteMirror.shared.pcIRs() ?? [] }
+        }
+    }
+
+    private func pick(_ item: ETRemoteIRItem) {
+        working = true
+        failed = false
+        Task {
+            let ok = await RemoteMirror.shared.selectPCIR(at: index, irId: item.id)
+            working = false
+            if ok { dismiss() } else { failed = true }
+        }
     }
 }

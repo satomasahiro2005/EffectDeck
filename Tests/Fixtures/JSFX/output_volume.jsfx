@@ -1,0 +1,28 @@
+desc:Output Volume Probe
+author:nemut.ai
+slider1:0<-1,1,0.0001>-Seen by @init
+slider2:0<-1,1,0.0001>-Seen by @slider
+slider3:0<-1,1,0.0001>-Seen by @block
+slider4:0<0,1,1>-Same through @sample (1 = yes)
+slider5:0<0,1,1>-Scribble
+slider6:0<-1,1,0.0001>-Kept from @init
+
+@init
+// **@init が見た値を変数にも残す。**つまみは状態の復元で保存した値に戻るので、
+// 復元の @init が見た値はつまみでは測れない。次のブロックの @block が slider6 へ写す。
+init_seen = effectdeck_output_volume;
+slider1 = init_seen;
+
+@slider
+slider2 = effectdeck_output_volume;
+
+@block
+slider3 = effectdeck_output_volume;
+slider4 = 1;
+slider6 = init_seen;
+
+@sample
+// ブロックの途中で値が動けば slider4 が 0 になる。
+effectdeck_output_volume != slider3 ? slider4 = 0;
+// slider5 が立っていれば script が変数へ書く。次のブロックの頭で host が戻す。
+slider5 ? effectdeck_output_volume = 0.123;

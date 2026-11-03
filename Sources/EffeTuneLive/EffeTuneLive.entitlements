@@ -36,5 +36,25 @@
 	     拡張は UserDefaults を触らない。 -->
 	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
 	<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<!-- 共有リンク（鎖の ?p= と JSFX の /j#…）を開く。受け口は ETFXDLink。
+	     リンクを作るのは effectdeck.nemut.ai だけで、アプリの無い人には同じ URL が
+	     公式ページになる。/.well-known/apple-app-site-association は site/ の Worker が返す。
+	     fxd.nemut.ai は人が打つための短い別名で、AASA のほかは effectdeck へ 301 する。
+	     **fxd も入れる。**鎖のページの「Open in EffectDeck」は fxd を指す（Universal Link は
+	     別のドメインへ飛ぶときにしか立たない。site/src/worker.js の頭）。 -->
+	<!-- **他社の AUv3 を見つけるのに要る**（Issue #10）。
+	     これが無いと AVAudioUnitComponentManager も AudioComponentFindNext も Apple の部品しか返さない。
+	     実機の数え上げで確かめた（au refresh … other=0 makers=appl:84。Apple 以外が 0 本）。
+	     Inter-App Audio 自体は iOS 13 で非推奨だが、この鍵は今も「Audio Unit extensions へのアクセスを与える」
+	     （Apple の entitlement の説明）。JUCE も iOS の AU ホストには必ず付けている。
+	     App ID に Inter-App Audio の capability が要る。App Store 用のプロファイル（EffeTuneLive-AppStore）は
+	     capability を足したあとに作り直す。 -->
+	<key>inter-app-audio</key>
+	<true/>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:effectdeck.nemut.ai</string>
+		<string>applinks:fxd.nemut.ai</string>
+	</array>
 </dict>
 </plist>

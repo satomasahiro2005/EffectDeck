@@ -1,0 +1,19 @@
+desc:Slow Trigger
+author:nemut.ai
+slider1:200<0,20000,1>Spin
+slider2:0<0,1024,1>-Fire count
+
+@init
+n = 200;
+fired = 0;
+
+@slider
+n = slider1;
+
+@block
+trigger ? (fired += 1);
+slider2 = fired;
+
+@sample
+i = 0;
+loop(n, i += 1;);

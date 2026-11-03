@@ -39,6 +39,9 @@ struct EffectCardView: View {
     var isDragPreview = false
     /// 組の中での位置。内側を向く角を角にする。
     var block: ETBlockPosition = .alone
+    /// VoiceOver の焦点を、左の一覧から飛んだカード・足したカードへ移す口（PipelineView の focusedCard）。
+    /// nil なら焦点は動かさない（浮いた並べ替えのカードなど）。
+    var focus: AccessibilityFocusState<UUID?>.Binding? = nil
 
     /// カードから開くもの。
     ///
@@ -59,6 +62,22 @@ struct EffectCardView: View {
     }
 
     @State private var sheet: Sheet?
+    /// 音量に追従する段で、帯で選んでいるキーフレームの位置（画面の上だけで持ち、保存しない）。
+    /// 添字でなく位置で持つ。足す・消すで添字はずれるが、位置は1つのキーフレームに1つ。
+    @State private var selectedPosition: Double?
+    /// 帯の吹き出しを開いている菱形の位置。帯の外で持つ。
+    /// 選ぶとカードの分岐（下の effectCard）が替わって帯が作り直されるので、帯の中の状態では長押しで開いた吹き出しが消える。
+    @State private var popoverPosition: Double?
+    /// 2列のとき。開閉の印を出さない（Components.swiftのetCardsPinnedOpen）。
+    @Environment(\.etCardsPinnedOpen) private var pinnedOpen
+    /// IR Reverb の図が出来たか（showsCollapsedGraph）。IR を入れ替えたときだけ変わる。
+    @ObservedObject private var irGraphs = ETIRGraphStore.shared
+    /// 削除の取り消し（PipelineView と同じ環境の UndoManager。⌘Z と 3 本指の取り消し）。
+    @Environment(\.undoManager) private var undoManager
+    /// コントラストを上げる設定。小さい札を濃くし、ミュートの薄さを弱める。
+    @Environment(\.colorSchemeContrast) private var contrast
+    /// 大きい文字サイズでだけ、名前と要約の折り返しを許す。
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         if node.isSection {
@@ -70,10 +89,108 @@ struct EffectCardView: View {
         }
     }
 
+    /// 音量に追従する段は、帯の菱形を押して選んだキーフレームを見せて直す。
+    /// 選んでいなければ、いまの音量で鳴っている値を見せる:
+    ///   - いまの音量がキーフレームの位置・両端の外・Hold の間なら、鳴っているのはそのキーフレームの値なので、それを直す
+    ///   - Smooth の間なら、鳴っている値を見せ、直したらそこにキーフレームを作る（AE と同じ）
+    ///   - ただし PEQ の Smooth の間は2台で鳴らしていて1組に写せないので、見せるだけ（ETPEQBlend）
+    /// **音はキーフレームに替わらない。**鳴るのはいつも今の音量の補間（キーフレームを直しても試聴にならない）。
+    /// PC の鎖を編集している間は、いま鳴っている値を映して直せなくする。
+    /// 判断は ETAutomation.editTarget（AutomationTests）。
+    private var follows: Bool { node.automation != nil }
+
+    private var editTarget: ETAutomation.EditTarget? {
+        node.automation?.editTarget(selected: selectedPosition,
+                                    volume: ETVolumeFollower.shared.position,
+                                    spec: node.spec,
+                                    remote: RemoteMirror.shared.isRemote)
+    }
+
+    /// 見せて直しているキーフレームの添字（帯で色を変える）。
+    private var selectedKeyframe: Int? {
+        if case .keyframe(let k) = editTarget { return k }
+        return nil
+    }
+
+    /// プリセット・Reset Parameters が書く口。
+    private var editAddress: Int {
+        switch editTarget {
+        case .keyframe(let k): return ETSlotAddress.keyframe(slot: index, index: k).raw
+        case .sounding: return ETSlotAddress.sounding(slot: index).raw
+        case nil: return index
+        }
+    }
+
+    /// 本文を直せるか。
+    private var canEdit: Bool { editTarget != .sounding(editable: false) }
+
+    /// PEQ の Smooth の間。帯の部品は隠して図だけを出す（グレーにして並べない）。
+    private var graphOnlyBetween: Bool {
+        editTarget == .sounding(editable: false) && !RemoteMirror.shared.isRemote
+    }
+
     private var effectCard: some View {
+        // **.sheet は分岐の外、本物の入れ物（Group でない）に付ける。**
+        // 最初のキーフレームを足す・最後を消すと下の分岐が入れ替わる。
+        // 分岐の中に付けていると、そのときシートごと閉じる。
+        VStack(spacing: 0) {
+            if follows {
+                // 音量が変わったときだけ引き直す。追従するカードだけが音量を見る（帯の針も）。
+                ETVolumeObserving {
+                    if let k = selectedKeyframe,
+                       let shown = dsp.node(at: ETSlotAddress.keyframe(slot: index, index: k).raw) {
+                        card(shown, address: ETSlotAddress.keyframe(slot: index, index: k).raw, editable: true)
+                    } else {
+                        card(dsp.soundingNode(node), address: ETSlotAddress.sounding(slot: index).raw,
+                             editable: canEdit, graphOnly: graphOnlyBetween,
+                             companion: dsp.soundingPEQ(node)?.secondary)
+                    }
+                }
+            } else {
+                card(node, address: index)
+            }
+        }
+        // 菱形を選んだあとに音量が変わったら選択を外し、いまの音量で鳴っている値に戻す。
+        .onReceive(ETVolumeFollower.shared.$position.removeDuplicates().dropFirst()) { _ in
+            selectedPosition = nil
+        }
+        // 開いている菱形から選びが移った・外れたら、吹き出しの位置も捨てる（帯が無いと帯側の掃除が走らない）。
+        .onChange(of: selectedPosition) { _, now in
+            if now != popoverPosition { popoverPosition = nil }
+        }
+        .onChange(of: showsTimeline) { _, now in
+            if !now { popoverPosition = nil }
+        }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
+            case .presets: EffectPresetsView(index: editAddress, spec: node.spec, dsp: dsp)
+            case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
+            }
+        }
+    }
+
+    /// 追従しているカードに、キーフレームの帯（AE のタイムライン）を出すか。
+    /// 開いているときと、畳んで図だけのとき。名前の行だけに畳んだカード（isCollapsedFully）は
+    /// 「1行」の形（頭の余白もそのため）なので出さない。2列は開く↔図だけの2形で、どちらも出る。
+    private var showsTimeline: Bool { follows && (isExpanded || !isCollapsedFully) }
+
+    /// カード本体。`shown` は画面に映す値を載せた段、`address` は部品が DSP の口へ渡す番号。
+    /// 追従しているときは、選んだキーフレームの写し（書ける）か、鳴っている値の写しと読むだけの番号。
+    /// `companion` は音量に追従する PEQ のもう1台が鳴らしている値（図が足して描く）。
+    /// `graphOnly` は本文を図だけにする（PEQ の Smooth の間）。
+    private func card(_ shown: EffeTuneDSP.Node, address: Int, editable: Bool = true,
+                      graphOnly: Bool = false, companion: [Float]? = nil) -> some View {
         Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
-                header
+                header(shown, address: address)
+                // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す・選んだ菱形の押し直しか長押しで吹き出し。
+                if showsTimeline, let a = node.automation {
+                    keyframeStrip(a)
+                        .padding(.leading, ETMetrics.cardPadding)
+                        .padding(.trailing, 4)
+                        .padding(.bottom, isExpanded ? 0 : 8)
+                }
                 // **畳んでいても図を出すもの。**
                 // Level Meter は畳むと「Analyzer」という字だけが残るが、
                 // この道具は音が来ているかを見るために置くので、
@@ -83,8 +200,10 @@ struct EffectCardView: View {
                     // 一度 150pt で切ってみたが、横軸の字まで落ちて壊れて見えた。
                     // 高さが要るのは図がそれだけの情報を持っているからで、
                     // 畳んだ状態でも見たいものはそこにある。
-                    ETEffectViews.view(index: index, node: node, dsp: dsp)
+                    ETEffectViews.view(index: address, node: shown, dsp: dsp)
+                        .id(node.resetCount)
                         .environment(\.etGraphOnly, true)
+                        .environment(\.etPEQCompanionValues, companion)
                         .environment(\.etGraphMaxHeight, Self.collapsedGraphHeight)
                         .padding(.horizontal, ETMetrics.cardPadding)
                         .padding(.bottom, ETMetrics.cardPadding)
@@ -93,174 +212,144 @@ struct EffectCardView: View {
                 if isExpanded && hasBody {
                     Group {
                         if node.isExternal {
-                            ExternalProcessorView(externalID: node.externalID ?? "",
+                            ExternalProcessorView(name: node.etDisplayName,
+                                                  externalID: node.externalID ?? "",
                                                   instanceID: node.externalInstanceID,
                                                   snapshot: externalSnapshot,
-                                                  isDragPreview: isDragPreview)
-                        } else if ETEffectViews.has(node.spec.type) {
-                            // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
-                            ETEffectViews.view(index: index, node: node, dsp: dsp)
-                                .environment(\.etGraphOnly, false)
+                                                  isDragPreview: isDragPreview,
+                                                  isProcessing: !node.isMuted && !dsp.bypass)
+                        } else if graphOnly {
+                            ETEffectViews.view(index: address, node: shown, dsp: dsp)
+                                .id(node.resetCount)
+                                .environment(\.etGraphOnly, true)
                         } else {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(node.spec.params) { param in
-                                    ParameterRow(param: param, nodeIndex: index,
-                                                 values: node.values, dsp: dsp)
-                                }
-                            }
+                            ETEffectBody(index: address, node: shown, dsp: dsp)
                         }
                     }
+                    // 追従していてキーフレームを選んでいないあいだは動くだけ。disabled で沈めて読み上げにも伝え、
+                    // 図やUIKitの入力欄のドラッグは当たり判定ごと止める。
+                    .disabled(!editable)
+                    .allowsHitTesting(editable)
+                    .environment(\.etPEQCompanionValues, companion)
                     .padding(ETMetrics.cardPadding)
                 }
             }
         }
-        .opacity(isMuted ? 0.55 : 1)
-        .sheet(item: $sheet) { which in
-            switch which {
-            case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
-            case .presets: EffectPresetsView(index: index, spec: node.spec, dsp: dsp)
-            case .jsfxSource: JSFXSourceView(instanceID: node.externalInstanceID)
+        // 通常の薄さは 0.55 のまま。コントラストを上げる設定のときだけ弱める（名前と要約が読めなくなるため）。
+        .opacity(node.isMuted ? (contrast == .increased ? 0.8 : 0.55) : 1)
+        // PoC: PC の鎖を編集しているあいだ、PC の測定値を映していない Analyzer の図を沈める
+        // （Views/RemoteScannerView.swift）。
+        .modifier(ETRemoteMeasurementDim(applies: node.spec.isAnalyzer, tap: node.tapId))
+        // PoC: PC の EffeTune が持っていない効果の段に、送れないことを出す。
+        .modifier(ETRemoteUnsupportedMark(effect: node.spec.name))
+    }
+
+    /// キーフレームの帯と、右の「+」（いまの音量の位置に足す）。
+    private func keyframeStrip(_ a: ETAutomation) -> some View {
+        let remote = RemoteMirror.shared.isRemote
+        return HStack(spacing: 6) {
+            ETKeyframeTimeline(
+                automation: a,
+                position: remote ? nil : ETVolumeFollower.shared.position,
+                popoverPosition: $popoverPosition,
+                selected: selectedKeyframe,
+                explicit: a.explicitKeyframe(selected: selectedPosition, remote: remote),
+                select: { k in selectedPosition = k.map { a.keyframes[$0].position } },
+                move: { k, p in
+                    dsp.moveKeyframe(k, to: p, at: index)
+                    // 動かしたものを選ぶ（位置で持っているので付け替える）。
+                    selectedPosition = a.source.snapped(p)
+                },
+                // 吹き出しが開いている間に添字がずれても当たるよう、位置で受けて動作の時に引き直す。
+                setHold: { p, hold in
+                    if let k = node.automation?.keyframeIndex(at: p) {
+                        dsp.setKeyframeHold(hold, keyframe: k, at: index)
+                    }
+                },
+                delete: { p in
+                    if let k = node.automation?.keyframeIndex(at: p) {
+                        dsp.removeKeyframe(k, at: index)
+                        selectedPosition = nil
+                    }
+                },
+                interactive: !remote && !isDragPreview)
+            addKeyframeButton(a)
+        }
+    }
+
+    /// 帯の右の「+」。いまの音量の位置に足して、足したものを選ぶ。
+    /// その位置にもうある・音量が読めない・PC 編集中・空きが無いなら押せない。
+    private func addKeyframeButton(_ a: ETAutomation) -> some View {
+        Button {
+            if let p = dsp.addKeyframeAtVolume(at: index) { selectedPosition = p }
+        } label: {
+            Image(systemName: "plus")
+                .etFont(size: 14, weight: .semibold)
+                .frame(width: 34, height: 30)
+                // 見た目と並びの大きさは 34x30 のまま、押せる面だけ 44x44 にする（余白を足して、同じだけ引く）。
+                .padding(.horizontal, 5)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+                .padding(.horizontal, -5)
+                .padding(.vertical, -7)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Add Keyframe")
+        .disabled(!a.canAddKeyframe(atVolume: ETVolumeFollower.shared.position)
+                  || RemoteMirror.shared.isRemote || isDragPreview)
+    }
+
+    /// ⋯ のキーフレームの項目。追従していなければ Follow Volume（いまの音量に1つ作って選ぶ）、
+    /// 追従していれば Stop Following Volume（キーフレームを捨て、一番上のキーフレームの値が普通の値になる）。
+    /// キーフレームごとの補間と削除は、帯の菱形の吹き出し。PC の鎖を編集している間は出さない（追従は動かない）。
+    @ViewBuilder
+    private var keyframeMenuItems: some View {
+        if ETAutomation.isAutomatable(node) && !RemoteMirror.shared.isRemote {
+            if node.automation != nil {
+                Button(role: .destructive) {
+                    dsp.stopFollowingVolume(at: index)
+                    selectedPosition = nil
+                } label: {
+                    Label("Stop Following Volume", systemImage: "speaker.slash")
+                }
+            } else if let position = ETAutomation.addChoices(nil, current: ETVolumeFollower.shared.position).suggested {
+                Button {
+                    dsp.addKeyframe(position: position, at: index)
+                    selectedPosition = position
+                } label: {
+                    Label("Follow Volume", systemImage: "speaker.wave.2")
+                }
             }
         }
     }
 
-    /// 音が通らない状態か。自分の入切と、上にある Section の入切の両方で決まる。
-    ///
-    /// 上流も同じ掛け算で、鎖の中の位置から区切りの入切を引いて
-    /// plugin-disabled を付けている（js/ui/pipeline/pipeline-core.js:309-323）。
-    /// 区切りの側の答えは sectionGate に入っている。
-    /// DSP も `node.enabled == 0 || node.sectionGate == 0` で読み飛ばす
-    /// （dsp/core/engine.cpp:919）ので、見た目の条件をそれに合わせる。
-    private var isMuted: Bool { !node.enabled || node.sectionGate == 0 }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            // Button ではなく Toggle。支援技術に入切が伝わるようにする。
-            Toggle("Enabled", isOn: Binding(
-                get: { node.enabled },
-                set: { dsp.setEnabled($0, at: index) }))
-                .toggleStyle(.power)
-                .labelsHidden()
-                .accessibilityLabel(node.spec.name)
-
-            // **畳んだ Level Meter は図を名前の場所へ入れる。**
-            // 横長の棒 2 本と目盛りなので、名前があった枠にそのまま収まる。
-            // これでカードが 1 行になり、鎖の先頭に置いても場所を食わない。
-            // 他の analyzer（図が縦に伸びるもの）は下に置く。
-            if inlinesGraph {
-                ETEffectViews.view(index: index, node: node, dsp: dsp)
-                    .environment(\.etGraphOnly, true)
-                    .allowsHitTesting(false)
-                    .accessibilityLabel(node.spec.name)
-            } else if !hidesName {
-                VStack(alignment: .leading, spacing: 1) {
-                    // 折り返さない。幅が足りないときは縮める。
-                    // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
-                    // 2 行に折れていた。
-                    Text(displayName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Text(summary)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+    private func header(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
+        // 文字をアクセシビリティサイズまで上げたときだけ 2 段にする。
+        // 1 行のままだと、固定幅の部品（電源・矢印・⋯）が幅を取って名前が "5Band…" に切れ、
+        // 部品の右端がカードの外（余白の外）まで出ていた。上の段に部品、下の段に名前を置き、
+        // 名前に幅いっぱいを渡す。通常の文字サイズは今までの 1 行のまま。
+        Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        headerPower
+                        Spacer(minLength: 4)
+                        headerRouting
+                        headerChevron
+                        headerMenu
+                    }
+                    headerTitle(shown, address: address)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                // 名前も図も頭には出さない（図は下に来る）。
-                // 読み上げだけ残す。図は読み上げられないので。
-                Color.clear.frame(width: 0, height: 0)
-                    .accessibilityHidden(false)
-                    .accessibilityLabel(node.spec.name)
-            }
-
-            Spacer(minLength: 4)
-
-            // 既定（0→0 の All）から外れたものだけ出す。
-            // 普通の鎖は一直線なので、普段は何も出ない。
-            //
-            // **出ているときは押せる。** 印が出ているということは行き先を
-            // いじってあるということで、次に触りたいのもそこ。⋯ を開いて
-            // Routing を選ぶより、目に見えている印をそのまま押すほうが速い。
-            // 矢印を押し所にしていないのとは事情が違う（あちらは行を押すのと
-            // 結果が同じだった）。
-            if !node.isDefaultRouting || node.isGated {
-                Button { sheet = .routing } label: {
-                    Text(ETRouting.badge(node))
-                        .font(.system(size: 10, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.tint, in: .capsule)
-                        .foregroundStyle(.white)
-                        .contentShape(.capsule)
+                HStack(spacing: 6) {
+                    headerPower
+                    headerTitle(shown, address: address)
+                    Spacer(minLength: 4)
+                    headerRouting
+                    headerChevron
+                    headerMenu
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Routing \(ETRouting.badge(node))")
-            }
-
-            if hasBody {
-                // **印であって押し所ではない。**
-                // 押すのは行そのもの（下の onTapGesture）。
-                // 矢印にも当たり判定があると、行の手つきと取り合って
-                // 押せたり押せなかったりに見える。しかも文字を押すのと
-                // 結果が同じなので、分ける意味が無い。
-                // **右向き↔下向きにする。上向きにしない。**
-                // 0°↔180°（下↔上）だと並べ替えの矢印に見える。カードは長押しで
-                // 動かせるうえ、⋯ の中に Move Up / Move Down が上下の矢印で
-                // 並んでいるので、同じ形が開閉にも使われていると取り違える。
-                // 右→下は開閉の作法で、下の Section の印とも揃う。
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-
-            Menu {
-                if node.externalID?.hasPrefix("jsfx:") == true {
-                    Button { sheet = .jsfxSource } label: {
-                        Label("View Source", systemImage: "doc.text.magnifyingglass")
-                    }
-                }
-                // 並びは上流に合わせて routing → preset → reset
-                // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
-                //
-                // 全体の Routing はツールバーにもあるが、あちらは鎖を見渡す画面。
-                // 「このカードの行き先」を変えたいときにここから直に開ける。
-                Button { sheet = .routing } label: {
-                    Label("Routing…", systemImage: "arrow.triangle.branch")
-                }
-                // 絵はしおり（上流 :360 の SVG も bookmark の d）。
-                // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
-                // プリセットの一覧に混ぜない。
-                if !node.isExternal {
-                    Button { sheet = .presets } label: {
-                        Label("Effect Presets", systemImage: "bookmark")
-                    }
-                    Button { dsp.resetParams(at: index) } label: {
-                        Label("Reset Parameters", systemImage: "arrow.counterclockwise")
-                    }
-                }
-                Button(action: moveUp) {
-                    Label("Move Up", systemImage: "arrow.up")
-                }
-                .disabled(!canMoveUp)
-                Button(action: moveDown) {
-                    Label("Move Down", systemImage: "arrow.down")
-                }
-                .disabled(!canMoveDown)
-                Divider()
-                Button(role: .destructive) {
-                    dsp.remove(at: IndexSet(integer: index))
-                } label: {
-                    Label("Remove", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
             }
         }
         // 両端の部品は 44pt / 34pt の当たり判定を取っていて、絵の周りに 12pt / 9pt の
@@ -285,6 +374,227 @@ struct EffectCardView: View {
             // 上の行が丸ごと消える枠・板が落ちて字だけ浮く枠・図が二重に
             // 描かれる枠が 1 サイクルに 4〜5 枚ずつ写った。1 番目でも出る。
             toggleExpanded()
+        }
+    }
+
+    // 以下は header の部品。1 行と 2 段の両方から同じものを置く。
+
+    /// 入切。
+    private var headerPower: some View {
+        // Button ではなく Toggle。支援技術に入切が伝わるようにする。
+        Toggle("Enabled", isOn: Binding(
+            get: { node.enabled },
+            set: { dsp.setEnabled($0, at: index) }))
+            .toggleStyle(.power)
+            .labelsHidden()
+            .accessibilityLabel(node.spec.name)
+            // 名前は隣の開閉と同じになる。声で「Tap <名前>」と言ったときに取り合わないよう、電源は別の呼び名にする。
+            .accessibilityInputLabels(["\(node.etDisplayName) power"])
+    }
+
+    /// 名前と要約（畳んだ Level Meter だけは図）。
+    @ViewBuilder
+    private func headerTitle(_ shown: EffeTuneDSP.Node, address: Int) -> some View {
+        // **畳んだ Level Meter は図を名前の場所へ入れる。**
+        // 横長の棒 2 本と目盛りなので、名前があった枠にそのまま収まる。
+        // これでカードが 1 行になり、鎖の先頭に置いても場所を食わない。
+        // 他の analyzer（図が縦に伸びるもの）は下に置く。
+        if inlinesGraph {
+            // 名前の行と同じ頭の要素（ボタン・開閉の値・並べ替えと削除・焦点の行き先）にする。
+            // 畳んだ Level Meter は既定の鎖の唯一のカードで、ここだけ違うと操作が食い違う。
+            titleElement(
+                ETEffectViews.view(index: address, node: shown, dsp: dsp)
+                    .id(node.resetCount)
+                    .environment(\.etGraphOnly, true)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(node.spec.name))
+        } else if !hidesName {
+            titleElement(
+            VStack(alignment: .leading, spacing: 1) {
+                // 折り返さない。幅が足りないときは縮める。
+                // "Digital Error Emulator" や "Spectrum Analyzer" は iPhone 幅で
+                // 2 行に折れていた。
+                // 文字サイズをアクセシビリティサイズまで上げたときだけ、縮めずに折り返す
+                // （縮めると設定が打ち消され、切ると同じ名前のカードを見分けられない）。
+                HStack(spacing: 4) {
+                    // 一覧の主役なので、他のアプリの一覧の項目名と同じ段（headline＝本文の太字）。設定に合わせて縮む。
+                    Text(node.etDisplayName)
+                        .font(.headline)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                    // 音量に追従している印。畳んでいても出る（頭は共通）。
+                    if node.automation != nil {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .etFont(size: 11, weight: .semibold)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Follow Volume")
+                    }
+                }
+                Text(summary(shown))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+            })
+        } else {
+            // 名前も図も頭には出さない（図は下に来る）。
+            // 読み上げだけ残す。図は読み上げられないので。
+            titleElement(
+                Color.clear.frame(width: 0, height: 0)
+                    .accessibilityHidden(false)
+                    .accessibilityLabel(node.spec.name))
+        }
+    }
+
+    /// ルーティングの札。
+    @ViewBuilder
+    private var headerRouting: some View {
+        // 既定（0→0 の All）から外れたものだけ出す。
+        // 普通の鎖は一直線なので、普段は何も出ない。
+        //
+        // **出ているときは押せる。** 印が出ているということは行き先を
+        // いじってあるということで、次に触りたいのもそこ。⋯ を開いて
+        // Routing を選ぶより、目に見えている印をそのまま押すほうが速い。
+        // 矢印を押し所にしていないのとは事情が違う（あちらは行を押すのと
+        // 結果が同じだった）。
+        if !node.isDefaultRouting || node.isGated {
+            Button { sheet = .routing } label: {
+                Text(ETRouting.badge(node))
+                    .etFont(size: 10, design: .monospaced)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .etBadgeBackground(in: .capsule)
+                    .foregroundStyle(.white)
+                    // 見た目は変えず、押せる面だけ 44pt 前後に広げる（余白を足して、同じだけ引く）。
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 14)
+                    .contentShape(.rect)
+                    .padding(.horizontal, -7)
+                    .padding(.vertical, -14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Routing \(ETRouting.badge(node))")
+        }
+    }
+
+    /// 開閉の印。
+    @ViewBuilder
+    private var headerChevron: some View {
+        // 2列では図を持つものだけが 開く ↔ 図だけ を行き来する。ほかは開いたままなので出さない。
+        if hasBody && (!pinnedOpen || showsCollapsedGraph) {
+            // **印であって押し所ではない。**
+            // 押すのは行そのもの（下の onTapGesture）。
+            // 矢印にも当たり判定があると、行の手つきと取り合って
+            // 押せたり押せなかったりに見える。しかも文字を押すのと
+            // 結果が同じなので、分ける意味が無い。
+            // **右向き↔下向きにする。上向きにしない。**
+            // 0°↔180°（下↔上）だと並べ替えの矢印に見える。カードは長押しで
+            // 動かせるうえ、⋯ の中に Move Up / Move Down が上下の矢印で
+            // 並んでいるので、同じ形が開閉にも使われていると取り違える。
+            // 右→下は開閉の作法で、下の Section の印とも揃う。
+            Image(systemName: "chevron.down")
+                .etFont(size: 12, weight: .semibold)
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// ⋯ のメニュー。
+    private var headerMenu: some View {
+        Menu {
+            if node.externalID?.hasPrefix("jsfx:") == true {
+                Button { sheet = .jsfxSource } label: {
+                    Label("View Source", systemImage: "doc.text.magnifyingglass")
+                }
+            }
+            // 並びは上流に合わせて routing → preset → reset
+            // （js/ui/pipeline/pipeline-item-builder.js:133-145）。
+            //
+            // 全体の Routing はツールバーにもあるが、あちらは鎖を見渡す画面。
+            // 「このカードの行き先」を変えたいときにここから直に開ける。
+            Button { sheet = .routing } label: {
+                Label("Routing…", systemImage: "arrow.triangle.branch")
+            }
+            // 絵はしおり（上流 :360 の SVG も bookmark の d）。
+            // **Reset Parameters とは別の口。**あちらは既定へ戻すもので、
+            // プリセットの一覧に混ぜない。
+            if !node.isExternal {
+                // 追従しているあいだは、カードが見せているもの（キーフレームか、いまの音量の位置）へ効く。
+                Button { sheet = .presets } label: {
+                    Label("Effect Presets", systemImage: "bookmark")
+                }
+                .disabled(!canEdit)
+                Button { dsp.resetParams(at: editAddress) } label: {
+                    Label("Reset Parameters", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(!canEdit)
+                keyframeMenuItems
+            }
+            Button(action: moveUp) {
+                Label("Move Up", systemImage: "arrow.up")
+            }
+            .disabled(!canMoveUp)
+            Button(action: moveDown) {
+                Label("Move Down", systemImage: "arrow.down")
+            }
+            .disabled(!canMoveDown)
+            Divider()
+            Button(role: .destructive) {
+                removeCard()
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .etFont(size: 15, weight: .semibold)
+                .frame(width: 34, height: 34)
+                // 見た目と並びの大きさは 34pt のまま、押せる面だけ 44pt にする（余白を足して、同じだけ引く）。
+                .padding(5)
+                .contentShape(Rectangle())
+                .padding(-5)
+        }
+        // どのカードの ⋯ も「More」と読まれて区別できない。読み上げの名前は変えず、
+        // 声で呼ぶ名前だけカードごとに分ける。
+        .accessibilityLabel("More")
+        .accessibilityInputLabels(["\(node.etDisplayName) options"])
+    }
+
+    /// 頭の押し所が開閉として働くか。山形を出す条件と同じ（2列で開閉する先が無いカードは押しても何も起きない）。
+    private var canToggle: Bool { hasBody && (!pinnedOpen || showsCollapsedGraph) }
+
+    /// 名前と要約を、支援技術に向けた 1 つの要素にする。
+    ///
+    /// 開閉は頭の onTapGesture だけで、ボタンの役割も状態も持たなかった（Voice Control の「Tap 名前」、
+    /// キーボード、スイッチコントロールで開けない）。見た目と onTapGesture はそのまま残し、
+    /// 同じ動作を accessibilityAction でも渡す。手本は PipelineView の OutputCorrectionRow。
+    ///
+    /// 並べ替えと削除もここに持たせる（ローターの Actions から 1 手で動かせる。⋯ のメニューは残す）。
+    /// カードの外側に付けると中のつまみすべてに付いてしまうので、名前の要素に付ける。
+    @ViewBuilder
+    private func titleElement<Content: View>(_ content: Content) -> some View {
+        let base = content
+            .accessibilityElement(children: .combine)
+            .accessibilityActions {
+                if canMoveUp { Button("Move Up", action: moveUp) }
+                if canMoveDown { Button("Move Down", action: moveDown) }
+                Button("Remove") { removeCard() }
+            }
+            .modifier(ETCardFocus(binding: focus, id: node.id))
+        if canToggle {
+            base
+                .accessibilityAddTraits(.isButton)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityAction { toggleExpanded() }
+        } else {
+            base
+        }
+    }
+
+    /// 消す。⋯ の Remove とローターの Remove で同じ道を通し、取り消せるようにする。
+    private func removeCard() {
+        ETChainUndo.run(.remove, dsp: dsp, undoManager: undoManager) {
+            dsp.remove(at: IndexSet(integer: index))
         }
     }
 
@@ -325,9 +635,17 @@ struct EffectCardView: View {
     /// 畳んだときに図だけを出すか。
     ///
     /// **`has` ではなく `hasGraph`。** 専用の画面はあるが図は描かないもの
-    /// （IR Reverb）を `has` で拾うと、畳んでいるのに取り込む口と状態行が
-    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（実機で確認）。
-    private var showsCollapsedGraph: Bool { ETEffectViews.hasGraph(node.spec.type) }
+    /// （SFZ Note Player など）を `has` で拾うと、畳んでいるのに取り込む口や状態行が
+    /// そのまま出て、隣のカードに重なってボタンを塞ぐ（IR Reverb で実機確認。
+    /// 今の IR Reverb は図を持ち、etGraphOnly では図だけを返す）。
+    ///
+    /// **IR Reverb は IR が入っているときだけ。**入っていなければ図が無いので（IRReverbDecayGraph）、
+    /// 図を出すことにすると畳んだカードに余白だけが残る。
+    private var showsCollapsedGraph: Bool {
+        guard ETEffectViews.hasGraph(node.spec.type) else { return false }
+        if node.spec.type == "IRReverbPlugin" { return irGraphs.graphs[node.id] != nil }
+        return true
+    }
 
 
     /// 開いて出すものがあるか。図だけのエフェクト（Level Meter など）も開ける。
@@ -335,23 +653,11 @@ struct EffectCardView: View {
         node.isExternal || !node.spec.params.isEmpty || ETEffectViews.has(node.spec.type)
     }
 
-    /// 1 行目に出す名前。
-    ///
-    /// 古い鎖は AU の名前に "Vendor: " が付いている（足すときに entry.title を渡していた
-    /// 頃のもの）。作者は 2 行目へ移したので二重になる。**作者名と一致する頭だけ**落とす。
-    /// 端末から AU を消すと作者が空になり、そのときは落とせないまま出る。
-    private var displayName: String {
-        guard let externalID = node.externalID else { return node.spec.name }
-        let author = ETPluginLabel.author(externalID: externalID)
-        guard !author.isEmpty, node.spec.name.hasPrefix(author + ": ") else { return node.spec.name }
-        return String(node.spec.name.dropFirst(author.count + 2))
-    }
-
     /// 畳んでいるときに何をしているかが分かるよう、主要な値を 1 行にする。
     ///
     /// 開いているときは同じ値がすぐ下に出ているので、分類の方を出す。
     /// そうしないと、どのエフェクトなのかを言う行が頭から消える。
-    private var summary: String {
+    private func summary(_ node: EffeTuneDSP.Node) -> String {
         // 外から来たものは、分類の隣に作者を出す。
         // AU の作者は取れていたのに、名前の接頭辞（"Vendor: Name"）として 1 行目へ
         // 混ざっていた。名前欄は lineLimit(1) なので、長いと肝心のプラグイン名が
@@ -391,11 +697,79 @@ struct EffectCardView: View {
     }
 }
 
+/// カードの本文（パラメータの画面）。**部品は index と node だけを見て、書くときは index を DSP へ渡す。**
+/// 音量に追従するカードのキーフレームごとの写しは、ETSlotAddress の番号と、その値を載せた段を渡して
+/// 同じ画面を使い回す（キーフレームのシート、追従中のカードの読むだけの画面）。
+/// 外部プロセッサは追従できないので、ここには来ない。
+struct ETEffectBody: View {
+    let index: Int
+    let node: EffeTuneDSP.Node
+    @ObservedObject var dsp: EffeTuneDSP
+
+    var body: some View {
+        if ETEffectViews.has(node.spec.type) {
+            // 専用の画面を持つものは、そちらがパラメータまで面倒を見る。
+            // Reset Parameters で作り直す。表示の設定は現れたときにしか
+            // 読まないので、id を変えないと画面だけ前の見せ方のまま残る。
+            ETEffectViews.view(index: index, node: node, dsp: dsp)
+                .id(node.resetCount)
+                .environment(\.etGraphOnly, false)
+        } else if let tabs = ETParamTabs.tabs(for: node.spec.type) {
+            // 上流がタブに分けているもの（AM Radio・TV Audio・Vinyl）。
+            TabbedParameterList(index: index, node: node, dsp: dsp, tabs: tabs)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                // runtimeOnly（Adaptive Prediction の resetToken）は画面の行を持たない。
+                ForEach(node.spec.params.filter { !$0.runtimeOnly }) { param in
+                    ParameterRow(param: param, nodeIndex: index,
+                                 values: node.values, dsp: dsp)
+                }
+            }
+        }
+    }
+}
+
+/// 音量が変わるたびに中身を描き直す。追従しているカードだけを包む（ほかのカードは音量で描き直さない）。
+private struct ETVolumeObserving<Content: View>: View {
+    @ObservedObject private var volume = ETVolumeFollower.shared
+    @ViewBuilder let content: () -> Content
+
+    var body: some View { content() }
+}
+
+/// カードと左の一覧（ChainMinimap）で同じ名前・同じ薄さを出す。
+extension EffeTuneDSP.Node {
+    /// 1 行目に出す名前。
+    ///
+    /// 古い鎖は AU の名前に "Vendor: " が付いている（足すときに entry.title を渡していた
+    /// 頃のもの）。作者は 2 行目へ移したので二重になる。**作者名と一致する頭だけ**落とす。
+    /// 端末から AU を消すと作者が空になり、そのときは落とせないまま出る。
+    @MainActor
+    var etDisplayName: String {
+        guard let externalID else { return spec.name }
+        let author = ETPluginLabel.author(externalID: externalID)
+        guard !author.isEmpty, spec.name.hasPrefix(author + ": ") else { return spec.name }
+        return String(spec.name.dropFirst(author.count + 2))
+    }
+
+    /// 音が通らない状態か。自分の入切と、上にある Section の入切の両方で決まる。
+    ///
+    /// 上流も同じ掛け算で、鎖の中の位置から区切りの入切を引いて
+    /// plugin-disabled を付けている（js/ui/pipeline/pipeline-core.js:309-323）。
+    /// 区切りの側の答えは sectionGate に入っている。
+    /// DSP も `node.enabled == 0 || node.sectionGate == 0` で読み飛ばす
+    /// （dsp/core/engine.cpp:919）ので、見た目の条件をそれに合わせる。
+    /// Sectionのgateは常に1（applySectionGates）なので、Sectionでは自分の入切だけになる。
+    var isMuted: Bool { !enabled || sectionGate == 0 }
+}
+
 /// AU parameters are deliberately presented by the external node rather than
 /// by a fixed post-insert settings screen. The selected AU host owns the
 /// parameter tree and persists values; this view only provides the same inline
 /// editing affordance as native EffeTune parameters.
 private struct ExternalProcessorView: View {
+    /// 読み上げに使う名前（@gfx の面の名前）。
+    let name: String
     @ObservedObject private var au = ETAUHost.shared
     @ObservedObject private var jsfx = ETJSFXHost.shared
     @ObservedObject private var prefs = Preferences.shared
@@ -403,6 +777,13 @@ private struct ExternalProcessorView: View {
     let instanceID: String
     let snapshot: UIImage?
     let isDragPreview: Bool
+    /// 鎖がこの段に音を通しているか。段の入切・上のSectionの入切・全体の入切（All effects）の3つ。
+    /// どれかが切れていると、鎖はこの段を飛ばしてprocessを呼ばない。
+    /// 無音で休んでいる間（AudioIO.resting）も鎖ごと飛ぶが、そちらは札のところで見る（triggerChips）。
+    let isProcessing: Bool
+    /// ioを丸ごと観測せず、休んでいるかだけを写す（PipelineViewと同じ）。
+    private let io = AudioIO.shared
+    @State private var resting = false
     @State private var controller: UIViewController?
     @State private var requestingView = false
     @State private var fullScreen = false
@@ -446,14 +827,11 @@ private struct ExternalProcessorView: View {
                         diagnostic + String(format: " (worst %.0f%% of the block, %u over)",
                                             $0.worst * 100, $0.trips)
                     } ?? diagnostic)
-                        .font(.system(size: 11))
+                        .etFont(size: 11)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    Button("Re-enable") { jsfx.clearDiagnostic(instanceID: instanceID) }
-                        .font(.system(size: 12))
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    ETTextActionButton(title: "Re-enable") { jsfx.clearDiagnostic(instanceID: instanceID) }
                 }
             }
             // **画面に入っているかを見るのは JSFX の canvas だけ。**
@@ -471,21 +849,19 @@ private struct ExternalProcessorView: View {
                         // 送り出せない。送れたとしても、送る指がそのまま
                         // つまみを掴む。**はみ出させないのが直し方。**
                         JSFXGFXView(instanceID: instanceID,
+                                    label: name,
                                     pixelPerfect: prefs.jsfxCanvasMode == .pixelPerfect,
                                     isVisible: isOnScreen && !fullScreen)
                         Button {
                                 movingToFullScreen = true
                                 Task { @MainActor in
                                     await Task.yield()
-                                    ETInterfaceOrientation.request(.landscapeRight)
-                                    for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
-                                        try? await Task.sleep(nanoseconds: 20_000_000)
-                                    }
+                                    await ETInterfaceOrientation.turnLandscape()
                                     fullScreen = true
                                 }
                         } label: {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 14, weight: .semibold))
+                                .etFont(size: 14, weight: .semibold)
                         }
                         .accessibilityLabel("Full Screen")
                         .buttonStyle(.glass(.regular.interactive()))
@@ -507,7 +883,7 @@ private struct ExternalProcessorView: View {
             } else if jsfxParameters.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(jsfx.status(instanceID: instanceID))
-                        .font(.footnote)
+                        .etFont(size: 12)
                         .foregroundStyle(.secondary)
                     jsfxTriggers
                 }
@@ -524,6 +900,8 @@ private struct ExternalProcessorView: View {
                 } else {
                     ETAUViewControllerHost(controller: controller)
                         .frame(minHeight: 260, idealHeight: 360, maxHeight: 520)
+                        // 触りをtouchesBeganで直に読むAUは、ownsDragから見えない。
+                        .etOwnsDrag()
                 }
                 Button {
                     movingToFullScreen = true
@@ -532,15 +910,12 @@ private struct ExternalProcessorView: View {
                         // avoids drawing one portrait frame of the plug-in
                         // and then snapping it sideways.
                         await Task.yield()
-                        ETInterfaceOrientation.request(.landscapeRight)
-                        for _ in 0..<40 where !ETInterfaceOrientation.isLandscape {
-                            try? await Task.sleep(nanoseconds: 20_000_000)
-                        }
+                        await ETInterfaceOrientation.turnLandscape()
                         fullScreen = true
                     }
                 } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 14, weight: .semibold))
+                        .etFont(size: 14, weight: .semibold)
                 }
                 .buttonStyle(.glass(.regular.interactive()))
                 .buttonBorderShape(.circle)
@@ -556,15 +931,16 @@ private struct ExternalProcessorView: View {
             }
         } else if parameters.isEmpty {
             Text(au.status(instanceID: instanceID))
-                .font(.footnote)
+                .etFont(size: 12)
                 .foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(parameters, id: \.address) { parameter in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
+                            // 14 は ParameterRow の題と同じ（ほかのエフェクトと並べて違和感が出ない）。
                             Text(parameter.displayName)
-                                .font(.footnote)
+                                .etFont(size: 14)
                             Spacer()
                             // `%.3g` は 1000 を `1e+03` にするので使わない。
                             // 打ち込みもできる欄にする（読み取り専用の Text だった）。
@@ -580,6 +956,9 @@ private struct ExternalProcessorView: View {
                             get: { Double(parameter.value) },
                             set: { au.setParameter(parameter, value: $0) }),
                             in: Double(parameter.minValue)...Double(parameter.maxValue))
+                            // 隣の数値欄と同じ名前と値。付けないと範囲そのままの割合（"50 percent"）と読まれる。
+                            .accessibilityLabel(parameter.displayName)
+                            .accessibilityValue(ETNumberText.plain(Double(parameter.value)))
                     }
                 }
             }
@@ -605,7 +984,7 @@ private struct ExternalProcessorView: View {
             ForEach(parameters) { parameter in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(parameter.name).font(.footnote)
+                        Text(parameter.name).etFont(size: 14)
                         Spacer()
                         // `%.3g` は 1000 を `1e+03`、12001 を `1.2e+04` にしていた。
                         // 可聴域を扱う slider（カットオフ・ディレイ・FFT 長）は
@@ -614,14 +993,19 @@ private struct ExternalProcessorView: View {
                                                                 step: parameter.step),
                                      label: parameter.name,
                                      editText: { ETNumberText.draft(parameter.value) }) { typed in
+                            // "nan" や "inf" は Double() を通る。min/max は NaN を素通しする。
+                            guard typed.isFinite else { return }
                             let clamped = min(max(typed, parameter.minimum), parameter.maximum)
                             jsfx.setParameter(instanceID: instanceID,
                                               parameterID: parameter.id, value: clamped)
                         }
                     }
                     if parameter.isEnumeration {
+                        // **Int(Double) を直に使わない。**スクリプトは NaN も 1e30 も書ける
+                        // （ETJSFXLoader.enumIndex を読むこと）。
                         Picker(parameter.name, selection: Binding(
-                            get: { Int(parameter.value.rounded()) },
+                            get: { ETJSFXLoader.enumIndex(parameter.value,
+                                                          count: parameter.enumNames.count) },
                             set: { jsfx.setParameter(instanceID: instanceID,
                                                      parameterID: parameter.id, value: Double($0)) })) {
                             ForEach(Array(parameter.enumNames.enumerated()), id: \.offset) {
@@ -630,6 +1014,7 @@ private struct ExternalProcessorView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                        .etFont(size: 14)
                     } else if parameter.maximum > parameter.minimum {
                         Slider(value: Binding(
                             get: { jsfx.normalizedValue(instanceID: instanceID,
@@ -638,6 +1023,10 @@ private struct ExternalProcessorView: View {
                             set: { jsfx.setNormalizedParameter(instanceID: instanceID,
                                                                parameterID: parameter.id, value: $0) }),
                                in: 0...1)
+                            // 0...1 に正規化した値なので、付けないと実際の値（1 kHz など）と無関係な割合と読まれる。
+                            // 隣の数値欄と同じ文字列を渡す。
+                            .accessibilityLabel(parameter.name)
+                            .accessibilityValue(ETNumberText.stepped(parameter.value, step: parameter.step))
                     }
                 }
             }
@@ -657,6 +1046,16 @@ private struct ExternalProcessorView: View {
     /// （自動バイパス中・状態保存中・再設定中）ときに送ると捨てられるので、
     /// 押せるままだと「効かないのか溜まっているのか」が区別できない。
     ///
+    /// **鎖がこの段を飛ばしている間も無効にする**（isProcessing）。段・Section・全体の
+    /// どれを切ってもhostはrunningのままなので、runningだけ見ていると札は押せるままで、
+    /// 押したぶんは溜まって再開した最初のブロックで一斉に発火していた（シミュレータ、
+    /// 切っている間に1と2を押すと、再開で発火数が0から2へ一度に上がった）。
+    /// 溜まったぶんはhostの側でも捨てる（ETJSFXHost.cppのprocess。止まっていた後の最初のブロック）。
+    ///
+    /// **無音で休んでいる間も無効にする**（AudioIO.resting）。省電力が1秒・3秒のとき、入力が
+    /// 無いとAudioIOは鎖ごと通さないので、押しても音が戻った最初のブロックで捨てられる。
+    /// 段の入切と同じく「効かないのか溜まっているのか」が区別できない。
+    ///
     /// **`trigger` を読まないスクリプトには出さない。**REAPER では MIDI や
     /// アクションから叩くもので、EffectDeck には叩く手段が無い。同梱 3 本と
     /// 手元の実物 6 本のうち読んでいるのは検証用の 1 本だけで、残りでは
@@ -668,14 +1067,16 @@ private struct ExternalProcessorView: View {
     }
 
     private var triggerChips: some View {
-        let live = jsfx.isRunning(instanceID: instanceID)
+        let live = isProcessing && !resting && jsfx.isRunning(instanceID: instanceID)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Trigger (trigger bits 1–\(ETJSFX_MaxTriggers()))")
-                .font(.caption).foregroundStyle(.secondary)
+                .etFont(size: 12).foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 ForEach(0..<Int(ETJSFX_MaxTriggers()), id: \.self) { index in
-                    Button("\(index + 1)") {
+                    Button {
                         jsfx.sendTrigger(instanceID: instanceID, index: UInt32(index))
+                    } label: {
+                        Text("\(index + 1)").etFont(size: 12, weight: .semibold)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -683,6 +1084,9 @@ private struct ExternalProcessorView: View {
                 }
             }
         }
+        // 写した値の初期合わせ。購読の初回配信に頼らない。
+        .onAppear { resting = io.resting }
+        .onReceive(io.$resting) { resting = $0 }
     }
 }
 
@@ -690,6 +1094,8 @@ private struct JSFXGFXView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var jsfx = ETJSFXHost.shared
     let instanceID: String
+    /// 読み上げる名前（エフェクト名）。全画面は渡さない。
+    var label = "JSFX"
     /// 貼るときに原寸（framebuffer の 1 画素 = 画面の 1 画素）で止めるか。
     /// **描く寸法は変えない。**変わるのは表示の大きさだけ。
     var pixelPerfect = false
@@ -731,6 +1137,11 @@ private struct JSFXGFXView: View {
                 JSFXKeyboardCapture(instanceID: instanceID)
                     .allowsHitTesting(false)
             }
+            // 面は Image(decorative:) なので VoiceOver に何も出ない。つまみや XY パッドを @gfx にだけ持つ
+            // スクリプトは触れない。1 つの要素として名前を出し、直接触れる面にする（触りはそのままスクリプトへ届く）。
+            .accessibilityElement()
+            .accessibilityLabel("\(label) graphics")
+            .accessibilityDirectTouch(options: .silentOnTouch)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
@@ -777,6 +1188,8 @@ private struct JSFXGFXView: View {
                                     : nil,
                                 fullScreen: fullScreen))
         .clipped()
+        // 横へ引いてもスクリプトのもの。行の払い（削除）と長押しの掴みには渡さない。
+        .etOwnsDrag()
         .onDisappear {
             jsfx.updateGFXWindow(instanceID: instanceID, owner: windowOwner,
                                  focused: false, visible: false)
@@ -849,7 +1262,7 @@ private struct JSFXFullScreenEditor: View {
                 .padding(8)
             Button { isPresented = false } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Close")
-            .font(.system(size: 15, weight: .bold))
+            .etFont(size: 15, weight: .bold)
             .buttonStyle(.glass(.regular.interactive()))
             .buttonBorderShape(.circle)
             .controlSize(.large)
@@ -859,39 +1272,15 @@ private struct JSFXFullScreenEditor: View {
     }
 }
 
-private struct JSFXSourceView: View {
-    @Environment(\.dismiss) private var dismiss
-    let instanceID: String
-
-    var body: some View {
-        NavigationStack {
-            ScrollView([.horizontal, .vertical]) {
-                Text(ETJSFXHost.shared.sourceText(instanceID: instanceID) ?? "Source unavailable")
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(16)
-            }
-            .navigationTitle("JSFX Source")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
 /// いま誰かが字を打っているか。
 ///
 /// UIKit に「現在の first responder」を直に返す API は無いので、nil 宛ての
 /// sendAction が first responder にだけ届く性質を使う。
-private final class ETFirstResponderProbe {
+final class ETFirstResponderProbe {
     static weak var found: UIResponder?
 }
 
-private extension UIResponder {
+extension UIResponder {
     @objc func et_findFirstResponder(_ sender: Any?) {
         ETFirstResponderProbe.found = self
     }
@@ -971,7 +1360,7 @@ private struct ETAUFullScreenEditor: View {
                 .background(Color(uiColor: .systemBackground))
             Button { isPresented = false } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
+                    .etFont(size: 15, weight: .bold)
             }
                 .buttonStyle(.glass(.regular.interactive()))
                 .buttonBorderShape(.circle)
@@ -994,7 +1383,24 @@ enum ETInterfaceOrientation {
             .interfaceOrientation.isLandscape == true
     }
 
+    /// 全画面に出すときに向きを変えるか。**iPadでは変えない。**
+    ///
+    /// iPadの窓は横でも縦でも十分に広く、Stage Managerやほかのアプリと並んでいると
+    /// 回すこと自体ができない。しかも閉じたときの`.portrait`がそのまま残り、
+    /// 縦に固定されたまま戻らなかった。
+    static var rotates: Bool { UIDevice.current.userInterfaceIdiom != .pad }
+
+    /// 横へ回して、回り終わるまで待つ（最長0.8秒）。回さない端末ではすぐ戻る。
+    static func turnLandscape() async {
+        request(.landscapeRight)
+        guard rotates else { return }
+        for _ in 0..<40 where !isLandscape {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
     static func request(_ mask: UIInterfaceOrientationMask) {
+        guard rotates else { return }
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
@@ -1104,6 +1510,12 @@ private struct SectionCardView: View {
     /// 固まるのがこれなので、確定（改行・欄から離れる）でだけ書く。
     @State private var draft = ""
     @FocusState private var editing: Bool
+    /// 2列のとき。畳むボタンを出さない（Components.swiftのetCardsPinnedOpen）。
+    @Environment(\.etCardsPinnedOpen) private var pinnedOpen
+    /// コントラストを上げる設定のとき、ミュートの薄さを弱める。
+    @Environment(\.colorSchemeContrast) private var contrast
+    /// 大きい文字サイズでだけ、要約の折り返しを許す。
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Card(block: block) {
@@ -1118,12 +1530,14 @@ private struct SectionCardView: View {
                     .toggleStyle(.power)
                     .labelsHidden()
                     .accessibilityLabel(accessibilityName)
+                    // 隣の名前の欄と取り合わないよう、声で呼ぶ名前は別にする。
+                    .accessibilityInputLabels(["\(accessibilityName) power"])
 
                 VStack(alignment: .leading, spacing: 1) {
                     // 上流の placeholder は "Enter the section name"（section.js）。
                     // 幅が無いので短くしてある。
                     TextField("Section name", text: $draft)
-                        .font(.system(size: 16, weight: .semibold))
+                        .etFont(size: 16, weight: .semibold)
                         .textInputAutocapitalization(.words)
                         .autocorrectionDisabled()
                         .submitLabel(.done)
@@ -1131,36 +1545,39 @@ private struct SectionCardView: View {
                         .onSubmit { commit() }
 
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .etFont(size: 11)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
 
                 Spacer(minLength: 4)
 
                 // 畳む・開く。Menu にはしない（提示が終わらない件を追っている最中で、
                 // 原因は高頻度の再描画）。1 手で効く直のボタンにする。
-                Button {
-                    if editing { commit() }
-                    // **動かさない。**カードの側（上の onTapGesture）と同じ。
-                    // Section は配下の行そのものが増え減りするので、包むと
-                    // 行の抜き差しにも動きが掛かる。
-                    toggleExpanded()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                        .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
-                        .contentShape(Rectangle())
+                // 2列では畳まないので出さない。
+                if !pinnedOpen {
+                    Button {
+                        if editing { commit() }
+                        // **動かさない。**カードの側（上の onTapGesture）と同じ。
+                        // Section は配下の行そのものが増え減りするので、包むと
+                        // 行の抜き差しにも動きが掛かる。
+                        toggleExpanded()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .etFont(size: 12, weight: .semibold)
+                            .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                            .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(isExpanded ? "Collapse section" : "Expand section")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(isExpanded ? "Collapse section" : "Expand section")
             }
             .padding(.leading, 2)
             .padding(.vertical, 10)
         }
-        .opacity(node.enabled ? 1 : 0.55)
+        .opacity(node.isMuted ? (contrast == .increased ? 0.8 : 0.55) : 1)
         .onAppear { draft = node.sectionName }
         .onChange(of: node.sectionName) { _, now in
             // プリセットや共有リンクの取り込みで名前が外から変わる。
@@ -1182,8 +1599,7 @@ private struct SectionCardView: View {
     /// 頭に出す行。Section の名前は欄そのものなので、ここには種別と中身の数を出す。
     private var subtitle: String {
         // 配下は Analysis が持つ。ここで鎖を走って数え直さない。
-        let n = dsp.chain.indices.contains(index)
-            ? dsp.analysis.members(of: dsp.chain[index].id).count : 0
+        let n = dsp.node(at: index).map { dsp.analysis.members(of: $0.id).count } ?? 0
         guard n > 0 else { return "Section" }
         let effects = "\(n) effect\(n == 1 ? "" : "s")"
         return isExpanded ? "Section · \(effects)" : "Section · \(effects) hidden"
@@ -1193,5 +1609,73 @@ private struct SectionCardView: View {
     /// （pipeline-item-builder.js:238-242）。
     private var accessibilityName: String {
         node.sectionName.isEmpty ? "Section" : "\(node.sectionName) Section"
+    }
+}
+
+/// 小さい札の地。通常は `.tint` のまま。コントラストを上げる設定のときだけ濃くする。
+///
+/// 10pt 前後の白い字を `.tint`（システムの青）の上に置くと、AA の比（4.5:1）に届かない。
+/// 通常の見た目は変えず、設定を入れた人にだけ効かせる。
+private struct ETBadgeBackground<S: Shape>: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+    let shape: S
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if contrast == .increased {
+            content.background(Color.accentColor.mix(with: .black, by: 0.3), in: shape)
+        } else {
+            content.background(.tint, in: shape)
+        }
+    }
+}
+
+extension View {
+    /// 白い字を載せる小さい札の地（`.background(.tint, in:)` の、コントラスト設定に従う版）。
+    func etBadgeBackground<S: Shape>(in shape: S) -> some View {
+        modifier(ETBadgeBackground(shape: shape))
+    }
+}
+
+/// カードの名前の要素へ VoiceOver の焦点を移せるようにする。binding が無いカードには何も付けない。
+private struct ETCardFocus: ViewModifier {
+    let binding: AccessibilityFocusState<UUID?>.Binding?
+    let id: UUID
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let binding {
+            content.accessibilityFocused(binding, equals: id)
+        } else {
+            content
+        }
+    }
+}
+
+/// 鎖の追加・削除・並べ替えに、取り消しの名前を付ける（振ったときの「取り消す - Remove Effect」）。
+///
+/// 取り消しそのものは EffeTuneDSP が鎖まるごとの控えで積む（DSP/ETUndo.swift）。
+/// ここで積むと同じ 1 手が二重になる。
+@MainActor
+enum ETChainUndo {
+    enum Kind {
+        case add, remove, move
+
+        var actionName: String {
+            switch self {
+            case .add: return "Add Effect"
+            case .remove: return "Remove Effect"
+            case .move: return "Move Effect"
+            }
+        }
+    }
+
+    /// `body` で鎖を変え、変わっていたら積まれた 1 手に名前を付ける。
+    static func run(_ kind: Kind, dsp: EffeTuneDSP, undoManager: UndoManager?, _ body: () -> Void) {
+        let before = dsp.chain.map(\.id)
+        body()
+        guard let undoManager, !RemoteMirror.shared.isRemote,
+              before != dsp.chain.map(\.id) else { return }
+        undoManager.setActionName(kind.actionName)
     }
 }

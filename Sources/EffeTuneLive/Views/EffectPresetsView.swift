@@ -39,9 +39,8 @@ struct EffectPresetsView: View {
     /// 適用したあと印を付け直すので、渡された写しではなく鎖から引く。
     /// 出している間に鎖が動いて別のエフェクトになっていたら nil。
     private var node: EffeTuneDSP.Node? {
-        guard dsp.chain.indices.contains(index),
-              dsp.chain[index].spec.type == spec.type else { return nil }
-        return dsp.chain[index]
+        guard let node = dsp.node(at: index), node.spec.type == spec.type else { return nil }
+        return node
     }
 
     /// 出荷時プリセットを上流の並びのまま束ねる。
@@ -58,7 +57,7 @@ struct EffectPresetsView: View {
     /// いま一致している出荷時プリセットの id。無ければ空。
     private var activeId: String {
         guard let node = node else { return "" }
-        return EffectPresetApply.matchingPresetId(for: spec, current: node.values)
+        return EffectPresetApply.matchingPresetId(for: spec, current: node.values, display: node.display)
     }
 
     private var names: [String] { store.names(of: spec.name) }
@@ -75,14 +74,20 @@ struct EffectPresetsView: View {
     private func apply(_ params: [String: Any]) {
         guard let node = node else { return }
         let next = EffectPresetApply.values(for: spec, params: params, current: node.values)
-        dsp.setValues(next, at: index)
+        // designerの材料（5Band FIR PEQの帯域など）もfloatに載らないので鍵で運ぶ
+        // （DSP/DesignParams.swift）。値と同じ回で当て、設計のやり直しは1度だけDSPがやる。
+        dsp.setValues(next, at: index, design: params)
+        // 表示だけの設定（Analog Meter の Reference / Range など。DSP/DisplayParams.swift）も、
+        // プリセットが書いているものは当てる。float に載らないので鍵で運んでいる。
+        dsp.applyDisplay(from: params, at: index)
 
         // IR Reverb の素材だけは float に載らないので鍵で運ぶ
         // （PipelineStore.swift:74-77 と同じ扱い）。段に書いてから入れ直す。
         // 入れ直しを DSP にやらせるのは、畳んだカードにはビューが無いため
         // （EffeTuneDSP.reloadAssets の注記）。
-        if let ir = params[ETIRLoader.presetKey] as? String,
-           !ir.isEmpty, ir != node.irId {
+        if let ir = params[ETChainText.assetKey(forType: node.spec.type)] as? String,
+           !ir.isEmpty, ir != node.irId,
+           node.spec.type != ETChainText.sfzType || ETSFZ.isValidID(ir) {
             dsp.setIRId(ir, at: index)
             dsp.reloadAssets()
         }
@@ -101,7 +106,7 @@ struct EffectPresetsView: View {
                 if !groups.isEmpty { systemSection }
                 userSection
             }
-            .navigationTitle("Effect Presets")
+            .etNavigationTitle("Effect Presets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
@@ -118,7 +123,7 @@ struct EffectPresetsView: View {
                 // グループ名が空なら見出しを出さない（上流 :273-278 の `if (group.label)`）。
                 if !group.id.isEmpty {
                     Text(group.id)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 ForEach(group.presets) { preset in
@@ -126,11 +131,11 @@ struct EffectPresetsView: View {
                         apply(preset.params)
                     } label: {
                         HStack {
-                            Text(preset.label).foregroundStyle(.primary)
+                            Text(preset.label).font(.body).foregroundStyle(.primary)
                             Spacer(minLength: 8)
                             if preset.presetId == active {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.footnote.weight(.semibold))
                                     .foregroundStyle(.tint)
                             }
                         }
@@ -139,8 +144,6 @@ struct EffectPresetsView: View {
             }
         } header: {
             Text("System Presets")
-        } footer: {
-            Text("Changes this effect only.")
         }
     }
 
@@ -148,11 +151,13 @@ struct EffectPresetsView: View {
         Section {
             HStack {
                 TextField("Preset name", text: $newName)
+                    .font(.body)
                     .textInputAutocapitalization(.words)
                 Button("Save") {
                     if let node = node { store.save(trimmedName, of: node) }
                     newName = ""
                 }
+                .font(.body)
                 .disabled(!canSave)
             }
 
@@ -166,7 +171,7 @@ struct EffectPresetsView: View {
                     Button {
                         applyUser(name)
                     } label: {
-                        Text(name).foregroundStyle(.primary)
+                        Text(name).font(.body).foregroundStyle(.primary)
                     }
                     // **.onDelete を使わない。** 位置で消すと、続けて払ったときに
                     // 別の行が消える。理由は PresetsView.swift:206-213 に書いてある。
@@ -180,14 +185,9 @@ struct EffectPresetsView: View {
         } header: {
             Text("User Presets")
         } footer: {
-            // 押せないボタンだけ置くと、壊れているのか条件があるのか読めない。
             // 同じ名前で保存すると前のものが黙って消えるので、押す前に言う。
             if !trimmedName.isEmpty && names.contains(trimmedName) {
                 Text("A preset named “\(trimmedName)” already exists. Saving replaces it.")
-            } else if names.isEmpty {
-                Text("Saved under “\(spec.name)”. Only this effect sees them.")
-            } else {
-                Text("Saved under “\(spec.name)”. Swipe a preset to delete it.")
             }
         }
     }

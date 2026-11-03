@@ -1,0 +1,6 @@
+# comment
+Filter 1: ON LP Fc 100 Hz Gain 0 dB Q 0.7
+Filter 2: ON constructor Fc 100 Hz Gain 1 dB Q 1
+Filter 3: OFF PK Fc 100 Hz Gain 1 dB Q 1
+Filter 4: ON HSC Fc 99999 Hz Gain +40 dB Q 9
+Filter　5: ON PK Fc 20 Hz Gain -99.5 dB Q 0.01

@@ -1,0 +1,87 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/../../build/native-${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ET_NATIVE_WERROR": "ON"
+      }
+    },
+    {
+      "name": "plain",
+      "displayName": "No sanitizer (also works with MSVC)",
+      "inherits": "base"
+    },
+    {
+      "name": "asan",
+      "displayName": "ASan + UBSan (gcc/clang)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "TSan (gcc/clang), threaded tests only",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -g -O1",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "engine",
+      "displayName": "ASan + UBSan, plus the pinned patched EffeTune engine",
+      "inherits": "asan",
+      "cacheVariables": {
+        "ET_NATIVE_WITH_ENGINE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "plain", "configurePreset": "plain", "configuration": "Debug"},
+    {"name": "asan", "configurePreset": "asan", "configuration": "Debug"},
+    {"name": "tsan", "configurePreset": "tsan", "configuration": "Debug"},
+    {"name": "engine", "configurePreset": "engine", "configuration": "Debug"}
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "configuration": "Debug",
+      "output": {"outputOnFailure": true},
+      "execution": {"noTestsAction": "error"}
+    },
+    {"name": "plain", "inherits": "base", "configurePreset": "plain"},
+    {
+      "name": "asan",
+      "inherits": "base",
+      "configurePreset": "asan",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=0:strict_string_checks=1",
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/lsan.supp:print_suppressions=0",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+      }
+    },
+    {
+      "name": "tsan",
+      "inherits": "base",
+      "configurePreset": "tsan",
+      "filter": {"include": {"label": "tsan"}},
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      }
+    },
+    {
+      "name": "engine",
+      "inherits": "asan",
+      "configurePreset": "engine"
+    }
+  ]
+}

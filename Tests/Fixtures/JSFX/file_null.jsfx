@@ -1,0 +1,17 @@
+desc:Fuzz file null（開いていない file ハンドルで file_rewind / file_riff が NULL を返し、EEL が読んで落ちないか）
+out_pin:L
+out_pin:R
+
+@init
+// file_rewind は引数の EEL_F* を返す関数。開いていないハンドルで 0（NULL）を返すと + 1 が読んで落ちた
+x = file_rewind(5) + 1;
+y = file_rewind(-2) + 1;
+// file_riff も同じ（負のハンドルが NULL だった。ハンドルは +0.0001 して切り捨てるので -1 は 0 になり、負は -2 から）
+n = 7;
+r = 8;
+z = file_riff(-2, n, r) + 1;
+q = file_riff(5, n, r) + 1;
+
+@sample
+spl0 = x * 0.1 + y * 0.01 + z * 0.001 + q * 0.0001 + n + r;
+spl1 = 0;

@@ -1,0 +1,47 @@
+desc:Fuzz GFX Draw
+author:nemut.ai
+slider1:0<0,4,1>Shape
+slider2:1<0.1,4,0.1>Scale
+
+@init
+gfx_ext_retina = 1;
+
+@sample
+
+@gfx 240 160
+s = max(1, gfx_ext_retina) * slider2;
+gfx_set(0.1, 0.2, 0.3, 1);
+gfx_rect(0, 0, gfx_w, gfx_h);
+gfx_set(1, 0.5, 0.25, 0.8, 1);
+gfx_line(0, 0, gfx_w, gfx_h, 1);
+gfx_x = 4; gfx_y = 4;
+gfx_lineto(gfx_w - 4, 8 * s, 1);
+gfx_rectto(40 * s, 40 * s);
+gfx_roundrect(10, 10, 60 * s, 30 * s, 6, 1);
+gfx_arc(80, 60, 20 * s, 0, $pi, 1);
+gfx_circle(120, 80, 15 * s, slider1 & 1, 1);
+gfx_triangle(10, 100, 60, 150, 110, 100, 60, 90);
+gfx_gradrect(0, 0, 64, 32, 1, 0, 0, 1, 0.01, 0, 0, 0, 0, 0.01, 0, 0);
+gfx_muladdrect(0, 0, 32, 32, 0.5, 0.5, 0.5, 1, 0.1, 0.1, 0.1, 0);
+gfx_setimgdim(0, 32, 32);
+gfx_dest = 0;
+gfx_set(0, 1, 0, 1);
+gfx_rect(0, 0, 32, 32);
+gfx_dest = -1;
+gfx_getimgdim(0, iw, ih);
+gfx_blit(0, s, 0);
+gfx_blit(0, 1, 0.5, 0, 0, 32, 32, 100, 10, 48, 48);
+gfx_x = 20; gfx_y = 20;
+gfx_blurto(80, 80);
+gfx_setpixel(1, 0, 1);
+gfx_getpixel(r, g, b);
+gfx_setfont(1, "Helvetica", 14 * s, 'b');
+gfx_measurestr("EffectDeck", tw, th);
+gfx_x = 8; gfx_y = gfx_h - th - 4;
+gfx_drawstr(sprintf(#s, "%d x %d %.2f", gfx_w, gfx_h, tw));
+gfx_drawchar('A');
+gfx_drawnumber(slider1, 2);
+gfx_printf("%s", "ok");
+gfx_setfont(0);
+c = gfx_getchar();
+mouse_cap & 1 ? gfx_showmenu("One|!Two|#Three|>More|Four|<Five");

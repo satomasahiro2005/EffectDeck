@@ -1,0 +1,12 @@
+desc:Serialize Size
+author:nemut.ai
+slider1:0<0,1000000000,1>Length
+slider2:0<0,100000,1>Spin
+
+@serialize
+// slider2 × 1000 回回してから、RAM の先頭 slider1 個を書く。
+k = 0;
+loop(slider2, loop(1000, k += 1));
+file_mem(0, 0, slider1);
+
+@sample

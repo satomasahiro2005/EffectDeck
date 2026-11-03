@@ -48,7 +48,8 @@ enum EffectPresetApply {
             : params
 
         var out = ETParamCoding.decode(params: spec.params,
-                                       defaults: current, from: source)
+                                       defaults: current, from: source,
+                                       type: spec.type)
         guard isTube else { return out }
 
         // rl = Number(preset.params.sl ?? this.sl)（tube_simulator.js:6132）。
@@ -94,16 +95,23 @@ enum EffectPresetApply {
     ///     `sr` 1 本だけ（modal_resonator.js:30-32。選択中タブの添字）。
     ///     音に効かないので params.json に無く、こちらの catalog にも無い。
     ///     decode は知らない鍵を黙って飛ばすので、外す相手がそもそも居ない。
-    static func matchingPresetId(for spec: ETEffect, current: [Float]) -> String {
+    ///
+    /// **表示の設定（DisplayParams）も比べる。**Analog Meter の出荷時プリセットは Mode 以外が全部
+    /// 表示の設定の違いなので、float だけだと Studio VU も Hot VU も同じに見えて、いつも最初の 1 つに印が付く。
+    static func matchingPresetId(for spec: ETEffect, current: [Float],
+                                 display: [String: String] = [:]) -> String {
         let skip = excludedOffsets(for: spec)
         for preset in ETPresetCatalog.presets(for: spec.name) {
-            let applied = values(for: spec, params: preset.params, current: current)
+            let params = preset.params
+            let applied = values(for: spec, params: params, current: current)
             guard applied.count == current.count else { continue }
             var same = true
             for i in current.indices where !skip.contains(i) {
                 if applied[i] != current[i] { same = false; break }
             }
-            if same { return preset.presetId }
+            if same && ETDisplayParam.matches(params, display: display, type: spec.type) {
+                return preset.presetId
+            }
         }
         return ""
     }

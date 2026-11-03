@@ -1,0 +1,6 @@
+# actionlint の設定（ci.yml の checks が読む）。
+self-hosted-runner:
+  # 自前の runner ではなく GitHub の image だが、actionlint 1.7.12 の一覧にまだ無い。
+  # xcode-27 は iOS 27 の SDK を持つ公開プレビュー（ci.yml の先頭の説明を参照）。
+  labels:
+    - xcode-27

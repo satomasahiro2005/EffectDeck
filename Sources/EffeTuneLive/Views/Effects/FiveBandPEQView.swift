@@ -227,7 +227,7 @@ private struct PEQ5Layout {
 
 /// 名前・数値欄・スライダーの 2 段。ParameterRow と同じ形だが、
 /// 触る先が「選んでいるバンド」なので別に持っている。
-private struct PEQ5SliderRow: View {
+struct PEQ5SliderRow: View {
     let title: String
     let value: Double
     let range: ClosedRange<Double>
@@ -237,55 +237,33 @@ private struct PEQ5SliderRow: View {
     let unit: String
     let onChange: (Double) -> Void
 
-    @State private var editing = false
-    @State private var draft = ""
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
+            // 文字を大きくした人には、名前の下に数値欄を積む（横だと名前が "Fr…" に切れる）。
+            ETAdaptiveStack { stacked in
                 Text(title)
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                field
+                if !stacked { Spacer(minLength: 4) }
+                // ValueBox + onTapGesture だと VoiceOver・Voice Control・キーボードから打ち込めない。
+                // ETValueField は TextField なので届く。下書きは単位なしの数だけ。
+                ETValueField(text: text, label: title,
+                             editText: { String(format: "%.\(decimals)f", value) }) { typed in
+                    onChange(min(max(typed, range.lowerBound), range.upperBound))
+                }
             }
+            // 0...1 に正規化した位置のままだと「37%」としか読まれない。名前と実値を渡す。
             Slider(value: Binding(get: { position },
                                   set: { onChange(denormalized($0)) }),
                    in: 0...1)
+                .accessibilityLabel(title)
+                .accessibilityValue(text)
         }
     }
 
     private var text: String {
         let s = String(format: "%.\(decimals)f", value)
         return unit.isEmpty ? s : "\(s) \(unit)"
-    }
-
-    private var field: some View {
-        Group {
-            if editing {
-                TextField("", text: $draft)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
-                    .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous).stroke(.tint, lineWidth: 1))
-                    .submitLabel(.done)
-                    .onSubmit { commit() }
-            } else {
-                ValueBox(text: text)
-                    .onTapGesture {
-                        draft = String(format: "%.\(decimals)f", value)
-                        editing = true
-                    }
-            }
-        }
-    }
-
-    private func commit() {
-        editing = false
-        guard let v = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
-        onChange(min(max(v, range.lowerBound), range.upperBound))
     }
 
     /// スライダーは 0〜1 で持つ。
@@ -325,9 +303,19 @@ struct FiveBandPEQView: View {
 
     /// カードの頭のボタンで立つ。図だけにして、下のつまみを畳む。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 音量に追従しているとき、もう1台が鳴らしている帯（EffeTuneDSP.soundingPEQ）。曲線に足して薄い印で出す。
+    @Environment(\.etPEQCompanionValues) private var companionValues
 
     /// 下の一枚に出しているバンド。図を掴むとそこへ移る。
     @State private var selected = 0
+    /// 帯を選んだときの音量（ETVolumeFollower.position）。音量に追従している段では、選んだあと音量が
+    /// 動いたら選んだ帯の点線を消す（鳴っている帯の組が替わるので、前の帯の内訳は残しておくと紛らわしい）。
+    /// 選んでいないときは -1、音量が読めないときに選んだら -2。
+    @State private var pickedAt: Double = -1
+    @ObservedObject private var volume = ETVolumeFollower.shared
+
+    /// 図に重ねるスペクトラムの出し方。上流と同じく保存しない（SpectrumOverlayLayer の頭）。
+    @State private var spectrumMode: ETSpectrumOverlayMode = .after
 
     /// 生成されたカタログは配列の既定値を拾えていない
     /// （Tools/gen_catalog.py:101 で list を float に直せず 0 になる）。
@@ -347,9 +335,13 @@ struct FiveBandPEQView: View {
                 bandPanel
             }
         }
+        // 畳むとこの View ごと消えるので、After / Compare は外に覚えておく。アプリを終うと消える。
+        .etRemembers($spectrumMode, key: "spectrum", node: node.id)
     }
 
     // MARK: 図
+
+    private var probeTaps: EffeTuneDSP.ProbeTaps? { dsp.probeTaps(at: index) }
 
     private var graph: some View {
         FrequencyResponseGraph(
@@ -359,10 +351,19 @@ struct FiveBandPEQView: View {
             decibelRange: -20...20,
             decibelStep: 6,
             height: ETGraphMetrics.height,
-            caption: "Drag a marker: across for frequency, up for gain",
-            spectrumTap: dsp.probeTap(at: index),
+            // 段の前後に置いた探り（EffeTuneDSP.probeTaps）。線は段から出た音、
+            // Compare のときだけ入る音も読む。
+            spectrumTap: probeTaps?.after,
+            spectrumBeforeTap: probeTaps?.before,
+            spectrumMode: $spectrumMode,
             onMarkerChanged: { id, hz, db in move(id, hz: hz, db: db) },
-            onMarkerSelected: { selected = $0 })
+            onMarkerSelected: { if $0 < layout.count { selected = $0; pickedAt = volume.position ?? -2 } })
+    }
+
+    /// 選んだ帯の点線を出すか。追従していなければいつも。追従していれば、選んだときから音量が動いていないあいだだけ。
+    private var showsPicked: Bool {
+        guard node.automation != nil else { return true }
+        return pickedAt != -1 && pickedAt == (volume.position ?? -2)
     }
 
     /// 合成した特性と、選んでいるバンド 1 本ぶん。
@@ -372,9 +373,11 @@ struct FiveBandPEQView: View {
             guard let c = PEQ5Math.coefficients(pair.element, sampleRate: rate) else { return nil }
             return (pair.offset, c)
         }
+        // 追従しているときの相方（もう1台）の帯。合成にだけ足す。
+        let other = companionBands.compactMap { PEQ5Math.coefficients($0, sampleRate: rate) }
         var result: [ETFrequencyCurve] = []
         // 選んでいる 1 本。合成が平らでも、いま何を触っているかが見えるように。
-        if designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
+        if showsPicked, designed.count > 1, let picked = designed.first(where: { $0.0 == selected }) {
             let c = picked.1
             result.append(ETFrequencyCurve.sampled(id: "band", count: 160,
                                                    width: 1, dashed: true, subdued: true) { hz in
@@ -385,16 +388,25 @@ struct FiveBandPEQView: View {
             let w = hz * 2 * Double.pi / rate
             var total = 0.0
             for entry in designed { total += PEQ5Math.magnitudeDB(entry.1, w: w) }
+            for c in other { total += PEQ5Math.magnitudeDB(c, w: w) }
             return total
         })
         return result
     }
 
     private var markers: [ETFrequencyMarker] {
-        bands.enumerated().map { i, item in
+        let own = bands.enumerated().map { i, item in
             ETFrequencyMarker(id: i, hz: item.frequency, db: item.gain,
                               label: "\(i + 1)", isActive: item.enabled)
         }
+        // 相方の帯は、音に効いているものだけを薄く（id は本体の帯と重ならない 1000 番台）。
+        let rate = sampleRate
+        let other = companionBands.enumerated().compactMap { i, item -> ETFrequencyMarker? in
+            guard PEQ5Math.coefficients(item, sampleRate: rate) != nil else { return nil }
+            return ETFrequencyMarker(id: 1000 + i, hz: item.frequency, db: item.gain,
+                                     label: "\(i + 1)", isActive: false)
+        }
+        return own + other
     }
 
     /// 印を動かすと、web と同じく周波数とゲインが同時に変わる
@@ -421,17 +433,30 @@ struct FiveBandPEQView: View {
         let isPicked = selected == i
         return Button {
             selected = i
+            pickedAt = volume.position ?? -2
         } label: {
             Text("\(i + 1)")
-                .font(.system(size: 13, weight: isPicked ? .bold : .regular))
+                .etFont(size: 13, weight: isPicked ? .bold : .regular)
                 .foregroundStyle(isPicked ? AnyShapeStyle(.white)
                                           : (isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                             in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
                 .opacity(isOn ? 1 : 0.45)
+                // 見た目は高さ 30 のまま、押せる面だけを 44pt まで広げる。
+                // 横は隣の札との隙間（6pt）を半分ずつ使い、重ならないようにする。
+                .padding(.vertical, 7)
+                .padding(.horizontal, 3)
+                .contentShape(.rect)
+                .padding(.vertical, -7)
+                .padding(.horizontal, -3)
         }
         .buttonStyle(.plain)
+        // 数字だけでは Voice Control で「Tap 2」が他の数字と混ざる。切ってあるのは不透明度だけで
+        // 表しているので、VoiceOver には値として伝える。
+        .accessibilityLabel("Band \(i + 1)")
+        .accessibilityValue(isOn ? "" : "Off")
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいるバンド
@@ -440,12 +465,8 @@ struct FiveBandPEQView: View {
         let l = layout
         let current = band(selected)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("BAND \(selected + 1)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-
+            // 文字を大きくした人には、見出しと入切の下にメニューを出す（ETMenuHeader）。
+            ETMenuHeader(title: "BAND \(selected + 1)") {
                 Picker("", selection: Binding(get: { current.type },
                                               set: { setType($0) })) {
                     ForEach(Array(PEQ5Math.typeNames.indices), id: \.self) { i in
@@ -453,9 +474,8 @@ struct FiveBandPEQView: View {
                     }
                 }
                 .pickerStyle(.menu)
-
-                Spacer(minLength: 0)
-
+                .etFont(size: 14)
+            } trailing: {
                 Toggle("Enabled", isOn: Binding(
                     get: { current.enabled },
                     set: { _ in dsp.setValue(current.enabled ? 0 : 1, at: index, offset: l.enabled + selected) }))
@@ -509,6 +529,20 @@ struct FiveBandPEQView: View {
 
     private func value(_ offset: Int) -> Float {
         node.values.indices.contains(offset) ? node.values[offset] : 0
+    }
+
+    /// 相方が鳴らしている帯（無ければ空）。
+    private var companionBands: [PEQ5Band] {
+        guard let values = companionValues else { return [] }
+        let l = layout
+        func at(_ offset: Int) -> Float { values.indices.contains(offset) ? values[offset] : 0 }
+        return (0..<l.count).map { i in
+            PEQ5Band(frequency: Double(at(l.frequency + i)),
+                     gain: Double(at(l.gain + i)),
+                     q: Double(at(l.q + i)),
+                     type: min(max(Int(at(l.type + i).rounded()), 0), PEQ5Math.typeNames.count - 1),
+                     enabled: at(l.enabled + i) >= 0.5)
+        }
     }
 
     /// 音が通るレート。EffeTune は _sampleRate をそのまま曲線に使っている

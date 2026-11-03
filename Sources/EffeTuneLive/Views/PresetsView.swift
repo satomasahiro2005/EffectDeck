@@ -14,6 +14,8 @@ import UIKit
 struct PresetsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var dsp: EffeTuneDSP
+    /// PC の鎖を編集している間（PipelineView が渡す）。Output Correction の画面へそのまま渡す。
+    var isRemote: Bool = false
     @StateObject private var store = PresetStore.shared
 
     @State private var newName = ""
@@ -42,6 +44,9 @@ struct PresetsView: View {
         case importClipboard(String)
         case emptyClipboard
         case failed(String)
+        /// 読めたが、直したもの・落としたものがある（ETChainText.Report.message）。
+        /// 鎖はもう入れ替えてあり、OKで閉じる。**黙って直さない。**
+        case imported(String)
         /// いまの鎖で、この名前のプリセットを置き換える。
         case overwrite(String)
         /// 読むと鎖が置き換わる（ユーザープリセットのみ）。
@@ -54,6 +59,7 @@ struct PresetsView: View {
             case .importClipboard: return "import"
             case .emptyClipboard:  return "empty"
             case .failed(let why): return "failed:" + why
+            case .imported(let note): return "imported:" + note
             case .overwrite(let name): return "overwrite:" + name
             case .loadUser(let name): return "load:" + name
             case .confirmDelete(let name): return "delete:" + name
@@ -64,6 +70,7 @@ struct PresetsView: View {
             switch self {
             case .importClipboard, .emptyClipboard: return "Import chain"
             case .failed:                           return "Could not load"
+            case .imported:                         return "Chain imported"
             case .overwrite(let name):              return "Overwrite “\(name)”?"
             case .loadUser(let name):               return "“\(name)”"
             case .confirmDelete(let name):          return "Delete “\(name)”?"
@@ -76,7 +83,7 @@ struct PresetsView: View {
                 return "Replace the current chain with what is on the clipboard?"
             case .emptyClipboard:
                 return "The clipboard is empty."
-            case .failed(let why):
+            case .failed(let why), .imported(let why):
                 return why
             case .overwrite:
                 return "The saved preset is overwritten with the chain you have now."
@@ -87,7 +94,24 @@ struct PresetsView: View {
             }
         }
     }
-    @State private var dialog: Dialog?
+    /// 出している1枚。**書いてもその場では出さない。**出ているものが閉じてから出る
+    /// （ETAlertQueue。下の.alertの.onChangeが次の回に出す）。
+    /// 取り込みの確認のImportの中で控えや断りを立てると、閉じる側の書き戻しが同じ回で
+    /// nilにして、何も出ていなかった。名前を打たせる.alertのSaveから出す断りも同じ道を通す。
+    private var dialog: Dialog? {
+        get { dialogs.current }
+        nonmutating set {
+            if let newValue { dialogs.present(newValue) } else { dialogs.dismissed() }
+        }
+    }
+    @State private var dialogs = ETAlertQueue<Dialog>()
+    /// 下の.alertのisPresented。書き戻しには、組んだときに出していた1枚の番号を添える
+    /// （ETAlertQueue.closed）。前の1枚の書き戻しが遅れて来ても、次の1枚を消さない。
+    private var dialogShown: Binding<Bool> {
+        let ticket = dialogs.ticket
+        return Binding(get: { dialogs.current != nil },
+                       set: { if !$0 { dialogs.closed(ticket) } })
+    }
     /// 名前を打たせているもの。Rename と新しいフォルダで使い回す。
     @State private var naming: Naming?
     @State private var typed = ""
@@ -178,16 +202,25 @@ struct PresetsView: View {
     /// 出なくなっていた。このリポジトリで 3 度目の踏み方）。
     ///
     /// 知らないエフェクトが混じっていれば PipelineStore.parse が黙って落とすので、
-    /// 1 本も残らなかったときは黙って閉じずに理由を出す。
+    /// 1 本も残らなかったときは黙って閉じずに理由を出す。置けなかった段があれば
+    /// それを名指しする（"Not found: JSFX tape wobble."。ETChainImportResult）。
     /// 共有リンクの取り込みだけは**置き換え**。鎖まるごとの写しなので、
     /// 足すと二重になる（上流も読み込みは置き換え）。
+    ///
+    /// 取り込みの確認のImportから呼ぶ。出す1枚は確認が閉じてから出る（dialogの注記）。
     private func importChain(_ text: String) {
-        let loaded = store.importFrom(text)
-        if loaded.isEmpty {
-            dialog = .failed("Nothing readable on the clipboard.")
-        } else {
+        let (loaded, report) = store.importFrom(text)
+        switch ETChainImportResult.of(loaded: loaded.count, report: report,
+                                      unreadable: "Nothing readable on the clipboard.") {
+        case .failed(let why):
+            dialog = .failed(why)
+        case .done:
             dsp.replaceChain(with: loaded)
             dismiss()
+        case .imported(let note):
+            // 直したもの・落としたものがあれば、閉じる前に1行だけ出す（ChatGPTに組ませた鎖）。
+            dsp.replaceChain(with: loaded)
+            dialog = .imported(note)
         }
     }
 
@@ -220,6 +253,7 @@ struct PresetsView: View {
         NavigationStack {
             List {
                 saveSection
+                outputCorrectionSection
                 userSection
                 systemSection
                 webSection
@@ -227,7 +261,7 @@ struct PresetsView: View {
                 // 扱っているのは設定ではなく、この画面と同じ「保存した鎖」。
                 ETBackupSection()
             }
-            .navigationTitle("Presets")
+            .etNavigationTitle("Presets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
@@ -237,8 +271,7 @@ struct PresetsView: View {
             // （PipelineView.swift:27-30 と IRReverbView.swift:79-80 に記録がある）。
             // 取り込みの確認と、読めなかったときの知らせを 1 つの .alert に束ねる。
             .alert(dialog?.title ?? "",
-                   isPresented: Binding(get: { dialog != nil },
-                                        set: { if !$0 { dialog = nil } }),
+                   isPresented: dialogShown,
                    presenting: dialog) { what in
                 switch what {
                 case .importClipboard(let text):
@@ -246,6 +279,8 @@ struct PresetsView: View {
                     Button("Import") { importChain(text) }
                 case .emptyClipboard, .failed:
                     Button("OK", role: .cancel) {}
+                case .imported:
+                    Button("OK", role: .cancel) { dismiss() }
                 case .overwrite(let name):
                     Button("Cancel", role: .cancel) {}
                     Button("Overwrite", role: .destructive) {
@@ -269,6 +304,11 @@ struct PresetsView: View {
                 }
             } message: { what in
                 Text(what.message)
+            }
+            // 頼まれた1枚を出す。**出ていた1枚が消えた回に鳴り、出すのはその次の回。**
+            // .alertが「閉じた」と「次の1枚」を同じ回で受けると、次の1枚が出ない（AlertQueue.swift）。
+            .onChange(of: dialogs.canAdvance) { _, ready in
+                if ready { Task { @MainActor in dialogs.advance() } }
             }
             // **名前を打たせるのは別の提示にする。**同じ .alert に混ぜると
             // 用件ごとにボタンの並びが変わって読みにくい。出す条件が
@@ -299,37 +339,48 @@ struct PresetsView: View {
                         store.addFolder(typed)
                     }
                 }
-            } message: { what in
-                switch what {
-                case .rename:       Text("A name already in use is not accepted.")
-                case .renameFolder: Text("Everything in it keeps its own name.")
-                case .newFolder:    Text("Folders cannot contain folders.")
-                }
             }
         }
     }
 
     // MARK: - 節
 
+    /// 出力補正への入口。**押して別の画面へ進むだけで、ここでは何も読み込まない。**
+    /// 前はこの画面の節で直に選ばせていて、プリセットの行を押すと鎖ごと読み込まれる
+    /// （この画面の本来の動き）ので、補正を選ぶつもりで使う人の鎖を置き換えてしまった。
+    /// 選ぶ所は OutputCorrectionList（OutputCorrectionView.swift）で、main の鎖には触らない。
+    /// 補正の中身はユーザープリセットなので、口はプリセットのシートに置く（⋯ のメニューではなく）。
+    /// 紐付けが無いと鎖の下の出力補正の行が出ないので、最初の紐付けはここから始める。
+    /// Save のすぐ下に、自分だけの節で置く（プリセットの一覧に混ぜると、押すと読み込む行に見える）。
+    private var outputCorrectionSection: some View {
+        Section {
+            NavigationLink {
+                OutputCorrectionList(isRemote: isRemote)
+            } label: {
+                Label("Output Correction", systemImage: "headphones")
+                    .font(.body)
+            }
+        }
+    }
+
     private var saveSection: some View {
         Section {
             HStack {
                 TextField("Preset name", text: $newName)
+                    .font(.body)
                     .textInputAutocapitalization(.words)
                 Button("Save") {
                     store.save(trimmedName, chain: dsp.chain)
                     newName = ""
                 }
+                .font(.body)
                 .disabled(!canSave)
             }
         } header: {
             Text("Save current chain")
         } footer: {
-            // 押せないボタンだけ置くと、壊れているのか条件があるのか読めない。
             // 同じ名前で保存すると前のものが黙って消えるので、押す前に言う。
-            if dsp.chain.isEmpty {
-                Text("There is nothing to save yet. Add an effect first.")
-            } else if !trimmedName.isEmpty && store.names.contains(trimmedName) {
+            if !dsp.chain.isEmpty && !trimmedName.isEmpty && store.names.contains(trimmedName) {
                 Text("A preset named “\(trimmedName)” already exists. Saving replaces it.")
             }
         }
@@ -390,8 +441,7 @@ struct PresetsView: View {
                 Spacer()
                 // **Edit は置かない。**長押しでそのまま掴めるので、
                 // 先にモードへ入る必要が無い。
-                Button("New Folder") { typed = ""; naming = .newFolder }
-                    .font(.footnote)
+                ETTextActionButton(title: "New Folder") { typed = ""; naming = .newFolder }
                     .textCase(nil)
             }
         }
@@ -403,6 +453,7 @@ struct PresetsView: View {
             request(.user(name))
         } label: {
             Text(ETUserPresetName.leaf(name))
+                .font(.body)
                 .foregroundStyle(.primary)
                 // フォルダの中は字下げする。線を引かずに所属を出す。
                 .padding(.leading, folder.isEmpty ? 0 : 20)
@@ -444,15 +495,15 @@ struct PresetsView: View {
             // フォルダが 1 つも無いうちは、仕切りを出す意味が無い。
             if orderedFolders.count > 1 {
                 Label("Uncategorized", systemImage: "tray")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
         } else {
             Label {
                 HStack(spacing: 6) {
-                    Text(folder.name).font(.system(size: 13, weight: .semibold))
+                    Text(folder.name).font(.footnote.weight(.semibold))
                     if folder.items.isEmpty {
-                        Text("empty").font(.caption).foregroundStyle(.tertiary)
+                        Text("empty").font(.caption2).foregroundStyle(.tertiary)
                     }
                 }
             } icon: {
@@ -533,7 +584,7 @@ struct PresetsView: View {
             }
             i -= 1
         }
-        withAnimation { move(moved.name, into: folder) }
+        etWithAnimation { move(moved.name, into: folder) }
     }
 
     /// `/` の前でフォルダに束ねる。**中身の無いフォルダも出す。**
@@ -576,7 +627,8 @@ struct PresetsView: View {
         Section {
             // 見るための鎖を先に置く（Debug ビルドだけ空でない）。
             if !debugPresets.isEmpty || !jsfxFixtureCount.isEmpty {
-                DisclosureGroup("Debug") {
+                // 題も中の行も 15（プリセットの行と揃える）。
+                DisclosureGroup {
                     // **同梱の JSFX を全部載せた鎖。**上の 3 本は EffeTune の
                     // エフェクトだけなので、JSFX を見るにはこちらが要る。
                     if !jsfxFixtureCount.isEmpty {
@@ -584,10 +636,10 @@ struct PresetsView: View {
                             request(.debugJSFX)
                         } label: {
                             HStack {
-                                Text("JSFX Host Test").foregroundStyle(.primary)
+                                Text("JSFX Host Test").font(.body).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 Text(jsfxFixtureCount)
-                                    .font(.system(size: 12))
+                                    .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -597,72 +649,78 @@ struct PresetsView: View {
                             request(.system(preset))
                         } label: {
                             HStack {
-                                Text(preset.name).foregroundStyle(.primary)
+                                Text(preset.name).font(.body).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 Text(countLabel(preset.effectCount))
-                                    .font(.system(size: 12))
+                                    .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
+                } label: {
+                    Text("Debug").font(.body)
                 }
             }
             ForEach(systemCategories, id: \.self) { category in
-                DisclosureGroup(category) {
+                DisclosureGroup {
                     ForEach(systemPresets(in: category)) { preset in
                         Button {
                             request(.system(preset))
                         } label: {
                             HStack {
-                                Text(preset.name).foregroundStyle(.primary)
+                                Text(preset.name).font(.body).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
                                 // 数字だけ置かない。何を数えたのか読めない。
                                 Text(countLabel(preset.effectCount))
-                                    .font(.system(size: 12))
+                                    .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
+                } label: {
+                    Text(category).font(.body)
                 }
             }
         } header: {
             Text("System Presets")
-        } footer: {
-            Text("Adds to the end of the current chain instead of replacing it.")
         }
     }
 
     private var webSection: some View {
-        let externalCount = dsp.chain.lazy.filter(\.isExternal).count
+        // 出力補正が入っていれば（入切が切・リモート中は空）、鎖だけか補正込みかを選ばせる。
+        let corrected = !dsp.correction.isEmpty
+        let mainExternal = dsp.chain.lazy.filter(\.isExternal).count
+        let externalCount = mainExternal + (corrected ? dsp.correction.lazy.filter(\.isExternal).count : 0)
         return Section {
             HStack {
-                Text("Compatibility")
+                Text("Compatibility").font(.body)
                 Spacer()
                 HStack(spacing: 5) {
                     Image(systemName: externalCount == 0 ? "checkmark.circle.fill"
                                                            : "exclamationmark.triangle.fill")
                     Text(externalCount == 0 ? "EffeTune" : "EffectDeck only")
-                        .font(.subheadline.weight(.medium))
+                        .font(.body.weight(.medium))
                 }
                 .foregroundStyle(externalCount == 0 ? Color.green : Color.orange)
             }
-            // **外から来たものが在るときは、落とさない口を先に出す。**
-            // 上流のリンクは AU と JSFX を落とすので、そちらしか無いと
-            // 「共有したのに向こうで鎖が違う」になる。
-            if externalCount > 0, let deck = ETShareLink.deckURL(for: dsp.chain) {
+            // **共有はいつも effectdeck.nemut.ai のリンク。**アプリが入っていれば Universal Link で
+            // そのまま開き、入っていなければ鎖の中身と App Store へのページになる。
+            // PC の EffeTune で開く人には、そのページが AU と JSFX を落とした EffeTune のリンクを出す
+            // （site/src/parse.js の effeTuneLink。落とし方は ETShareLink.effeTuneForm と同じ）。
+            // 以前は内蔵だけの鎖を effetune.frieve.com のリンクで出していたので、iPhone で押すと
+            // EffeTune の Web 版が開き、EffectDeck へはコピーして戻るしかなかった。
+            if corrected {
+                correctedShareRows()
+            } else if let deck = ETShareLink.deckURL(for: soundingChain(dsp.chain)) {
                 ShareLink(item: deck) {
                     Label("Share this chain", systemImage: "square.and.arrow.up")
+                        .font(.body)
                 }
             }
-            if let url = ETShareLink.url(for: dsp.chain) {
-                ShareLink(item: url) {
-                    Label(externalCount == 0
-                          ? "Share this chain"
-                          : "Export to EffeTune without \(externalCount) external effect\(externalCount == 1 ? "" : "s")",
-                          systemImage: externalCount == 0
-                                       ? "square.and.arrow.up" : "arrow.up.forward.square")
-                }
-            }
+            // 鎖を ChatGPT に組ませる口（Build with ChatGPT…）はプリセットの口ではない。結果は
+            // プリセットとして保存されず、クリップボード経由で鎖として読み込まれる（ClipboardBanner）ので、
+            // エフェクト一覧（Available Effects）の Effects の面の頭と、空の鎖の表示に置いてある。
+            // ここは共有するための節で、デスクトップの EffeTune へもリンクのページから渡せるので "Share" と呼ぶ。
             Button {
                 // **@State を立てるだけで終わっていた。** それを読む View が無く、
                 // 押しても確認も知らせも出ないまま何も起きなかった。
@@ -671,15 +729,36 @@ struct PresetsView: View {
                 dialog = text.isEmpty ? .emptyClipboard : .importClipboard(text)
             } label: {
                 Label("Import from clipboard", systemImage: "doc.on.clipboard")
+                    .font(.body)
             }
         } header: {
-            Text("EffeTune on the web")
-        } footer: {
-            if externalCount == 0 {
-                Text("A shared chain opens in EffeTune, and one made there opens here.")
-            } else {
-                Text("EffeTune export omits external effects. EffectDeck saves keep them.")
+            Text("Share")
+        }
+    }
+
+    /// 共有に載せる鎖。音量に追従する段は、上の値を今鳴っている値にする（キーフレームは運ぶ）。
+    /// EffeTune のページ向けの値はこの上の値で、あちらにキーフレームは渡らない（site/src/parse.js）。
+    private func soundingChain(_ nodes: [ETChainNode]) -> [ETChainNode] {
+        ETAutomation.sounding(nodes, at: ETVolumeFollower.shared.position)
+    }
+
+    /// 出力補正が入っているときの共有の行。「鎖だけ」と「鎖＋出力補正」の 2 つから選ぶ Menu にする。
+    /// 補正込みは main・終端・補正を 1 本の普通の鎖に平らげたもの（ETOutputCorrectionForm.flatten）で、
+    /// 受け手には出力先の身元は付かない。
+    @ViewBuilder
+    private func correctedShareRows() -> some View {
+        let flat = ETOutputCorrectionForm.flatten(main: soundingChain(dsp.chain).map { PipelineStore.Loaded($0) },
+                                                  correction: soundingChain(dsp.correction).map { PipelineStore.Loaded($0) })
+        Menu {
+            if let deck = ETShareLink.deckURL(for: soundingChain(dsp.chain)) {
+                ShareLink("Chain", item: deck)
             }
+            if let deck = ETShareLink.deckURL(for: flat) {
+                ShareLink("Chain + Output Correction", item: deck)
+            }
+        } label: {
+            Label("Share this chain", systemImage: "square.and.arrow.up")
+                .font(.body)
         }
     }
 }

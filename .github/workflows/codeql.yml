@@ -1,0 +1,101 @@
+# CodeQL（GitHub のコードスキャン）。結果は Security タブの Code scanning に出る。
+#
+#   actions  ワークフロー（.github/workflows）。建てずに読む（build-mode: none）
+#   c-cpp    自前の C/C++ を本当に建てて、コンパイラが見たとおりに読む（build-mode: manual）。
+#            建てるのは ci.yml の native と同じ Tests/Native（ETPipeline・ETResample・ETPreviewTone・
+#            ETExternalProcessor・ETLinkCodec・Sources/Extension/ETZeroTimeStamp.c）と、
+#            そこに入っていない ETJSFXHost.cpp を 1 本。ETJSFXHost.cpp の include は
+#            Tests/Fuzz/run.sh の jsfxgate と同じで、fuzz の計測は付けず -c だけ（リンクしない）。
+#            Objective-C（LocalLink.m・ETLICEFont.mm・EffeTuneDriver.m）は CodeQL が読めないので入らない。
+#
+# Swift は入れない（macOS の runner で Xcode の project を建てる必要があり重い）。
+# 問い合わせ（security-extended）と、結果から外す場所は .github/codeql/codeql-config.yml。
+#
+# 公開リポジトリなので Advanced Security は要らない。リポジトリの設定で CodeQL の
+# default setup を有効にすると、このワークフローの結果は受け付けられなくなる（どちらか一方）。
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 19 * * 0"   # 毎週月曜 04:41（日本時間）。問い合わせの更新をコードが止まっていても拾う
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ci.yml と同じ決まり。PR は新しく押せば前の回を止める（group は PR ごと）。
+# main に押した回・毎週の回・手で回した回は回ごとに別の group にする（**ref で束ねない**。
+# 理由は ci.yml の concurrency の説明）。
+concurrency:
+  group: codeql-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # security-events: 結果を上げる。actions: 走っている回の情報を読む（init・analyze が使う）。
+    # packages: read は要らない（問い合わせは CodeQL の束に入っているものだけで、GHCR から取らない）。
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: c-cpp
+            build-mode: manual
+    steps:
+      - uses: actions/checkout@v7
+      # Vendor/effetune は ETPipeline の試験が読む abi.h、Vendor/ysfx は ETJSFXHost.cpp の見出し
+      # （ysfx.h と WDL の ns-eel.h）。取り方は ci.yml の native・generated と同じ。
+      - name: submodule（c-cpp だけ）
+        if: matrix.language == 'c-cpp'
+        run: |
+          git submodule update --init --filter=blob:none Vendor/effetune
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status
+      # **アプリと同じパッチを当てる。**ETJSFXHost.cpp はパッチが足す宣言（ysfx_set_eel_exec_mode など）を使う。
+      # 当て方は Tests/Fuzz/run.sh と同じ（CR を落として git apply）。
+      - name: ysfx にパッチを当てる（c-cpp だけ）
+        if: matrix.language == 'c-cpp'
+        run: tr -d '\r' < Patches/ysfx-effectdeck-ios.diff | git -C Vendor/ysfx apply -p1 -
+      - name: CodeQL の準備
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+      # init のあとに走るコンパイルを CodeQL が横で見て取り込む。
+      # **建てる場所は checkout の外（RUNNER_TEMP）。**中に置くと CMake が試しに建てる
+      # CMakeCCompilerId.c なども取り込まれる（manual では paths-ignore で外せない）。
+      # コンパイラは runner の既定の gcc / g++。サニタイザは付けない（走らせないので要らない）。
+      # -Werror も付けない（警告で落とすのは native の仕事）。
+      - name: 建てる（c-cpp）
+        if: matrix.build-mode == 'manual'
+        env:
+          CC: gcc
+          CXX: g++
+          BUILD_DIR: ${{ runner.temp }}/codeql-build
+        run: |
+          cmake -S Tests/Native -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build "$BUILD_DIR" --parallel
+          # アプリの project.yml と同じく C++20。定義は要らない（ETJSFXHost.cpp に #if が無い）。
+          "$CXX" -std=c++20 -g -c \
+            -I Sources/Shared -I Vendor/ysfx/include -I Vendor/ysfx/thirdparty/WDL/source \
+            Sources/Shared/ETJSFXHost.cpp -o "$BUILD_DIR/ETJSFXHost.o"
+      - name: CodeQL で調べて結果を上げる
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}

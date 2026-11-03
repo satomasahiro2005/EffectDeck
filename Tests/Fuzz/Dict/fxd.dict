@@ -1,0 +1,18 @@
+# Tests/Fuzz/Dict/fxd.dict
+# 開かれた URL の振り分けと /j#… のリンク（ETFXDLink）に出る綴り。fxdlink が使う。
+"https://effectdeck.nemut.ai/j#"
+"https://fxd.nemut.ai/j/#"
+"https://effectdeck.nemut.ai/?p="
+"http://fxd.nemut.ai/?p="
+"https://effetune.frieve.com/effetune.html?p="
+"/j"
+"/j/"
+"#"
+"?p="
+"&p="
+"-"
+"_"
+"="
+"+"
+"/"
+"%"

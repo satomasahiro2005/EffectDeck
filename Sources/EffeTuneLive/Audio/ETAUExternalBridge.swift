@@ -15,14 +15,16 @@ final class ETAUExternalBridge {
         var errorDescription: String? {
             switch self {
             case .noSlot:
-                return "The external processor limit is 8."
+                return "The external processor limit is \(Int(ET_EXTERNAL_MAX_PROCESSORS))."
             case .unsupportedFormat(let rate, let channels):
                 return "This Audio Unit does not support \(Int(rate)) Hz / \(channels) channels."
             }
         }
     }
 
-    private var indices: [String: UInt8] = [:]
+    /// インスタンス → 枠番号。割り当ての約束は ExternalSlotAllocator.swift
+    /// （ExternalSlotAllocatorTests）。枠の数は C の ET_EXTERNAL_MAX_PROCESSORS。
+    private var slots = ETExternalSlotAllocator(capacity: Int(ET_EXTERNAL_MAX_PROCESSORS))
     private var adapters: [String: Adapter] = [:]
     // C descriptors are immutable and intentionally retained for process
     // lifetime. Keep their Swift contexts alive by the same rule.
@@ -31,12 +33,7 @@ final class ETAUExternalBridge {
     private init() {}
 
     func reserve(instanceID: String) throws -> UInt8 {
-        if let index = indices[instanceID] { return index }
-        let used = Set(indices.values)
-        guard let index = (0..<UInt8(8)).first(where: { !used.contains($0) }) else {
-            throw BridgeError.noSlot
-        }
-        indices[instanceID] = index
+        guard let index = slots.reserve(instanceID) else { throw BridgeError.noSlot }
         return index
     }
 
@@ -68,10 +65,10 @@ final class ETAUExternalBridge {
         return index
     }
 
-    func index(for instanceID: String) -> UInt8? { indices[instanceID] }
+    func index(for instanceID: String) -> UInt8? { slots.index(for: instanceID) }
 
     func remove(instanceID: String) {
-        guard let index = indices.removeValue(forKey: instanceID) else { return }
+        guard let index = slots.release(instanceID) else { return }
         ETPipeline_ClearExternalProcessorAt(UInt32(index))
         if let adapter = adapters.removeValue(forKey: instanceID) {
             retired.append(adapter)
@@ -82,7 +79,7 @@ final class ETAUExternalBridge {
         ETPipeline_ClearExternalProcessor()
         retired.append(contentsOf: adapters.values)
         adapters.removeAll()
-        indices.removeAll()
+        slots.removeAll()
     }
 
     /// Audio engine is stopped, so no render callback can still hold an old
@@ -217,13 +214,11 @@ final class ETAUExternalBridge {
 
             input.channels = channelCount
             input.frames = frameCount
-            for frame in 0..<frameCount {
-                for channel in 0..<channelCount {
-                    let value = planar[channel * frameCount + frame]
-                    input.planar[channel * maxFrames + frame] = value
-                    input.interleaved[frame * channelCount + channel] = value
-                }
-            }
+            // AU がプレーナ（行の幅 maxFrames）とインターリーブのどちらで引いても渡せるよう、
+            // 両方へ写しておく（AudioBufferOpsTests）。
+            ETAudioBufferOps.stage(planar, frames: frameCount, channels: channelCount,
+                                   planarOut: input.planar, stride: maxFrames,
+                                   interleavedOut: input.interleaved)
 
             let buffers = outputList
             buffers.count = channelCount
@@ -247,11 +242,8 @@ final class ETAUExternalBridge {
             let rendered = UnsafeMutableAudioBufferListPointer(outputList.unsafeMutablePointer)
             if rendered.count == 1, channelCount > 1,
                let samples = rendered[0].mData?.assumingMemoryBound(to: Float.self) {
-                for frame in 0..<frameCount {
-                    for channel in 0..<channelCount {
-                        planar[channel * frameCount + frame] = samples[frame * channelCount + channel]
-                    }
-                }
+                ETAudioBufferOps.deinterleave(samples, frames: frameCount, channels: channelCount,
+                                              into: planar)
                 return 0
             }
             guard rendered.count >= channelCount else { return 0 }
@@ -259,7 +251,7 @@ final class ETAUExternalBridge {
                 guard let samples = rendered[channel].mData?.assumingMemoryBound(to: Float.self) else {
                     return 0
                 }
-                planar.advanced(by: channel * frameCount).assign(from: samples, count: frameCount)
+                planar.advanced(by: channel * frameCount).update(from: samples, count: frameCount)
             }
             return 0
         }

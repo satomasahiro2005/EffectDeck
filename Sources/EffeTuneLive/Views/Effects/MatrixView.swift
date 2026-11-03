@@ -50,11 +50,14 @@ struct MatrixView: View {
             ChannelCountProbe(tap: node.tapId, channels: $channels)
         }
         .onAppear {
-            MatrixRouting.shared.prune(keeping: dsp.chain.map(\.id))
+            MatrixRouting.shared.prune(keeping: dsp.nodes.map(\.id))
             push(cells)
         }
-        // 鎖を作り直すとカーネルは既定の対角へ戻る（kernel.cpp:44-48 の reset）。
+        // 新しい instance は既定の対角で始まる（kernel.cpp のメンバ初期化）。
         // 画面に出ている経路と食い違うので、instance が変わったら入れ直す。
+        // 2.14.0 までは reset（et_instance_reset・時間の巻き戻し・再開）でも対角へ戻り、
+        // instance が変わらないのでここは動かず、画面だけ人の経路を出していた。2.15.0 で
+        // reset は経路に触らなくなった（上流 basics/matrix/kernel.cpp。topology_native_test が見る）。
         .onChange(of: node.instance) { _, _ in push(cells) }
     }
 
@@ -108,18 +111,21 @@ struct MatrixView: View {
         let key = Self.key(input, output)
         let phase = cells[key]
         return HStack(spacing: 0) {
-            pad("ON", on: phase != nil) { toggleActive(key) }
-            pad("Ø", on: phase == true, heavy: true) { togglePhase(key) }
+            pad("ON", name: "Input \(input + 1) to output \(output + 1)", on: phase != nil) { toggleActive(key) }
+            pad("Ø", name: "Invert phase, input \(input + 1) to output \(output + 1)",
+                on: phase == true, heavy: true) { togglePhase(key) }
         }
         .frame(width: Self.cellWidth, height: ETMetrics.hitTarget)
         // 升は押せるままにしておく。上流も薄くするだけで外さない（matrix.js:500-519）。
         .opacity(dim(input) || dim(output) ? 0.5 : 1)
     }
 
-    private func pad(_ label: String, on: Bool, heavy: Bool = false,
+    private func pad(_ label: String, name: String, on: Bool, heavy: Bool = false,
                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
+                // 升の幅は固定で広げられないので、文字サイズ設定には追従させず、
+                // 大きな文字は長押しの拡大表示で読ませる。
                 .font(.system(size: 11, weight: heavy ? .heavy : .bold))
                 .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 .frame(width: 36, height: 30)
@@ -129,17 +135,22 @@ struct MatrixView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityShowsLargeContentViewer()
+        // 「ON」「Ø」だけでは、どの入力から出力への升か分からない。
+        .accessibilityLabel(name)
+        .accessibilityValue(on ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
     }
 
     private func channelLabel(_ channel: Int) -> some View {
         Text("Ch \(channel + 1)")
-            .font(.system(size: 11))
+            .etFont(size: 11)
             .foregroundStyle(.secondary)
     }
 
     private func caption(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .etFont(size: 10, weight: .semibold)
             .tracking(0.6)
             .foregroundStyle(.secondary)
     }
@@ -191,26 +202,8 @@ struct MatrixView: View {
 
     // MARK: DSP へ渡す
 
-    /// kernel.cpp:51-71 が読む並びに詰める。本数は 1024 まで。
-    private func packed(_ routes: [UInt8: Bool]) -> [UInt8] {
-        let keys = routes.keys.sorted().prefix(1024)
-        var bytes: [UInt8] = [1, 0, UInt8(keys.count & 0xff), UInt8(keys.count >> 8)]
-        bytes.reserveCapacity(4 + keys.count * 3)
-        for key in keys {
-            bytes.append(key >> 4)
-            bytes.append(key & 0x0f)
-            bytes.append(routes[key] == true ? 1 : 0)
-        }
-        return bytes
-    }
-
     private func push(_ routes: [UInt8: Bool]) {
-        guard dsp.engine != 0, node.instance != 0 else { return }
-        let bytes = packed(routes)
-        _ = bytes.withUnsafeBufferPointer {
-            et_instance_set_param_bytes(dsp.engine, node.instance, $0.baseAddress,
-                                        UInt32(bytes.count), node.spec.paramsHash, 0)
-        }
+        MatrixRouting.push(routes, node: node, engine: dsp.engine)
     }
 
     // MARK: 枠を読む
@@ -222,7 +215,7 @@ struct MatrixView: View {
         let tap: UInt32
         @Binding var channels: Int
 
-        @ObservedObject private var telemetry = Telemetry.shared
+        @ETTelemetryFeed private var telemetry
 
         var body: some View {
             Color.clear
@@ -257,7 +250,7 @@ final class MatrixRouting {
     static let shared = MatrixRouting()
 
     /// 既定は対角 2 本。matrix.js:105-111 と params.json の default（"0011"）、
-    /// カーネルの reset（kernel.cpp:44-48）が同じものを置いている。
+    /// カーネルのメンバ初期化（kernel.cpp。2.15.0 で reset から移った）が同じものを置いている。
     static let initial: [UInt8: Bool] = [0x00: false, 0x11: false]
 
     private var byNode: [UUID: [UInt8: Bool]] = [:]
@@ -271,5 +264,35 @@ final class MatrixRouting {
     func prune(keeping ids: [UUID]) {
         let live = Set(ids)
         byNode = byNode.filter { live.contains($0.key) }
+    }
+
+    /// 既定の対角へ戻してカーネルへも送る。上流の Reset は mx を足した時の値へ戻す
+    /// （pipeline-item-builder.js:392-410、既定は matrix.js:105-111）。
+    /// 畳んだカードにはビューが無いので、送るのはここでやる。
+    func reset(_ node: EffeTuneDSP.Node, engine: UInt32) {
+        byNode[node.id] = nil
+        Self.push(Self.initial, node: node, engine: engine)
+    }
+
+    /// kernel.cpp:51-71 が読む並びに詰める。本数は 1024 まで。
+    static func packed(_ routes: [UInt8: Bool]) -> [UInt8] {
+        let keys = routes.keys.sorted().prefix(1024)
+        var bytes: [UInt8] = [1, 0, UInt8(keys.count & 0xff), UInt8(keys.count >> 8)]
+        bytes.reserveCapacity(4 + keys.count * 3)
+        for key in keys {
+            bytes.append(key >> 4)
+            bytes.append(key & 0x0f)
+            bytes.append(routes[key] == true ? 1 : 0)
+        }
+        return bytes
+    }
+
+    static func push(_ routes: [UInt8: Bool], node: EffeTuneDSP.Node, engine: UInt32) {
+        guard engine != 0, node.instance != 0 else { return }
+        let bytes = packed(routes)
+        _ = bytes.withUnsafeBufferPointer {
+            et_instance_set_param_bytes(engine, node.instance, $0.baseAddress,
+                                        UInt32(bytes.count), node.spec.paramsHash, 0)
+        }
     }
 }

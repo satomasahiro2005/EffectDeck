@@ -13,9 +13,14 @@ typedef int32_t (*ETJSFXMenuCallback)(void *context, const char *menu,
                                       int32_t x, int32_t y);
 ETJSFX *ETJSFX_Create(const char *path, double sampleRate, uint32_t maxFrames,
                       char *error, size_t errorCapacity);
+/// 走っている SaveState / Reconfigure / LoadState / GFX の呼び出しを待ってから消す。
+/// **返った後に呼ばれたものは守れない。**gfxQueue に積んだものは先に流すこと。
 void ETJSFX_Destroy(ETJSFX *host);
+/// 出力の NaN・Inf・非正規化数は 0 にして返す（後段の IIR を守る）。
 ETExternalProcessor ETJSFX_Processor(ETJSFX *host);
+/// Reconfigure / SaveState / LoadState は同じ host の上で 1 本ずつ走る（後から来た方は待つ）。
 bool ETJSFX_Reconfigure(ETJSFX *host, double sampleRate, uint32_t maxFrames);
+/// 全体が 16 MiB を超える状態は false（@serialize は書いている最中に止まる）。
 bool ETJSFX_SaveState(ETJSFX *host, uint8_t **bytes, size_t *size);
 bool ETJSFX_LoadState(ETJSFX *host, const uint8_t *bytes, size_t size);
 void ETJSFX_FreeBytes(void *bytes);
@@ -33,8 +38,14 @@ double ETJSFX_SliderToNormalized(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_SliderFromNormalized(ETJSFX *host, uint32_t index, double value);
 void ETJSFX_SetSlider(ETJSFX *host, uint32_t index, double value);
 double ETJSFX_GetSlider(ETJSFX *host, uint32_t index);
+/// 物理の出力の音量（0〜1）をスクリプトの effectdeck_output_volume に渡す。読めていなければ負の値か NaN を渡す（-1 になる）。
+/// どのスレッドからでもよい。値は次のブロックの頭（と次の @init）から見える。**保存しない・つまみも通知も立てない。**
+/// 出力先は 1 つなので値は host ごとでなくプロセスで 1 つ。後から作った host も最新の値から始まる。
+void ETJSFX_SetOutputVolume(double volume);
 /// trigger を送る。**running でなければ false を返して捨てる。**
 /// 溜めると、再開した最初の 1 ブロックで一斉に発火して、押した覚えの無い音が出る。
+/// runningのまま鎖がこの段を飛ばしている間（段・Section・全体の入切・無音で休む）は受け取るが、
+/// 再開した最初のブロックで捨てる（processのsampleTimeが前のブロックの終わりと合わないとき）。
 bool ETJSFX_SendTrigger(ETJSFX *host, uint32_t index);
 /// trigger の本数（ysfx_max_triggers）。UI が 10 を直書きしないため。
 uint32_t ETJSFX_MaxTriggers(void);
@@ -47,12 +58,19 @@ bool ETJSFX_UsesTrigger(const ETJSFX *host);
 bool ETJSFX_IsRunning(const ETJSFX *host);
 /// 自動バイパスを解く。診断を消し、締切の回数を 0 に戻し、
 /// **automaticBypass のときだけ** running へ戻す（maintenance は触らない）。
-/// 戻せたら true。
+/// 戻せたら true。maintenance の最中で戻せなかったときは診断を残す（札が消えない）。
 bool ETJSFX_ClearDiagnostic(ETJSFX *host);
 /// 締切を超えたブロックの累計。**測るためだけ。**
 uint32_t ETJSFX_DeadlineTrips(const ETJSFX *host);
 /// 1 ブロックの持ち時間に対して使った割合の最大値（1/1000）。1000 で使い切り。
 uint32_t ETJSFX_DeadlineWorstPermille(const ETJSFX *host);
+/// EEL の実行系（WDL の ns-eel.h の NSEEL_EXEC_*。0 は portable）。**照合と測るためだけ。**アプリは既定
+/// （NSEEL_EXEC_DEFAULT）のまま。この建て方で使えない番号は false で何も変えない。結果は 1 ビットも変わらない（速さだけ）。
+/// 保守（Reconfigure と同じ）の中で替える: 走っているブロックと @gfx が抜けるのを待ち、替わるのは次のブロックから。
+/// 音のスレッドから呼ばない。
+bool ETJSFX_SetEELExecutor(ETJSFX *host, int32_t mode);
+int32_t ETJSFX_EELExecutor(const ETJSFX *host);
+/// 遅延（pdc_delay）が変わったか。遅延そのものは 0〜192000 サンプルに切ってある。
 bool ETJSFX_ConsumeLatencyChange(ETJSFX *host);
 bool ETJSFX_ConsumeSliderChange(ETJSFX *host);
 bool ETJSFX_HasGFX(const ETJSFX *host);

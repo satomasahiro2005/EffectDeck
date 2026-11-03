@@ -14,33 +14,66 @@ createUI で見つからなかったパラメータだけ params.json の値を�
 のような目盛りを変換している行は、その -100..100 を持ってくるとモデルに 100 倍の値が入る。
 そういう行は範囲も単位も触らない（表示の変換は Swift 側に無い）。
 
+同じspecsから、ChatGPTなどに鎖を組ませるための語彙も書く（CHAIN.mdが指す）。
+
+  chain/v<dspの版>/effects.json     機械で読む形
+  chain/v<dspの版>/index.md         全部のnmを分類ごとに1行ずつ
+  chain/v<dspの版>/<分類>.md        鍵・名札・形・範囲・選択肢・既定値
+
+**古い版のフォルダは消さない。**古いビルドの依頼文は古い版を名指しする。
+**別のパラメータで同じ版のフォルダを上書きしない。**effects.jsonのdspParamsで確かめる。
+
 EffectDeck 独自の effect は Vendor の外に住む。
-Sources/EffeTuneLive/DSP/<名前>/effect.json が正本で（docs/virtual-room-design.md §50）、
+EffectDeckLocalDSP/<分類>/<名前>/params.json が正本で（docs/virtual-room-design.md §50）、
 ここから C++ の詰め順ヘッダと Swift の ETEffect を**同じ 1 本の表から**作る。
 手で offset とハッシュを二重管理しない。出来上がる ETCatalog は Vendor 由来と
 EffectDeck 由来が混ざった 1 つの配列で、使う側に分岐は要らない（§49）。
+**鎖の語彙（chain/）には入れない。**上流の版の名前で切ったフォルダなので、上流に無い型を
+混ぜると dspParams の指紋が変わり、同じ版のフォルダを別の形で上書きしたことになって止まる。
 
-  python Tools/gen_catalog.py
+**外した型があれば黙らない。**生成ヘッダが無い・読めない・詰め幅が合わない型はカタログから
+落ちる（アプリからそのエフェクトが消える）。いつもは stderr に !! で出して続け、
+ET_STRICT=1（CI）か --strict では何も書かずに 1 で止める。
+
+  python Tools/gen_catalog.py [--strict]
 """
 
+import hashlib
 import json
+import os
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-DSP = ROOT / "Vendor" / "effetune" / "dsp"
-JS_PLUGINS = ROOT / "Vendor" / "effetune" / "plugins"
+VENDOR = ROOT / "Vendor" / "effetune"
+DSP = VENDOR / "dsp"
+JS_PLUGINS = VENDOR / "plugins"
 LOCAL_DSP = ROOT / "EffectDeckLocalDSP"
 LOCAL_HEADERS = ROOT / "Generated" / "dsp"
 OUT = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "EffectCatalog.swift"
+CHAIN = ROOT / "chain"
+UPSTREAM_VERSION = ROOT / "Sources" / "EffeTuneLive" / "Generated" / "UpstreamVersion.swift"
+PARAM_CODING = ROOT / "Sources" / "EffeTuneLive" / "DSP" / "ETParamCoding.swift"
 
 MEMBER = re.compile(r"^\s*float\s+(\w+)\s*(?:\[(\d+)\])?\s*;")
 HASH = re.compile(r"kHash\s*=\s*(0x[0-9a-fA-F]+)u")
 COUNT = re.compile(r"kFloatCount\s*=\s*(\d+)u")
-SUPER = re.compile(r"super\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*'((?:[^'\\]|\\.)*)'", re.S)
+# super('名前', '説明')。**引用符は'でも"でもよく、説明は'a' + 'b'と足してあることがある。**
+# 'だけを見ていた頃は、"で書いた7種（Hi Pass Filterなど）の説明が空になり、
+# 足してあるSBC Codec Simulatorの説明が"round trip, "で切れていた。
+JS_STR = r"""(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")"""
+JS_CAT = r"%s(?:\s*\+\s*%s)*" % (JS_STR, JS_STR)
+SUPER = re.compile(r"super\(\s*(%s)\s*,\s*(%s)\s*[,)]" % (JS_CAT, JS_CAT), re.S)
+JS_PART = re.compile(r"""'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)\"""")
 
 BS = chr(92)
+
+
+def strict_mode():
+    """ET_STRICT=1（CI）か --strict。外した型を警告で済ませず止める。"""
+    return os.environ.get("ET_STRICT", "") not in ("", "0") or "--strict" in sys.argv[1:]
 
 
 # 保存している値と画面に出す値がずれるもの。(type, メンバ名) -> ETParamScale。
@@ -55,21 +88,38 @@ BS = chr(92)
 # 上流の配列形式:
 #   - オブジェクト配列  "bs": [{"en":…}, …]   params.json の objectArrayKey
 #   - 添字付き          "f0" "f1" "f2" …      js が params['f' + i] で書く
-#   - 2.10.0 Spatial Mapper のみ、dm / fm / rm は平らな 256 要素配列。
+#   - 平らな配列        "dm": [...]            FLAT_ARRAYS の表にあるものだけ
 # 5Band PEQ を平らな "f": [...] で書いていたときは、
 # プリセットが一つも読めず曲線が平坦になっていた。
 # 将来 params.json が増えたときに黙って同じ穴に落ちないよう、
 # 「object でも indexed でもない配列」が出たらここで止める。
+#
+# **平らな配列は表で持つ。検査と flatArrayKey の出力の両方がこの表を見る。**
+# 検査だけ外すと ro0..ro15 の添字形式で書かれ、web 版とプリセットが食い違う。
+#   - Spatial Mapper (2.10.0): dm / fm / rm は 16×16 の行列
+#   - Bass Management (2.11.0): ro / fc / sl / rt / ri は 16ch 分
+#     （bass_management.js の getParameters / setParameters が平らなまま読み書きする）
+FLAT_ARRAYS = {
+    "SpatialMapperPlugin": ("dm", "fm", "rm"),
+    "BassManagementPlugin": ("ro", "fc", "sl", "rt", "ri"),
+}
+
+
+def is_flat_array(type_name, f):
+    return f.get("arrayKey") in FLAT_ARRAYS.get(type_name, ())
+
+
 def check_array_shape(meta, type_name, category, folder):
     js = JS_PLUGINS / category / (folder + ".js")
     src = js.read_text(encoding="utf-8", errors="replace") if js.exists() else ""
     for f in meta.get("fields", []):
         if (f.get("count") or 1) <= 1 or f.get("objectArrayKey"):
             continue
-        if type_name == "SpatialMapperPlugin" and f.get("arrayKey") in ("dm", "fm", "rm"):
+        if is_flat_array(type_name, f):
             continue
         k = f.get("key") or f["name"]
-        indexed = re.search(r"\[\s*['\"]%s['\"]\s*\+" % re.escape(k), src) or                   re.search(r"`%s\$\{" % re.escape(k), src)
+        indexed = (re.search(r"\[\s*['\"]%s['\"]\s*\+" % re.escape(k), src)
+                   or re.search(r"`%s\$\{" % re.escape(k), src))
         if not indexed:
             raise SystemExit(
                 "!! %s の配列 %s が object でも indexed でもない。"
@@ -80,6 +130,380 @@ def check_array_shape(meta, type_name, category, folder):
 SCALES = {
     ("TiltEQPlugin", "pivotExponent"): "naturalExp",
 }
+
+
+# 画面の並びが createUI の行番号だけでは決まらないもの。(type, key) -> 直前に置く key。
+# Tonal Balance EQ の Averaging Time は専用の行を作る関数（createAveragingTimeControl）が
+# createUI より前にあり、そのラベルの行が先頭に化ける。createUI では Smoothing の次に並ぶ。
+UI_AFTER = {
+    ("TonalBalanceEQPlugin", "at"): "sm",
+}
+
+# 保存形式にも鎖の語彙にも出さないパラメータ。(type, メンバ名)。DSP の float には載るので
+# catalog には残し、ETParam.runtimeOnly で印を付ける（ETParamCoding が書かず・読まない）。
+# Tonal Balance EQ の mp（測定の一時停止）は TONAL_BALANCE_EQ_DEFAULTS にも getParameters にも
+# 無く、画面の操作も無い。ライブラリの bindings だけが立てる実行時の旗。
+# Adaptive Prediction（2.13.0）の resetToken は Reset を押すたびに増える数。kernel は値が変わったら学習を
+# 捨てる。上流は getSerializableParameters で消し、プリセットの照合からも外す
+# （getPresetComparisonExcludedKeys）。
+# SFZ Note Player（2.14.0）の previewMidi / previewVelocity は鍵盤を押している間だけ鳴らす試し弾きの音。
+# 上流は getParameters に入れず、getWorkletPluginData で worklet へだけ渡す（-1 が鳴らさない）。
+RUNTIME_ONLY = {
+    ("TonalBalanceEQPlugin", "measurementPaused"),
+    ("AdaptivePredictionEffectPlugin", "resetToken"),
+    ("SFZNotePlayerPlugin", "previewMidi"),
+    # Note Spectrogram（2.14.0）の te は保存しない。上流は Color が Instrument (3)/(9) か Highlight が None 以外の
+    # ときに立てて worklet へだけ渡す（note_spectrogram.js の getWorkletPluginData / noteEventsEnabled）。
+    ("NoteSpectrogramPlugin", "timbreEnabled"),
+    ("SFZNotePlayerPlugin", "previewVelocity"),
+}
+
+
+# ---------------------------------------------------------------- 鎖の語彙（chain/）
+
+# 鎖の字では組めないもの。**手で持つ。**type -> 理由（英語。そのままindex.mdに出る）。
+#
+# 材料がparamsの外にあるものだけを入れる。paramsを持たないだけのMuteや
+# Polarity Inversionは鎖に置けば働くので入れない。Matrixだけは経路（mx）が
+# paramsに無く、鎖の字で書いても読まれない（MatrixRoutingが端末の中だけで持つ）。
+# 残りはAssetReattach.swiftが入れ直している型とIR Reverb。
+#
+# 5Band FIR PEQ・Group Delay EQ / PEQ・FIR Crossoverは、設計の材料（pm / tp / f0など）を
+# 鎖に持てるようになった（DSP/DesignParams.swift）。アプリから写した鎖は材料ごと戻る。
+# ただし材料の鍵はこの語彙に載せていない（floatのparamsではないのでspecsに無い）ので、
+# 依頼文で組ませると既定の設計にしかならない。「持てない」とは書かず「この一覧の鍵では
+# 設計しない」と書く。材料を持てなかった頃のビルドにも同じ版の語彙が渡りうるが、どちらにも正しい。
+CHAIN_UNSUPPORTED = {
+    "MatrixPlugin": "its routing is set in the app and a chain cannot carry it",
+    "IRReverbPlugin": "it needs an impulse response file that the user imports",
+    "FiveBandFIRPEQPlugin": "its bands are designed in the app, not from the keys listed here",
+    "GroupDelayEqPlugin": "its filter is designed in the app, not from the keys listed here",
+    "GroupDelayPEQPlugin": "its filter is designed in the app, not from the keys listed here",
+    "RoomEqPlugin": "it needs a room measurement made in the app",
+    "CrosstalkCancellationPlugin": "it needs a measurement made in the app",
+    "FIRCrossoverPlugin": "its crossover is designed in the app, not from the keys listed here",
+    "SFZNotePlayerPlugin": "it needs an SFZ instrument that the user imports",
+}
+
+# 保存している値が見た目の数と違うもの。(type, メンバ名) -> (印, 説明)。
+# **SCALESとは別の表。**あちらはアプリの画面が換算するものだけで、ここは
+# 鎖を書く側が間違えるものを全部挙げる。Modal Resonatorの*Logも自然対数
+# （modal_resonator.jsのLOG_20 / LOG_20000）だが、画面は生の数のまま見せている。
+_LN_HZ = ("ln(Hz)", "natural log of the frequency in Hz: 3.0 = 20 Hz, 6.91 = 1 kHz, 9.9 = 20 kHz")
+_POW10 = ("10^x", "exponent of the rate: -6 means 10^-6")
+CHAIN_SCALED = {
+    ("TiltEQPlugin", "pivotExponent"): _LN_HZ,
+    ("ModalResonatorPlugin", "frequencyLog"): _LN_HZ,
+    ("ModalResonatorPlugin", "lowPassLog"): _LN_HZ,
+    ("ModalResonatorPlugin", "highPassLog"): _LN_HZ,
+    ("DigitalErrorEmulatorPlugin", "bitErrorRateExponent"): _POW10,
+    ("G726ADPCMSimulatorPlugin", "radioBitErrorExponent"): _POW10,
+}
+
+
+def allowed_values():
+    """ETAllowedValuesの表をSwiftから読む。**写しを持たない。**
+
+    決まった値しか取らない数（Oversamplingの1/2/4/8）は、範囲の中でも外れた値を
+    decodeが黙って捨てる。語彙に書かないと鎖を書く側に分からない。
+    表の正はETParamCoding.swiftで、ChainTextTestsが語彙と突き合わせる。
+    """
+    text = PARAM_CODING.read_text(encoding="utf-8")
+    start = text.find("enum ETAllowedValues")
+    end = text.find("\nenum ", start + 1)
+    if start < 0:
+        raise SystemExit("!! ETParamCoding.swiftにETAllowedValuesが無い")
+    table = {}
+    for m in re.finditer(r'"(\w+)\.(\w+)":\s*\[([^\]]*)\]', text[start:end if end > 0 else None]):
+        table[(m.group(1), m.group(2))] = [float(v) for v in m.group(3).split(",") if v.strip()]
+    return table
+
+
+def run_git(*args):
+    try:
+        return subprocess.run(["git", *args], capture_output=True, text=True)
+    except OSError:
+        return None
+
+
+def same_path(a, b):
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def vendor_is_checkout():
+    """Vendor/effetuneが自前のgitの作業ツリーか。
+
+    **Macへ送った木はgitではない**（.gitごと無い写し）。そこで版を確かめようとすると
+    setup.shが毎回止まるので、確かめるのはgitの作業ツリーのときだけにする。
+    Vendor/effetuneが空で上の木だけがgitのときも、上の木を答えるので外れる。
+    """
+    top = run_git("-C", str(VENDOR), "rev-parse", "--show-toplevel")
+    return bool(top and top.returncode == 0 and top.stdout.strip()
+                and same_path(top.stdout.strip(), VENDOR))
+
+
+def check_vendor_pin():
+    """固定した版と違うVendor/effetuneから作らない。
+
+    このリポジトリが指しているgitlink（HEADかindexのどちらか）とVendorのHEADを比べる。
+    違う版のまま走ると、カタログも語彙も黙ってその版へ変わる（Windowsの作業ツリーは
+    dsp-v0.10.0のまま、固定は0.11.0だった）。**固定より新しいのも通さない。**
+    タグの間のコミットはdescribeが前のタグの版を答えるので、前の版のフォルダ（chain/v<版>/）を
+    上書きしてしまう。上流へ追従するときは、Vendorを進めてgit add Vendor/effetuneしてから
+    走らせる（indexのgitlinkも固定として受ける）。
+    """
+    head = run_git("-C", str(VENDOR), "rev-parse", "HEAD")
+    if not head or head.returncode != 0:
+        return
+    actual = head.stdout.strip()
+    pins = set()
+    for args in (("ls-tree", "HEAD", "Vendor/effetune"), ("ls-files", "--stage", "Vendor/effetune")):
+        r = run_git("-C", str(ROOT), *args)
+        if r and r.returncode == 0:
+            m = re.search(r"\b([0-9a-f]{40})\b", r.stdout)
+            if m:
+                pins.add(m.group(1))
+    if not pins or actual in pins:
+        return
+    raise SystemExit(
+        "!! Vendor/effetune（%s）が固定した版（%s）と違う。"
+        "戻すならgit submodule update --init Vendor/effetune、"
+        "上流へ追従するならgit add Vendor/effetuneを先に"
+        % (actual[:8], ", ".join(p[:8] for p in sorted(pins))))
+
+
+def dsp_params_fingerprint(specs):
+    """語彙の元になったDSPのパラメータの形。型ごとのハッシュとfloatの数から作る。
+
+    上流がパラメータを変えると変わり、この生成器の直し（説明や表の書き方）では変わらない。
+    effects.jsonに`dspParams`として残し、同じ版のフォルダを別の形で上書きしないのに使う。
+    """
+    h = hashlib.sha256()
+    for s in sorted(specs, key=lambda x: x["type"]):
+        h.update(("%s:%08x:%d\n" % (s["type"], s["hash"], s["floatCount"])).encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def check_chain_folder(version, fingerprint):
+    """chain/v<版>/が別のパラメータから作ってあれば止める。**何か書く前に呼ぶ。**
+
+    版の名前は作業ツリーならdsp-v*のタグ、gitでない写し（Mac）では追跡してある
+    UpstreamVersion.swiftから取る。どちらも中身より遅れることがある（タグの間のコミット、
+    gen_version.pyより先に走るsetup.sh）。そのまま書くと前の版のフォルダが新しい中身で
+    上書きされ、古いビルドの依頼が読む語彙が変わる。
+    """
+    old = CHAIN / ("v" + version) / "effects.json"
+    if not old.exists():
+        return
+    try:
+        recorded = json.loads(old.read_text(encoding="utf-8")).get("dspParams")
+    except ValueError:
+        recorded = None
+    if recorded and recorded != fingerprint:
+        raise SystemExit(
+            "!! chain/v%s/は別のDSPのパラメータから作ってある（%s、いまは%s）。"
+            "版の名前（dsp-v*のタグかUpstreamVersion.swift）が中身に追いついているか確かめる。"
+            "置き換えてよいなら、そのフォルダを消してから走らせる"
+            % (version, recorded, fingerprint))
+
+
+def dsp_version(checkout):
+    """語彙のフォルダに付ける版。
+
+    gitの作業ツリーならgen_version.pyと同じくdsp-v*のタグから取る（追従の途中でも
+    新しい版になる）。gitでない写しでは、追跡してあるUpstreamVersion.swiftを読む。
+    """
+    if checkout:
+        r = run_git("-C", str(VENDOR), "describe", "--tags", "--match", "dsp-v*")
+        if r and r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().removeprefix("dsp-v").split("-")[0]
+    m = re.search(r'ETUpstreamVersion\s*=\s*"([^"]+)"', UPSTREAM_VERSION.read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit("!! UpstreamVersion.swiftから版を読めない")
+    return m.group(1)
+
+
+def jnum(v):
+    """JSONに書く数。整数で表せるものは整数で書く（20.0より20のほうが読みやすい）。"""
+    v = float(v)
+    return int(v) if v.is_integer() and abs(v) < 1e15 else v
+
+
+def typed(info, raw):
+    """floatの既定値を保存形式の型へ（ETParamCoding.tidyと同じ）。"""
+    if info["kind"] == "enum":
+        i = int(round(raw))
+        return info["options"][i] if 0 <= i < len(info["options"]) else i
+    if info["kind"] == "toggle":
+        return raw >= 0.5
+    return jnum(raw)
+
+
+def md_value(v):
+    if isinstance(v, bool):
+        return "`true`" if v else "`false`"
+    if isinstance(v, str):
+        return "`\"%s\"`" % v.replace("|", "\\|")
+    if isinstance(v, float):
+        return "`%s`" % ("%.6g" % v)
+    return "`%s`" % v
+
+
+def md_key(p):
+    if p["shape"] == "indexed":
+        return "`%s0` … `%s%d`" % (p["key"], p["key"], p["count"] - 1)
+    if p["shape"] == "object-array":
+        return "`%s[].%s`" % (p["array"], p["key"])
+    return "`%s`" % p["key"]
+
+
+def md_shape(p):
+    if p["shape"] == "indexed":
+        return "indexed ×%d" % p["count"]
+    if p["shape"] == "object-array":
+        return "object array ×%d" % p["count"]
+    if p["shape"] == "flat":
+        return "flat array ×%d" % p["count"]
+    return "scalar"
+
+
+def md_values(p):
+    if p["kind"] == "enum":
+        text = "one of " + ", ".join(md_value(o) for o in p["options"])
+    elif p["kind"] == "toggle":
+        text = "`true` or `false`"
+    else:
+        text = "%s to %s" % (md_value(p["min"]), md_value(p["max"]))
+        if p["step"]:
+            text += ", step %s" % ("%.6g" % p["step"])
+        # 10^xは印と同じ字なので2度書かない。
+        if p["unit"] and p["unit"] != p.get("scale"):
+            text += ", " + p["unit"].replace("|", "\\|")
+    if "allowed" in p:
+        text += "; only " + ", ".join(md_value(v) for v in p["allowed"])
+    if "scale" in p:
+        text += "; **%s**: %s" % (p["scale"], p["scaleNote"])
+    return text
+
+
+def md_default(p):
+    d = p["default"]
+    if not isinstance(d, list):
+        return md_value(d)
+    if all(x == d[0] for x in d):
+        return "%s ×%d" % (md_value(d[0]), len(d))
+    if len(d) > 16:
+        return "%d values (see effects.json)" % len(d)
+    return ", ".join(md_value(x) for x in d)
+
+
+def check_chain_unsupported(specs):
+    """CHAIN_UNSUPPORTEDの表の型が全部カタログに居るか。**何か書く前に呼ぶ。**"""
+    types = {s["type"] for s in specs}
+    missing = sorted(set(CHAIN_UNSUPPORTED) - types)
+    if missing:
+        raise SystemExit("!! CHAIN_UNSUPPORTEDにカタログに無い型がある: %s" % ", ".join(missing))
+
+
+def write_chain(specs, version, fingerprint):
+    """chain/v<版>/に語彙を書く。**書くのはその版のフォルダだけ。**"""
+    check_chain_unsupported(specs)
+
+    effects = []
+    for s in sorted(specs, key=lambda x: (x["category"], x["name"])):
+        e = {"nm": s["name"], "type": s["type"], "category": s["category"], "about": s["about"]}
+        if s["type"] in CHAIN_UNSUPPORTED:
+            e["unsupported"] = CHAIN_UNSUPPORTED[s["type"]]
+        e["params"] = s["chain"]
+        effects.append(e)
+
+    folder = CHAIN / ("v" + version)
+    folder.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def put(name, text):
+        (folder / name).write_text(text, encoding="utf-8", newline="\n")
+        written.append(name)
+
+    # 1エフェクト1行。字下げすると16×16の行列が1要素1行に割れて160 KBを超える。
+    rows = ",\n".join(json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in effects)
+    put("effects.json", '{"dsp":%s,"dspParams":%s,"generator":"Tools/gen_catalog.py","effects":[\n%s\n]}\n'
+        % (json.dumps(version), json.dumps(fingerprint), rows))
+
+    categories = []
+    for e in effects:
+        if e["category"] not in categories:
+            categories.append(e["category"])
+
+    head = [
+        "# EffectDeck effects, EffeTune DSP %s" % version,
+        "",
+        "Generated by `Tools/gen_catalog.py` from the effects EffectDeck is built with. Do not edit.",
+        "",
+        "Every effect name (`nm`) a chain can use, by category, with what the effect is for.",
+        "The keys, ranges, options and defaults of each effect are in its category file.",
+        "How to write the chain itself: [CHAIN.md](../../CHAIN.md).",
+        "",
+        "`Section` is not an effect. `{\"nm\":\"Section\",\"cm\":\"Name\"}` groups the stages after it,",
+        "up to the next Section (see CHAIN.md).",
+        "",
+    ]
+    for c in categories:
+        head.append("## %s ([%s.md](%s.md))" % (c, c, c))
+        head.append("")
+        for e in (x for x in effects if x["category"] == c):
+            line = "- `%s`" % e["nm"]
+            if e["about"]:
+                line += " — " + e["about"]
+            if "unsupported" in e:
+                line += ". **Not for chains:** %s." % e["unsupported"]
+            head.append(line)
+        head.append("")
+    put("index.md", "\n".join(head))
+
+    for c in categories:
+        out = [
+            "# %s effects, EffeTune DSP %s" % (c, version),
+            "",
+            "Generated by `Tools/gen_catalog.py`. Do not edit. All effect names: [index.md](index.md).",
+            "",
+            "Values are the stored values in the stored units. Write only the keys you change;",
+            "the others keep the defaults shown. Shapes:",
+            "",
+            "- scalar: `\"vl\": -3`",
+            "- indexed: one key per element, `\"f0\": 100, \"f1\": 316`",
+            "- object array: `\"bs\": [{\"f\": 100}, {}, …]`, one object per element in order;",
+            "  `{}` keeps that element's defaults. `bs[].f` below means member `f` of each object in `bs`.",
+            "- flat array: `\"dm\": [1, 0, …]`, one number per element in order",
+            "",
+        ]
+        for e in (x for x in effects if x["category"] == c):
+            out.append("## %s" % e["nm"])
+            out.append("")
+            if e["about"]:
+                out.append(e["about"] + ".")
+                out.append("")
+            if "unsupported" in e:
+                out.append("**Not for chains:** %s." % e["unsupported"])
+                out.append("")
+                continue
+            if not e["params"]:
+                out.append("No keys: `{\"nm\":\"%s\"}`." % e["nm"])
+                out.append("")
+                continue
+            out.append("| Key | Label | Shape | Values | Default |")
+            out.append("|---|---|---|---|---|")
+            for p in e["params"]:
+                out.append("| %s | %s | %s | %s | %s |" % (
+                    md_key(p), p["label"].replace("|", "\\|"), md_shape(p), md_values(p), md_default(p)))
+            out.append("")
+        put(c + ".md", "\n".join(out))
+
+    # 同じ版のフォルダに残った古い分類だけ消す。他の版のフォルダは触らない。
+    for old in folder.iterdir():
+        if old.is_file() and old.name not in written:
+            old.unlink()
+    return folder
 
 
 def parse_header(path):
@@ -99,12 +523,55 @@ def parse_header(path):
 
 # ---------------------------------------------------------------- JS を読む
 
+# この字や語の後ろの / は割り算ではなく正規表現リテラルの始まり。
+REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
+REGEX_AFTER_WORDS = {"return", "typeof", "case", "do", "else", "in", "instanceof", "new", "delete",
+                     "void", "throw", "yield", "await", "of"}
+
+
+def regex_end(t, i):
+    """t[i] の / から始まる正規表現リテラルの終わり（フラグの後ろ）。同じ行で閉じなければ None。"""
+    j, n = i + 1, len(t)
+    in_class = False
+    while j < n:
+        c = t[j]
+        if c == "\n":
+            return None
+        if c == BS:
+            j += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            j += 1
+            while j < n and (t[j].isalnum() or t[j] in "_$"):
+                j += 1
+            return j
+        j += 1
+    return None
+
+
 def strip_comments(t):
-    """// と /* */ を空白に潰す。文字列の中は触らない。行数は変えない。"""
+    """// と /* */ を空白に潰す。文字列と正規表現リテラルの中は触らない。行数は変えない。
+
+    **正規表現リテラルを飛ばす。**`s.replace(/'/g, '')` の ' を文字列の始まりと取ると、
+    次の ' までが文字列になってその間のコメントが残り、そこから先が食い違う
+    （コメントの中の ' で閉じた後ろのコードがコメント扱いで消える）。
+    / が割り算か正規表現かは、直前の字（演算子や括弧の後ろなら正規表現）で決める。
+    ただし ++ と -- の後ろは割り算（count++ / 2）。++ の後ろに正規表現は来ない（リテラルは
+    増やせない）。+ や - が隙間なく続くときは 2 つずつ ++ / -- になるので、続いた数が偶数なら
+    最後は ++ / --、奇数なら最後は 1 つの + / -（a+++/x/ は a++ + /x/）。
+    """
     out = []
     i, n = 0, len(t)
     quote = None
     esc = False
+    last = ""      # コメントの外で最後に書いた空白でない字
+    run = 0        # last と同じ字が隙間なく続いた数（++ と -- を見分ける）
+    word = ""      # last が語の終わりなら、その語
+    gap = False    # last の後ろに空白かコメントを挟んだか（語が続いているか）
     while i < n:
         c = t[i]
         if quote:
@@ -115,6 +582,7 @@ def strip_comments(t):
                 esc = True
             elif c == quote:
                 quote = None
+                last, run, word, gap = c, 1, "", False
             i += 1
             continue
         if c in "'\"`":
@@ -127,14 +595,34 @@ def strip_comments(t):
             j = n if j < 0 else j
             out.append(" " * (j - i))
             i = j
+            gap = True
             continue
         if c == "/" and t[i + 1:i + 2] == "*":
             j = t.find("*/", i + 2)
             j = n if j < 0 else j + 2
             out.append("".join(ch if ch == "\n" else " " for ch in t[i:j]))
             i = j
+            gap = True
             continue
+        after_update = last in ("+", "-") and run % 2 == 0     # ++ か -- の後ろ（値の後ろ）
+        if c == "/" and not after_update and \
+                (last == "" or last in REGEX_AFTER or word in REGEX_AFTER_WORDS):
+            j = regex_end(t, i)
+            if j is not None:
+                out.append(t[i:j])
+                i = j
+                last, run, word, gap = ")", 1, "", False    # リテラルの後ろは値。次の / は割り算
+                continue
         out.append(c)
+        if c.isspace():
+            gap = True
+        else:
+            if c.isalnum() or c in "_$":
+                word = word + c if word and not gap else c
+            else:
+                word = ""
+            run = run + 1 if c == last and not gap else 1
+            last, gap = c, False
         i += 1
     return "".join(out)
 
@@ -143,8 +631,8 @@ OPENERS = "([{"
 CLOSERS = ")]}"
 
 
-def split_args(t, lp):
-    """t[lp] が '(' のとき、トップレベルのカンマで割った引数を返す。
+def split_args(t, lp, close=")"):
+    """t[lp] が '('（close が ']' なら '['）のとき、トップレベルのカンマで割った引数を返す。
 
     テンプレート文字列の ${…} も 1 つの塊として飛ばす。閉じ括弧が無ければ None。
     """
@@ -182,7 +670,7 @@ def split_args(t, lp):
         if c in OPENERS:
             depth += 1
         elif c in CLOSERS:
-            if depth == 0 and c == ")":
+            if depth == 0 and c == close:
                 args.append("".join(cur))
                 return [a.strip() for a in args]
             depth -= 1
@@ -242,6 +730,52 @@ def at(args, i):
     return args[i] if args and i < len(args) else None
 
 
+JS_NUMS = r"[-+]?(?:\d+\.?\d*|\.\d+)"
+CONST_ARRAY = re.compile(
+    r"\bconst\s+([A-Z_][A-Z0-9_]*)\s*=\s*(?:Object\.freeze\(\s*)?"
+    r"\[\s*(%s(?:\s*,\s*%s)*)\s*,?\s*\]" % (JS_NUMS, JS_NUMS))
+CONST_OBJECT = re.compile(r"\bconst\s+([A-Z_][A-Z0-9_]*)\s*=\s*Object\.freeze\(\s*\{")
+OBJECT_RANGE = re.compile(r"(\w+)\s*:\s*\[\s*(%s(?:\s*,\s*%s)*)\s*,?\s*\]" % (JS_NUMS, JS_NUMS))
+SPREAD = re.compile(r"\.\.\.\s*([A-Z_][A-Z0-9_]*)(?:\.(\w+))?")
+
+
+def const_number_lists(text):
+    """ファイルの先頭にある数だけの定数配列を引けるようにする。
+
+      const RHYTHM_ANALYZER_MN_RANGE = [40, 192];                  -> (NAME, None)
+      const TONAL_BALANCE_EQ_RANGES = Object.freeze({ tc: [20, 1000], … })   -> (NAME, 'tc')
+
+    戻り値は (定数名, キーか None) -> "40, 192"（数をカンマで繋いだ文字列）。
+    """
+    table = {}
+    for m in CONST_ARRAY.finditer(text):
+        table[(m.group(1), None)] = ", ".join(x.strip() for x in m.group(2).split(","))
+    for m in CONST_OBJECT.finditer(text):
+        # 対応する } まで。入れ子の {} は数えるが、文字列の中の括弧までは見ない（定数の表だけ読む）。
+        depth, i = 1, m.end()
+        while i < len(text) and depth:
+            depth += {"{": 1, "}": -1}.get(text[i], 0)
+            i += 1
+        for mm in OBJECT_RANGE.finditer(text[m.end():i]):
+            table[(m.group(1), mm.group(1))] = ", ".join(x.strip() for x in mm.group(2).split(","))
+    return table
+
+
+def resolve_spreads(text):
+    """createParameterControl('Min BPM', ...MN_RANGE, 1, …) の ...定数 を、数に置き換える。
+
+    **spread は引数 1 つに見えるので、そのままだと後ろの引数が全部 1 つずつずれる**
+    （Rhythm Analyzer の Min BPM は刻みも単位も取れず、Tonal Balance EQ の Corner は
+    ラベルを取れなかった）。数だけの定数配列（と、その配列を持つ Object.freeze の表）の
+    spread だけ解く。読めないものはそのまま。行は変わらない。
+    """
+    table = const_number_lists(text)
+
+    def sub(m):
+        return table.get((m.group(1), m.group(2)), m.group(0))
+    return SPREAD.sub(sub, text)
+
+
 def read_ui(path, keys):
     """createUI が画面に出しているものを key ごとに集める。
 
@@ -249,7 +783,7 @@ def read_ui(path, keys):
     unit と範囲は取れなかったら None（params.json の値をそのまま使う合図）。
     line は画面での並び順に使う。
     """
-    text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+    text = resolve_spreads(strip_comments(path.read_text(encoding="utf-8", errors="replace")))
     found = {}
 
     def line_of(pos):
@@ -305,6 +839,24 @@ def read_ui(path, keys):
         elif last in keys and first is not None:
             # 引数の位置がヘルパごとに違うので、名前と並び順だけもらう。
             put(last, m.start(), label=first)
+        elif (first is None and string_of(at(args, 1)) in keys
+              and string_of(at(args, 2)) is not None
+              and (len(args) <= 6 or string_of(args[6]) is not None)):
+            # 第1引数が置き場所（DOM 要素）で、key とラベルがその後ろに来る形。
+            #   adaptive_prediction_effect.js:155  addParameter(predictionControls, 'gap', 'Gap', 0, 500, 0.1, 'ms')
+            # 8 番目（toDisplay）があると目盛りがモデル値そのものでない（Weight Decay の 0 は
+            # 無限大）ので、createParameterControl と同じく範囲も単位も持ってこない。
+            # 7 番目が単位の字でないもの（phase_select_eq.js の _createNumberField は getter）は
+            # 別の形なので拾わない。
+            lo = hi = step = unit = None
+            if len(args) <= 7:
+                lo, hi, step = (number_of(at(args, 3)), number_of(at(args, 4)),
+                                number_of(at(args, 5)))
+                unit = "" if len(args) <= 6 else string_of(at(args, 6))
+                if lo is None or hi is None or step is None:
+                    lo = hi = step = unit = None
+            put(string_of(at(args, 1)), m.start(), label=string_of(at(args, 2)),
+                unit=unit, lo=lo, hi=hi, step=step)
 
     # 3. label 要素に直書きしているもの（bit_crusher.js:235 の 'TPDF Dither:' など）。
     #    textContent から次の textContent までを 1 かたまりと見て、
@@ -348,7 +900,34 @@ def read_ui(path, keys):
                     lo = hi = step = None
         put(key, pos, label=label.rstrip(":").strip(), lo=lo, hi=hi, step=step)
 
+    # 4. 行を表で持ち、ループで作成関数に渡しているもの（sfz_note_player.js:522, 526）。
+    #      for (const [key, label] of [['hi', 'Highest'], ['md', 'Middle'], …]) createCheckboxControl(…)
+    #      for (const [key, labelText, min, max, step, unit] of [['th', 'Threshold', 0.01, 1, 0.01, ''], …])
+    #    中身が [key, ラベル] か [key, ラベル, 最小, 最大, 刻み, 単位] のリテラルだけの配列を拾う。
+    #    ほかの段で取れなかった key にしか効かない。同じ行に並ぶ行は書いた順に並べる
+    #    （行番号が同じだと params.json の順になり、Highest / Middle / Lowest が逆になる）。
+    for m in TUPLE_ROW.finditer(text):
+        args = split_args(text, m.start(), close="]")
+        if args is None or len(args) not in (2, 6):
+            continue
+        key, label = string_of(args[0]), string_of(args[1])
+        if key not in keys or key in found or label is None:
+            continue
+        lo = hi = step = unit = None
+        if len(args) == 6:
+            lo, hi, step = number_of(args[2]), number_of(args[3]), number_of(args[4])
+            unit = string_of(args[5])
+            if lo is None or hi is None or step is None or unit is None:
+                continue
+        put(key, m.start(), label=label, unit=unit, lo=lo, hi=hi, step=step)
+        line = found[key]["line"]
+        found[key]["line"] = line + (m.start() - text.rfind("\n", 0, m.start())) / 10000.0
+
     return found
+
+
+# [ 'key', 'Label' … ] の始まり。split_args は開き括弧の位置から読む。
+TUPLE_ROW = re.compile(r"\[(?=\s*(?:'[^'\\]*'|\"[^\"\\]*\")\s*,\s*(?:'|\"|this\._t\s*\())")
 
 
 def display_order(lines):
@@ -385,13 +964,19 @@ def swift_str(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def js_string(expr):
+    """JSの文字列の式（'a' + "b"）を1つの字へ。戻すエスケープは引用符だけ（名前と説明にほかは出ない）。"""
+    text = "".join(a or b for a, b in JS_PART.findall(expr))
+    return text.replace("\\'", "'").replace('\\"', '"')
+
+
 def display_name(type_name, category, folder):
     """EffeTune の JS が持っている製品名を拾う。無ければ型名から作る。"""
     js = JS_PLUGINS / category / (folder + ".js")
     if js.exists():
         m = SUPER.search(js.read_text(encoding="utf-8", errors="replace"))
         if m:
-            return m.group(1).replace("\\'", "'"), m.group(2).replace("\\'", "'")
+            return js_string(m.group(1)), js_string(m.group(2))
     return camel_to_words(type_name.replace("Plugin", "")), ""
 
 
@@ -522,7 +1107,7 @@ def write_local_header(meta, out_path):
 
 
 def local_specs():
-    """Sources/EffeTuneLive/DSP/**/effect.json を spec へ。ヘッダも同時に吐く。"""
+    """EffectDeckLocalDSP/<分類>/<名前>/params.json を spec へ。ヘッダも同時に吐く。"""
     specs = []
     LOCAL_HEADERS.mkdir(parents=True, exist_ok=True)
     for manifest in sorted(LOCAL_DSP.glob("*/*/params.json")):
@@ -567,6 +1152,13 @@ def main():
     if not DSP.exists():
         sys.exit("Vendor/effetune が無い。git submodule update --init を先に。")
 
+    # **書き始める前に版を確かめる。**固定と違うVendorから作ると、カタログも語彙もその版へ変わる。
+    checkout = vendor_is_checkout()
+    if checkout:
+        check_vendor_pin()
+    version = dsp_version(checkout)
+    allowed = allowed_values()
+
     specs = []
     skipped = []
     stat = {"label": 0, "unit": 0, "range": 0, "order": 0, "miss": 0}
@@ -606,6 +1198,9 @@ def main():
                     ui_keys.add(k)
         js_path = JS_PLUGINS / category / (folder + ".js")
         ui = read_ui(js_path, ui_keys) if js_path.exists() else {}
+        for (t, k), after in UI_AFTER.items():
+            if t == type_name and k in ui and after in ui:
+                ui[k] = dict(ui[k], line=ui[after]["line"] + 0.5)
 
         params, defaults, offset = [], [], 0
         for mname, mcount in members:
@@ -683,10 +1278,10 @@ def main():
             # 上流がオブジェクト配列で書くもの。
             #   "bs": [{"en": …, "ft": …}, …]
             # 平らな "en": [...] にすると段の en と衝突して潰れ、web 版も
-            # 同梱プリセットも読めない（Sources/.../EffectSpec.swift の
+            # 同梱プリセットも読めない（Sources/EffeTuneLive/DSP/EffectSpec.swift の
             # objectArrayKey のコメントに経緯）。
             extra = ""
-            if type_name == "SpatialMapperPlugin" and f.get("arrayKey") in ("dm", "fm", "rm"):
+            if is_flat_array(type_name, f):
                 extra += ", flatArrayKey: %s" % swift_str(f["arrayKey"])
             oak, mk = f.get("objectArrayKey"), f.get("memberKey")
             if oak and mk and mcount > 1:
@@ -698,13 +1293,33 @@ def main():
             scale = SCALES.get((type_name, mname))
             if scale:
                 extra += ", scale: .%s" % scale
+            runtime_only = (type_name, mname) in RUNTIME_ONLY
+            if runtime_only:
+                extra += ", runtimeOnly: true"
 
-            params.append((
-                u.get("line"),
-                "        ETParam(name: %s, key: %s, label: %s, kind: %s, defaultValue: %r, "
-                "offset: %d, count: %d%s)"
-                % (swift_str(mname), swift_str(key), swift_str(label),
-                   kind_swift, dv_f, offset, mcount, extra)))
+            # 鎖の語彙（chain/）に書く1行。鍵は保存形式で実際に書く名前にする
+            # （オブジェクト配列はmemberKey、平らな配列はarrayKey。ETParamCodingと同じ）。
+            info = {"key": key, "label": label}
+            if is_flat_array(type_name, f):
+                info.update(key=f["arrayKey"], shape="flat", count=mcount)
+            elif oak and mk and mcount > 1:
+                info.update(key=mk, shape="object-array", array=oak, count=mcount)
+            elif mcount > 1:
+                info.update(shape="indexed", count=mcount)
+            else:
+                info["shape"] = "scalar"
+            if kind == "enum":
+                info.update(kind="enum", options=list(f.get("values", [])))
+            elif kind == "bool":
+                info["kind"] = "toggle"
+            else:
+                info.update(kind="number", min=jnum(lo), max=jnum(hi), step=jnum(step or 0),
+                            unit=unit)
+            if (type_name, key) in allowed:
+                info["allowed"] = [jnum(v) for v in allowed[(type_name, key)]]
+            if (type_name, mname) in CHAIN_SCALED:
+                info["scale"], info["scaleNote"] = CHAIN_SCALED[(type_name, mname)]
+
             if dv_list is not None:
                 # 要素ごとに違う既定値を持つ。足りない分は先頭で埋める。
                 vals = []
@@ -720,9 +1335,22 @@ def main():
                             vals.append(float(raw))
                         except (TypeError, ValueError):
                             vals.append(0.0)
-                defaults.extend(vals)
             else:
-                defaults.extend([dv_f] * mcount)
+                vals = [dv_f] * mcount
+            defaults.extend(vals)
+            # 要素ごとの既定値を全部書く。ETParam.defaultValueは先頭の1つしか持たない。
+            info["default"] = ([typed(info, v) for v in vals] if mcount > 1
+                               else typed(info, vals[0]))
+
+            if runtime_only:
+                info["runtimeOnly"] = True
+            params.append((
+                u.get("line"),
+                "        ETParam(name: %s, key: %s, label: %s, kind: %s, defaultValue: %r, "
+                "offset: %d, count: %d%s)"
+                % (swift_str(mname), swift_str(key), swift_str(label),
+                   kind_swift, dv_f, offset, mcount, extra),
+                info))
             offset += mcount
 
         if offset != float_count:
@@ -731,7 +1359,8 @@ def main():
 
         # 画面の並びは createUI が足した順。詰め順（offset）とは別なので、
         # ここで並べ替えても et_instance_set_params に渡す配列は変わらない。
-        ordered = [params[i][1] for i in display_order([p[0] for p in params])]
+        order = display_order([p[0] for p in params])
+        ordered = [params[i][1] for i in order]
         if ordered != [p[1] for p in params]:
             stat["order"] += 1
 
@@ -740,17 +1369,59 @@ def main():
             "type": type_name, "name": name, "about": about, "category": category,
             "hash": phash, "floatCount": float_count,
             "params": ordered, "defaults": defaults,
+            "chain": [params[i][2] for i in order if not params[i][2].get("runtimeOnly")],
         })
 
-    # EffectDeck 独自 effect。Vendor と同じ 1 つの配列に混ぜる（§49）。
+    # **外した型は黙らない。**そのエフェクトはアプリから消える。CI（ET_STRICT=1）では何も書かずに止める。
+    if skipped:
+        print("!! 外したもの（カタログに入らない＝アプリから消える）:", file=sys.stderr)
+        for t, why in skipped:
+            print("!!   %-34s %s" % (t, why), file=sys.stderr)
+        if strict_mode():
+            sys.exit("!! 外した型が %d ある（ET_STRICT）。何も書いていない" % len(skipped))
+
+    # EffectDeck 独自 effect。カタログでは Vendor と同じ 1 つの配列に混ぜる（§49）。
     # 型名がぶつかると et_instance_create がどちらを返すか分からなくなるので止める。
+    # **鎖の語彙（指紋・CHAIN_UNSUPPORTED・chain/v<版>/）には混ぜない。**上流の版で切った
+    # フォルダの指紋が変わり、check_chain_folder と check_repo.py --base が止まる。
     local = local_specs()
     vendor_types = {s["type"] for s in specs}
     for s in local:
         if s["type"] in vendor_types:
             sys.exit("!! %s は Vendor にも居る。EffectDeck 側の型名を変えること" % s["type"])
-    specs.extend(local)
 
+    text = render_catalog(specs + local)
+
+    # 語彙のフォルダと表を確かめてからカタログを書く。止まるならどちらも書かない。
+    fingerprint = dsp_params_fingerprint(specs)
+    check_chain_folder(version, fingerprint)
+    check_chain_unsupported(specs)
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(text, encoding="utf-8", newline="\n")
+
+    folder = write_chain(specs, version, fingerprint)
+
+    print("書いた: %s" % OUT.relative_to(ROOT))
+    print("書いた: %s/（鎖の語彙）" % folder.relative_to(ROOT).as_posix())
+    for s in local:
+        print("書いた: %s" % s["header"].relative_to(ROOT).as_posix())
+    print("EffectDeck 独自 %d 種（鎖の語彙には入れない）" % len(local))
+    print("エフェクト %d 種 / パラメータ %d 個"
+          % (len(specs) + len(local), sum(len(s["params"]) for s in specs + local)))
+    print("createUI から: 名前 %d / 単位 %d / 範囲 %d / 並べ替えた型 %d"
+          % (stat["label"], stat["unit"], stat["range"], stat["order"]))
+    print("createUI に出てこないパラメータ %d 個は params.json のまま" % stat["miss"])
+    if skipped:
+        print("外したもの %d 型（上の !! を見る）" % len(skipped))
+
+
+def render_catalog(specs):
+    """EffectCatalog.swift の中身。分類・名前の順に1つの配列リテラルへ並べる。
+
+    Tests/Linux/make_package.py の split_catalog はこの形（`let ETCatalog: [ETEffect] = [` の下に
+    `    ETEffect(` の塊が並ぶ）を前提に1件ずつの定数へ分けて写す。形を変えるならあちらも一緒に。
+    """
     lines = [
         "//  EffectCatalog.swift",
         "//  Tools/gen_catalog.py が作る。手で直さないこと。",
@@ -759,7 +1430,7 @@ def main():
         "//  et_instance_set_params にはこの順で float を並べて渡す。",
         "//  params の並びは EffeTune の createUI が画面に出す順で、詰め順とは別。",
         "//",
-        "//  EffectDeck 独自の effect は Sources/EffeTuneLive/DSP/<名前>/effect.json が正本。",
+        "//  EffectDeck 独自の effect は EffectDeckLocalDSP/<分類>/<名前>/params.json が正本。",
         "//  そちらは fields の並びがそのまま詰め順で、画面の順とも同じ。",
         "",
         "import Foundation",
@@ -780,23 +1451,7 @@ def main():
         lines.append("      ]),")
     lines.append("]")
     lines.append("")
-
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")
-
-    print("書いた: %s" % OUT.relative_to(ROOT))
-    for s in local:
-        print("書いた: %s" % s["header"].relative_to(ROOT))
-    print("EffectDeck 独自 %d 種" % len(local))
-    print("エフェクト %d 種 / パラメータ %d 個"
-          % (len(specs), sum(len(s["params"]) for s in specs)))
-    print("createUI から: 名前 %d / 単位 %d / 範囲 %d / 並べ替えた型 %d"
-          % (stat["label"], stat["unit"], stat["range"], stat["order"]))
-    print("createUI に出てこないパラメータ %d 個は params.json のまま" % stat["miss"])
-    if skipped:
-        print("外したもの:")
-        for t, why in skipped:
-            print("  %-34s %s" % (t, why))
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

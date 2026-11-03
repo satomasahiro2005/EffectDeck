@@ -269,8 +269,15 @@ final class DynamicProbe: XCTestCase {
         XCTAssertFalse(app.staticTexts["All effects bypassed"].exists, "Turn On で帯が消えない")
     }
 
-    // MARK: - 5. 図だけ表示
+    // MARK: - 6. プリセット
 
+    private func openPresets(_ app: XCUIApplication) {
+        app.navigationBars.buttons["Presets"].tap()
+        XCTAssertTrue(app.navigationBars["Presets"].waitForExistence(timeout: 15),
+                      "Presets が開かない")
+    }
+
+    /// 期待: System Presets は鎖を置き換えず、名前付き Section で包んで足す。
     func test07SystemPreset() {
         let app = launch(["-ETSeed", "VolumePlugin"])
         Thread.sleep(forTimeInterval: 2)

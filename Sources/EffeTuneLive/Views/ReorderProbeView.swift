@@ -118,6 +118,7 @@ struct ETReorderProbeView: View {
         .coordinateSpace(name: Self.space)
     }
 
+    // etOwnsDrag-exempt: 診断画面の独自の ScrollView で、鎖の長押しと払い（ETDragHandle）が居ない
     private func drag(_ item: Item) -> some Gesture {
         LongPressGesture(minimumDuration: 0.3)
             .sequenced(before: DragGesture(coordinateSpace: .named(Self.space)))

@@ -41,6 +41,12 @@
 //  instance == 0 のノードが鎖に残ると publish が黙って落として
 //  「画面には出ているのに何も掛からない」になる。
 //  descriptor には入れない。chain には残す。
+//
+//  **組の範囲と gate を数えるのは ETPipelineAnalysis（PipelineAnalysis.swift）だけ。**
+//  ここに置くのは綴りと見た目だけ。前はここにも数え方（gates・range(after:)・
+//  redundantUnnamed）があり、どこからも呼ばれないまま残っていたので消した。
+//  **足したものは組の外へ置く**（落とした先が組のカードのときだけ組に入る）。
+//  決めるのは ETChainEditing.addition。
 
 import Foundation
 
@@ -57,6 +63,16 @@ enum ETSection {
     /// セクションの名前を入れる保存キー。section.js の `cm`。
     static let commentKey = "cm"
 
+    /// **自分で置いた終端（rootReset）の印。**`Section(cm: "")`の段に`true`で付ける。
+    ///
+    /// 渡す形には組を閉じる印が無く、終端も素の`Section("")`になる。印が無いと、読み戻したときに
+    /// 名前の無いSectionとして戻り、下の段を組に呑む（PipelineAnalysis.swiftの頭）。
+    /// 付けるのはこちらが自分のために書くもの（pipeline.last・自分のプリセット・バックアップ・
+    /// effectdeck.nemut.aiのリンク）だけで、effetune.frieve.comのリンクでは外す
+    /// （PipelineStore.upstreamEntry）。上流はsection.jsのsetParametersが`cm`しか読まないので、
+    /// 付いたまま渡っても害は無い。
+    static let rootResetKey = "rr"
+
     /// 鎖に置ける飾りとしての見た目。パラメータは持たない
     /// （名前は Node 側に文字列で持つ。ETParam は float しか運べない）。
     /// about は docs/plugins/control.md:13 の説明から。
@@ -71,99 +87,6 @@ enum ETSection {
         params: [])
 
     static func isSection(_ spec: ETEffect) -> Bool { spec.type == type }
-
-    /// 名前を持たない Section か。
-    ///
-    /// **組を閉じるためだけに置くもの。**鎖はフラットな配列で、Section は
-    /// 「ここから」の印しか持たない（range(after:) を読むこと）。だから
-    /// 「組の外」という状態が形式に無い。名前の無い Section を置けば、
-    /// 上流はただの新しい組として読み、こちらは組の終わりとして描ける。
-    /// 形式を変えないので web と行き来しても壊れない。
-    static func isUnnamed(_ comment: String) -> Bool {
-        comment.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    /// ヘッダに出す文字。pipeline-item-builder.js:238-239 と同じ。
-    static func title(_ comment: String) -> String {
-        let cm = comment.trimmingCharacters(in: .whitespaces)
-        return cm.isEmpty ? name : "\(cm) \(name)"
-    }
-
-    /// 各段の sectionGate を決める。
-    /// dsp-pipeline-descriptor.js:190-212 の insideSection / sectionEnabled と同じ走り方。
-    ///
-    /// - Parameters:
-    ///   - types: 各段の spec.type
-    ///   - enabled: 各段の入切
-    /// - Returns: 各段の sectionGate（1 なら通す）。Section 自身にも 1 を返すが、
-    ///            Section は descriptor に入らないので使われない。
-    static func gates(types: [String], enabled: [Bool]) -> [UInt8] {
-        precondition(types.count == enabled.count)
-        var out = [UInt8](repeating: 1, count: types.count)
-        // 最初の Section より前は !insideSection で常に通る。
-        var open = true
-        for i in types.indices {
-            if types[i] == type {
-                open = enabled[i]
-                out[i] = 1       // Section 自身は区切りに縛られない
-            } else {
-                out[i] = open ? 1 : 0
-            }
-        }
-        return out
-    }
-
-    /// 何も閉じていない無名 Section。
-    ///
-    /// 無名 Section は「組を閉じる」ためだけに置く代用品（isUnnamed を読むこと）。
-    /// 閉じる相手が無ければ鎖に居る意味が無い。放っておくと leaveGroup を
-    /// 繰り返すだけで増え続ける。増える形は 2 つ:
-    ///
-    ///   1. 組の唯一の配下を出したとき。[S("A"), X] の X を出すと
-    ///      [S("A"), S(""), X] になり、S("A") は配下ゼロ、S("") は閉じる中身が無い。
-    ///   2. 同じ組から下の段から順に出したとき。後から挿した印が前の印を追い越し、
-    ///      末尾側の印は「既に組の外に居る段」の後ろに立って何も閉じなくなる。
-    ///
-    /// **切ってある無名 Section は候補に入れない。**名前が無くても配下は止まる
-    /// （gates は名前を見ない）。あれは飾りではなく本物の区切り。
-    ///
-    /// 返すのは**候補**。消してよいかは gates が変わらないことで最後に確かめる
-    /// （EffeTuneDSP.sweepDeadSections）。この関数だけで決めない。
-    static func redundantUnnamed(types: [String], names: [String], enabled: [Bool]) -> IndexSet {
-        precondition(types.count == names.count && types.count == enabled.count)
-        var dead = IndexSet()
-        var open = false      // 閉じるべき組が開いているか
-        var filled = false    // その組に配下が入ったか
-        for i in types.indices {
-            guard types[i] == type else {
-                if open { filled = true }
-                continue
-            }
-            if isUnnamed(names[i]) && enabled[i] {
-                // 後ろが Section だけなら、閉じる相手が居ても閉じる必要が無い。
-                let tail = (i + 1 ..< types.count).allSatisfy { types[$0] == type }
-                if !open || !filled || tail { dead.insert(i) }
-                open = false
-                filled = false
-            } else {
-                open = true
-                filled = false
-            }
-        }
-        return dead
-    }
-
-    /// 畳んだときに隠す範囲。Section の次から、次の Section の手前まで。
-    /// findSectionRange（pipeline-section-handler.js:250-268）は Section 自身を含む
-    /// startIndex..<endIndex を返すが、こちらは配下だけを返す。
-    static func range(after index: Int, types: [String]) -> Range<Int> {
-        guard types.indices.contains(index), types[index] == type else {
-            return index..<index
-        }
-        var end = index + 1
-        while end < types.count && types[end] != type { end += 1 }
-        return (index + 1)..<end
-    }
 }
 
 /// ユーザープリセットの名前の読み方。

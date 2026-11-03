@@ -1,8 +1,13 @@
 //  UpstreamVersion.swift
 //  Tools/gen_version.py が作る。手で直さないこと。
 //
-//  同梱している EffeTune の版（Vendor/effetune/package.json）。
+//  積んでいる EffeTune の dsp/ 自体の版（Vendor/effetune の dsp-v* タグ）。
 //  **アプリの版とは別の事実。**あちらは出した日で、
-//  こちらは積んだ EffeTune の dsp の版。
+//  EffeTune アプリ全体の版（package.json）とも別。
+//
+//  ETUpstreamAppVersion は積んでいる EffeTune アプリ全体の版（Vendor/effetune/package.json）。
+//  公式の PC は hello の返事に dsp の版を出さず、この版だけを出す。食い違いの表示にだけ使う。
+//  読めなければ空。
 
-let ETUpstreamVersion = "2.10.0"
+let ETUpstreamVersion = "0.16.0"
+let ETUpstreamAppVersion = "2.16.0"

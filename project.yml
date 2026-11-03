@@ -4,17 +4,36 @@ options:
   deploymentTarget:
     iOS: "27.0"
   createIntermediateGroups: true
+  # 既定を Debug に固定する（configs を足すと xcodebuild -list の既定が動くため）。
+  defaultConfig: Debug
+
+# ビルド構成。紫（TestFlight）と青（店）の違いを構成で持つ。
+#   Debug   開発用
+#   Release 店へ出す版（青・ET_BETA なし）。scheme EffeTuneLive の Archive
+#   Beta    TestFlight へ出す版（紫・ET_BETA あり）。scheme "EffectDeck Beta" の Archive
+# アイコンと ET_BETA を同じ Beta の 1 か所で決めるので、
+# 「紫なのに ET_BETA が無い」「青なのに ET_BETA がある」は書けない。
+configs:
+  Debug: debug
+  Release: release
+  Beta: release
 
 settings:
+  configs:
+    Beta:
+      ET_APPICON: EffectDeckPublicBeta
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ET_BETA"
   base:
+    # 既定は青。Beta 構成だけ上の configs で紫に上書きする。
+    ET_APPICON: EffeTuneLive
     DEVELOPMENT_TEAM: C82ST8T9MN
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CLANG_ENABLE_OBJC_ARC: YES
     TARGETED_DEVICE_FAMILY: "1,2"
-    MARKETING_VERSION: "2026.09.20"
-    CURRENT_PROJECT_VERSION: "18"
+    MARKETING_VERSION: "2026.11.03"
+    CURRENT_PROJECT_VERSION: "31"
 
 # EffeTune の DSP コアは host-neutral な C++20 なので、そのまま arm64 で建つ。
 # WASM を経由しない。include の場所だけ揃えれば通る（実機向けに 75/75 確認済み）。
@@ -32,6 +51,8 @@ dspSettings: &dspSettings
     - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
     - $(SRCROOT)/Vendor/effetune/dsp/vendor/pffft/include/pffft
     - $(SRCROOT)/Generated/note-models
+    # 2.12.0 で heap_tree_model.h が note_spectrogram/ から tree_models/ に移った。
+    - $(SRCROOT)/Vendor/effetune/dsp/plugins/analyzer/tree_models
     - $(SRCROOT)/Generated/dsp
     - $(SRCROOT)/EffectDeckLocalDSP
     - $(SRCROOT)/Vendor/ysfx/include
@@ -41,7 +62,8 @@ targets:
 
   # ------------------------------------------------------------------
   # 本体。UI・DSP・スピーカー出力。ユーザーが開くのはこれ。
-  # 拡張を同梱していないので音を出せる。
+  # Media Device Extensionと共有の拡張もここに同梱する。同梱していても
+  # 音を出せる訳は下のdependenciesに書いてある。
   # ------------------------------------------------------------------
   EffeTuneLive:
     type: application
@@ -51,11 +73,18 @@ targets:
         script: bash "$SRCROOT/Scripts/embed_debug_jsfx.sh"
         basedOnDependencyAnalysis: false
     sources:
+      # PrivacyInfo.xcprivacyもここで拾われる。xcodegenは知らない拡張子のファイルを
+      # Copy Bundle Resourcesへ入れる（SourceGenerator.getDefaultBuildPhase）ので、名指しの項目は要らない。
       - path: Sources/EffeTuneLive
         excludes: ["**/*.icon/**"]
       # Icon Composer のファイル。.xcassets の外に置き、
       # ASSETCATALOG_COMPILER_APPICON_NAME に拡張子なしの名前を書く。
       - path: Sources/EffeTuneLive/EffeTuneLive.icon
+        type: file
+        buildPhase: resources
+      # TestFlight へ出すときの紫版。**同じバイナリでは分けられない**ので、
+      # 起動時に差し替えるのではなく、書庫を作るときの構成（Beta）で選ぶ（ET_APPICON）。
+      - path: Sources/EffeTuneLive/EffectDeckPublicBeta.icon
         type: file
         buildPhase: resources
       - path: Sources/Shared
@@ -65,9 +94,12 @@ targets:
       - path: Vendor/effetune/dsp/core
         includes: ["**/*.cpp", "**/*.h"]
         excludes: ["**/*test*.cpp"]
+      # calibrate_tables.cpp は Tonal Balance EQ の表を作る単体ツール（int main を持つ）。
+      # 積むと Swift の @main と _main が衝突する。2.13.0 の rhythm_analyzer/eval.cpp も
+      # 同じ（Rhythm Analyzer の評価ドライバ。upstream はテストとしてだけ組む）。
       - path: Vendor/effetune/dsp/plugins
         includes: ["**/*.cpp", "**/*.h"]
-        excludes: ["**/*test*.cpp"]
+        excludes: ["**/*test*.cpp", "**/calibrate_tables.cpp", "**/rhythm_analyzer/eval.cpp"]
       - path: Vendor/effetune/dsp/vendor/pffft/src
         includes: ["**/*.c", "**/*.h"]
         excludes: ["**/*test*"]
@@ -79,7 +111,7 @@ targets:
       - path: Generated/dsp
         includes: ["**/*.h"]
       # Note Spectrogram はモデルを実行ファイルへ埋め込む。
-      # Scripts/build.sh が embed_models.py を走らせてここへ吐く。
+      # Scripts/setup.sh が embed_models.py を走らせてここへ吐く。
       - path: Generated/note-models
         includes: ["**/*.S", "**/*.h"]
     settings:
@@ -88,7 +120,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune
         PRODUCT_NAME: EffectDeck
         INFOPLIST_FILE: Sources/EffeTuneLive/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: EffeTuneLive
+        # ET_APPICON は上の settings.configs（Beta は紫、ほかは青）。
+        ASSETCATALOG_COMPILER_APPICON_NAME: $(ET_APPICON)
         CODE_SIGN_ENTITLEMENTS: Sources/EffeTuneLive/EffeTuneLive.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Sources/EffeTuneLive/EffeTuneLive-Bridging-Header.h
     dependencies:
@@ -110,6 +143,10 @@ targets:
       # だから**本体の entitlement から落とし、.appex 側にだけ残す**と通る。
       # 2026-09-16 に実機で確かめた。
       - target: EffeTuneLiveExtension
+        embed: true
+        codeSign: true
+      # 共有シートの受け口。Safari の raw リンクを落として App Group へ置く。
+      - target: EffectDeckShare
         embed: true
         codeSign: true
 
@@ -173,14 +210,14 @@ targets:
           - $(SRCROOT)/Vendor/ysfx/thirdparty/dr_libs
 
   # ------------------------------------------------------------------
-  # 入れ物。Media Device Extension を運ぶためだけに在る。
-  # 拡張を同梱したアプリは AVAudioSession が '!pla' で拒否されるので、
-  # ここに UI も DSP も置けない。だからアプリが 2 本要る。
+  # Media Device Extension。本体（EffeTuneLive）に同梱して運ぶ。
+  # 同梱していても本体が音を出せる訳は本体のdependenciesに書いてある。
   # ------------------------------------------------------------------
   EffeTuneLiveExtension:
     type: extensionkit-extension
     platform: iOS
     sources:
+      # 拡張のPrivacyInfo.xcprivacyはこのフォルダから資源として拾われる（本体と同じ）。
       - path: Sources/Extension
       # 拡張は DSP コアを積まないので、et_* を呼ぶものは除く。
       # ファイルを 1 本ずつ書くと XcodeGen が拾わないことがあったので、
@@ -190,6 +227,7 @@ targets:
           - "ETPipeline.*"
           - "ETResample.*"
           - "ETPreviewTone.*"
+          - "ETMeterTap.*"
           - "ETJSFXHost.*"
           - "ETLICEFont.*"
     settings:
@@ -208,25 +246,94 @@ targets:
       - sdk: ExtensionFoundation.framework
 
   # ------------------------------------------------------------------
-  # UI の当たり判定を機械で確かめるためのもの。製品には入らない。
+  # 共有シートの EffectDeck。Safari で開いた gist の raw（WAV・JSFX）、
+  # Files のファイル、選んだ字を受けて App Group の Inbox へ置く。
+  # **判定も取り込みもしない。**本体が前へ出たときに ETShareInbox.drain で拾い、
+  # 「このアプリで開く」と同じ ETInbox.receive に通す。
+  # リンクの読み替えと上限は「Import → From Link」と同じ ETRemoteFile を共有する。
   # ------------------------------------------------------------------
+  EffectDeckShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      # 共有の拡張のPrivacyInfo.xcprivacyはこのフォルダから資源として拾われる（本体と同じ）。
+      - path: Sources/ShareExtension
+      - path: Sources/EffeTuneLive/DSP/ETRemoteFile.swift
+      - path: Sources/EffeTuneLive/DSP/ETShareInbox.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.share
+        PRODUCT_NAME: EffectDeckShare
+        INFOPLIST_FILE: Sources/ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/ShareExtension/ShareExtension.entitlements
+    dependencies:
+      - sdk: UniformTypeIdentifiers.framework
+
   # ------------------------------------------------------------------
   # 実機を使わずに測れるものはここで測る。
   #
   # **アプリを建てない。** 対象のファイルをこのバンドルへ直接コンパイルする。
   # アプリを建てると拡張＝MediaDevice.framework が要り、
-  # それはシミュレータの SDK に無いので建たない（docs/connect-log.md の冒頭）。
+  # それはシミュレータの SDK に無いので建たない（Tools/gen_sim_spec.py の頭）。
   # ここに置けるのは「OS に触らない判断」だけ。触るものは実機で測る。
+  # Foundationだけのものは、Tests/Linux/run.shがこの一覧を読んでLinuxでも走らせる。
   # ------------------------------------------------------------------
   EffeTuneLiveUnitTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: Tests/Unit
+      # JSFX Host。**C++ の native テストは作らない。**
+      # Tests/Native/CMakeLists.txt は ysfx を知らず、Vendor/ysfx は
+      # submodule なので、もう 1 つビルド系を増やすと持ち主が 2 つになる。
+      # 代わりに対象の実装をこのバンドルへ直接コンパイルし、Swift から
+      # ETJSFXHost.h の public C API を叩く（Tests/Unit/JSFX*Tests.swift）。
+      - path: Sources/Shared/ETJSFXHost.cpp
+      - path: Sources/Shared/ETJSFXHost.h
+      - path: Sources/Shared/ETExternalProcessor.h
+      # libYSFX の LICE は字の描画だけ外へ出してある
+      # （ETLICE_CreateFont / ETLICE_ConfigureFont / GetSysColor）。
+      # @gfx を呼ばなくても ysfx_api_gfx.o は引き込まれるので、
+      # この 1 本が無いと未定義参照でリンクが落ちる。
+      - path: Sources/Shared/ETLICEFont.mm
+      # fixture は実行時にバンドルから読む。ETJSFX_Create はパスを取るので、
+      # バンドル内のパスをそのまま渡せる。
+      - path: Tests/Fixtures/JSFX
+        buildPhase: resources
       - path: Sources/EffeTuneLive/Audio/RouteEscape.swift
+      # JSFX を建てる専用スレッドと列挙つまみの選択。Foundation だけ（JSFXLoaderTests）。
+      - path: Sources/EffeTuneLive/Audio/ETJSFXLoader.swift
+      # ソース表示の行分けと色分け。Foundationだけ（JSFXSourceSyntaxTests）。
+      - path: Sources/EffeTuneLive/Audio/JSFXSourceSyntax.swift
+      # 取り込み直したJSFXで前の版を置き換える規則（同じ1本かの判定・付け替えの表・置き場の見直し）。
+      # Foundationだけ（JSFXReplaceTests）。ファイルを動かすのはETJSFXHostで、ここには入れない。
+      - path: Sources/EffeTuneLive/Audio/JSFXReplace.swift
       # 図に重ねるスペクトラムの平滑。SwiftUI にも et_* にも触らないので、
       # この 1 本だけをここへ入れれば数で照合できる。
       - path: Sources/EffeTuneLive/DSP/SpectrumSmoothing.swift
+      # リンクの読み替え（RemoteFileTests）。Foundation と OSLog だけ。
+      - path: Sources/EffeTuneLive/DSP/ETRemoteFile.swift
+      # 15Band PEQ の Import（AutoEQ の ParametricEQ.txt など）。Foundation だけ（PEQTextImportTests）。
+      - path: Sources/EffeTuneLive/DSP/ETPEQTextImport.swift
+      # 専用の画面を持たないエフェクトを上流と同じタブに分ける表。Foundationだけ（ParamTabsTests）。
+      - path: Sources/EffeTuneLive/DSP/ETParamTabs.swift
+      # ほかの値で触れなくなる行の規則（Cassette の Mode・Adaptive Prediction の Freeze / Hold など）。
+      # Foundationだけ（ParamGateTests）。
+      - path: Sources/EffeTuneLive/DSP/ETParamGate.swift
+      # 値を渡した直後には動かない遅れ（SFZ の dt・tm）を tick で見直す帳面。Foundationだけ（LatencyWatchTests）。
+      - path: Sources/EffeTuneLive/DSP/ETLatencyWatch.swift
+      # Audio Unit の数え上げを報告用の行にする所。Foundationだけ（AUCensusTests）。
+      - path: Sources/EffeTuneLive/Audio/ETAUCensus.swift
+      # IR Reverbの下ごしらえ（伸縮・頭の無音・Direct Cut・正規化・切り詰め）と解決規則。
+      # Foundationだけ（IRPreparationTests）。見本は上流のprepareIrが吐いたもので、
+      # Tools/ir_prepare_golden.mjsで作り直せる。
+      - path: Sources/EffeTuneLive/DSP/IRPreparation.swift
+      - path: Tests/Fixtures/IR/prepare-golden.json
+        buildPhase: resources
+      # IR ReverbのEDCグラフの数字（IRAnalysisTests）。見本はTools/ir_analysis_golden.mjsで作り直せる。
+      - path: Sources/EffeTuneLive/DSP/IRAnalysis.swift
+      - path: Tests/Fixtures/IR/analysis-golden.json
+        buildPhase: resources
       # 鎖の意味と正規形。Foundation だけなので実機なしで試せる。
       # 判断をここへ出してあるのは、そのため（PipelineRulesTests）。
       - path: Sources/EffeTuneLive/DSP/PipelineAnalysis.swift
@@ -238,14 +345,191 @@ targets:
       # Virtual Room の純粋な部分。CoreGraphics と Foundation だけ。
       # **VirtualRoomPresets.swift は必須**（EffectPresetApply が
       # ETPresetCatalog を呼ぶので、入れないとリンクが通らない）。
+      # DeckEffects.swift も同じ。PipelineForm・ETShareLink・ETChainText が `ed` の印を読み書きする。
       - path: Sources/EffeTuneLive/DSP/VirtualRoom/VirtualRoomPresets.swift
       - path: Sources/EffeTuneLive/DSP/VirtualRoom/VirtualRoomUIModel.swift
+      - path: Sources/EffeTuneLive/DSP/DeckEffects.swift
       - path: Sources/EffeTuneLive/DSP/RoutingConstraint.swift
+      # 共有リンク（effectdeck.nemut.ai）。**見本はサイトと同じファイルを読む。**
+      # 写しを持つと、片側だけ直して両方の試験が通る形になる（FXDLinkTests）。
+      - path: Sources/EffeTuneLive/DSP/ETFXDLink.swift
+      - path: site/test-vector.json
+        buildPhase: resources
+      # 2.16.0 の Chords & Key（型 32）の枠。上流 3769b9ae の fixtures/chord-key-telemetry.bin の写し（Upstream216Tests）。
+      # CI の linux-swift と fuzz は Vendor/effetune を取らないので、submodule の中を直接指さない。
+      - path: Tests/Fixtures/NoteSpectrogram/chord-key-telemetry.bin
+        buildPhase: resources
+      # 共有の拡張から本体へ渡す置き場。並べる・消すだけで Foundation のみ。
+      - path: Sources/EffeTuneLive/DSP/ETShareInbox.swift
+      # 貼られた鎖の下ごしらえ（ChainTextTests）。Foundationだけ。
+      # Sectionの綴り・表示の鍵・チャンネルの綴り・同梱の鎖・DSPの版を引くので、その5本も入れる。
+      - path: Sources/EffeTuneLive/DSP/ETChainText.swift
+      - path: Sources/EffeTuneLive/DSP/SectionSupport.swift
+      - path: Sources/EffeTuneLive/DSP/DisplayParams.swift
+      # 2.12.0 の解析 3 種（Analog Meter・Tonal Balance EQ・Rhythm Analyzer）の枠の読みと計算。
+      # Foundation だけ。枠は ETFrame / ETPayload で読むので、その 2 本も入れる
+      # （AnalogMeterTests・TonalBalanceTests・RhythmAnalyzerTests）。
+      - path: Sources/EffeTuneLive/DSP/TelemetryFrame.swift
+      - path: Sources/EffeTuneLive/Views/Graphs/TelemetryPayloads.swift
+      - path: Sources/EffeTuneLive/DSP/AnalogMeterModel.swift
+      - path: Sources/EffeTuneLive/DSP/TonalBalanceModel.swift
+      - path: Sources/EffeTuneLive/DSP/RhythmAnalyzerModel.swift
+      # 2.13.0 の Note Spectrogram の枠（版 5）の読み。Foundation だけ（Upstream213Tests）。
+      - path: Sources/EffeTuneLive/DSP/NoteSpectrogramFrame.swift
+      # 2.13.0 の SFZ Note Player の取り込み（SFZ の読み・バンクの入れ物と鍵・カーネルへ送る資産・置き場）。
+      # Foundation だけ（SFZTests）。見本は上流の js/sfz/*.js が作ったもの（Tools/golden/sfz_golden.mjs）。
+      - path: Sources/EffeTuneLive/DSP/SFZParser.swift
+      - path: Sources/EffeTuneLive/DSP/SFZSource.swift
+      - path: Sources/EffeTuneLive/DSP/SFZVoiceFrame.swift
+      - path: Sources/EffeTuneLive/DSP/SFZBank.swift
+      - path: Sources/EffeTuneLive/DSP/SFZAsset.swift
+      - path: Sources/EffeTuneLive/DSP/SFZLibraryFiles.swift
+      - path: Tests/Fixtures/SFZ/sfz-golden.json
+        buildPhase: resources
+      - path: Sources/EffeTuneLive/DSP/ETChannel.swift
+      - path: Sources/EffeTuneLive/Generated/SystemPresets.swift
+      - path: Sources/EffeTuneLive/Generated/UpstreamVersion.swift
+      # 鎖を書いて読み戻す（PipelineStoreTests）。Foundationだけ。引くのはETChainText・SectionSupport・
+      # DisplayParams・ETChannel・ETParamCoding・EffectSpecで、どれも上で入れてある。
+      # Sectionの終端（rootReset）が再起動・プリセット・共有リンクを通って残るかを見る。
+      - path: Sources/EffeTuneLive/DSP/PipelineForm.swift
+      # designerで作る4種の設計の材料（pm / tp / f0など）を上流の綴りで鎖に書く・読む（DesignParamsTests）。
+      # 設定の型を引くので、下のDesigners/*Design.swiftも要る。PipelineForm・ETChainText・
+      # EffectPresetStoreCoreが引く。
+      - path: Sources/EffeTuneLive/DSP/DesignParams.swift
+      # CHAIN.mdの見本と、積んでいる版の語彙（chain/v<版>/effects.json）を実行時に読む。
+      # **chainはフォルダのまま入れる。**版ごとに同じ名前のeffects.jsonが並ぶので、
+      # 平らに束ねると名前がぶつかる。
+      - path: CHAIN.md
+        buildPhase: resources
+      - path: chain
+        type: folder
+        buildPhase: resources
+      # 鎖に並ぶ1個（元はEffeTuneDSP.Node）。EffeTuneDSPはosとet_*に触るので外へ出してある。
+      # 下のChainEditing・ETShareLink・EffectPresetStoreCoreが引く。
+      - path: Sources/EffeTuneLive/DSP/ETChainNode.swift
+      # 音量に追従するカードのキーフレームと補間。Foundationだけ（AutomationTests）。ETChainNode・PipelineForm・ETChainTextが引く。
+      - path: Sources/EffeTuneLive/DSP/Automation.swift
+      # ピッカーの検索の順位（定番の表と別名）。Foundationだけ（EffectSearchTests）。
+      - path: Sources/EffeTuneLive/DSP/EffectSearch.swift
+      # 音量に追従する PEQ の鳴らし方（帯を組にせず2台で直列）。Foundationだけ（PEQBlendTests）。
+      - path: Sources/EffeTuneLive/DSP/PEQBlend.swift
+      # PC の EffeTune を LAN から操る PoC の、通信に触らない部分（RemoteProtocolTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/DSP/RemoteProtocol.swift
+      # PC のアナライザの枠（ETRemoteTelemetry）が引く。枠の型だけで Foundation のみ。
+      - path: Sources/EffeTuneLive/DSP/TelemetryFrame.swift
+      # 鎖をいじるときの決まり（プリセットの足し方・外部の段の付け直し・選択肢をoffsetで読む・
+      # descriptorの中身）。Foundationだけ（ChainEditingTests）。
+      - path: Sources/EffeTuneLive/DSP/ChainEditing.swift
+      # 鎖の取り消しの控えと戻す段取り。Foundationだけ（UndoTests）。
+      - path: Sources/EffeTuneLive/DSP/ETUndo.swift
+      # 共有リンクの読み書き（ShareLinkTests）。
+      - path: Sources/EffeTuneLive/DSP/ETShareLink.swift
+      # 実機で見るための鎖。名前が目録と一字も違わないかを見る（DebugPresetsTests）。
+      - path: Sources/EffeTuneLive/DSP/DebugPresets.swift
+      # プリセット・iCloud・バックアップ・設定の中身。入れ物はETKeyValueStorageで受け、テストは
+      # ETMemoryStorageを渡す（PresetStoreTests・CloudMirrorTests・BackupTests・PreferencesValuesTests）。
+      - path: Sources/EffeTuneLive/DSP/KeyValueStorage.swift
+      - path: Sources/EffeTuneLive/DSP/PresetStoreCore.swift
+      - path: Sources/EffeTuneLive/DSP/EffectPresetStoreCore.swift
+      - path: Sources/EffeTuneLive/DSP/CloudMirrorCore.swift
+      - path: Sources/EffeTuneLive/DSP/ETBackupFormat.swift
+      - path: Sources/EffeTuneLive/PreferencesValues.swift
+      # Status節とツールバーの帯が出す数字と言い回し。両方が同じ関数で丸める（StatusReadingsTests）。
+      - path: Sources/EffeTuneLive/Views/StatusReadings.swift
+      # 警告を1枚ずつ、前の1枚が閉じてから出す順番と、鎖を取り込んだ後に出すもの（AlertQueueTests）。
+      # Foundationだけ。引くETChainText・ETShareLinkは上で入れてある。
+      - path: Sources/EffeTuneLive/Views/AlertQueue.swift
+      # AudioIOから出した、値だけで決まる判断（本数・レート・組み直し・中断・出力の書き出し・外部の枠・
+      # ロック画面・休む判断・撮影用の音）。AVAudioSessionにもCoreAudioにも触らない
+      # （ProcessingChannels・SampleRateRules・PeerFollow・FeedbackLoop・AudioLifecycle・RouteRebuildRule・
+      # AudioBufferOps・ExternalSlotAllocator・NowPlayingMode・PowerGate・MockSourceのTests）。
+      - path: Sources/EffeTuneLive/Audio/AudioSessionRules.swift
+      - path: Sources/EffeTuneLive/Audio/AudioLifecycle.swift
+      - path: Sources/EffeTuneLive/Audio/RouteRebuildRule.swift
+      - path: Sources/EffeTuneLive/Audio/AudioBufferOps.swift
+      - path: Sources/EffeTuneLive/Audio/ExternalSlotAllocator.swift
+      - path: Sources/EffeTuneLive/Audio/NowPlayingMode.swift
+      - path: Sources/EffeTuneLive/Audio/PowerPolicy.swift
+      - path: Sources/EffeTuneLive/Audio/MockSource.swift
+      # 出力先（ヘッドホンなど）ごとの出力補正。出力先の鍵・切り替える時機の判断。
+      # Foundationだけ（OutputDeviceTests）。自分の仮想デバイスを名前で外すのにAudioSessionRules、
+      # 待つ秒数にRouteEscape（どちらも上で入れてある）を引く。
+      - path: Sources/EffeTuneLive/Audio/OutputDevice.swift
+      # 出力補正（Output Correction）の値だけの判断：slot の数え方・端末ごとのプリセットの紐付け・切り替えの段取り・共有の平らげ。Foundationだけ（OutputCorrectionTests）。
+      - path: Sources/EffeTuneLive/DSP/OutputCorrectionCore.swift
+      # プロトコル名を替えた版へ上げた人にだけ再起動の案内を出し、音が続いたら消す（#12）。
+      # Foundationだけ（ProtocolMigrationTests）。入れ物はETKeyValueStorage（上で入れてある）。
+      - path: Sources/EffeTuneLive/Audio/ProtocolMigration.swift
+      # FeedbackLoopTestsがET_NAME_STEMをSwiftの写しと照らすために読む。コンパイルはしない。
+      - path: Sources/Shared/ETNames.h
+        buildPhase: resources
+      # FIRの設計の道具（実FFT・窓・最小位相など）と、FIR系7種へ送る資産の並びと見積り。
+      # FIRDesignはAccelerateのvDSPを使う（LinuxではTests/Linux/Shimsの代役なので、詰め方の照合はMacで数える）。
+      # 見本はTools/golden/fir_golden.mjs・asset_golden.mjsが上流に作らせる（FIRDesignTests・AssetPayloadTests）。
+      - path: Sources/EffeTuneLive/DSP/FIRDesign.swift
+      - path: Sources/EffeTuneLive/DSP/AssetPayload.swift
+      - path: Tests/Fixtures/FIR/fir-golden.json
+        buildPhase: resources
+      - path: Tests/Fixtures/Asset/asset-golden.json
+        buildPhase: resources
+      # FIR系の設計の半分（Foundationだけ）。カーネルへ送り込む半分は各*Designer.swiftに残してある。
+      # 見本はTools/golden/designers_a_golden.mjs（5Band FIR PEQ・FIR Crossover・Bass Management）と
+      # designers_b_golden.mjs（Group Delay EQ・PEQ・Crosstalk・Room EQ）。**見本はファイルで入れる。**
+      # TestResource.urlはsubdirectoryなしでバンドルの根を引くので、type: folderにしない。
+      - path: Sources/EffeTuneLive/DSP/Designers/BassManagementSettings.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/BandFIRPEQDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/FIRCrossoverDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/BassManagementDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/GroupDelayEQDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/GroupDelayPEQDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/CrosstalkDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/RoomEQDesign.swift
+      - path: Sources/EffeTuneLive/DSP/Designers/RoomEQPreview.swift
+      - path: Sources/EffeTuneLive/DSP/CrosstalkMeasurementCore.swift
+      - path: Tests/Fixtures/Designers/designers-a-golden.json
+        buildPhase: resources
+      - path: Tests/Fixtures/Designers/designers-b-golden.json
+        buildPhase: resources
+      # 共有の拡張が受けたものの扱い・Inboxの振り分け・IRの読み方と置き場の鍵
+      # （ShareModelTests・InboxTests・IRDecodeTests・IRLibraryKeyTests・IRLibraryFilesTests）。
+      # NSItemProviderとAVAudioFileに触る所は#if canImportの中で、Macのバンドルだけで走る。
+      # **ShareModelは1本だけ名指しで入れる。**Sources/ShareExtensionをフォルダで入れると、
+      # 共有の拡張の画面とPrivacyInfo.xcprivacyまでこのバンドルに入る。
+      - path: Sources/ShareExtension/ShareModel.swift
+      - path: Sources/EffeTuneLive/DSP/ETInboxRouting.swift
+      - path: Sources/EffeTuneLive/DSP/IRDecode.swift
+      - path: Sources/EffeTuneLive/DSP/IRLibraryFiles.swift
+      - path: Tests/Fixtures/IR/ir-library-id-golden.json
+        buildPhase: resources
+      # PiP の帯（Floating Meters）の描き方。CoreGraphics と Accelerate だけで、音の輪（ETMeterTap）から読む。
+      # 器へ写す道と全部 CoreGraphics で描く道が同じピクセルになるかを見る（MiniMetersTests）。
+      # 実機の器と同じ作りの CGContext をメモリに作って描くので、シミュレータで走る。LinuxではCoreGraphicsが無いので入らない。
+      - path: Sources/EffeTuneLive/Views/MiniMeters.swift
+      - path: Sources/Shared/ETMeterTap.c
+      - path: Sources/Shared/ETMeterTap.h
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.unittests
         GENERATE_INFOPLIST_FILE: YES
+        # ETJSFXHost.cpp は本体と同じ形で建てる（本体は dspSettings 経由）。
+        CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+        CLANG_CXX_LIBRARY: "libc++"
+        # **本体の橋を使い回さない。**JSFX に要るものだけを入れてある。
+        SWIFT_OBJC_BRIDGING_HEADER: Tests/Unit/EffeTuneLiveUnitTests-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Sources/Shared
+          - $(SRCROOT)/Vendor/ysfx/include
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
+    dependencies:
+      - target: YSFX
+      # ETLICEFont.mm の CoreText 境界。
+      - sdk: CoreText.framework
+      - sdk: CoreGraphics.framework
 
+  # ------------------------------------------------------------------
+  # UI の当たり判定を機械で確かめるためのもの。製品には入らない。
+  # ------------------------------------------------------------------
   EffeTuneLiveUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -259,9 +543,43 @@ targets:
     dependencies:
       - target: EffeTuneLive
 
+  # ------------------------------------------------------------------
+  # 共有の部品を ImageRenderer で絵にして並べる（文字サイズ・外観・幅ごと）。製品には入らない。
+  # 何も判定せず、絵を添付に残すだけ（Tests/Snapshot/ComponentGallery.swift）。
+  # 本体の型を @testable で読むので、アプリをホストにする（UI テストと違い同じプロセスで走る）。
+  # scheme AccessibilitySnapshot だけが建てる。Logic（単体テスト）には混ぜない。
+  # ------------------------------------------------------------------
+  EffeTuneLiveSnapshotTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/Snapshot
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.nemut.effetune.snapshottests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/EffectDeck.app/EffectDeck
+        BUNDLE_LOADER: $(TEST_HOST)
+        # **本体のモジュールを読むと、本体の橋渡しヘッダ（ETNames.h・ETJSFXHost.h・effetune/abi.h など）を
+        # この対象の探索パスで引き直す。**本体は headermap と dspSettings で見つけているので、同じ場所を並べる。
+        # 無いと 'effetune/abi.h' file not found で ComponentGallery が建たない。
+        CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+        CLANG_CXX_LIBRARY: "libc++"
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Sources/Shared
+          - $(SRCROOT)/Vendor/effetune/dsp/include
+          - $(SRCROOT)/Vendor/effetune/dsp
+          - $(SRCROOT)/Vendor/effetune/dsp/generated/cpp
+          - $(SRCROOT)/Vendor/effetune/dsp/bindings/generated
+          - $(SRCROOT)/Vendor/ysfx/include
+          - $(SRCROOT)/Vendor/ysfx/thirdparty/WDL/source
+    dependencies:
+      - target: EffeTuneLive
+
 schemes:
-  # 実機なしで走るもの。
-  #   xcodebuild test -scheme Logic -destination 'platform=iOS Simulator,name=iPhone 17'
+  # 実機なしで走るもの。Scripts/test.sh が xcodegen から xcodebuild test まで回す
+  # （端末は既定で "iPad Pro 13-inch (M5)"。Scripts/lib/sim.sh）。
+  #   xcodebuild test -scheme Logic -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)'
   Logic:
     build:
       targets:
@@ -269,6 +587,33 @@ schemes:
     test:
       targets:
         - EffeTuneLiveUnitTests
+
+  # アクセシビリティの監査と、画面の絵を作る（CI の macos a11y）。
+  #   xcodebuild test -scheme Accessibility -only-testing:EffeTuneLiveUITests/AccessibilityAudit ...
+  # 拡張を外したシミュレータ用の仕様（project-sim.yml）で建てる。
+  # **部品の絵（Snapshot）は別の scheme。**ホスト付きの束は本体の型を読むので、建てそこなうことがある。
+  # 同じ scheme に入れると、その失敗で監査と画面の絵まで一緒に落ちる。
+  Accessibility:
+    build:
+      targets:
+        EffeTuneLive: all
+        EffeTuneLiveUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - EffeTuneLiveUITests
+
+  # 共有の部品を ImageRenderer で絵にする（CI の macos a11y の 2 本目）。
+  # Debug 構成で建てる。@testable import EffectDeck が要る。
+  AccessibilitySnapshot:
+    build:
+      targets:
+        EffeTuneLive: all
+        EffeTuneLiveSnapshotTests: [test]
+    test:
+      config: Debug
+      targets:
+        - EffeTuneLiveSnapshotTests
 
   EffeTuneLive:
     build:
@@ -278,3 +623,14 @@ schemes:
     test:
       targets:
         - EffeTuneLiveUITests
+    # 店へ出す版（青）。Release を明示する（release 型の構成が 2 つになったため）。
+    archive:
+      config: Release
+
+  # TestFlight へ出す版（紫・ET_BETA）。GitHub Actions の release.yml〈tf-* のタグ〉と scheme の Archive が使う。
+  "EffectDeck Beta":
+    build:
+      targets:
+        EffeTuneLive: all
+    archive:
+      config: Beta

@@ -1,0 +1,135 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "0DCB706C-8169-4EE7-87B1-C2C12C074245",
+      "deviceName": "iPad Pro 13-inch (M5)",
+      "modelName": "iPad Pro 13-inch (M5)",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ],
+  "testNodes": [
+    {
+      "name": "Logic",
+      "nodeType": "Test Plan",
+      "result": "Passed",
+      "children": [
+        {
+          "name": "EffeTuneLiveUnitTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed",
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0.006s",
+                  "durationInSeconds": 0.005970954895019531,
+                  "name": "testCatalogCarriesEveryKey()",
+                  "nodeIdentifier": "BassManagementTests/testCatalogCarriesEveryKey()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/BassManagementTests/testCatalogCarriesEveryKey",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "children": [
+                    {
+                      "name": "Test skipped - まだ書いていない",
+                      "nodeType": "Skip Message"
+                    }
+                  ],
+                  "duration": "0.0056s",
+                  "durationInSeconds": 0.005631089210510254,
+                  "name": "testIntegerArraysAreWrittenAsInt()",
+                  "nodeIdentifier": "BassManagementTests/testIntegerArraysAreWrittenAsInt()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/BassManagementTests/testIntegerArraysAreWrittenAsInt",
+                  "nodeType": "Test Case",
+                  "result": "Skipped"
+                }
+              ],
+              "name": "BassManagementTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/BassManagementTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0.23s",
+                  "durationInSeconds": 0.22545397281646729,
+                  "name": "testConcurrentSaveStatesReturnTheSameState()",
+                  "nodeIdentifier": "JSFXStabilityTests/testConcurrentSaveStatesReturnTheSameState()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/JSFXStabilityTests/testConcurrentSaveStatesReturnTheSameState",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "children": [
+                    {
+                      "name": "Test skipped - SaveState が先に終わった（重ねられなかった）",
+                      "nodeType": "Skip Message"
+                    }
+                  ],
+                  "duration": "0.19s",
+                  "durationInSeconds": 0.1940000057220459,
+                  "name": "testDestroyWaitsForARunningSaveState()",
+                  "nodeIdentifier": "JSFXStabilityTests/testDestroyWaitsForARunningSaveState()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/JSFXStabilityTests/testDestroyWaitsForARunningSaveState",
+                  "nodeType": "Test Case",
+                  "result": "Skipped"
+                },
+                {
+                  "duration": "0.16s",
+                  "durationInSeconds": 0.15515291690826416,
+                  "name": "testReenableDuringSaveStateNeverHidesTheBypass()",
+                  "nodeIdentifier": "JSFXStabilityTests/testReenableDuringSaveStateNeverHidesTheBypass()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/JSFXStabilityTests/testReenableDuringSaveStateNeverHidesTheBypass",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "JSFXStabilityTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/JSFXStabilityTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0.00052s",
+                  "durationInSeconds": 0.0005199909210205078,
+                  "name": "testBothBecomeEmptySection()",
+                  "nodeIdentifier": "WireCodecTests/testBothBecomeEmptySection()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/WireCodecTests/testBothBecomeEmptySection",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0.19s",
+                  "durationInSeconds": 0.18634092807769775,
+                  "name": "testGatesMatchUpstream()",
+                  "nodeIdentifier": "WireCodecTests/testGatesMatchUpstream()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/WireCodecTests/testGatesMatchUpstream",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "WireCodecTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/EffeTuneLive/EffeTuneLiveUnitTests/WireCodecTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

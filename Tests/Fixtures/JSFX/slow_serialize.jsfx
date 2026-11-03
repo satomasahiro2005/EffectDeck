@@ -1,0 +1,19 @@
+desc:Slow Serialize
+author:nemut.ai
+slider1:200<0,20000,1>Spin
+slider2:0<0,100000,1>Serialize spin
+
+@init
+n = 200;
+
+@slider
+n = slider1;
+
+@serialize
+k = 0;
+loop(slider2, loop(1000, k += 1));
+file_var(0, n);
+
+@sample
+i = 0;
+loop(n, i += 1;);

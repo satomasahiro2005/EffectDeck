@@ -1,0 +1,17 @@
+desc:State Grow New
+author:nemut.ai
+slider1:3<0,10,1>Added later
+slider2:0<0,1000,1>-y from @init
+
+@init
+// **slider1 を足した版。**state_grow_old.jsfx の状態には slider1 が無い。
+// 復元の @init は slider1 を既定値 3 で読むはず（ysfx_load_state と同じ）。
+y = slider1 * 2;
+
+@block
+slider2 = y;
+
+@serialize
+file_var(0, kept);
+
+@sample

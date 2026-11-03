@@ -21,17 +21,17 @@ rm -f "$LOG"
 
 echo "録る: ${SECS}秒 -> $LOG  (udid=$UDID)"
 echo
-echo "  いまコントロールセンターを開いて出力先に EffeTune を選ぶこと。"
+echo "  いまコントロールセンターを開いて出力先に EffectDeck を選ぶこと。"
 echo "  音が鳴っているアプリ（音楽など）も一緒に動かしておく。"
 echo
 # **絞らずに録る。**
-# `-m "EffeTune"` を付けていたが、**一番要る行がそれで落ちる。**
-# 経路を決めている audiomxd の行に大文字の EffeTune は入っていない:
+# `-m "EffeTune"`（当時の表示名。今は EffectDeck）を付けていたが、**一番要る行がそれで落ちる。**
+# 経路を決めている audiomxd の行に表示名は入っていない:
 #   Session with bundleID: com.spotify.client doesn't support currently selected
 #   protocolID media-device-protocol.ai.nemut.effetune. isPlayingVideoOutput: NO.
 #   Allow session with bundleID: com.spotify.client to play using
 #   protocolID media-device-protocol.ai.nemut.effetune because there is a MusicVAD.
-# （docs/connect-log.md:545, :587-589 逐語。effetune は小文字）
+# （手元の記録 docs/connect-log.md:545, :587-589 から逐語。公開していない。effetune は小文字）
 # 絞るのは録ったあと。下の grep がやる。
 idevicesyslog -u "$UDID" > "$LOG" 2>&1 &
 CAP=$!
@@ -49,7 +49,7 @@ grep "受信 frames=" "$LOG" | tail -6
 echo
 echo "-- 2. 本体は受け取って、どこへ出しているか"
 grep "tick out=" "$LOG" | tail -6
-echo "   out= が EffeTune なら自分の音が仮想デバイスへ戻っている（ループバック側の話）"
+echo "   out= が EffectDeck なら自分の音が仮想デバイスへ戻っている（ループバック側の話）"
 echo
 echo "-- 3. 繋ぎ"
 grep "ET connect\|ET receiver\|ET 接続を受けた\|相手が切断した\|ET connect 失敗" "$LOG" | tail -8

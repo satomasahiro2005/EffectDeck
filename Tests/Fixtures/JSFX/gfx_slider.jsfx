@@ -1,0 +1,9 @@
+desc:GFX slider
+author:nemut.ai
+slider1:0<0,10,1>Value
+slider2:0<0,10,1>Seen by @gfx
+
+@sample
+
+@gfx 100 100
+slider2 = slider1;

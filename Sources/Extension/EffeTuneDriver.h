@@ -73,6 +73,13 @@ typedef void (^EffeTuneSampleHandler)(const float *_Nonnull *_Nonnull data,
 @property (nonatomic, readonly) uint32_t channelCount;
 @property (nonatomic, readonly) uint64_t framesDelivered;
 
+/// WriteMix に来たフレームと回数、そのうち中身がすべて 0.0f だったフレームの累計。
+/// framesDelivered は StartIO と startCapture で 0 に戻るので差が負になりうる。
+/// こちらは戻らないので、増分を見ること。
+@property (nonatomic, readonly) uint64_t writeMixFramesTotal;
+@property (nonatomic, readonly) uint64_t writeMixCalls;
+@property (nonatomic, readonly) uint64_t silentFrames;
+
 @end
 
 NS_ASSUME_NONNULL_END

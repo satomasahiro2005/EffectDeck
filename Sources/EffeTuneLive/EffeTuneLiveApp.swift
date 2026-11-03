@@ -27,18 +27,33 @@ struct EffeTuneLiveApp: App {
     /// 鎖だけは遅れて降りてくることがある（入れ直した直後）。そのとき画面へ
     /// 入れるのは DSP の担当なので、口を先に渡してから seed する。
     init() {
+        // **iCloud から鎖を戻すより先に。**前の版から上げたかを鎖の有無で見ている
+        // ので、戻した後だと新しく入れた端末まで上げた人に見える（ProtocolMigration.swift）。
+        // 撮影用の起動では見ない（帯の字が変わる）。
+        assert(ETProtocolMigration.legacyKey == PipelineStore.lastKey,
+               "ETProtocolMigration.legacyKey が PipelineStore.lastKey と違う")
+        if ETScreenshotSeed.requested == nil {
+            ETProtocolMigration.noteLaunch(storage: UserDefaults.standard)
+        }
         CloudMirror.onChainRestored = { EffeTuneDSP.shared.adoptSeededChain() }
         CloudMirror.seedIfEmpty()
+        // どの国の店から入れたか。中国本土では ChatGPT の入口を隠す（ETStorefrontGate）。
+        ETStorefrontGate.shared.start()
+        // PoC: Disconnect していなければ、控えた PC の EffeTune へつなぎ直す（DSP/RemoteMirror.swift）。
+        // 店の版ではつながない（ETFeatures.remoteControl）。退避の戻しだけする。
+        RemoteMirror.shared.start()
     }
 
     var body: some Scene {
         WindowGroup {
-            // -ETProbe 1 のときは並べ替えの切り分け用の画面
-            // （ReorderProbeView.swift の頭）。
-            if ETScreenshotSeed.probe {
-                ETReorderProbeView()
-            } else {
-                PipelineView()
+            Group {
+                // -ETProbe 1 のときは並べ替えの切り分け用の画面
+                // （ReorderProbeView.swift の頭）。
+                if ETScreenshotSeed.probe {
+                    ETReorderProbeView()
+                } else {
+                    PipelineView()
+                }
             }
         }
     }

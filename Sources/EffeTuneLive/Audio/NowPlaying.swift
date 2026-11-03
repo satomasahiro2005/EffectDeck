@@ -16,68 +16,26 @@ enum NowPlaying {
 
     private static var wired = false
 
-    /// 測るためだけの口。**製品の設定には出さない。**
-    ///
-    /// なぜ要るか。MediaExperience の `_CMSUtility_UpdateRoutingContextForSession` は
-    /// `_CMSUtility_SessionCanBeAndAllowedToBeNowPlayingApp` が真だと、
-    /// こちらのセッションを SystemMusic ルーティングコンテキストへ移して
-    /// `updateRouteSharingPolicy:setByClient:` を (1, 0) で撃つ。
-    /// SystemMusic は non-groupable な経路が選ばれると SystemAudio へ追従するので、
-    /// どちらに居ても仮想デバイスを指す＝ループバック。
-    ///
-    /// 判定が走るのは `setCategory` の瞬間と、Now Playing の再生状態が変わった瞬間。
-    /// こちらは init で `MPRemoteCommandCenter` を配線し、tick で
-    /// `playbackState = .playing` を置くので、**`start()` との前後が起動ごとに
-    /// 入れ替わる**。起動ごとに結果が変わる観測と整合する。
-    /// （「20%」は Unable to Connect の頻度で、ループバックの頻度ではない）
-    ///
-    /// 実測（2026-09-16）。セッションを開いた瞬間の出力先と `rsp`:
-    ///
-    /// | `np` | セッション開始 | `out=EffeTune` の tick |
-    /// |---|---|---|
-    /// | `on`    | 5（うち 1 回が EffeTune で開いて `rsp=1`） | 3 |
-    /// | `first` | 2 | 7 |
-    /// | `off`   | **6** | **0** |
-    ///
-    /// `off` の 6 回は全部 `rsp=0` で内蔵／BT へ出ており、一度も仮想デバイスに
-    /// 乗っていない。`routeSharingPolicy` はこちらが一度も設定していないので、
-    /// 1（LongFormAudio）は系が書いたもの。ヘッダの定義がそのまま症状になっている:
-    ///   「All applications on the system that use the long-form audio route
-    ///    sharing policy will have their audio routed to the same location.」
-    /// その location が EffeTune なので、自分の音が自分へ戻る。
-    ///
-    /// **引き金**: アプリが動いていない状態で EffeTune を選ぶ、または
-    /// タスクキル後に選び直す。どちらも「仮想デバイスが選ばれている最中に
-    /// こちらがセッションを開く」並びになる。
-    ///
-    /// **失うものは無い。** 名乗っていた頃もロック画面に EffectDeck の
-    /// 再生/一時停止は出ていなかった（2026-09-16 ユーザー確認）。
-    /// 鳴らしているアプリが Now Playing を握っているので、こちらは出番が無い。
-    /// そもそも鎖の入切は、コントロールセンターで出力先を iPhone Speaker と
-    /// EffeTune で切り替えるのと同じことなので、割り当てる価値も無い。
-    /// つまりこの配線は**効果ゼロでループバックだけ招いていた**。
-    /// 名乗らなければロック画面には実際に鳴っているアプリが出る。
-    enum Mode: String {
-        /// 名乗る。**2026-09-16 までの既定。ループバックの原因だったので外した。**
-        case on
-        /// **既定。** now playing 能力を名乗らない。
-        case off
-        /// **わざと先に名乗る。** `start()` より前に `playbackState = .playing` を置く。
-        /// 測るためだけ。
-        case first
-    }
+    /// 測るためだけの口。中身と理由は NowPlayingMode.swift の ETNowPlayingMode。
+    typealias Mode = ETNowPlayingMode
 
-    /// 引数で来たら**焼き付ける**。
+    /// 引数で来たら**焼き付ける（Debug だけ）**。
     /// `-ETNowPlaying first` のように渡すのは `devicectl` から起動したときだけで、
-    /// アイコンから起動すると引数は付かない。焼いておけば次から効く。
-    /// 戻すときは `-ETNowPlaying on`。
+    /// アイコンから起動すると引数は付かない。Debug では焼いておけば次から効く。
+    /// Release は焼かず、焼いてある値も読まない（開発中に焼いた値を店の版へ持ち込まない）。
+    /// 戻すときは `-ETNowPlaying off`。
     nonisolated static let mode: Mode = {
         let d = UserDefaults.standard
-        if let arg = d.string(forKey: "ETNowPlaying"), let m = Mode(rawValue: arg) {
-            d.set(m.rawValue, forKey: "diag.nowPlaying")
-            return m
-        }
-        return Mode(rawValue: d.string(forKey: "diag.nowPlaying") ?? "") ?? .off
+        #if DEBUG
+        let persists = true
+        #else
+        let persists = false
+        #endif
+        let resolved = Mode.resolve(argument: d.string(forKey: Mode.argumentKey),
+                                    persisted: persists ? d.string(forKey: Mode.persistedKey) : nil,
+                                    persists: persists)
+        if let save = resolved.save { d.set(save.rawValue, forKey: Mode.persistedKey) }
+        return resolved.mode
     }()
 
     nonisolated static var disabled: Bool { mode == .off }
@@ -87,7 +45,7 @@ enum NowPlaying {
     static func claimBeforeSession() {
         guard mode == .first else { return }
         var info: [String: Any] = [:]
-        info[MPMediaItemPropertyTitle] = "EffectDeck"
+        info[MPMediaItemPropertyTitle] = ETNowPlayingText.title
         info[MPNowPlayingInfoPropertyIsLiveStream] = true
         info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -139,10 +97,8 @@ enum NowPlaying {
         guard running else { stop(); return }
 
         var info: [String: Any] = [:]
-        info[MPMediaItemPropertyTitle] = "EffectDeck"
-        info[MPMediaItemPropertyArtist] = active
-            ? (count == 1 ? "1 effect" : "\(count) effects")
-            : "Bypassed"
+        info[MPMediaItemPropertyTitle] = ETNowPlayingText.title
+        info[MPMediaItemPropertyArtist] = ETNowPlayingText.artist(active: active, count: count)
         // 尺も再生位置も持っていないので出さない。
         // 出すと元のアプリの曲の進みだと誤解される。
         info[MPNowPlayingInfoPropertyIsLiveStream] = true

@@ -46,11 +46,20 @@ struct StereoMeterView: View {
     let node: EffeTuneDSP.Node
     @ObservedObject var dsp: EffeTuneDSP
 
+    @Environment(\.etGraphOnly) private var graphOnly
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// 表示だけの倍率（dB）。上流の `gn`（v2.11.0 の stereo_meter.js:160、:264-269）。DSP へは送らない。
+    @State private var gain: Double = 0
+
+    /// v2.11.0 の stereo_meter.js:222 の 0〜24dB。
+    private static let gainRange: ClosedRange<Double> = 0...24
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // テレメトリを観測するのはこの中だけ。つまみの行を 30Hz で作り直さない。
-            StereoMeterFigure(tapId: node.tapId, windowSeconds: windowSeconds)
+            StereoMeterFigure(tapId: node.tapId, windowSeconds: windowSeconds, gainDB: gain)
 
+            // 上流は Window・Gain の順（v2.11.0 の stereo_meter.js:213-226）。
             ForEach(node.spec.params) { param in
                 if param.name == "windowTime" {
                     StereoWindowRow(param: param, nodeIndex: index,
@@ -59,7 +68,38 @@ struct StereoMeterView: View {
                     ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
                 }
             }
+            if !graphOnly { gainRow }
         }
+        // 畳むと View ごと消えるので鎖に持たせる。上流も `gn` をプリセットに書く
+        // （v2.11.0 の stereo_meter.js:271-279）。
+        .etSaved($gain, key: "gn", index: index, dsp: dsp)
+    }
+
+    /// v2.11.0 の stereo_meter.js:221-226 の createParameterControl('Gain', 0, 24, 1, …, 'dB')。
+    private var gainRow: some View {
+        // 文字を大きくした人には縮めず折り返し、名前と数値欄を縦に積む（ParameterRow と同じ）。
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return VStack(alignment: .leading, spacing: 6) {
+            layout {
+                Text("Gain (dB)")
+                    .etFont(size: 14)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                ETValueField(text: ETNumberText.plain(gain) + " dB",
+                             label: "Gain",
+                             editText: { ETNumberText.plain(gain) }) { typed in
+                    // 上流の setGain（:264-269）と同じく挟むだけで丸めない。
+                    gain = min(max(typed, Self.gainRange.lowerBound), Self.gainRange.upperBound)
+                }
+            }
+            Slider(value: $gain, in: Self.gainRange, step: 1)
+                .accessibilityLabel("Gain")
+                .accessibilityValue(ETNumberText.plain(gain) + " dB")
+        }
+        .padding(.vertical, 2)
     }
 
     /// つまみが持っている Window の長さ。秒で入っている（EffectCatalog の windowTime）。
@@ -80,10 +120,20 @@ private struct StereoMeterFigure: View {
 
     let tapId: UInt32
     let windowSeconds: Double
+    /// 点と包絡線の半径にだけ掛ける（v2.11.0 の stereo_meter.js:542 の signalRadius）。
+    /// ひし形・目盛り・相関と左右差の棒は変えない。
+    let gainDB: Double
 
     @ObservedObject private var telemetry = Telemetry.shared
     @StateObject private var trail = ETStereoTrail()
-    @State private var side: CGFloat = ETGraphMetrics.height
+    @Environment(\.etGraphOnly) private var graphOnly
+    @Environment(\.etGraphMaxHeight) private var maxHeight
+
+    /// 畳んだカードの図の一辺（etGraphOnly と etGraphMaxHeight が両方入る。EffectCardView）。
+    /// 開いたカードでは nil。
+    private var foldedSide: CGFloat? {
+        graphOnly ? maxHeight : nil
+    }
 
     /// 角度ごとのピーク（stereo_meter.js:6）。
     private static let envelopeBins = 360
@@ -97,18 +147,27 @@ private struct StereoMeterFigure: View {
     var body: some View {
         // 枠を解くのは 1 回だけ。指で触っている間も body は回る。
         let reading = self.reading
+        let folded = foldedSide
         return GraphCanvas(
             x: .blank(), y: .blank(),
-            height: side,
+            height: folded ?? ETGraphMetrics.height,
             insets: .none,
             readout: readout(reading),
             caption: "Waiting for audio",
             clipsContent: true,
+            // 畳んだ図は高さを幅に合わせた正方形にして、字の行と外枠は持たない。
+            // 高さだけを 132pt に切ると、幅いっぱいの帯の中に正方形用の配置
+            // （左端の相関の棒・下端の左右差の棒）が引き伸ばされて、棒が帯の端に離れてしまう。
+            showsHeader: folded == nil,
+            framed: folded == nil,
+            // 開いた図は幅から高さを決める（測って入れ直すと開いた直後に 1 回跳ねる）。
+            isSquare: folded == nil,
             draw: { context, plot in
                 Self.drawField(&context, plot)
                 if let r = reading {
-                    trail.draw(&context, plot, seconds: windowSeconds)
-                    Self.drawEnvelope(&context, plot, Self.smooth(r.envelope))
+                    let gain = pow(10, gainDB / 20)
+                    trail.draw(&context, plot, seconds: windowSeconds, gain: gain)
+                    Self.drawEnvelope(&context, plot, Self.smooth(r.envelope), gain: gain)
                     Self.drawCorrelationBar(&context, plot, Double(r.correlation))
                     Self.drawBalanceBar(&context, plot, Double(r.balance))
                 }
@@ -117,20 +176,21 @@ private struct StereoMeterFigure: View {
                 Self.drawBalanceTicks(&context, plot)
                 Self.drawAxisNames(&context, plot)
             })
-            .frame(maxWidth: Self.maxSide)
-            // 上流は aspectRatio '1 / 1'。幅を測って高さに使う。
-            // 高さだけが変わるので、測り直しは繰り返さない。
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.width
-            } action: { width in
-                if width > 0 { side = width }
-            }
+            // 畳んだ図は高さ（collapsedGraphHeight）と同じ幅。開いた図は上流の 480 まで（左寄せのまま）。
+            .frame(maxWidth: folded ?? Self.maxSide)
+            .frame(maxWidth: centeredWidth(folded: folded))
             .onAppear { push(reading) }
             .onChange(of: reading?.sequence) { _, _ in push(reading) }
             // 枠が途切れたら貯めた点を捨てる。繋ぎ直したときに前の音が混ざらないように。
             .onChange(of: reading == nil) { _, gone in
                 if gone { trail.reset() }
             }
+            // 手元と PC で時計が違う。入れ替わったら貯めた点を捨てる。
+    }
+
+    /// 畳んだ図だけ、カードの幅の真ん中に置く。開いた図は今まで通り左寄せ。
+    private func centeredWidth(folded: CGFloat?) -> CGFloat? {
+        folded == nil ? nil : CGFloat.infinity
     }
 
     private func readout(_ r: Reading?) -> [ETReadoutItem] {
@@ -195,8 +255,9 @@ private struct StereoMeterFigure: View {
     // MARK: 包絡線
 
     /// 角度ごとのピークを結んだ輪（stereo_meter.js:641-653）。
+    /// gain は Gain の倍率（v2.11.0 の stereo_meter.js:671）。
     private static func drawEnvelope(_ context: inout GraphicsContext, _ plot: ETPlot,
-                                     _ envelope: [Double]) {
+                                     _ envelope: [Double], gain: Double) {
         guard envelope.count == envelopeBins else { return }
         let rect = plot.rect
         let center = CGPoint(x: rect.midX, y: rect.midY)
@@ -205,7 +266,8 @@ private struct StereoMeterFigure: View {
         var path = Path()
         for bin in 0..<envelopeBins {
             let radians = Double(bin) * .pi / 180
-            let r = min(max(envelope[bin], 0), 4) * 0.5 * Double(radius)
+            // 上限 4 は倍率を掛けた後で切る。図の外へ大きく外れた点で Path を壊さない。
+            let r = min(max(envelope[bin] * gain, 0), 4) * 0.5 * Double(radius)
             let point = CGPoint(x: center.x + CGFloat(cos(radians) * r),
                                 y: center.y + CGFloat(sin(radians) * r))
             if bin == 0 { path.move(to: point) } else { path.addLine(to: point) }
@@ -442,7 +504,9 @@ final class ETStereoTrail: ObservableObject {
     }
 
     /// Window の長さだけ遡って打つ（stereo_meter.js:595-618）。
-    func draw(_ context: inout GraphicsContext, _ plot: ETPlot, seconds: Double) {
+    /// gain は Gain の倍率（v2.11.0 の stereo_meter.js:627-628）。
+    func draw(_ context: inout GraphicsContext, _ plot: ETPlot, seconds: Double,
+              gain: Double = 1) {
         guard count > 0, storedRate > 0, seconds > 0 else { return }
         let needed = min(count, max(1, Int((seconds * storedRate).rounded())))
         let step = max(1, needed / Self.maxDrawn)
@@ -465,8 +529,9 @@ final class ETStereoTrail: ObservableObject {
             i += step
             guard x.isFinite, y.isFinite else { continue }
             // ひし形の外へ大きく外れた点で Path を壊さないよう、ほどほどで止める。
-            let cx = min(max(x, -4), 4)
-            let cy = min(max(y, -4), 4)
+            // 倍率を掛けた後で止める。
+            let cx = min(max(x * gain, -4), 4)
+            let cy = min(max(y * gain, -4), 4)
             let px = center.x + CGFloat(cx * 0.5) * radius
             let py = center.y - CGFloat(cy * 0.5) * radius
             paths[shade].addRect(CGRect(x: px - 0.75, y: py - 0.75, width: 1.5, height: 1.5))
@@ -496,6 +561,7 @@ private struct StereoWindowRow: View {
     @ObservedObject var dsp: EffeTuneDSP
 
     @Environment(\.etGraphOnly) private var graphOnly
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var editing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
@@ -525,13 +591,17 @@ private struct StereoWindowRow: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        // 文字を大きくした人には縮めず折り返し、名前と数値欄を縦に積む（ParameterRow と同じ）。
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return VStack(alignment: .leading, spacing: 6) {
+            layout {
                 Text(param.label + " (ms)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 4)
+                    .etFont(size: 14)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                 field
             }
             Slider(value: Binding(get: { milliseconds }, set: { set($0) }),
@@ -547,9 +617,9 @@ private struct StereoWindowRow: View {
                                              set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
                 .stroke(.tint, lineWidth: editing ? 1 : 0))

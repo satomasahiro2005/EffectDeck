@@ -15,13 +15,16 @@
 //
 //  **こちらでは終端を独立した語にする。**それが `rootReset`。
 //  Section ではないので、名前も入切も持たず、行にも出ず、畳めもしない。
-//  EffeTune へ出す瞬間だけ `Section(cm: "")` に化ける（ETWireCodec）。
+//  EffeTuneへ出す瞬間だけ`Section(cm: "")`に化ける（PipelineForm.swift）。
 //
 //  **外から来た空 Section を rootReset と推測してはいけない。**
 //  人が付けなかった名前なのか、上流が挿した終端なのか、渡された形からは
 //  区別できない。外のものは必ず普通の Section として読む。自分で作ったものだけ、
-//  端末に残した覚え（ETPipelineMetadata）から戻す。**誤って消すより、
+//  書いたときに付けた印（ETSection.rootResetKey）から戻す。**誤って消すより、
 //  見た目の情報を失うほうが安全。**
+//
+//  足したものは組の外へ置く（ETChainEditing.addition）。末尾の組が開いたままなら
+//  足す直前に rootReset を挿す。
 
 import Foundation
 
@@ -75,6 +78,20 @@ struct ETPipelineAnalysis {
                 out.state[ids[i]] = State(owner: owner, gate: open ? 1 : 0)
                 if let owner { out.members[owner, default: []].append(ids[i]) }
             }
+        }
+        return out
+    }
+
+    /// 別々に走らせた複数の結果を 1 つにする（main と出力補正）。
+    ///
+    /// 鍵は Node.id で、部分をまたいで重ならない。それぞれの走りは自分の並びの中だけで
+    /// 完結しているので、main の終わりの OFF Section が補正を止めることも、
+    /// 補正の Section が main の段を引き込むこともない。
+    static func merged(_ parts: [ETPipelineAnalysis]) -> ETPipelineAnalysis {
+        var out = ETPipelineAnalysis()
+        for p in parts {
+            out.state.merge(p.state) { _, new in new }
+            out.members.merge(p.members) { _, new in new }
         }
         return out
     }

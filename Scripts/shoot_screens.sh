@@ -2,59 +2,58 @@
 # エフェクトのカード以外の画面を撮る。
 # 使い方: bash Scripts/shoot_screens.sh
 #
-# 撮ったものは shots-screens/<名前>.png。
-# **iPhone で撮り、幅は絞らない。** 絞ると端末の幅との差が左右の余白に見えて
-# 崩れと区別できなくなる。カードが長くて切れるのは shoot_all.sh の話で、
-# こちらは画面の作りを見るためのもの。
+# 撮ったものは shots-screens/<名前>.png。画面の作りを見るためのもの
+# （カードが長くて切れるのは shoot_all.sh の話）。
+#
+# 端末は既定で "iPad Pro 13-inch (M5)"（Scripts/lib/sim.sh。ほかに起きている端末は落とす）。
+# 幅は WIDTH で決める。既定は iPad なら 440（出荷物の iPad が 1 列で止める幅）、
+# iPhone なら 0（絞らない）。**iPhone で撮るなら絞ってはいけない。**絞ると端末の幅との差が
+# 左右の余白に見えて、崩れと区別できなくなる。
+#   SIM="iPhone 18 Pro" bash Scripts/shoot_screens.sh   iPhone の見え方
+#   LAYOUT=wide                                        iPad の 2 列（-ETLayout wide を渡す）
+#   SKIP_BUILD=1 / SKIP_SETUP=1 / WAIT=秒 / DRY_RUN=1  shoot_all.sh と同じ
+# 建てるときの全出力は shoot-build.log。
 set -u
 export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")/.." || exit 1
 ROOT="$PWD"
+# shellcheck source=Scripts/lib/sim.sh
+. Scripts/lib/sim.sh
 OUT="$ROOT/shots-screens"
-APPID=ai.nemut.effetune
+BUILD_LOG="$ROOT/shoot-build.log"
 
-DEV=$(xcrun simctl list devices available | grep -F "${SIM:-iPhone 18 Pro} (" | head -1 \
-      | sed -n 's/.*(\([0-9A-F-]\{36\}\)).*/\1/p')
-[ -n "$DEV" ] || { echo "!! シミュレータが無い"; exit 1; }
-xcrun simctl list devices | grep Booted | grep -oE "[0-9A-F-]{36}" | while read -r other; do
-  if [ "$other" != "$DEV" ]; then xcrun simctl shutdown "$other" >/dev/null 2>&1; fi
-done
-xcrun simctl boot "$DEV" 2>/dev/null
-xcrun simctl bootstatus "$DEV" -b >/dev/null 2>&1
+sim_select || exit 1
+echo "device: $SIM_NAME ($SIM_UDID)"
+if sim_is_ipad; then WIDTH="${WIDTH:-440}"; else WIDTH="${WIDTH:-0}"; fi
+sim_only || exit 1
+sim_show
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
-  bash Scripts/setup.sh 2>&1 | tail -1
-  # 拡張を外した仕様で建てる。MediaDevice.framework はシミュレータに無いので、
-  # 拡張を含むスキームは Unable to resolve module dependency で必ず落ちる。
-  # 画面を撮るのに拡張は要らない（音が来ないだけで画面は同じものが出る）。
-  python3 Tools/gen_sim_spec.py 2>&1 | tail -1
-  xcodegen generate --spec project-sim.yml 2>&1 | tail -1
-  /usr/bin/xcodebuild -project EffeTuneLiveSim.xcodeproj -scheme EffeTuneLive \
-    -configuration Debug -sdk iphonesimulator -arch arm64 \
-    CONFIGURATION_BUILD_DIR="$ROOT/out-sim" build 2>&1 \
-    | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -5
+  [ "${DRY_RUN:-0}" = "1" ] || : > "$BUILD_LOG"
+  sim_project "$BUILD_LOG" || exit 1
+  sim_build_app "$BUILD_LOG" || exit 1
 fi
 
 APP="$ROOT/out-sim/EffectDeck.app"
-[ -d "$APP" ] || { echo "!! 成果物が無い"; exit 1; }
-xcrun simctl uninstall "$DEV" "$APPID" >/dev/null 2>&1
-xcrun simctl install "$DEV" "$APP"
+if [ "${DRY_RUN:-0}" != "1" ] && [ ! -d "$APP" ]; then
+  echo "!! 成果物が無い: $APP"
+  exit 1
+fi
+sim_install_app "$APP" || exit 1
 
-mkdir -p "$OUT"
+et_run mkdir -p "$OUT"
 
 # 名前 / 鎖 / 出すシート
 #   鎖が none だと空の画面、chain だと 4 本並んだ画面になる。
 shoot() {
   local name="$1" seed="$2" sheet="${3:-}"
-  xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
-  # -ETWidth 0 で幅の絞りを外す。iPhone で撮るので端末そのままが正しい。
-  if [ -n "$sheet" ]; then
-    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETSheet "$sheet" -ETWidth 0 -ETMock 1 >/dev/null 2>&1
-  else
-    xcrun simctl launch "$DEV" "$APPID" -ETSeed "$seed" -ETWidth 0 -ETMock 1 >/dev/null 2>&1
-  fi
-  sleep "${WAIT:-3}"
-  xcrun simctl io "$DEV" screenshot "$OUT/$name.png" >/dev/null 2>&1
+  local args=(-ETSeed "$seed" -ETWidth "$WIDTH" -ETMock 1)
+  [ -z "$sheet" ] || args+=(-ETSheet "$sheet")
+  [ -z "${LAYOUT:-}" ] || args+=(-ETLayout "$LAYOUT")
+  sim_terminate_app
+  et_quiet xcrun simctl launch "$SIM_UDID" "$ET_APPID" "${args[@]}"
+  et_run sleep "${WAIT:-3}"
+  et_quiet xcrun simctl io "$SIM_UDID" screenshot "$OUT/$name.png"
   echo "  $name"
 }
 
@@ -67,6 +66,6 @@ shoot routing    chain routing
 shoot ir         chain ir
 # 撮り終わったら落とす。-ETMock で音が鳴っているので、
 # 起きたままだと Mac のスピーカーから掃引が鳴り続ける。
-xcrun simctl terminate "$DEV" "$APPID" >/dev/null 2>&1
-xcrun simctl shutdown "$DEV" >/dev/null 2>&1
+sim_terminate_app
+et_quiet xcrun simctl shutdown "$SIM_UDID"
 echo "SHOTS: $OUT"

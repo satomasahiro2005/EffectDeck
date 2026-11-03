@@ -38,25 +38,28 @@ struct ETFrequencyCurve: Identifiable {
     var dashed: Bool
     /// バンドごとの内訳のように、合成曲線の脇に薄く添えるもの。
     var subdued: Bool
+    /// 読み上げる名前（Audio Graphs の系列名）。nil なら id から決める。
+    var name: String?
 
     init(id: String, points: [ETFreqPoint], width: CGFloat = 2,
-         dashed: Bool = false, subdued: Bool = false) {
+         dashed: Bool = false, subdued: Bool = false, name: String? = nil) {
         self.id = id
         self.points = points
         self.width = width
         self.dashed = dashed
         self.subdued = subdued
+        self.name = name
     }
 
     /// 対数で等間隔に並んだ dB の列から作る。DSP から並びだけ貰うときはこれ。
     static func logSpaced(id: String, decibels: [Float],
                           from: Double = 20, to: Double = 20000,
                           width: CGFloat = 2, dashed: Bool = false,
-                          subdued: Bool = false) -> ETFrequencyCurve {
+                          subdued: Bool = false, name: String? = nil) -> ETFrequencyCurve {
         let n = decibels.count
         guard n > 1 else {
             return ETFrequencyCurve(id: id, points: [], width: width,
-                                    dashed: dashed, subdued: subdued)
+                                    dashed: dashed, subdued: subdued, name: name)
         }
         let lo = log10(max(from, 1e-9))
         let hi = log10(max(to, from * 1.000001))
@@ -65,17 +68,18 @@ struct ETFrequencyCurve: Identifiable {
             return ETFreqPoint(pow(10, lo + t * (hi - lo)), Double(decibels[i]))
         }
         return ETFrequencyCurve(id: id, points: points, width: width,
-                                dashed: dashed, subdued: subdued)
+                                dashed: dashed, subdued: subdued, name: name)
     }
 
     /// 式から引く。count 点を対数で等間隔に取る。
     static func sampled(id: String, count: Int = 256,
                         from: Double = 20, to: Double = 20000,
                         width: CGFloat = 2, dashed: Bool = false, subdued: Bool = false,
+                        name: String? = nil,
                         magnitude: (Double) -> Double) -> ETFrequencyCurve {
         guard count > 1 else {
             return ETFrequencyCurve(id: id, points: [], width: width,
-                                    dashed: dashed, subdued: subdued)
+                                    dashed: dashed, subdued: subdued, name: name)
         }
         let lo = log10(max(from, 1e-9))
         let hi = log10(max(to, from * 1.000001))
@@ -85,7 +89,7 @@ struct ETFrequencyCurve: Identifiable {
             return ETFreqPoint(hz, magnitude(hz))
         }
         return ETFrequencyCurve(id: id, points: points, width: width,
-                                dashed: dashed, subdued: subdued)
+                                dashed: dashed, subdued: subdued, name: name)
     }
 }
 
@@ -123,15 +127,23 @@ struct FrequencyResponseGraph: View {
     ///
     /// 上流はホストのループが段の前後で音を横取りして描いている
     /// （plugins/audio-processor.js:5142,5275）。その口が dsp/include/effetune/abi.h に
-    /// 無いので、こちらは隣に置かれた Spectrum Analyzer の tap を借りる。
-    /// 探し方は ETSpectrumOverlayFinder、描くのは SpectrumOverlayLayer。
+    /// 無いので、こちらは段の前後に置いた探り（Spectrum Analyzer）の tap を借りる。
+    /// 置くのは EffeTuneDSP.syncProbes、描くのは SpectrumOverlayLayer。
+    /// **これは段から出た音**（After の線）。
     var spectrumTap: UInt32?
+    /// 段に入る音の tap。spectrumMode と両方あるときだけ After ⇄ Compare の札を出す。
+    var spectrumBeforeTap: UInt32?
+    /// After / Compare。持ち主は呼ぶ側（段ごとにメモリだけで覚える、SpectrumOverlayLayer の頭）。
+    var spectrumMode: Binding<ETSpectrumOverlayMode>?
     /// 印を動かしたとき。(印の id, 周波数, dB)。両方が同時に動く。
     var onMarkerChanged: ((Int, Double, Double) -> Void)?
     var onMarkerSelected: ((Int) -> Void)?
     /// 印から指を離したとき。**設計をやり直す型はここで 1 回だけ書く。**
     var onMarkerReleased: ((Int) -> Void)?
 
+    /// 畳んだカードの図。**印を描かない。**触れない図に掴む印が見えると、
+    /// 動かせそうに見えて指を置いてしまう（面は allowsHitTesting(false) で死んでいる）。
+    @Environment(\.etGraphOnly) private var graphOnly
     @State private var dragging: Int?
     @State private var dragged: ETFreqPoint?
 
@@ -143,6 +155,8 @@ struct FrequencyResponseGraph: View {
          height: CGFloat = ETGraphMetrics.height,
          caption: String? = nil,
          spectrumTap: UInt32? = nil,
+         spectrumBeforeTap: UInt32? = nil,
+         spectrumMode: Binding<ETSpectrumOverlayMode>? = nil,
          onMarkerChanged: ((Int, Double, Double) -> Void)? = nil,
          onMarkerSelected: ((Int) -> Void)? = nil,
          onMarkerReleased: ((Int) -> Void)? = nil) {
@@ -154,6 +168,8 @@ struct FrequencyResponseGraph: View {
         self.height = height
         self.caption = caption
         self.spectrumTap = spectrumTap
+        self.spectrumBeforeTap = spectrumBeforeTap
+        self.spectrumMode = spectrumMode
         self.onMarkerChanged = onMarkerChanged
         self.onMarkerSelected = onMarkerSelected
         self.onMarkerReleased = onMarkerReleased
@@ -166,7 +182,9 @@ struct FrequencyResponseGraph: View {
             height: height,
             readout: readout,
             caption: caption,
+            accessory: spectrumToggle,
             clipsContent: true,
+            chart: chart,
             draw: { context, plot in
                 // 掴んでいる間の目印。指の下に細い十字を出しておく。
                 if let p = dragged {
@@ -198,27 +216,73 @@ struct FrequencyResponseGraph: View {
                     // 重ねるスペクトラム。**曲線の上**に出る。
                     // 上流も PEQ の曲線の上に 0.85 で重ねている
                     // （spectrum-overlay.css:15 の z-index: 2）。
+                    // **常に出す（Off が無い）。そこだけ上流と違えてある**（2026-09-30 に決めた）。
+                    // 上流の札は Off → After → Compare を回す（spectrum-overlay.js:242-246）。
+                    // こちらは After（段から出た音、既定）と Compare（入る音と出た音）の 2 つを
+                    // 読み値の行の札で切り替える（spectrumToggle）。描き方は上流の写し
+                    // （SpectrumOverlayLayer の頭）。
                     // Telemetry を観測するのはこの層の中だけ。ここより外で観測すると
                     // 30Hz で body が回り、掴んでいる印と下のつまみが固まる。
+                    // PoC: PC の鎖を編集しているあいだは PC の前後の枠が来ている段だけ出す（ETRemoteOverlayGate）。
                     if let spectrumTap {
-                        SpectrumOverlayLayer(tapId: spectrumTap, plot: plot)
+                        ETRemoteOverlayGate(tap: spectrumTap) {
+                            SpectrumOverlayLayer(tapId: spectrumTap,
+                                                 beforeTapId: spectrumBeforeTap,
+                                                 mode: spectrumMode?.wrappedValue ?? .after,
+                                                 plot: plot)
+                        }
                     }
 
                     // 指を受ける面。印より下に置く（印は当たり判定を持たない）。
                     // 印が無いときは面を置かない。置くと一覧の縦スクロールを食う。
-                    if !markers.isEmpty {
+                    if !markers.isEmpty && !graphOnly {
                         Color.clear
                             .contentShape(Rectangle())
                             .gesture(drag(in: plot))
+                            // 印を横へ引いたときに行が払われないように。
+                            .etOwnsDrag()
                     }
 
-                    ForEach(markers) { marker in
+                    ForEach(graphOnly ? [] : markers) { marker in
                         markerBadge(marker)
                             .position(plot.clampedPoint(marker.hz, marker.db))
                             .allowsHitTesting(false)
+                            // 番号だけの要素が並んでも、バンド・周波数・ゲインも操作も付かない。
+                            // 操作の経路は下のバンドのスライダー 1 本にする（印は読ませない）。
+                            .accessibilityHidden(true)
                     }
                 }
             })
+    }
+
+    /// After ⇄ Compare の札。**畳んだ図には出さない**（押せない図に押せそうな札を残さない）。
+    /// 入口の探りが無い図（FIR PEQ など）も比べる相手が無いので出さない。
+    private var spectrumToggle: AnyView? {
+        guard !graphOnly, let tap = spectrumTap, spectrumBeforeTap != nil,
+              let spectrumMode else { return nil }
+        return AnyView(ETRemoteOverlayGate(tap: tap) { SpectrumOverlayToggle(mode: spectrumMode) })
+    }
+
+    // MARK: Audio Graphs
+
+    /// 淡色でない曲線を 1 本ずつ系列にする（バンドごとの内訳は除く）。
+    /// 中身は VoiceOver が求めたときに作る。
+    private var chart: ETChartAccess? {
+        // 畳んだカードの図は効果名のない同じ読み上げが並ぶだけなので、開いたカードだけ。
+        guard !graphOnly else { return nil }
+        let lines = curves.filter { !$0.subdued && $0.points.count > 1 }
+        guard !lines.isEmpty else { return nil }
+        let named = lines.map { curve in
+            ETFrequencyChart.Line(name: ETFrequencyChart.name(of: curve, count: lines.count),
+                                  points: curve.points)
+        }
+        let frequency = frequencyRange
+        let decibels = decibelRange
+        let step = decibelStep
+        return ETChartAccess(label: "Frequency response") {
+            ETFrequencyChart.descriptor(lines: named, frequency: frequency,
+                                        decibels: decibels, decibelStep: step)
+        }
     }
 
     // MARK: 掴む
@@ -265,6 +329,7 @@ struct FrequencyResponseGraph: View {
     private func markerBadge(_ marker: ETFrequencyMarker) -> some View {
         let held = dragging == marker.id
         return Text(marker.label)
+            // 22pt の丸の中の番号なので固定（読ませない印。バンドは下のスライダーで操作する）。
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(marker.isActive ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
             .frame(width: 22, height: 22)

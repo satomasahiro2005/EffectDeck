@@ -1,0 +1,14 @@
+desc:Trigger
+author:nemut.ai
+slider1:0<0,1024,1>Seen
+
+@init
+seen = 0;
+
+@block
+trigger & 1 ? seen |= 1;
+trigger & 2 ? seen |= 2;
+trigger & 4 ? seen |= 4;
+slider1 = seen;
+
+@sample

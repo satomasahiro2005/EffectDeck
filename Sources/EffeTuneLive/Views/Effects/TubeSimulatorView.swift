@@ -300,9 +300,8 @@ private struct ETTubeChoiceRow: View {
         VStack(alignment: .leading, spacing: 6) {
             if let title {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
             }
             HStack(spacing: 6) {
                 ForEach(Array(labels.enumerated()), id: \.offset) { i, label in
@@ -311,7 +310,7 @@ private struct ETTubeChoiceRow: View {
                         onSelect(i)
                     } label: {
                         Text(label)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                            .etFont(size: 13, weight: isSelected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .foregroundStyle(isSelected ? AnyShapeStyle(.white)
@@ -366,7 +365,7 @@ struct TubeSimulatorView: View {
             // 上流も操作が先で、図と数値は後ろ（js:7506-7512 のコメント）。
             if panels.isEmpty {
                 Text("No tube stage is active.")
-                    .font(.system(size: 12))
+                    .etFont(size: 12)
                     .foregroundStyle(.secondary)
             } else if panels.count > 1 {
                 panelPicker
@@ -583,7 +582,7 @@ private struct TubeSimulatorHUD: View {
     let inputReferenceVpk: Double
     let inputVolumeDb: Double
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 動作点の尾。新しいものが後ろ。
     @State private var trail: [ETTubeTrailSample] = []
@@ -651,6 +650,7 @@ private struct TubeSimulatorHUD: View {
                     // 触って値を読むだけなので、一覧の縦スクロールと同時に効かせる。
                     Color.clear
                         .contentShape(Rectangle())
+                        // etOwnsDrag-exempt: 読むだけで何も動かさない。行の掴みと払いは止めず、縦スクロールと同時に効かせる
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { touch in
@@ -779,35 +779,42 @@ private struct TubeSimulatorHUD: View {
     private struct Reading: Identifiable {
         let label: String
         let value: String
+        /// 手元の音から計った値か。偽の 2 つ（入力の基準）は設定から出るので、PC の鎖でも出す（上流 2.14.0）。
+        let measured: Bool
         var id: String { label }
 
-        init(_ label: String, _ value: String) {
+        init(_ label: String, _ value: String, measured: Bool = true) {
             self.label = label
             self.value = value
+            self.measured = measured
         }
     }
 
+    @Environment(\.etLocalAudio) private var localAudio
+
     private var readouts: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(readings) { reading in
+            ForEach(readings.filter { localAudio || !$0.measured }) { reading in
                 HStack(spacing: 6) {
                     Text(reading.label)
-                        .font(.system(size: 9, weight: .semibold))
+                        .etFont(size: 9, weight: .semibold)
                         .tracking(0.4)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     Text(reading.value)
-                        .font(.system(size: 11, design: .monospaced))
+                        .etFont(size: 11, design: .monospaced)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
             }
-            Text(safetyLine)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if localAudio {
+                Text(safetyLine)
+                    .etFont(size: 10)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -831,8 +838,8 @@ private struct TubeSimulatorHUD: View {
                     Self.stereoFixed(d.map { $0.left.vak2 + $0.left.vk2 - $0.left.vbPlus },
                                      d.map { $0.right.vak2 + $0.right.vk2 - $0.right.vbPlus },
                                      "V", digits: 2, integerDigits: 3)),
-            Reading("INPUT REFERENCE (0 dBFS)", inputReferenceText),
-            Reading("STAGE 1 EXTERNAL INPUT (0 dBFS)", stage1ExternalInputText),
+            Reading("INPUT REFERENCE (0 dBFS)", inputReferenceText, measured: false),
+            Reading("STAGE 1 EXTERNAL INPUT (0 dBFS)", stage1ExternalInputText, measured: false),
             Reading("POWER LTP BALANCE",
                     Self.stereoFixed(l?.ltpBalanceV, r?.ltpBalanceV,
                                      "V", digits: 2, integerDigits: 3)),
@@ -890,13 +897,12 @@ private struct TubeSimulatorHUD: View {
         return sign + pad + String(whole) + String(fraction)
     }
 
-    /// 上流の status（js:6983-6988）。0 dB でも必ず出す。
+    /// 上流の status（js:6983-6988）から、後ろの案内の文を落としたもの。0 dB でも必ず出す。
     private var safetyLine: String {
         guard let reported = latest?.safetyReductionDb, reported.isFinite, reported < 0 else {
             return "Output safety reduction: 0.0 dB."
         }
-        return String(format: "Output safety reduction: %.1f dB applied automatically. "
-                      + "Move Output Safety Trim to clear it.", -reported)
+        return String(format: "Output safety reduction: %.1f dB.", -reported)
     }
 }
 
@@ -912,7 +918,7 @@ private struct TubeSimulatorSafetyTrimRow: View {
     @ObservedObject var dsp: EffeTuneDSP
     let tapId: UInt32
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 掴んでいる間はテレメトリで数値を動かさない。
     @State private var held = false
@@ -926,9 +932,8 @@ private struct TubeSimulatorSafetyTrimRow: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("Output Safety Trim (dB)")
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 ETValueField(text: String(format: "%.1f dB", shown),
                              label: "Output Safety Trim (dB)",
@@ -947,6 +952,8 @@ private struct TubeSimulatorSafetyTrimRow: View {
                            held = false
                        }
                    })
+                .accessibilityLabel("Output Safety Trim (dB)")
+                .accessibilityValue(String(format: "%.1f dB", shown))
         }
         .padding(.vertical, 2)
         // 報告された減衰が変わったら、二重取り込みの止めを外す（js:6579-6583）。

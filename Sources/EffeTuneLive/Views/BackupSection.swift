@@ -30,7 +30,7 @@ struct ETBackupSection: View {
     /// 入るのは鎖・保存した鎖・エフェクトごとのプリセットの 3 つだけなので、
     /// ボタンも "settings" とは名乗らない。
     ///
-    /// すぐ上の共有リンク（"EffeTune on the web"）とは別物で、
+    /// すぐ上の共有リンク（"Share"）とは別物で、
     /// あちらは鎖 1 本を渡すためのもの。こちらは取っておくためのもの。
     ///
     /// **読み込みは 2 段。**選んだ瞬間には入れず、何が入って何が消えるかを
@@ -48,6 +48,7 @@ struct ETBackupSection: View {
                 export()
             } label: {
                 Label("Export presets & chain", systemImage: "square.and.arrow.up")
+                    .font(.body)
             }
             .fileExporter(isPresented: $exporting,
                           document: exportFile,
@@ -66,6 +67,7 @@ struct ETBackupSection: View {
                 importing = true
             } label: {
                 Label("Import presets & chain", systemImage: "square.and.arrow.down")
+                    .font(.body)
             }
             .fileImporter(isPresented: $importing,
                           // 型で絞らない。中身が読めるかは受け側が決める。
@@ -96,12 +98,13 @@ struct ETBackupSection: View {
                     pending = nil
                     backupReport = apply(waiting)
                 } label: {
-                    Text("Import")
+                    Text("Import").font(.body)
                 }
                 Button("Cancel") {
                     pending = nil
                     backupReport = nil
                 }
+                .font(.body)
             }
         } header: {
             Text("Backup")

@@ -1,0 +1,28 @@
+{
+  "pipeline": [
+    {
+      "name": "Volume",
+      "enabled": true,
+      "parameters": {
+        "vl": -3
+      }
+    },
+    {
+      "name": "Section",
+      "enabled": false,
+      "parameters": {
+        "cm": "Tone"
+      }
+    },
+    {
+      "name": "Hi Pass Filter",
+      "enabled": true,
+      "parameters": {
+        "fr": 120,
+        "sl": -12
+      },
+      "inputBus": 1,
+      "channel": "R"
+    }
+  ]
+}

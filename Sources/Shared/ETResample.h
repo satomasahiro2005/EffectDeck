@@ -9,9 +9,15 @@
 //  入力が 48kHz 固定なので、比は整数（2倍・4倍）だけでよい。
 //  44.1kHz 系を混ぜると有理数比の変換になって、得るものが無い割に重くなる。
 //
-//  作りは多相 FIR。窓関数つき sinc を factor 個の位相に分けて持ち、
+//  作りは多相 FIR。Kaiser 窓つき sinc を factor 個の位相に分けて持ち、
 //  1 入力から factor 個の出力を作る（逆はその転置）。
 //  確保は Create のときだけ。処理中は確保も待ちもしない。
+//
+//  遮断は入力ナイキストより下（入力レートの 22/48、48kHz 入力なら 22kHz）。
+//  48kHz 入力での実測（Tests/Native/resample.c が押さえている）:
+//    - 往復（Up→Down）の通過域は 20kHz まで ±0.1dB に収まる
+//    - 24kHz より上は Up の像も Down の折り返しも -60dB 以下（2倍・4倍とも）
+//    - 往復の遅延は 55 サンプル（ETResampler_LatencySamples）
 
 #ifndef ETResample_h
 #define ETResample_h
@@ -30,7 +36,7 @@ ETResampler *ETResampler_Create(uint32_t factor, uint32_t channels, uint32_t max
 void ETResampler_Destroy(ETResampler *r);
 
 uint32_t ETResampler_Factor(const ETResampler *r);
-/// 変換で増える遅延（入力レートでのサンプル数）。
+/// Up→Down の往復で増える遅延（入力レートでのサンプル数）。factor 1 なら 0。
 uint32_t ETResampler_LatencySamples(const ETResampler *r);
 
 void ETResampler_Reset(ETResampler *r);

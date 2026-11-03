@@ -1,0 +1,573 @@
+# 押すたび・PR ごとに回すもの。
+#
+#   site         公式サイト（site/）の npm test。submodule 不要
+#   checks       Python と shell の構文、shellcheck、ワークフロー自体の actionlint、.github/scripts の試験、
+#                Tests/Scripts（Mac の台本を偽物の xcrun で）、Tools/check_repo.py・Tests/Tools・
+#                Tools/*.test.mjs（ファイルがあれば）
+#   native       Tests/Native（C）。gcc と clang × ASan+UBSan / TSan（TSan は ctest -L tsan だけ）
+#   linux-swift  Logic バンドルのうち Foundation だけのもの（Tests/Linux/run.sh）。素と ASan
+#   fuzz         外から来る字を読むコードの libFuzzer（Tests/Fuzz/run.sh）。的ごとに 20 秒だけ
+#   generated    setup.sh と Tools/golden を回し直して、追跡している生成物が 1 バイトも変わらないこと
+#   macos        iOS 27 のシミュレータで Logic の単体テスト（logic）と、拡張を外したアプリの build（sim-build）。
+#                logic は予定外の XCTSkip（.github/scripts/allowed_skips.txt に無いもの）でも落とす
+#                a11y は同じシミュレータで performAccessibilityAudit（名前の無い要素だけ落とす）と、
+#                画面・部品の絵（文字サイズ・外観・幅違い）を作り、artifact の macos-a11y に上げる
+#
+# 上流の DSP の ctest（パッチを当てたもの）は重いので dsp.yml に分けてある。
+#
+# **macOS の runner ラベル（D2）:** iOS 27 の SDK とシミュレータを持つ GitHub の image は
+# `xcode-27`（公開プレビュー。2026-09 時点で Xcode 27.0 が既定、27.1・27.2 beta も入っている）だけ。
+# ラベルの出どころは https://github.com/actions/runner-images/issues/14404 （GA で名前が変わりうる）。
+# runs-on には env を書けないので、ラベルは macos ジョブの runs-on の 1 箇所だけに置いてある。
+# 入れ替えるときはそこと、すぐ下の macos ジョブの env（XCODE_APP・SIM_NAME・SIM_OS）を合わせて直す。
+# canary.yml（毎晩、いちばん新しい Xcode で同じ 2 つを回す）も同じラベルと env（STABLE_XCODE_APP・
+# SIM_NAME・XCODEGEN_*）と build の段を写して持っている。release.yml（配布）も同じラベル・XCODE_APP・
+# XCODEGEN_*・xcodegen と submodule の段を写して持っている。どれも一緒に直す
+# （Tests/Tools/test_release_config.py が食い違いを落とす）。
+# プレビューの image は予告なく変わるので、Xcode は xcode-select で固定し、iOS 27 の SDK が
+# 無ければその場で止める。
+#
+# 署名はしない（CODE_SIGNING_ALLOWED=NO）。秘密も使わない。pull_request_target は使わない。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# shell を名指しすると pipefail が付く（名指ししないと bash -e だけで、`xcodebuild | tee` の失敗が消える）。
+defaults:
+  run:
+    shell: bash
+
+# PR は新しく押せば前の回を止める（group は PR ごと）。
+# main と手で回した回は、回ごとに別の group にする（どのコミットにも結果を残す）。
+# **ref で束ねない。**同じ group で待てる回は 1 つだけで、次の回が並ぶと待っている回は
+# cancel-in-progress が false でも取り消される（GitHub の concurrency の決まり）。main を続けて
+# 押すと、走っている回の後ろに並んだコミットには結果が残らない。
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: site
+    steps:
+      # 木ごと取る。worker.js が ../../docs/icon*.png を読む。
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Python の構文
+        run: git ls-files -z '*.py' | xargs -0 python3 -m py_compile
+      - name: shell の構文と shellcheck（error だけ）
+        # 全部 bash。asc_auth.sh のように source される断片は shebang が無いので -s bash で読む。
+        run: |
+          git ls-files -z '*.sh' | xargs -0 -n1 bash -n
+          git ls-files -z '*.sh' | xargs -0 shellcheck -s bash -S error
+      - name: ワークフロー（actionlint）
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: CI の道具の単体テスト（.github/scripts）
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      # Scripts/*.sh（Mac の台本）を xcrun・xcodegen・setup.sh の偽物で走らせる。Mac は要らない。
+      - name: Mac の台本の試験（Tests/Scripts）
+        if: hashFiles('Tests/Scripts/*_test.sh') != ''
+        run: |
+          for t in Tests/Scripts/*_test.sh; do
+            echo "::group::$t"
+            bash "$t"
+            echo "::endgroup::"
+          done
+      - name: chain・版・店の文面の照合（Tools/check_repo.py）
+        if: hashFiles('Tools/check_repo.py') != ''
+        run: python3 Tools/check_repo.py
+      # 前の版（PR の行き先か、押す前の main）にあった chain/v*/ が消えていない・dspParams が同じ。
+      # 読むのは前の版の木だけなので、その 1 コミットを浅く取れば足りる。
+      - name: chain/v* を前の版と比べる（Tools/check_repo.py --base）
+        if: >-
+          hashFiles('Tools/check_repo.py') != '' &&
+          (github.event_name == 'pull_request' ||
+           (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'))
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # force push で前の版が消えていれば比べようがない（落とさず知らせるだけ）。
+          if ! git fetch --no-tags --depth=1 origin "$BASE_SHA"; then
+            echo "::warning::前の版 $BASE_SHA を取れないので --base を飛ばす"
+            exit 0
+          fi
+          python3 Tools/check_repo.py --base "$BASE_SHA" --only base
+      - name: 生成スクリプトの単体テスト（Tests/Tools）
+        if: hashFiles('Tests/Tools/test_*.py') != ''
+        run: python3 -m unittest discover -s Tests/Tools -v
+      - name: node の単体テスト（Tools/*.test.mjs）
+        if: hashFiles('Tools/**/*.test.mjs') != ''
+        run: git ls-files -z 'Tools/*.test.mjs' | xargs -0 node --test
+      # ---- 統合で足す枠（P-ReleaseCheck）: submodule の要らない照合はここへ段を足す ----
+
+  native:
+    name: native (${{ matrix.cc }}, ${{ matrix.san }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        san: [asan-ubsan, tsan]
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cc == 'gcc' && 'g++' || 'clang++' }}
+      SAN_MODE: ${{ matrix.san }}
+    steps:
+      - uses: actions/checkout@v7
+      # ETPipeline の試験は作り物の engine を上流の abi.h の型で建てる。
+      - name: submodule（Vendor/effetune。abi.h だけ使う）
+        run: git submodule update --init --filter=blob:none Vendor/effetune
+      # ubuntu-24.04 の runner は ASLR の乱数が 32bit で、gcc の TSan が起動時に
+      # "unexpected memory mapping" で落ちることがある（WSL の同じ設定で再現した）。
+      - name: ASLR を sanitizer が扱える幅にする
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: configure
+        run: |
+          # 旗は Tests/Native/CMakePresets.json の asan・tsan と同じ（-O1 は TSan だけ。
+          # gcc の -O1 は -Wmaybe-uninitialized を出すことがあり、下の -Werror で手元と食い違う）。
+          case "$SAN_MODE" in
+            asan-ubsan) SAN="-fsanitize=address,undefined -fno-sanitize-recover=all"; OPT="" ;;
+            tsan)       SAN="-fsanitize=thread"; OPT="-O1" ;;
+            *) echo "::error::知らない SAN_MODE: $SAN_MODE"; exit 1 ;;
+          esac
+          FLAGS="$SAN -fno-omit-frame-pointer -g $OPT"
+          # ET_NATIVE_WERROR もプリセットと同じ（試験の target の警告で落とす）。
+          cmake -S Tests/Native -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DET_NATIVE_WERROR=ON \
+            -DCMAKE_C_FLAGS="$FLAGS" -DCMAKE_CXX_FLAGS="$FLAGS" \
+            -DCMAKE_EXE_LINKER_FLAGS="$SAN" -DCMAKE_SHARED_LINKER_FLAGS="$SAN"
+      - name: build
+        run: cmake --build build/native --parallel
+      - name: ctest
+        run: |
+          # 環境と「1 本も無ければ落とす」は Tests/Native/CMakePresets.json の試験のプリセット
+          # （asan・tsan）と同じにする。ASAN_OPTIONS は TSan の回では読まれない。
+          export ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:strict_string_checks=1
+          export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          export TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+          # 意図して残している確保（ETPipeline の外部ノードの記述子）は Tests/Native/lsan.supp に書く。
+          if [ -f Tests/Native/lsan.supp ]; then
+            export LSAN_OPTIONS="suppressions=$PWD/Tests/Native/lsan.supp:print_suppressions=0"
+          fi
+          if [ "$SAN_MODE" = tsan ]; then
+            # tsan の印の付いた試験が CMakeLists に居るなら、1 本も走らないのは誤り（印が外れた）。
+            no_tests=ignore
+            if grep -rqE 'LABELS[^)]*tsan' Tests/Native --include=CMakeLists.txt; then no_tests=error; fi
+            ctest --test-dir build/native -L tsan --no-tests="$no_tests" --output-on-failure
+          else
+            ctest --test-dir build/native --parallel 4 --no-tests=error --output-on-failure
+          fi
+
+  linux-swift:
+    name: linux-swift (${{ matrix.san }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: swift:6.4.0-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        san: [plain, address]
+    env:
+      SAN_MODE: ${{ matrix.san }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # run.sh と make_package.py が使う。swift の image には入っていない。
+      - name: python3
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends python3 >/dev/null
+          fi
+          python3 --version
+      - uses: actions/checkout@v7
+      # 建てるのは project.yml の EffeTuneLiveUnitTests に登録してあるソースと Tests/Unit の全部。
+      # Tests/Unit に足したテストが未登録のソースを引くと、ここで「型が無い」で建たない
+      # （Mac の Logic も同じ理由で落ちる）。ソースの登録は project.yml に入れる。
+      - name: swift test（Tests/Linux/run.sh）
+        run: |
+          args=(--name "ci-$SAN_MODE")
+          if [ "$SAN_MODE" != plain ]; then args+=("--sanitize=$SAN_MODE"); fi
+          bash Tests/Linux/run.sh "${args[@]}"
+      - name: ログを残す
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-swift-${{ matrix.san }}
+          path: build/linux-unit-*.log
+          retention-days: 14
+
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # gen_effect_presets と見本は node で作る。手元（Windows・WSL）と同じ 22 に揃える。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # effetune は履歴ごと（中身は checkout した版だけ）。gen_version が dsp-v* のタグを引く。
+      # ysfx は浅く、入れ子の submodule は取らない（使わない）。
+      # （2026-09 に GitHub から測って effetune 7 秒・ysfx 1 秒。どちらも指している版に届く）
+      - name: submodule
+        run: |
+          git submodule update --init --filter=blob:none Vendor/effetune
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status
+      - name: 生成物を作り直す（Scripts/setup.sh。xcodegen は叩かない）
+        env:
+          SKIP_XCODEGEN: 1
+          ET_STRICT: 1
+        run: bash Scripts/setup.sh
+      - name: 見本（golden）を作り直す
+        # 上流は指している版を git archive で展開したものを読む（パッチの当たった木は読まない）。
+        run: |
+          root=$(bash Tools/golden/extract_pin.sh "$RUNNER_TEMP")
+          shopt -s nullglob
+          for f in Tools/golden/*_golden.mjs Tools/ir_prepare_golden.mjs; do
+            echo "::group::$f"
+            EFFETUNE_ROOT="$root" node "$f"
+            echo "::endgroup::"
+          done
+      - name: 追跡している生成物が変わっていないこと
+        run: |
+          drift=$(git status --porcelain --ignore-submodules=dirty)
+          if [ -n "$drift" ]; then
+            echo "::error::生成物が追跡しているものと違う。bash Scripts/setup.sh と Tools/golden を回してコミットすること"
+            echo "$drift"
+            git diff --ignore-submodules=dirty --stat
+            git diff --ignore-submodules=dirty | sed -n '1,300p'
+            exit 1
+          fi
+          echo "差分なし"
+      - name: 版の照合（gitlink のタグ = UpstreamVersion = README のバッジ = CHAIN.md = chain/v*）
+        if: hashFiles('Tools/check_repo.py') != ''
+        run: python3 Tools/check_repo.py --version-guard
+      # ---- 統合で足す枠（P-ReleaseCheck）: 上流の版が要る照合はここへ段を足す ----
+
+  macos:
+    name: macos (${{ matrix.task }})
+    # D2: iOS 27 の SDK を持つ image はこのラベルだけ。先頭の説明を参照。
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [logic, sim-build, a11y]
+    # **ワークフローの env に上げない。**SIM_OS は Scripts/lib/sim.sh も読むので、checks の
+    # Tests/Scripts に漏れると端末の選び方の試験が変わる（実際に 1 件落ちた）。
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      # Xcode と端末。image の中身は
+      # https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+      XCODE_APP: /Applications/Xcode_27.0.app
+      SIM_NAME: iPad Pro 13-inch (M5)
+      SIM_OS: "27.0"
+      # xcodegen はどの image にも無い。brew の最新ではなく版を固定し、sha256 を確かめて入れる。
+      XCODEGEN_VERSION: 2.46.0
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+    steps:
+      - uses: actions/checkout@v7
+      - name: Xcode を固定する
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::error::$XCODE_APP が無い。image の Xcode の場所が変わった"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          echo "iphonesimulator SDK: $sdk"
+          case "$sdk" in
+            27.*) ;;
+            *) echo "::error::iOS 27 の SDK が無い（${sdk}）。配備先が 27.0 なので建たない"; exit 1 ;;
+          esac
+      # effetune は generated と同じ取り方（blob:none は --depth 1 より速く、タグも付いてくる）。
+      - name: submodule
+        run: |
+          git submodule update --init --filter=blob:none Vendor/effetune
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status
+      - name: xcodegen をキャッシュから戻す
+        uses: actions/cache@v6
+        with:
+          path: ~/.ci-tools/xcodegen
+          key: xcodegen-${{ env.XCODEGEN_VERSION }}-${{ env.XCODEGEN_SHA256 }}
+      - name: xcodegen（版を固定し sha256 を確かめる）
+        run: |
+          dir="$HOME/.ci-tools/xcodegen"
+          if [ ! -x "$dir/bin/xcodegen" ]; then
+            zip="$RUNNER_TEMP/xcodegen.zip"
+            curl -fsSL --retry 3 -o "$zip" \
+              "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+            echo "$XCODEGEN_SHA256  $zip" | shasum -a 256 -c -
+            rm -rf "$dir"
+            mkdir -p "$HOME/.ci-tools"
+            unzip -q "$zip" -d "$HOME/.ci-tools"
+          fi
+          "$dir/bin/xcodegen" --version
+          echo "XCODEGEN=$dir/bin/xcodegen" >> "$GITHUB_ENV"
+      # パッチ・生成物・note-models。logic はここで project.yml から .xcodeproj まで組む。
+      - name: Scripts/setup.sh
+        env:
+          SKIP_XCODEGEN: ${{ matrix.task == 'logic' && '0' || '1' }}
+        run: bash Scripts/setup.sh
+
+      - name: シミュレータを選んで起こす
+        if: matrix.task == 'logic' || matrix.task == 'a11y'
+        id: sim
+        run: |
+          udid=$(python3 .github/scripts/pick_simulator.py --name "$SIM_NAME" --os "$SIM_OS")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl bootstatus "$udid" -b
+      - name: Logic の単体テスト
+        if: matrix.task == 'logic'
+        id: logic
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        # JSFX の締め切り・競合の試験は 3 vCPU の runner で揺れることがあるので 1 回だけ取り直す
+        # （取り直した記録は xcresult に残る）。
+        run: |
+          mkdir -p build
+          xcodebuild test \
+            -project EffeTuneLive.xcodeproj -scheme Logic \
+            -destination "id=$UDID" \
+            -only-testing:EffeTuneLiveUnitTests \
+            -parallel-testing-enabled NO \
+            -retry-tests-on-failure -test-iterations 2 \
+            -resultBundlePath build/Logic.xcresult \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/logic.log | xcbeautify --renderer github-actions
+      # 「緑」が予定の試験を走らせた緑であること。XCTSkip で飛んだ試験が
+      # .github/scripts/allowed_skips.txt に無い、または 1 本も走っていなければ落とす。
+      # 試験の段が落ちた回にも走らせて飛んだものを並べる（この段が通っても前の段の失敗は消えない）。
+      # 試験の段まで来なかった回（シミュレータを起こせない等）は xcresult が無いので走らせない。
+      - name: 予定外の skip が無いこと（xcresult）
+        if: ${{ !cancelled() && matrix.task == 'logic' && steps.logic.outcome != 'skipped' }}
+        run: python3 .github/scripts/check_xcresult_skips.py --xcresult build/Logic.xcresult
+
+      - name: シミュレータ用の仕様を組む（拡張を外す）
+        if: matrix.task == 'sim-build' || matrix.task == 'a11y'
+        run: |
+          python3 Tools/gen_sim_spec.py
+          "$XCODEGEN" generate --spec project-sim.yml
+      - name: アプリを建てる（シミュレータ）
+        if: matrix.task == 'sim-build'
+        run: |
+          mkdir -p build
+          xcodebuild build \
+            -project EffeTuneLiveSim.xcodeproj -scheme EffeTuneLive -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -resultBundlePath build/SimBuild.xcresult \
+            -jobs 3 \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/out-sim" \
+            2>&1 | tee build/sim-build.log | xcbeautify --renderer github-actions
+          test -d out-sim/EffectDeck.app
+
+      # アクセシビリティの監査（performAccessibilityAudit）と、画面の絵の書き出し。
+      # Tests/UI/AccessibilityAudit.swift は「名前が無い要素」だけで落とし、ほかの指摘は添付の文面に残す。
+      # AccessibilityGallery は何も判定しない（絵を作れなかったときだけ落ちる）。
+      # 監査の試験は -ETFreezeLive 1 で起動する（図・メーター・帯の数字の更新を止める）。動き続ける木だと
+      # 監査が落ち着かず -56 "Audit failed to complete in time" になる。時間切れだけは試験の中で 1 回取り直し、
+      # 2 回目も切れたら落とす。指摘は A11Y-ISSUE の行に要素（id・label・type・frame）つきで残る。
+      # **取り直し（-retry-tests-on-failure）はかけない。**名前が無い、は毎回同じ結果で、取り直すと
+      # 監査の時間が倍になって job の 60 分に当たり、添付を書き出す段まで届かなくなる。
+      # 段にも上限を付ける：段の時間切れなら後ろの段（添付の書き出し）は走る。job の時間切れは走らない。
+      # 上限は実測で決めた（run 40676674420 と 40686556967）。この段は建てる時間も含む。
+      #   速い runner: 建て 4 分 + 監査 7.7 分 + 絵 12 分 = 24.6 分
+      #   遅い runner: 建て 12.3 分 + 監査 11.6 分 + 絵 16 分強 = 40 分ほど（35 分で切れた）
+      # 長い一覧の監査を落とす種類だけにして（AccessibilityAudit.swift）、切れて取り直す分と
+      # 外観を変えないときの待ち（起動のたび 1.5 秒）を省く。それでも遅い runner では 38 分ほど要るので 42 分にする。
+      # 後ろの段（絵の Snapshot は最長 15 分、書き出しと上げるので 2 分）と前の段（5 分ほど）を足しても
+      # job の 60 分に収まる（5 + 42 + 4 + 2 = 53 分）。
+      - name: アクセシビリティの監査と絵（Accessibility）
+        if: matrix.task == 'a11y'
+        id: a11y
+        timeout-minutes: 42
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          mkdir -p build
+          rm -rf build/A11y.xcresult
+          xcodebuild test \
+            -project EffeTuneLiveSim.xcodeproj -scheme Accessibility \
+            -destination "id=$UDID" \
+            -only-testing:EffeTuneLiveUITests/AccessibilityAudit \
+            -only-testing:EffeTuneLiveUITests/AccessibilityGallery \
+            -parallel-testing-enabled NO \
+            -disable-concurrent-destination-testing \
+            -jobs 3 \
+            -resultBundlePath build/A11y.xcresult \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/a11y.log | xcbeautify --renderer github-actions
+      # 部品の絵（Tests/Snapshot/ComponentGallery.swift）。何も判定せず、描画のクラッシュだけで落ちる。
+      # **別の呼び出しにする。**ホスト付きの束は本体のモジュールを読むので、建てそこなうと
+      # 同じ呼び出しの監査と画面の絵まで巻き込む。ホストの本体は上の段で建て済みなので建て直しは軽い。
+      - name: 部品の絵（Snapshot）
+        if: ${{ !cancelled() && matrix.task == 'a11y' }}
+        id: a11y_snapshot
+        timeout-minutes: 15
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          mkdir -p build
+          rm -rf build/A11ySnapshot.xcresult
+          xcodebuild test \
+            -project EffeTuneLiveSim.xcodeproj -scheme AccessibilitySnapshot \
+            -destination "id=$UDID" \
+            -only-testing:EffeTuneLiveSnapshotTests \
+            -parallel-testing-enabled NO \
+            -disable-concurrent-destination-testing \
+            -jobs 3 \
+            -resultBundlePath build/A11ySnapshot.xcresult \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/a11y-snapshot.log | xcbeautify --renderer github-actions
+
+      # xcresult の添付（PNG と監査の文面）を取り出し、画面名で読めるよう名前を付け直す。
+      # 取り出せなくても落とさない（絵が目的で、判定ではないため）。
+      - name: 添付を書き出す
+        if: ${{ !cancelled() && matrix.task == 'a11y' && steps.a11y.outcome != 'skipped' }}
+        run: |
+          rm -rf build/a11y-raw build/a11y-gallery
+          mkdir -p build/a11y-raw build/a11y-gallery
+          # 監査と画面の絵（A11y）と、部品の絵（A11ySnapshot）。片方が無くても、もう片方は書き出す。
+          for name in A11y A11ySnapshot; do
+            if [ ! -d "build/$name.xcresult" ]; then
+              echo "::warning::build/$name.xcresult が無い"
+              continue
+            fi
+            if ! xcrun xcresulttool export attachments --path "build/$name.xcresult" --output-path "build/a11y-raw/$name"; then
+              echo "::warning::$name の添付を書き出せなかった"
+            fi
+          done
+          python3 - <<'PY'
+          import json, pathlib, re, shutil
+          root = pathlib.Path("build/a11y-raw")
+          out = pathlib.Path("build/a11y-gallery")
+          out.mkdir(parents=True, exist_ok=True)
+          count = 0
+          for raw in sorted(p for p in root.iterdir() if p.is_dir()):
+              manifest = raw / "manifest.json"
+              entries = json.loads(manifest.read_text(encoding="utf-8")) if manifest.exists() else []
+              for test in entries:
+                  for att in test.get("attachments", []):
+                      src = raw / att.get("exportedFileName", "")
+                      if not src.is_file():
+                          continue
+                      # 人が読める名前（無ければ書き出された名前）。<画面>-<組み合わせ>_0_<UUID>.png の尾を落とす。
+                      name = att.get("suggestedHumanReadableName") or src.name
+                      name = re.sub(r"_\d+_[0-9A-Fa-f-]{36}(?=\.\w+$)", "", name)
+                      name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+                      if not pathlib.Path(name).suffix:
+                          name += src.suffix
+                      shutil.copyfile(src, out / name)
+                      count += 1
+          print("書き出した添付:", count)
+          PY
+
+      - name: 結果を残す
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.task }}
+          path: |
+            build/*.xcresult
+            build/*.log
+            build/a11y-gallery/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ---- 統合で足す枠 ----
+  # P-ReleaseCheck: 独立したジョブが要るならここへ。submodule が要らなければ checks、
+  #                 上流の版が要るなら generated に段を足すほうが速い（上の印の場所）。
+
+  # 外から来る字を読むコードを libFuzzer で叩く（Tests/Fuzz/run.sh。的の一覧はその頭）。的ごとに 20 秒だけ。
+  # --target all なので、run.sh に足した的はここを直さずに入る。
+  # 長い回は dsp.yml の fuzz-long（毎晩）。その回が育てた corpus を戻して続きから回す（ここでは残さない）。
+  # 落ちたら artifact の fuzz に、落ちた入力（build/fuzz/ci/<的>/crash-* など）とログが残る。手元では
+  # bash Tests/Fuzz/run.sh --target <的> --repro <入力> で 1 度だけ通して再現する。
+  fuzz:
+    runs-on: ubuntu-24.04
+    # release（WMO）+ ASan で建てるのと、的ごとの種の書き出しと 20 秒。
+    # （2026-09 に WSL の 8 コアで測って、的 10 個（jsfxexec の ysfx 31 本を建てるのを含む）を
+    # 8 秒ずつで全体 2 分半。4 vCPU の runner で 20 秒ずつなら 10 分に収まる見込み）
+    timeout-minutes: 30
+    # linux-swift と同じツールチェーン。-sanitize=fuzzer の libFuzzer も、jsfxgate を建てる clang++ も入っている。
+    container: swift:6.4.0-noble
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # make_package.py が使う。swift の image には入っていない。
+      - name: python3
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends python3 >/dev/null
+          fi
+          python3 --version
+      - uses: actions/checkout@v7
+      # jsfxgate（C++ の門）は ysfx の include/ と WDL の宣言だけ読む。jsfxexec は ysfx の源を建てるが、
+      # run.sh が写しを作って Patches/ysfx-effectdeck-ios.diff を git apply で当てるので setup.sh は要らない
+      # （入れ子の submodule の dr_libs などは使わない）。Swift の的は Vendor を読まない。
+      - name: submodule（Vendor/ysfx）
+        run: |
+          # checkout した木の持ち主はコンテナの外の利用者で、コンテナの root の git は持ち主の違いで断る。
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --depth 1 Vendor/ysfx
+          git submodule status Vendor/ysfx
+      # 鍵は回ごとに違う（dsp.yml の fuzz-long が残す）。頭で引いて一番新しいものを戻す。無くても回る。
+      # 置き場は fuzz-long と同じ ~/.cache/effectdeck-fuzz/ci/corpus（--name ci。path の書き方が違うと別のキャッシュになる）。
+      - name: 育った corpus を戻す（dsp.yml の fuzz-long）
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/effectdeck-fuzz/ci/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+      - name: fuzz（Tests/Fuzz/run.sh、的ごとに 20 秒）
+        run: |
+          echo "戻した corpus: $(find ~/.cache/effectdeck-fuzz/ci/corpus -type f 2>/dev/null | wc -l) 個"
+          FUZZ_JOBS="$(nproc)" bash Tests/Fuzz/run.sh --name ci --target all --time 20
+      - name: 落ちた入力とログを残す
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz
+          path: |
+            build/fuzz/
+            build/fuzz-*.log
+          retention-days: 14

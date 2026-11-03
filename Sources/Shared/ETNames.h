@@ -14,11 +14,14 @@
 //  違う字を当てると「どちらを選べばいいのか」という問いが使う人に生まれる。
 //  一覧の行をタップすると 2 行になる。**下の行はここではなく、拡張の
 //  UTTypeDescription（Sources/Extension/Info.plist）。**そちらも揃えること
-//  （docs/connect-log.md「コントロールセンターの 2 行目は UTTypeDescription」）。
+//  （docs/connect-log.md「コントロールセンターの 2 行目は UTTypeDescription」。
+//  docs/connect-log.md は手元だけの記録で、追跡していない）。
 //
-//  **帰還ループの判定は名前の包含で見ている**（AudioIO.swift:336, 681, 767 の
-//  `localizedCaseInsensitiveContains`）。どちらの名前も ET_NAME_STEM を
-//  含んでいること。含まない字にすると、出力先が自分へ戻っていても気づけない。
+//  **帰還ループの判定は名前の包含で見ている**（AudioSessionRules.swift の
+//  `ETAudioSessionRules.isOwnDevice(portName:)`。`localizedCaseInsensitiveContains` で
+//  Swift の写し `nameStem` を探す。写しがここと同じかは AudioIO の init の assert が見る）。
+//  どちらの名前も ET_NAME_STEM を含んでいること。含まない字にすると、出力先が自分へ
+//  戻っていても気づけない。
 
 #ifndef ETNames_h
 #define ETNames_h

@@ -76,11 +76,31 @@ final class CrosstalkStore: ObservableObject {
 
     /// 鎖に居ない段を落とす。
     private func prune() {
-        let live = Set(EffeTuneDSP.shared.chain.map(\.id))
+        let live = Set(EffeTuneDSP.shared.nodes.map(\.id))
         for id in Array(sessions.keys) where !live.contains(id) {
             sessions[id] = nil
             relays[id] = nil
         }
+    }
+
+    /// 既定へ戻す。上流の Reset は足した時の getParameters() を丸ごと当てるので
+    /// （pipeline-item-builder.js:392-410）、測定の割り当て（ll / lr / rl / rr）は空に、
+    /// 設計の指示は初期値に戻る（crosstalk_cancellation.js:46-55）。
+    /// 割り当てが欠けると上流は設計せず資産を外す（同 :280-287）。こちらは design が外す。
+    func reset(node: EffeTuneDSP.Node) {
+        guard sessions[node.id] != nil else { return }
+        update(node.id) { session in
+            let initial = Session()
+            session.leftEar = nil
+            session.rightEar = nil
+            session.taps = initial.taps
+            session.regularization = initial.regularization
+            session.maxGainDb = initial.maxGainDb
+            session.lowFrequency = initial.lowFrequency
+            session.highFrequency = initial.highFrequency
+            session.directWindowMs = initial.directWindowMs
+        }
+        design(node: node)
     }
 
     // MARK: - 設計して送る
@@ -135,14 +155,14 @@ final class CrosstalkStore: ObservableObject {
                 // 送る直前に書けば同じ begin で効く（kernel.cpp:156）。
                 //
                 // 並べ替えを跨ぐので、位置は instance から引き直す。
-                guard let at = dsp.chain.firstIndex(where: { $0.instance == instance }),
+                guard let at = dsp.nodes.firstIndex(where: { $0.instance == instance }),
                       let param = node.spec.params.first(where: { $0.key == "fd" }) else { return }
                 dsp.setValue(Float(built.config.filterDelaySamples), at: at, offset: param.offset)
             },
             afterSend: {
                 // commit で instance の遅延が変わるので、鎖を組み直させる。
                 // setRouting は何も変えずに呼んでも publish まで進む。
-                guard let at = dsp.chain.firstIndex(where: { $0.instance == instance }) else { return }
+                guard let at = dsp.nodes.firstIndex(where: { $0.instance == instance }) else { return }
                 dsp.setRouting(at: at)
             })
     }

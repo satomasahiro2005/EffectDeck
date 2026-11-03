@@ -25,20 +25,15 @@ struct RoutingView: View {
         NavigationStack {
             Group {
                 if dsp.chain.isEmpty {
-                    // List の上に overlay で重ねない。段が無くても Section の見出しと
-                    // 注記は描かれるので、その上に重なって二重に読める。
-                    ContentUnavailableView(
-                        "Nothing to route",
-                        systemImage: "arrow.triangle.branch",
-                        description: Text("""
-                                          Add an effect first. Buses and channels belong to \
-                                          the effects on the chain.
-                                          """))
+                    // List の上に overlay で重ねない。段が無くても Section の見出しは
+                    // 描かれるので、その上に重なって二重に読める。
+                    ContentUnavailableView("Nothing to route",
+                                           systemImage: "arrow.triangle.branch")
                 } else {
                     list
                 }
             }
-            .navigationTitle("Routing")
+            .etNavigationTitle("Routing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
@@ -54,13 +49,6 @@ struct RoutingView: View {
                 }
             } header: {
                 Text("Signal flow")
-            } footer: {
-                Text("""
-                     Bus 0 is the main path. Buses 1–4 are cleared at the start of every \
-                     block, so whatever an effect writes there has to be read back within \
-                     the same block. When the input and output bus differ, the result is \
-                     added to that bus instead of replacing what is already on it.
-                     """)
             }
 
             if dsp.chain.contains(where: { !$0.isDefaultRouting }) {
@@ -94,14 +82,14 @@ struct RoutingRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(node.spec.name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .etFont(size: 15, weight: .semibold)
                 Spacer()
                 if !node.isDefaultRouting || node.isGated {
                     Text(ETRouting.badge(node))
-                        .font(.system(size: 11, design: .monospaced))
+                        .etFont(size: 11, design: .monospaced)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(.tint, in: .capsule)
+                        .etBadgeBackground(in: .capsule)
                         .foregroundStyle(.white)
                 }
             }
@@ -111,7 +99,7 @@ struct RoutingRow: View {
                     dsp.setRouting(at: index, inputBus: $0)
                 }
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                 busMenu(title: "Out", value: node.outputBus) {
                     dsp.setRouting(at: index, outputBus: $0)
@@ -136,12 +124,12 @@ struct RoutingRow: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text("Channel").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("Channel").etFont(size: 11).foregroundStyle(.secondary)
                         Text(ETRouting.channelName(node.channelSpec))
-                            .font(.system(size: 13))
+                            .etFont(size: 13)
                             .lineLimit(1)
                         Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9))
+                            .etFont(size: 9)
                     }
                 }
                 .accessibilityLabel("Channel")
@@ -160,9 +148,9 @@ struct RoutingRow: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(title).etFont(size: 11).foregroundStyle(.secondary)
                 Text("\(value)")
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .etFont(size: 14, weight: .semibold, design: .monospaced)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
@@ -173,8 +161,8 @@ struct RoutingRow: View {
 
 /// バスとチャンネルの見せ方。カードの頭でも使う。
 enum ETRouting {
-    /// 画面に出す選択肢。このアプリは 2ch しか扱わないので、
-    /// EffeTune が持っている 3ch 目以降の選択肢は出さない。
+    /// 画面に出す選択肢。処理幅は出力IFに合わせて 2〜16ch になるが
+    /// （AudioIO.processingChannels）、3ch 目以降の単独と対は出さない。
     /// ただし取り込んだプリセットがそれらを持っていても値は保つ。
     static var channelOptions: [(Int8, String)] {
         [(-1, "Stereo"), (-2, "All"), (0, "Left"), (1, "Right")]
@@ -239,7 +227,7 @@ struct EffectRoutingSheet: View {
                     }
                 }
             }
-            .navigationTitle("Routing")
+            .etNavigationTitle("Routing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

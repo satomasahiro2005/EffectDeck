@@ -1,6 +1,6 @@
 //  EffectDeck — Media Device Extension (iOS 27+)
 //
-//  ルートピッカーに EffeTune を1台出し、選ばれたらシステム音声のサンプルを受け取る。
+//  ルートピッカーに EffectDeck（ET_ROUTE_NAME）を 1 台出し、選ばれたらシステム音声のサンプルを受け取る。
 //  API は Xcode 27 の MediaDevice.swiftinterface から起こしたもので、推測は含まない。
 //
 //  CoreAudio/AudioServerPlugIn.h に書かれている制約:
@@ -9,9 +9,12 @@
 //      違うと登録が kAudioHardwareIllegalOperationError で失敗する
 //    - デバイスの UID は MediaOutputDevice.id と一致していること
 //
-//  未確認: MediaOutputDevice.init? は requiredNetworkEndpoints が必須引数で
+//  MediaOutputDevice.init? は requiredNetworkEndpoints が必須引数で
 //  デフォルト値が無く、init 自体が failable。ネットワーク上の受信機を前提にした
-//  設計なので、ローカル完結のデバイスで何を渡せば nil にならないかは実機で詰める。
+//  設計だが、ローカル完結のここでは本体の受け口 127.0.0.1:47101 を渡していて、
+//  それで nil にならず一覧に出て選べる（実機。TestFlight の build 26 もこの形。
+//  渡す口の理由は linkEndpoint と localDevice の説明）。nil のときは
+//  startDeviceDiscovery が discoveryFailed を返す。
 
 import Foundation
 import MediaDevice
@@ -40,6 +43,26 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     lazy var routingManager: MediaDeviceRoutingManager = .routingManager(for: self)
 
     private var reportTimer: Timer?
+
+    /// 状態の行を出す間隔。
+    ///
+    /// 前は 1 秒ごとに固定で、配送が続くあいだ拡張を毎秒起こしていた。
+    /// 1 秒の粒が要るのは Xcode から繋いで流れを見ているときだけなので、
+    /// Debug ビルドだけ 1 秒にする。ストアと TestFlight のビルドは 1 分に 1 行。
+    /// docs/battery-log.md §2 の式は差分で組んであるので、間隔が変わっても使える。
+    /// 実行時の切り替えは付けていない。拡張は App Group のファイルを書けず
+    /// （LocalLink.h の頭）、起動引数も受け取らないので、確かめられた経路が無い。
+    #if DEBUG
+    private static let reportEvery: TimeInterval = 1
+    #else
+    private static let reportEvery: TimeInterval = 60
+    #endif
+
+    /// 前回の行を出した時点の累計。行には増分を載せる。
+    /// 送り手の数（送信・起床・send）は start のたびに 0 へ戻るので、
+    /// 前回より小さければ今回の値をそのまま増分とする。
+    private var reportLast: (at: TimeInterval, total: UInt64, calls: UInt64,
+                             silent: UInt64, sent: UInt64, pumps: UInt64, sends: UInt64)?
 
     /// 配送が止まったあと、少し待ってから送り手を落とすための札。
     /// 系が停止と再開を短い間に往復させることが在るので、即座に落とさない。
@@ -97,11 +120,10 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     static let deviceUUID = UUID(uuidString: "6E656D75-7400-4E00-A000-000000000001")!
 
     /// 本体（EffeTuneLive）の ETLinkReceiver が bind している口。
-    /// Sources/Shared/LocalLink.h:23-24 の ET_LINK_PORT / ET_LINK_HOST と同じもの。
+    /// Sources/Shared/LocalLink.h の ET_LINK_PORT / ET_LINK_HOST と同じもの。
     /// 数字を写さずマクロを引くのは、片方だけ変えられるのを防ぐため。
-    /// ET_LINK_PORT は bridging header 経由（Extension-Bridging-Header.h:2）。
-    /// もし `cannot find 'ET_LINK_PORT' in scope` で止まったら 47101 を直に書く。
-    /// ビルドしていないのでここだけは確かめていない。
+    /// ET_LINK_PORT は bridging header 経由（Extension-Bridging-Header.h が LocalLink.h を読む）。
+    /// この形のまま TestFlight へ出したビルド（3eafecb の build 26 ほか）が建っている。
     static let linkEndpoint: NWEndpoint = .hostPort(
         host: .ipv4(.loopback),
         port: NWEndpoint.Port(rawValue: UInt16(ET_LINK_PORT)) ?? 47101
@@ -134,7 +156,7 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
     /// 127.0.0.1:47101 なら実在していて、拡張から実際に繋がっている:
     ///   et.log:9681 EffeTuneLiveExtension[564] ET connect 成功 port=47101（7 回）
     ///   et.log:65193 EffectDeck[601] ET receiver 待ち受け開始 port=47101
-    ///   Sources/Shared/LocalLink.m:285-300（本体側の bind/listen）
+    ///   Sources/Shared/LocalLink.m の -[ETLinkReceiver start]（本体側の bind/listen）
     /// 音はこの口を通らない（AudioServerPlugIn 経由で来る）。名乗るためだけに使う。
     ///
     /// **確かめていないこと**: 0 番が revert の原因だと書いてある行は無い。確定は
@@ -195,10 +217,12 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
             volumeControl: .none,
             canMute: false,
             requiredNetworkEndpoints: eps,
-            // **空のまま。**
-            // コントロールセンターの行は 2 行とも displayName が出る。
-            // 2 行目をこちらから変える口は無い（2026-09-17 に 3 つとも実機で外した。
-            // docs/connect-log.md の「2 行目は選べない」）。
+            // **空のまま。**コントロールセンターの字はここを通らない。
+            // 一覧の 1 行目は displayName（ET_ROUTE_NAME）、タップして出る 2 行目は
+            // Info.plist の UTTypeDescription（2026-09-17 に実機で確認。model と
+            // manufacturer をここに入れても 2 行目は変わらなかった。手元のログ
+            // docs/connect-log.md の「コントロールセンターの 2 行目は UTTypeDescription」。
+            // リポジトリには入っていない）。
             txtRecords: [],
             supportsSimultaneousSessions: false
         )
@@ -353,16 +377,49 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         senderStopWork?.cancel()
         senderStopWork = nil
         ETLinkSender.shared.start()
+        // 音のスレッドで走るので、何も捕まえず、C 関数を直に呼ぶ
+        // （ObjC のメソッドだと objc_msgSend と、シングルトンの retain/release が毎回入る）。
         EffeTuneDriver.shared.startCapture { planes, channels, frames, _ in
-            ETLinkSender.shared.pushInterleaved(planes[0], frames: frames, channels: channels)
+            ETLinkSenderPushInterleaved(planes[0], frames, channels)
         }
 
+        // 最初の 1 行は 2 秒後に出す。Scripts/bridge_probe.sh は 30 秒だけ録って
+        // 「受信 frames=」が 0 行なら配送が走らなかったと読むので、
+        // 間隔が 60 秒でもその窓に必ず 1 行入るようにしてある。
         reportTimer?.invalidate()
-        reportTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            _ = self
-            log.notice("受信 frames=\(EffeTuneDriver.shared.framesDelivered) 接続=\(ETLinkSender.shared.connected) 送信=\(ETLinkSender.shared.sentFrames)")
+        reportLast = nil
+        let every = Self.reportEvery
+        let timer = Timer(fire: Date().addingTimeInterval(2), interval: every, repeats: true) { [weak self] _ in
+            self?.reportStatus()
         }
+        timer.tolerance = every * 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        reportTimer = timer
+    }
+
+    /// 状態の行。先頭の「受信 frames=… 接続=… 送信=…」は
+    /// Scripts/bridge_probe.sh と docs/battery-log.md §2 が読むので変えない。
+    /// 後ろに足した増分は、WriteMix が無音のまま来続けているか・止まっているかを見るためのもの:
+    ///   WriteMix の増分 ÷ 間 ÷ 48000 が 1 前後で 無音 ≒ WriteMix → 無音の PCM が流れ続けている
+    ///   WriteMix の増分が 0 前後 → ホストが IO を止めていて、橋は眠っているだけ
+    ///   WriteMix のフレーム ÷ 回数 → IO ブロックの大きさ（送り手の起床の上限もこれで決まる）
+    private func reportStatus() {
+        let drv = EffeTuneDriver.shared
+        let snd = ETLinkSender.shared
+        let now = ProcessInfo.processInfo.systemUptime
+        let cur = (at: now, total: drv.writeMixFramesTotal, calls: drv.writeMixCalls,
+                   silent: drv.silentFrames, sent: snd.sentFrames,
+                   pumps: snd.pumpCount, sends: snd.sendCalls)
+        var tail = ""
+        if let last = reportLast {
+            func d(_ c: UInt64, _ p: UInt64) -> UInt64 { c >= p ? c - p : c }
+            let secs = Int((cur.at - last.at).rounded())
+            tail = " 間=\(secs)s WriteMix=+\(d(cur.total, last.total))/\(d(cur.calls, last.calls))回"
+                + " 無音=+\(d(cur.silent, last.silent)) 起床=+\(d(cur.pumps, last.pumps))"
+                + " send=+\(d(cur.sends, last.sends))"
+        }
+        reportLast = cur
+        log.notice("受信 frames=\(drv.framesDelivered) 接続=\(snd.connected) 送信=\(snd.sentFrames)\(tail, privacy: .public)")
     }
 
     func stopRealtimeSampleDelivery(session: MediaOutputSession) {
@@ -372,11 +429,13 @@ final class EffeTuneLiveExtension: MediaDeviceExtension, RealtimeSampleHandling 
         EffeTuneDriver.shared.stopCapture()
 
         // **送り手も止める。**ここは捕まえる側を外すだけで、送り手の 2ms タイマー
-        // （500 回/秒）は回り続けていた。落とすのは deactivateDevice と quit だけで、
+        // （500 回/秒）は回り続けていた（当時の話。いまの送り手は音を積んだ瞬間にしか
+        // 起きないので、音が来ないあいだは眠るが、接続と 200ms の再試行は持ったまま）。
+        // 落とすのは deactivateDevice と quit だけで、
         // その 2 つが来ないまま配送が止まっている窓の長さには上限が無い。
         //
         // **即座には落とさない。**stop は _fd を閉じるので、受け手は切断として
-        // 扱い、再接続で溜め直し（SETTLE_FRAMES）と "no audio" の点滅を買う。
+        // 扱い、再接続で溜め直し（ET_LINK_SETTLE_FRAMES）と "no audio" の点滅を買う。
         // 系が停止と再開を短い間に往復させる回では、それが毎回起きる。
         senderStopWork?.cancel()
         let work = DispatchWorkItem {

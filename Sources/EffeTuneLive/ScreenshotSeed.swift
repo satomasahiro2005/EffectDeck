@@ -55,10 +55,21 @@ enum ETScreenshotSeed {
     /// 濁りを削り、3kHz を少し出し、高域に棚を足した、よくある形にしてある。
     /// 後ろに Spectrum Analyzer を置いて、かかった結果が図に出るようにする。
     static var storeChain: String? {
+        // `-ETSeed am-<presetId>` は Analog Meter の同梱プリセットを 1 枚だけ並べる
+        // （針の見え方を、Mode ごとに値の入った状態で撮るため）。
+        if let name = UserDefaults.standard.string(forKey: "ETSeed"), name.hasPrefix("am-"),
+           let preset = ETEffectPresetList.first(where: {
+               $0.effect == "Analog Meter" && $0.presetId == String(name.dropFirst(3))
+           }) {
+            return "{\"pipeline\":[{\"name\":\"Analog Meter\",\"enabled\":true,\"parameters\":" + preset.json + "}]}"
+        }
         if let name = UserDefaults.standard.string(forKey: "ETSeed"),
            let id = storePresets[name] {
             return ETSystemPresets.first { $0.id == id }?.json
         }
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "ETSeed") == "demo" { return demoChain }
+        #endif
         // 宣材用の Analyzer 4 枚。同梱の All Analyzers から Oscilloscope を外し、
         // Level Meter を頭へ持ってきたもの。畳んで撮ると図だけが 4 つ並ぶ。
         // **Spectrogram は埋まるまで時間が要る**（SLEEP を伸ばして撮ること）。
@@ -91,6 +102,38 @@ enum ETScreenshotSeed {
         """
     }
 
+    /// 撮るときも2列（左に一覧、右に全部開いたカード）にする。`-ETLayout wide`で立つ。
+    ///
+    /// 撮影の既定は1列。iPadで撮るのは高さが要るからで、幅はiPhoneに絞る（phoneWidth）。
+    /// iPadの画面そのものを撮りたいときだけ立てる。
+    static var wideLayout: Bool {
+        UserDefaults.standard.string(forKey: "ETLayout") == "wide"
+    }
+
+    #if DEBUG
+    /// iPadの2列を撮るための鎖。`-ETSeed demo`で並ぶ。
+    ///
+    /// 左の一覧で見たいものを1枚に収める。字下げ（Section 2つ）、薄く出す行
+    /// （SpaceのDelayを切ってある）、Level Meterの棒、図を持つカード。
+    ///
+    /// **組の外の段はSectionより前に置く。**Sectionは次のSectionまでを抱えるので、
+    /// Vocalの後ろに置くとPEQとStereo MeterまでVocalの配下になる。無名のSectionで
+    /// 閉じても、読み込むと無名の組になるだけで組の外には戻らない。
+    static let demoChain = """
+    {"pipeline":[
+      {"name":"Level Meter","enabled":true,"parameters":{}},
+      {"name":"15Band PEQ","enabled":true,"parameters":{}},
+      {"name":"Stereo Meter","enabled":true,"parameters":{}},
+      {"name":"Section","enabled":true,"parameters":{"cm":"Vocal"}},
+      {"name":"Gate","enabled":true,"parameters":{}},
+      {"name":"Compressor","enabled":true,"parameters":{}},
+      {"name":"Section","enabled":true,"parameters":{"cm":"Space"}},
+      {"name":"RS Reverb","enabled":true,"parameters":{}},
+      {"name":"Delay","enabled":false,"parameters":{}}
+    ]}
+    """
+    #endif
+
     /// 畳んだ状態で撮るか。既定は開く（中身が写らないと意味が無いので）。
     /// 畳んだときの見え方を確かめたいときだけ立てる。
     static var collapsed: Bool {
@@ -120,6 +163,21 @@ enum ETScreenshotSeed {
         UserDefaults.standard.bool(forKey: "ETDebugBlocks")
     }
 
+    /// 画面の自動更新を止める。`-ETFreezeLive 1` で立つ。**アクセシビリティの監査のためだけのもの。**
+    ///
+    /// 図・メーター・帯の数字が動き続けると、読み上げの木が毎フレーム変わり、
+    /// performAccessibilityAudit が落ち着くのを待ちきれない（-56 "Audit failed to complete in time"）。
+    /// 立てると、起動してしばらく（freezeWarmup / freezeWarmupTicks）だけ普通に動かして
+    /// 図に最初の絵を描かせ、そのあとは汲むのも publish もやめる。音は鳴らしたまま（ETMock）。
+    /// 実機では引数が付かないので false で、何も変わらない。毎 tick 読むので一度だけ引く。
+    static let freezeLive: Bool = UserDefaults.standard.bool(forKey: "ETFreezeLive")
+
+    /// freezeLive のとき、図を汲み続ける秒数（最初の絵を描くまで）。
+    static let freezeWarmup: TimeInterval = 1.5
+
+    /// freezeLive のとき、AudioIO.tick が帯の数字を更新し続ける回数（0.3 秒ごと。約 3 秒）。
+    static let freezeWarmupTicks = 10
+
     /// 並べ替えの切り分け用。段階を画面の上のセグメントで切り替える。
     static var probe: Bool {
         UserDefaults.standard.bool(forKey: "ETProbe")
@@ -132,7 +190,10 @@ enum ETScreenshotSeed {
     static var requested: [String]? {
         guard let name = UserDefaults.standard.string(forKey: "ETSeed") else { return nil }
         // プリセットを読むものは、並べる型を自分では決めない（storeChain が持つ）。
-        if storePresets[name] != nil || name == "analyzers4" { return [] }
+        if storePresets[name] != nil || name == "analyzers4" || name.hasPrefix("am-") { return [] }
+        #if DEBUG
+        if name == "demo" { return [] }
+        #endif
         switch name {
         case "none":       return []
         case "peq":        return ["FiveBandPEQPlugin"]
@@ -140,9 +201,9 @@ enum ETScreenshotSeed {
         case "saturation": return ["SaturationPlugin"]
         case "meter":      return ["LevelMeterPlugin"]
         case "spectrum":   return ["SpectrumAnalyzerPlugin"]
-        // PEQ の図に重ねるスペクトラム。Analyzer を **PEQ の前**に置くと入口側になる
-        // （ETSpectrumOverlayFinder.source が入口を先に見る）。
-        // 波形のボタンを押すまで重ならないので、撮るときは 1 度押す。
+        // PEQ の図に重ねるスペクトラム。PEQ の図には探り（EffeTuneDSP.syncProbes）が
+        // いつも重なる。Analyzer は PEQ に入る音を並べて見せるために置く。
+        // 図の札を押すと Compare（入る音と出た音）になる。
         case "peq-spectrum": return ["SpectrumAnalyzerPlugin", "FiveBandPEQPlugin"]
         case "chain":      return ["VolumePlugin", "ToneControlPlugin",
                                    "CompressorPlugin", "RSReverbPlugin"]

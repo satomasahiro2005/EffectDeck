@@ -1,0 +1,2926 @@
+EffectDeck が ysfx 5c3452f に当てる差分（Scripts/setup.sh が当てる）。
+上流 WDL から取り込んだもの:
+  f9d7b1b3f, 0e7e5bfd0  LICE_ScaledBlit の桁あふれと負の元座標。WDL_NOT_NORMALLY は素の比較にした
+                        （この版の lice.cpp は wdltypes.h を読まない。n<0 は起きない分岐）
+  f31b13bfc             引数の数を間違えた tan(x,y) で関数表の外を読む
+EffectDeck が足したもの（上流に無い）:
+  effectdeck_exec_select  EEL の実行系を実行時に選ぶ（ns-eel.h の NSEEL_EXEC_*、glue_port_vm.h。バイトコードはそのまま）。
+                        ysfx は @slider・@block・@sample をその実行系で回す（ysfx_set_eel_exec_mode）。既定は
+                        NSEEL_EXEC_GOTO_FPREG。NSEEL_rand_reset は比べ合わせのため（rand の列を最初からにする）
+  GLUE_MEGABUF_NO_IMMEDIATE  portable の x[]（megabuf）に __NSEEL_RAMAlloc を書き込まない。即値の席が無い命令に
+                        EEL_GLUE_set_immediate をかけて命令の後ろを潰し、命令列の最後だと先にインラインにした
+                        関数の中身の頭を壊していた（上流 WDL d30c30b でも同じ）
+  effectdeck_file_retptr  file_rewind（開いていないハンドル）と file_riff（負のハンドル）が EEL_F* の戻りに NULL を返し、
+                        EEL が戻りの先を読んで落ちていた（x = file_rewind(5) + 1;）。引数を返す。上流 ysfx でも同じ
+  effectdeck_nan_order  + と *（ADD・MUL・ADD_OP_FAST・MUL_OP_FAST）を asm で書き、オペランドが 2 つとも NaN の
+                        ときに残る NaN を式の左（top2・升の値）に決める。C の a + b はコンパイラが順を入れ替えて
+                        よく、portable と glue_port_vm.h の実行系とで残る NaN の符号が違った（glue_port.h・
+                        glue_port_vm.h）
+  heapbuf.h            空の WDL_HeapBuf を写すとき memcpy(NULL, …, 0) を呼ばない（strncat(#a, #空)。UBSan）
+diff --git a/include/ysfx.h b/include/ysfx.h
+index 49296d4..a8d7e7c 100644
+--- a/include/ysfx.h
++++ b/include/ysfx.h
+@@ -351,6 +351,10 @@ YSFX_API bool ysfx_fetch_want_undopoint(ysfx_t *fx);
+ 
+ // process a cycle in 32-bit float
+ YSFX_API void ysfx_process_float(ysfx_t *fx, const float *const *ins, float *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames);
++// EffectDeck: @slider・@block・@sample の EEL の実行系（WDL の ns-eel.h の NSEEL_EXEC_*）。
++// 使えない番号は false で何も変えない。どれでも結果は 1 ビットも変わらない（速さだけ）。
++YSFX_API bool ysfx_set_eel_exec_mode(ysfx_t *fx, int mode);
++YSFX_API int ysfx_get_eel_exec_mode(ysfx_t *fx);
+ // process a cycle in 64-bit float
+ YSFX_API void ysfx_process_double(ysfx_t *fx, const double *const *ins, double *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames);
+ 
+diff --git a/sources/ysfx.cpp b/sources/ysfx.cpp
+index 740d1dd..c83ca5f 100644
+--- a/sources/ysfx.cpp
++++ b/sources/ysfx.cpp
+@@ -186,6 +186,7 @@ ysfx_t *ysfx_new(ysfx_config_t *config)
+     AUTOVAR(gfx_texth, 0);
+     AUTOVAR(gfx_dest, 0);
+     AUTOVAR(gfx_ext_retina, 0);
++    AUTOVAR(gfx_ext_flags, 0);
+     AUTOVAR(mouse_x, 0);
+     AUTOVAR(mouse_y, 0);
+     AUTOVAR(mouse_cap, 0);
+@@ -452,13 +453,15 @@ bool ysfx_compile(ysfx_t *fx, uint32_t compileopts)
+     {
+         uint32_t maxmem = fx->source.main->header.options.maxmem;
+         if (maxmem == 0)
+-            maxmem = 8 * 1024 * 1024;
+-        if (maxmem > 128 * 1024 * 1024)
+-            maxmem = 128 * 1024 * 1024;
++            maxmem = 2 * 1024 * 1024;
++        if (maxmem > 2 * 1024 * 1024)
++            maxmem = 2 * 1024 * 1024;
+ 
+         NSEEL_VM_setramsize(vm, (int)maxmem);
+         if (fx->source.main->header.options.prealloc != 0) {
+-            NSEEL_VM_preallocram(vm, (int) fx->source.main->header.options.prealloc);
++            int32_t prealloc = fx->source.main->header.options.prealloc;
++            if (prealloc < 0 || prealloc > (int32_t)maxmem) prealloc = (int32_t)maxmem;
++            NSEEL_VM_preallocram(vm, prealloc);
+         };
+ 
+         ysfx_gmem_attach(fx, fx->source.main->header.options.gmem);
+@@ -574,6 +577,7 @@ void ysfx_reinitialize_vars(ysfx_t *fx)
+                 && strcmp(name, "mouse_wheel")
+                 && strcmp(name, "mouse_hwheel")
+                 && strcmp(name, "gfx_ext_retina")
++                && strcmp(name, "gfx_ext_flags")
+             )
+         ) {
+             found = true;
+@@ -1484,6 +1488,49 @@ uint64_t ysfx_get_slider_visibility(ysfx_t *fx, uint8_t slider_group_index)
+     return fx->slider.visible_mask[slider_group_index].load();
+ }
+ 
++// EffectDeck: NSEEL_code_execute_frames の回の前後（下の 1 フレームずつの回し方と同じ読み書き）。
++template <class Real>
++struct ysfx_sample_io_t {
++    const Real *const *ins;
++    Real *const *outs;
++    EEL_F **spl;
++    uint32_t num_ins, num_code_ins, num_outs;
++    double denorm_value;
++};
++
++template <class Real>
++static void ysfx_sample_pre(void *ctx, unsigned int i)
++{
++    const ysfx_sample_io_t<Real> *io = (const ysfx_sample_io_t<Real> *)ctx;
++    EEL_F **spl = io->spl;
++    for (uint32_t ch = 0; ch < io->num_ins; ++ch)
++        *spl[ch] = (EEL_F)io->ins[ch][i] + io->denorm_value;
++    for (uint32_t ch = io->num_ins; ch < io->num_code_ins; ++ch)
++        *spl[ch] = io->denorm_value;
++}
++
++template <class Real>
++static void ysfx_sample_post(void *ctx, unsigned int i)
++{
++    const ysfx_sample_io_t<Real> *io = (const ysfx_sample_io_t<Real> *)ctx;
++    EEL_F **spl = io->spl;
++    for (uint32_t ch = 0; ch < io->num_outs; ++ch)
++        io->outs[ch][i] = (Real)*spl[ch];
++}
++
++bool ysfx_set_eel_exec_mode(ysfx_t *fx, int mode)
++{
++    if (!fx || !NSEEL_code_exec_mode_available(mode))
++        return false;
++    fx->eel_exec_mode.store(mode, std::memory_order_relaxed);
++    return true;
++}
++
++int ysfx_get_eel_exec_mode(ysfx_t *fx)
++{
++    return fx ? fx->eel_exec_mode.load(std::memory_order_relaxed) : NSEEL_EXEC_PORTABLE;
++}
++
+ template <class Real>
+ void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs, uint32_t num_ins, uint32_t num_outs, uint32_t num_frames)
+ {
+@@ -1529,18 +1576,32 @@ void ysfx_process_generic(ysfx_t *fx, const Real *const *ins, Real *const *outs,
+         *fx->var.samplesblock = (EEL_F)num_frames;
+         *fx->var.num_ch = (EEL_F)num_ins;
+ 
++        // EffectDeck: NSEEL_EXEC_PORTABLE はもとの道（1 回ずつ NSEEL_code_execute）。
++        const int exec_mode = fx->eel_exec_mode.load(std::memory_order_relaxed);
++
+         // compute @slider if needed
+         if (fx->must_compute_slider) {
+             // TODO: slider must never run concurrently with @sample or @block
+-            NSEEL_code_execute(fx->code.slider.get());
++            if (exec_mode == NSEEL_EXEC_PORTABLE)
++                NSEEL_code_execute(fx->code.slider.get());
++            else
++                NSEEL_code_execute_frames(fx->code.slider.get(), exec_mode, 1, nullptr, nullptr, nullptr);
+             fx->must_compute_slider = false;
+         }
+ 
+         // compute @block
+-        NSEEL_code_execute(fx->code.block.get());
++        if (exec_mode == NSEEL_EXEC_PORTABLE)
++            NSEEL_code_execute(fx->code.block.get());
++        else
++            NSEEL_code_execute_frames(fx->code.block.get(), exec_mode, 1, nullptr, nullptr, nullptr);
+ 
+         // compute @sample, once per frame
+-        if (fx->code.sample) {
++        if (fx->code.sample && exec_mode != NSEEL_EXEC_PORTABLE) {
++            // EffectDeck: 1 ブロックを 1 回の入口で。回の前後の読み書きは下の portable の道と同じ。
++            ysfx_sample_io_t<Real> io{ins, outs, fx->var.spl, num_ins, num_code_ins, num_outs, denorm_value};
++            NSEEL_code_execute_frames(fx->code.sample.get(), exec_mode, num_frames,
++                                      &ysfx_sample_pre<Real>, &ysfx_sample_post<Real>, &io);
++        } else if (fx->code.sample) {
+             EEL_F **spl = fx->var.spl;
+             for (uint32_t i = 0; i < num_frames; ++i) {
+                 for (uint32_t ch = 0; ch < num_ins; ++ch)
+@@ -1700,6 +1761,7 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+         return nullptr;
+ 
+     std::string buffer;
++    bool overflow = false;
+ 
+     // invoke @serialize
+     {
+@@ -1710,9 +1772,14 @@ ysfx_state_t *ysfx_save_state(ysfx_t *fx)
+         lock.unlock();
+         ysfx_serialize(fx);
+         lock.lock();
++        overflow = serializer->m_overflow;
+         serializer->end();
+     }
+ 
++    // EffectDeck: a truncated @serialize is not a state; do not hand it out.
++    if (overflow)
++        return nullptr;
++
+     // save the sliders
+     ysfx_state_u state{new ysfx_state_t};
+     uint32_t slider_count = 0;
+diff --git a/sources/ysfx.hpp b/sources/ysfx.hpp
+index a7f2a24..fde6d3b 100644
+--- a/sources/ysfx.hpp
++++ b/sources/ysfx.hpp
+@@ -70,6 +70,9 @@ struct ysfx_s {
+     bool must_compute_slider = false;
+     bool has_serialize = false;
+     bool want_undo = false;
++    // EffectDeck: @slider・@block・@sample の EEL の実行系（ns-eel.h の NSEEL_EXEC_*）。音のスレッドが
++    // ブロックごとに 1 回読む。
++    std::atomic<int> eel_exec_mode{NSEEL_EXEC_DEFAULT};
+ 
+     std::unordered_map<ysfx_real *, uint32_t> slider_of_var;
+     
+@@ -135,6 +138,7 @@ struct ysfx_s {
+         EEL_F *gfx_texth = nullptr;
+         EEL_F *gfx_dest = nullptr;
+         EEL_F *gfx_ext_retina = nullptr;
++        EEL_F *gfx_ext_flags = nullptr;
+         EEL_F *mouse_x = nullptr;
+         EEL_F *mouse_y = nullptr;
+         EEL_F *mouse_cap = nullptr;
+diff --git a/sources/ysfx_api_eel.cpp b/sources/ysfx_api_eel.cpp
+index 592f1f4..5799177 100644
+--- a/sources/ysfx_api_eel.cpp
++++ b/sources/ysfx_api_eel.cpp
+@@ -145,13 +145,16 @@ const char *ysfx_string_access_unlocked(ysfx_t *fx, ysfx_real id, WDL_FastString
+ }
+ 
+ //------------------------------------------------------------------------------
+-// NOTE(jpc) implement this? I guess probably not.
+-//     DSP and UI should not mutex each other.
++// EffectDeck: WDL uses these hooks only around internal allocation and shared
++// GRAM bookkeeping. This is intentionally not a whole-VM/render mutex.
++static std::recursive_mutex g_wdl_internal_mutex;
+ 
+ void NSEEL_HOSTSTUB_EnterMutex()
+ {
++    g_wdl_internal_mutex.lock();
+ }
+ 
+ void NSEEL_HOSTSTUB_LeaveMutex()
+ {
++    g_wdl_internal_mutex.unlock();
+ }
+diff --git a/sources/ysfx_api_file.cpp b/sources/ysfx_api_file.cpp
+index d4305e5..db1a049 100644
+--- a/sources/ysfx_api_file.cpp
++++ b/sources/ysfx_api_file.cpp
+@@ -294,6 +294,7 @@ void ysfx_serializer_t::begin(bool write, std::string &buffer)
+     m_write = (int)write;
+     m_buffer = &buffer;
+     m_pos = 0;
++    m_overflow = false;
+ }
+ 
+ void ysfx_serializer_t::end()
+@@ -314,9 +315,22 @@ void ysfx_serializer_t::rewind()
+ {
+ }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++// EffectDeck: bound @serialize while it is written, not after it returns.
++// The host rejects states above 16 MiB anyway, but only once the whole blob
++// exists; one file_mem(0, 0, 1e9) would grow this buffer until jetsam.
++static constexpr size_t k_effectdeck_serialize_limit = 16u * 1024u * 1024u;
++#endif
++
+ bool ysfx_serializer_t::var(ysfx_real *var)
+ {
+     if (m_write == 1) {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++        if (m_overflow || m_buffer->size() + 4 > k_effectdeck_serialize_limit) {
++            m_overflow = true;
++            return false;
++        }
++#endif
+         uint8_t buf[4];
+         ysfx::pack_f32le((float)*var, buf);
+         m_buffer->append((char *)buf, 4);
+@@ -361,14 +375,43 @@ uint32_t ysfx_serializer_t::mem(uint32_t offset, uint32_t length)
+ 
+ uint32_t ysfx_serializer_t::string(std::string &str)
+ {
+-    // TODO implement me; docs claim support in Reaper 4.59+ but it seems
+-    //   non-working (as of Reaper 6.40)
++    if (m_write == 1) {
++        const uint32_t length = (uint32_t)std::min<size_t>(str.size(), 1024 * 1024);
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++        if (m_overflow || m_buffer->size() + 4 + length > k_effectdeck_serialize_limit) {
++            m_overflow = true;
++            return 0;
++        }
++#endif
++        uint8_t size[4];
++        ysfx::pack_u32le(length, size);
++        m_buffer->append((char *)size, sizeof(size));
++        m_buffer->append(str.data(), length);
++        return length;
++    }
++    if (m_write == 0) {
++        if (m_pos + 4 > m_buffer->size()) return 0;
++        const uint32_t length = ysfx::unpack_u32le((uint8_t *)&(*m_buffer)[m_pos]);
++        m_pos += 4;
++        if (length > 1024 * 1024 || m_pos + length > m_buffer->size()) {
++            m_pos = m_buffer->size();
++            return 0;
++        }
++        str.assign(m_buffer->data() + m_pos, length);
++        m_pos += length;
++        return length;
++    }
+     return 0;
+ }
+ 
+ //------------------------------------------------------------------------------
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_open(void *opaque, EEL_F *file_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque;
++    (void)file_;
++    return -1;
++#else
+     ysfx_t *fx = (ysfx_t *)opaque;
+ 
+     std::string filepath;
+@@ -405,6 +448,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_open(void *opaque, EEL_F *file_)
+     }
+ 
+     return -1;
++#endif
+ }
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_close(void *opaque, EEL_F *handle_)
+@@ -429,6 +473,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_close(void *opaque, EEL_F *handle_)
+     return 0;
+ }
+ 
++// EffectDeck (effectdeck_file_retptr): file_rewind と file_riff は EEL_F* を返す関数
++// （NSEEL_addfunc_retptr）。EEL は戻りの先をそのまま読むので、NULL を返すと
++// `x = file_rewind(5) + 1;` のような式がアプリごと落ちる。開いていないハンドルでも
++// 引数（開いているときと同じ先）を返す。
+ static EEL_F *NSEEL_CGEN_CALL ysfx_api_file_rewind(void *opaque, EEL_F *handle_)
+ {
+     int32_t handle = ysfx_eel_round<int32_t>(*handle_);
+@@ -439,7 +487,7 @@ static EEL_F *NSEEL_CGEN_CALL ysfx_api_file_rewind(void *opaque, EEL_F *handle_)
+     std::unique_lock<ysfx::mutex> lock;
+     ysfx_file_t *file = ysfx_get_file(fx, (uint32_t)handle, lock);
+     if (!file)
+-        return 0;
++        return handle_;
+ 
+     file->rewind();
+     return handle_;
+@@ -498,8 +546,11 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_file_avail(void *opaque, EEL_F *handle_)
+ static EEL_F *NSEEL_CGEN_CALL ysfx_api_file_riff(void *opaque, EEL_F *handle_, EEL_F *nch_, EEL_F *samplerate_)
+ {
+     int32_t handle = ysfx_eel_round<int32_t>(*handle_);
+-    if (handle < 0)
+-        return 0;
++    if (handle < 0) {
++        *nch_ = 0;
++        *samplerate_ = 0;
++        return nch_;
++    }
+ 
+     ysfx_t *fx = (ysfx_t *)opaque;
+     std::unique_lock<ysfx::mutex> lock;
+diff --git a/sources/ysfx_api_file.hpp b/sources/ysfx_api_file.hpp
+index f94e7eb..f039411 100644
+--- a/sources/ysfx_api_file.hpp
++++ b/sources/ysfx_api_file.hpp
+@@ -119,6 +119,7 @@ struct ysfx_serializer_t final : ysfx_file_t {
+     int m_write = -1;
+     std::string *m_buffer = nullptr;
+     size_t m_pos = 0;
++    bool m_overflow = false;
+ };
+ 
+ using ysfx_serializer_u = std::unique_ptr<ysfx_serializer_t>;
+diff --git a/sources/ysfx_api_gfx.cpp b/sources/ysfx_api_gfx.cpp
+index 7a115e7..954e4de 100644
+--- a/sources/ysfx_api_gfx.cpp
++++ b/sources/ysfx_api_gfx.cpp
+@@ -38,7 +38,7 @@
+ #define GFX_GET_CONTEXT(opaque) (((opaque)) ? ysfx_gfx_get_context((ysfx_t *)(opaque)) : nullptr)
+ 
+ enum {
+-    ysfx_gfx_max_images = 1024,
++    ysfx_gfx_max_images = 128,
+     ysfx_gfx_max_fonts = 128,
+     ysfx_gfx_max_input = 1024,
+ };
+@@ -65,6 +65,10 @@ struct ysfx_gfx_state_t {
+ #if !defined(YSFX_NO_GFX)
+ static bool eel_lice_get_filename_for_string(void *opaque, EEL_F idx, WDL_FastString *fs, int iswrite)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)idx; (void)fs; (void)iswrite;
++    return false;
++#else
+     if (iswrite)
+         return false; // this is neither supported nor used
+ 
+@@ -76,6 +80,7 @@ static bool eel_lice_get_filename_for_string(void *opaque, EEL_F idx, WDL_FastSt
+ 
+     if (fs) fs->Set(filepath.data(), (uint32_t)filepath.size());
+     return true;
++#endif
+ }
+ 
+ #define EEL_LICE_GET_FILENAME_FOR_STRING(idx, fs, p)    \
+@@ -409,7 +414,9 @@ void ysfx_gfx_prepare(ysfx_t *fx)
+ void ysfx_api_init_gfx()
+ {
+ #if !defined(YSFX_NO_GFX)
++#if !defined(YSFX_EFFECTDECK_SANDBOX)
+     lice_stb_install_loaders();
++#endif
+ #endif
+ 
+     NSEEL_addfunc_retptr("gfx_lineto", 3, NSEEL_PProc_THIS, &ysfx_api_gfx_lineto);
+diff --git a/sources/ysfx_api_gfx_lice.hpp b/sources/ysfx_api_gfx_lice.hpp
+index 94252e1..9eaf5e8 100644
+--- a/sources/ysfx_api_gfx_lice.hpp
++++ b/sources/ysfx_api_gfx_lice.hpp
+@@ -36,6 +36,7 @@
+ #include "WDL/wdlcstring.h"
+ #include "WDL/wdlutf8.h"
+ #include <algorithm>
++#include <atomic>
+ #include <cmath>
+ #include <cstdio>
+ #include <cstring>
+@@ -96,10 +97,10 @@ static int LICE__DrawText(LICE_IFont* ifont, LICE_IBitmap *bm, const char *str,
+ }
+ 
+ 
+-static LICE_IFont *LICE_CreateFont()
+-{
+-  return new LICE_CachedFont();
+-}
++extern LICE_IFont *ETLICE_CreateFont();
++extern int ETLICE_ConfigureFont(LICE_IFont *, const char *, int, bool, bool, bool,
++                               char *, size_t);
++static LICE_IFont *LICE_CreateFont() { return ETLICE_CreateFont(); }
+ static void LICE__DestroyFont(LICE_IFont *bm)
+ {
+   delete bm;
+@@ -109,12 +110,93 @@ static bool LICE__resize(LICE_IBitmap *bm, int w, int h)
+   return bm->resize(w,h);
+ }
+ 
++// **座標は int にする前に ±2^28 へ収める。** 範囲外の double から int への変換は未定義で、
++// arm64 では INT_MIN/INT_MAX に張り付く。LICE はその値の差や +1 を int のまま取るので
++// 符号付きの桁あふれになり、範囲の検査が最適化で消えて画面の外を読み書きする
++// (gfx_blurto → LICE_Blur、gfx_triangle → FillClippedTrapezoid、回した gfx_blit → LICE_RotatedBlit)。
++// 画像は 2048 px までなので、この幅の中なら切り取られる結果は同じ。NaN は今までどおり 0。
++// **スクリプトの値を画素の座標・大きさにする口は全部これを通す**(線・矩形・円・弧・三角形・
++// blit の元と先・文字の位置)。±2^28 の中の値は何も変えない。
++static const EEL_F k_effectdeck_gfx_coord_limit = (EEL_F)(1<<28);
++static EEL_F effectdeck_gfx_coord(EEL_F v)
++{
++  if (v != v) return 0.0;
++  return v < -k_effectdeck_gfx_coord_limit ? -k_effectdeck_gfx_coord_limit :
++         v > k_effectdeck_gfx_coord_limit ? k_effectdeck_gfx_coord_limit : v;
++}
++
++// 位置と幅(矩形、blit の元と先)は両端を収める。幅だけを収めると、画面の外から大きく
++// はみ出した矩形が画面に掛からなくなる。両端とも範囲の中なら何もしない(足して引くと
++// 丸めで幅が変わりうる)。
++static void effectdeck_gfx_span(EEL_F *pos, EEL_F *len)
++{
++  if (fabs(*pos) <= k_effectdeck_gfx_coord_limit && fabs(*pos + *len) <= k_effectdeck_gfx_coord_limit) return;
++  const EEL_F p = *pos == *pos ? *pos : 0.0, l = *len == *len ? *len : 0.0;
++  *pos = effectdeck_gfx_coord(p);
++  *len = effectdeck_gfx_coord(p + l) - *pos;
++}
++
++// 線分は端点を別々に収めると向きが変わる。箱の外の端点は、線分に沿って箱の縁まで寄せる
++// (Liang-Barsky)。箱の中の端点から測る(外の大きな値から測ると桁が落ちる)。箱は ±(2^30-1)
++// (LICE_ClipLine が取る端点の差が int に収まる幅)で、両端とも箱の中なら何もしない。
++// 箱に掛からない線分は画面にも掛からないので false。
++static bool effectdeck_gfx_segment(EEL_F *x1, EEL_F *y1, EEL_F *x2, EEL_F *y2)
++{
++  const EEL_F lim = (EEL_F)((1<<30)-1);
++  EEL_F *v[4] = { x1, y1, x2, y2 };
++  for (int i = 0; i < 4; i ++)
++  {
++    if (*v[i] != *v[i]) *v[i] = 0.0; // NaN は今までどおり 0
++    else if (*v[i] > 1e300) *v[i] = 1e300; // ±Inf でも差を有限にする
++    else if (*v[i] < -1e300) *v[i] = -1e300;
++  }
++  const bool in1 = fabs(*x1) <= lim && fabs(*y1) <= lim, in2 = fabs(*x2) <= lim && fabs(*y2) <= lim;
++  if (in1 && in2) return true;
++  const bool from2 = !in1 && in2;
++  const EEL_F ox = from2 ? *x2 : *x1, oy = from2 ? *y2 : *y1;
++  const EEL_F dx = (from2 ? *x1 : *x2) - ox, dy = (from2 ? *y1 : *y2) - oy;
++  const EEL_F p[4] = { -dx, dx, -dy, dy }, q[4] = { ox + lim, lim - ox, oy + lim, lim - oy };
++  EEL_F t0 = 0.0, t1 = 1.0;
++  for (int i = 0; i < 4; i ++)
++  {
++    if (p[i] == 0.0) { if (q[i] < 0.0) return false; }
++    else if (p[i] < 0.0) { const EEL_F t = q[i] / p[i]; if (t > t0) t0 = t; }
++    else { const EEL_F t = q[i] / p[i]; if (t < t1) t1 = t; }
++  }
++  if (t0 > t1) return false;
++  EEL_F e[4] = { ox + t0*dx, oy + t0*dy, ox + t1*dx, oy + t1*dy };
++  for (int i = 0; i < 4; i ++) e[i] = e[i] < -lim ? -lim : e[i] > lim ? lim : e[i]; // 丸めの分
++  *x1 = from2 ? e[2] : e[0]; *y1 = from2 ? e[3] : e[1];
++  *x2 = from2 ? e[0] : e[2]; *y2 = from2 ? e[1] : e[3];
++  return true;
++}
++
++// **gfx_a は LICE に渡す前に ±8 へ収める。** LICE は alpha*256 を int にして、合成(lice_combine.h)で
++// 色・画素の alpha と掛ける。LICE_FillRect はその値を画素の alpha にも入れるので積は (alpha*256)^2*255
++// まで育ち、乗算・オーバーレイは |gfx_a| が 11 余りで、写し・加算は巨大な値で int を溢れる(未定義。
++// 範囲外の double は arm64 で INT_MAX に張り付く)。±8 なら LICE の合成に届く整数は全部 ±2048 に収まる
++// (lice.cpp の gradBlit も同じ幅に収める)。ふつうは 0..1 で、±8 の中は何も変えない。NaN は今までどおり 0。
++// **スクリプトの gfx_a を LICE に渡す口は全部これを通す。**スクリプトから見える gfx_a は変えない。
++static float effectdeck_gfx_alpha(EEL_F v)
++{
++  if (v != v) return 0.0f;
++  return (float)(v < -8.0 ? -8.0 : v > 8.0 ? 8.0 : v);
++}
++
+ static LICE_IBitmap *__LICE_CreateBitmap(int mode, int w, int h)
+ {
+-  if (mode==1) return new LICE_SysBitmap(w,h);
++  (void)mode;
+   return new LICE_MemBitmap(w,h);
+ }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++// EffectDeck keeps offscreen images bounded independently of the app-owned
++// presentation framebuffer: 16 MiB per instance and 64 MiB process-wide.
++static std::atomic<size_t> g_effectdeck_lice_image_bytes{0};
++static constexpr size_t k_effectdeck_lice_instance_limit = 16u * 1024u * 1024u;
++static constexpr size_t k_effectdeck_lice_global_limit = 64u * 1024u * 1024u;
++#endif
++
+ class eel_lice_state
+ {
+ public:
+@@ -123,8 +205,12 @@ public:
+   ~eel_lice_state();
+ 
+   LICE_IBitmap *m_framebuffer, *m_framebuffer_extra;
++  LICE_IFont *m_effectdeck_default_font;
+   int m_framebuffer_dirty;
+   WDL_TypedBuf<LICE_IBitmap *> m_gfx_images;
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++  size_t m_effectdeck_image_bytes = 0;
++#endif
+   struct gfxFontStruct {
+     LICE_IFont *font;
+     char last_fontname[128];
+@@ -143,7 +229,7 @@ public:
+   };
+ 
+   int m_gfx_font_active; // -1 for default, otherwise index into gfx_fonts (NOTE: this differs from the exposed API, which defines 0 as default, 1-n)
+-  LICE_IFont *GetActiveFont() { return m_gfx_font_active>=0&&m_gfx_font_active<m_gfx_fonts.GetSize() && m_gfx_fonts.Get()[m_gfx_font_active].use_fonth ? m_gfx_fonts.Get()[m_gfx_font_active].font : NULL; }
++  LICE_IFont *GetActiveFont() { return m_gfx_font_active>=0&&m_gfx_font_active<m_gfx_fonts.GetSize() && m_gfx_fonts.Get()[m_gfx_font_active].use_fonth ? m_gfx_fonts.Get()[m_gfx_font_active].font : m_effectdeck_default_font; }
+ 
+   LICE_IBitmap *GetImageForIndex(EEL_F idx, const char *callername) 
+   { 
+@@ -222,6 +308,12 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+   m_gfx_images.Resize(image_slots);
+   memset(m_gfx_images.Get(),0,m_gfx_images.GetSize()*sizeof(m_gfx_images.Get()[0]));
+   m_framebuffer=m_framebuffer_extra=0;
++  m_effectdeck_default_font=LICE_CreateFont();
++  if (m_effectdeck_default_font) {
++    char actual_name[128] = {};
++    ETLICE_ConfigureFont(m_effectdeck_default_font,"Helvetica",12,false,false,false,
++                         actual_name,sizeof(actual_name));
++  }
+   m_framebuffer_dirty=0;
+ 
+   m_gfx_r = NSEEL_VM_regvar(vm,"gfx_r");
+@@ -250,6 +342,9 @@ eel_lice_state::eel_lice_state(NSEEL_VMCTX vm, void *ctx, int image_slots, int f
+ }
+ eel_lice_state::~eel_lice_state()
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++  g_effectdeck_lice_image_bytes.fetch_sub(m_effectdeck_image_bytes, std::memory_order_relaxed);
++#endif
+   if (LICE_FUNCTION_VALID(LICE__Destroy)) 
+   {
+     LICE__Destroy(m_framebuffer_extra);
+@@ -262,6 +357,7 @@ eel_lice_state::~eel_lice_state()
+   }
+   if (LICE_FUNCTION_VALID(LICE__DestroyFont))
+   {
++    if (m_effectdeck_default_font) LICE__DestroyFont(m_effectdeck_default_font);
+     int x;
+     for (x=0;x<m_gfx_fonts.GetSize();x++)
+     {
+@@ -386,9 +482,13 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
+   if (ctx) 
+   {
+ #ifndef EEL_LICE_NO_RAM
+-    const int divw = (int) (parms[5][0]+0.5);
+-    const int divh = (int) (parms[6][0]+0.5);
+-    if (divw < 1 || divh < 1) return 0.0;
++    // **表の大きさは double で測ってから int にする。** divw*divh*2 が int で折り返すと
++    // 下の連続性の検査は小さな表しか見ず、LICE_TransformBlit2 は本来の div_w*div_h*2 個を
++    // RAM の外まで読む(46341x46341 で 9266 個に化ける)。NaN は今までどおり 0 扱いで弾く。
++    const EEL_F divw_f = parms[5][0]+0.5, divh_f = parms[6][0]+0.5;
++    if (!(divw_f >= 1.0 && divh_f >= 1.0 && divw_f*divh_f*2.0 < 2147483648.0)) return 0.0;
++    const int divw = (int) divw_f;
++    const int divh = (int) divh_f;
+     const int sz = divw*divh*2;
+ 
+ #ifdef EEL_LICE_RAMFUNC
+@@ -398,6 +498,7 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_transformblit(void *opaque, INT_PTR np
+     EEL_F **blocks = ctx->m_vmref ? ((compileContext*)ctx->m_vmref)->ram_state->blocks : 0;
+     if (!blocks || np < 8) return 0.0;
+ 
++    if (parms[7][0]+0.5 >= 2147483648.0 - sz) return 0.0; // addr1+sz-1 も int に収める
+     const int addr1= (int) (parms[7][0]+0.5);
+     EEL_F *d=__NSEEL_RAMAlloc(blocks,addr1);
+     if (sz>NSEEL_RAM_ITEMSPERBLOCK)
+@@ -422,7 +523,8 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_gfx_circle(void *opaque, INT_PTR np, EEL_F
+   bool aa = true, fill = false;
+   if (np>3) fill = parms[3][0] > 0.5;
+   if (np>4) aa = parms[4][0] > 0.5;
+-  if (ctx) ctx->gfx_circle((float)parms[0][0], (float)parms[1][0], (float)parms[2][0], fill, aa);
++  if (ctx) ctx->gfx_circle((float)effectdeck_gfx_coord(parms[0][0]), (float)effectdeck_gfx_coord(parms[1][0]),
++                           (float)effectdeck_gfx_coord(parms[2][0]), fill, aa);
+   return 0.0;
+ }
+ 
+@@ -619,13 +721,15 @@ void eel_lice_state::gfx_lineto(EEL_F xpos, EEL_F ypos, EEL_F aaflag)
+   LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_lineto");
+   if (!dest) return;
+ 
+-  int x1=(int)floor(xpos),y1=(int)floor(ypos),x2=(int)floor(*m_gfx_x), y2=(int)floor(*m_gfx_y);
+-  if (LICE_FUNCTION_VALID(LICE__GetWidth) && LICE_FUNCTION_VALID(LICE__GetHeight) && LICE_FUNCTION_VALID(LICE_Line) && 
++  EEL_F fx1=xpos, fy1=ypos, fx2=*m_gfx_x, fy2=*m_gfx_y;
++  const bool inbox = effectdeck_gfx_segment(&fx1,&fy1,&fx2,&fy2);
++  int x1=(int)floor(fx1),y1=(int)floor(fy1),x2=(int)floor(fx2), y2=(int)floor(fy2);
++  if (inbox && LICE_FUNCTION_VALID(LICE__GetWidth) && LICE_FUNCTION_VALID(LICE__GetHeight) && LICE_FUNCTION_VALID(LICE_Line) &&
+       LICE_FUNCTION_VALID(LICE_ClipLine) && 
+       LICE_ClipLine(&x1,&y1,&x2,&y2,0,0,LICE__GetWidth(dest),LICE__GetHeight(dest))) 
+   {
+     SetImageDirty(dest);
+-    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),(float) *m_gfx_a,getCurMode(),aaflag > 0.5);
++    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode(),aaflag > 0.5);
+   }
+   *m_gfx_x = xpos;
+   *m_gfx_y = ypos;
+@@ -641,9 +745,9 @@ void eel_lice_state::gfx_circle(float x, float y, float r, bool fill, bool aafla
+   {
+     SetImageDirty(dest);
+     if(fill)
+-      LICE_FillCircle(dest, x, y, r, getCurColor(), (float) *m_gfx_a, getCurMode(), aaflag);
++      LICE_FillCircle(dest, x, y, r, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aaflag);
+     else
+-      LICE_Circle(dest, x, y, r, getCurColor(), (float) *m_gfx_a, getCurMode(), aaflag);
++      LICE_Circle(dest, x, y, r, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aaflag);
+   }
+ }
+ 
+@@ -658,8 +762,10 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
+     {        
+       if (!LICE_FUNCTION_VALID(LICE_FillTriangle)) return;
+ 
+-      LICE_FillTriangle(dest, (int)parms[0][0], (int)parms[1][0], (int)parms[2][0], (int)parms[3][0], 
+-          (int)parms[4][0], (int)parms[5][0], getCurColor(), (float)*m_gfx_a, getCurMode());
++      LICE_FillTriangle(dest, (int)effectdeck_gfx_coord(parms[0][0]), (int)effectdeck_gfx_coord(parms[1][0]),
++          (int)effectdeck_gfx_coord(parms[2][0]), (int)effectdeck_gfx_coord(parms[3][0]),
++          (int)effectdeck_gfx_coord(parms[4][0]), (int)effectdeck_gfx_coord(parms[5][0]),
++          getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode());
+     }
+     else
+     {
+@@ -671,11 +777,11 @@ void eel_lice_state::gfx_triangle(EEL_F** parms, int np)
+       int x[maxpt], y[maxpt];
+       for (i=0; i < n; i++)
+       {
+-        x[i]=(int)parms[rdi++][0];
+-        y[i]=(int)parms[rdi++][0];
++        x[i]=(int)effectdeck_gfx_coord(parms[rdi++][0]);
++        y[i]=(int)effectdeck_gfx_coord(parms[rdi++][0]);
+       }
+ 
+-      LICE_FillConvexPolygon(dest, x, y, n, getCurColor(), (float)*m_gfx_a, getCurMode());
++      LICE_FillConvexPolygon(dest, x, y, n, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode());
+     }
+   }
+ }
+@@ -692,7 +798,9 @@ void eel_lice_state::gfx_rectto(EEL_F xpos, EEL_F ypos)
+   if (LICE_FUNCTION_VALID(LICE_FillRect) && x2-x1 > 0.5 && y2-y1 > 0.5)
+   {
+     SetImageDirty(dest);
+-    LICE_FillRect(dest,(int)x1,(int)y1,(int)(x2-x1),(int)(y2-y1),getCurColor(),(float)*m_gfx_a,getCurMode());
++    x1=effectdeck_gfx_coord(x1); y1=effectdeck_gfx_coord(y1);
++    x2=effectdeck_gfx_coord(x2); y2=effectdeck_gfx_coord(y2);
++    LICE_FillRect(dest,(int)x1,(int)y1,(int)(x2-x1),(int)(y2-y1),getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode());
+   }
+   *m_gfx_x = xpos;
+   *m_gfx_y = ypos;
+@@ -704,14 +812,16 @@ void eel_lice_state::gfx_line(int np, EEL_F **parms)
+   LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_line");
+   if (!dest) return;
+ 
+-  int x1=(int)floor(parms[0][0]),y1=(int)floor(parms[1][0]),x2=(int)floor(parms[2][0]), y2=(int)floor(parms[3][0]);
+-  if (LICE_FUNCTION_VALID(LICE__GetWidth) && 
++  EEL_F fx1=parms[0][0], fy1=parms[1][0], fx2=parms[2][0], fy2=parms[3][0];
++  const bool inbox = effectdeck_gfx_segment(&fx1,&fy1,&fx2,&fy2);
++  int x1=(int)floor(fx1),y1=(int)floor(fy1),x2=(int)floor(fx2), y2=(int)floor(fy2);
++  if (inbox && LICE_FUNCTION_VALID(LICE__GetWidth) &&
+       LICE_FUNCTION_VALID(LICE__GetHeight) && 
+       LICE_FUNCTION_VALID(LICE_Line) && 
+       LICE_FUNCTION_VALID(LICE_ClipLine) && LICE_ClipLine(&x1,&y1,&x2,&y2,0,0,LICE__GetWidth(dest),LICE__GetHeight(dest))) 
+   {
+     SetImageDirty(dest);
+-    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),(float)*m_gfx_a,getCurMode(),np< 5 || parms[4][0] > 0.5);
++    LICE_Line(dest,x1,y1,x2,y2,getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode(),np< 5 || parms[4][0] > 0.5);
+   } 
+ }
+ 
+@@ -720,14 +830,16 @@ void eel_lice_state::gfx_rect(int np, EEL_F **parms)
+   LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_rect");
+   if (!dest) return;
+ 
+-  int x1=(int)floor(parms[0][0]),y1=(int)floor(parms[1][0]),w=(int)floor(parms[2][0]),h=(int)floor(parms[3][0]);  
++  EEL_F fx=floor(parms[0][0]), fy=floor(parms[1][0]), fw=floor(parms[2][0]), fh=floor(parms[3][0]);
++  effectdeck_gfx_span(&fx,&fw); effectdeck_gfx_span(&fy,&fh);
++  int x1=(int)fx,y1=(int)fy,w=(int)fw,h=(int)fh;
+   int filled=(np < 5 || parms[4][0] > 0.5);
+ 
+   if (LICE_FUNCTION_VALID(LICE_FillRect) && LICE_FUNCTION_VALID(LICE_DrawRect) && w>0 && h>0)
+   {
+     SetImageDirty(dest);
+-    if (filled) LICE_FillRect(dest,x1,y1,w,h,getCurColor(),(float)*m_gfx_a,getCurMode());
+-    else LICE_DrawRect(dest, x1, y1, w-1, h-1, getCurColor(), (float)*m_gfx_a, getCurMode());
++    if (filled) LICE_FillRect(dest,x1,y1,w,h,getCurColor(),effectdeck_gfx_alpha(*m_gfx_a),getCurMode());
++    else LICE_DrawRect(dest, x1, y1, w-1, h-1, getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode());
+   }
+ }
+ 
+@@ -741,7 +853,9 @@ void eel_lice_state::gfx_roundrect(int np, EEL_F **parms)
+   if (LICE_FUNCTION_VALID(LICE_RoundRect) && parms[2][0]>0 && parms[3][0]>0)
+   {
+     SetImageDirty(dest);
+-    LICE_RoundRect(dest, (float)parms[0][0], (float)parms[1][0], (float)parms[2][0], (float)parms[3][0], (int)parms[4][0], getCurColor(), (float)*m_gfx_a, getCurMode(), aa);
++    EEL_F fx=parms[0][0], fy=parms[1][0], fw=parms[2][0], fh=parms[3][0];
++    effectdeck_gfx_span(&fx,&fw); effectdeck_gfx_span(&fy,&fh);
++    LICE_RoundRect(dest, (float)fx, (float)fy, (float)fw, (float)fh, (int)effectdeck_gfx_coord(parms[4][0]), getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aa);
+   }
+ }
+ 
+@@ -755,7 +869,8 @@ void eel_lice_state::gfx_arc(int np, EEL_F **parms)
+   if (LICE_FUNCTION_VALID(LICE_Arc))
+   {
+     SetImageDirty(dest);
+-    LICE_Arc(dest, (float)parms[0][0], (float)parms[1][0], (float)parms[2][0], (float)parms[3][0], (float)parms[4][0], getCurColor(), (float)*m_gfx_a, getCurMode(), aa);
++    LICE_Arc(dest, (float)effectdeck_gfx_coord(parms[0][0]), (float)effectdeck_gfx_coord(parms[1][0]),
++             (float)effectdeck_gfx_coord(parms[2][0]), (float)parms[3][0], (float)parms[4][0], getCurColor(), effectdeck_gfx_alpha(*m_gfx_a), getCurMode(), aa);
+   }
+ }
+ 
+@@ -764,7 +879,9 @@ void eel_lice_state::gfx_grad_or_muladd_rect(int whichmode, int np, EEL_F **parm
+   LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,whichmode==0?"gfx_gradrect":"gfx_muladdrect");
+   if (!dest) return;
+ 
+-  const int x1=(int)floor(parms[0][0]),y1=(int)floor(parms[1][0]),w=(int)floor(parms[2][0]), h=(int)floor(parms[3][0]);
++  EEL_F fx=floor(parms[0][0]), fy=floor(parms[1][0]), fw=floor(parms[2][0]), fh=floor(parms[3][0]);
++  effectdeck_gfx_span(&fx,&fw); effectdeck_gfx_span(&fy,&fh);
++  const int x1=(int)fx,y1=(int)fy,w=(int)fw, h=(int)fh;
+ 
+   if (w>0 && h>0)
+   {
+@@ -802,7 +919,7 @@ void eel_lice_state::gfx_setpixel(EEL_F r, EEL_F g, EEL_F b)
+   if (LICE_FUNCTION_VALID(LICE_PutPixel)) 
+   {
+     SetImageDirty(dest);
+-    LICE_PutPixel(dest,(int)*m_gfx_x, (int)*m_gfx_y,LICE_RGBA(red,green,blue,255), (float)*m_gfx_a,getCurMode());
++    LICE_PutPixel(dest,(int)effectdeck_gfx_coord(*m_gfx_x), (int)effectdeck_gfx_coord(*m_gfx_y),LICE_RGBA(red,green,blue,255), effectdeck_gfx_alpha(*m_gfx_a),getCurMode());
+   }
+ }
+ 
+@@ -857,13 +974,26 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+   int use_w = (int)*w;
+   int use_h = (int)*h;
+   if (use_w<1 || use_h < 1) use_w=use_h=0;
+-  if (use_w > 8192) use_w=8192;
+-  if (use_h > 8192) use_h=8192;
++  if (use_w > 2048) use_w=2048;
++  if (use_h > 2048) use_h=2048;
+   
+   LICE_IBitmap *bm=NULL;
+   if (img >= 0 && img < m_gfx_images.GetSize()) 
+   {
+     bm=m_gfx_images.Get()[img];  
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    const size_t old_bytes = bm ? (size_t)LICE__GetWidth(bm) * LICE__GetHeight(bm) * 4u : 0u;
++    const size_t new_bytes = (size_t)use_w * use_h * 4u;
++    if (m_effectdeck_image_bytes - old_bytes + new_bytes > k_effectdeck_lice_instance_limit)
++      return 0.0;
++    size_t global = g_effectdeck_lice_image_bytes.load(std::memory_order_relaxed);
++    const size_t add = new_bytes > old_bytes ? new_bytes - old_bytes : 0u;
++    while (add && (global > k_effectdeck_lice_global_limit - add ||
++           !g_effectdeck_lice_image_bytes.compare_exchange_weak(global, global + add,
++             std::memory_order_acq_rel, std::memory_order_relaxed))) {
++      if (global > k_effectdeck_lice_global_limit - add) return 0.0;
++    }
++#endif
+     if (!bm) 
+     {
+       m_gfx_images.Get()[img] = bm = __LICE_CreateBitmap(1,use_w,use_h);
+@@ -873,6 +1003,15 @@ EEL_F eel_lice_state::gfx_setimgdim(int img, EEL_F *w, EEL_F *h)
+     {
+       rv=LICE__resize(bm,use_w,use_h);
+     }
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    if (!rv && new_bytes > old_bytes)
++      g_effectdeck_lice_image_bytes.fetch_sub(new_bytes-old_bytes, std::memory_order_relaxed);
++    else if (rv) {
++      if (old_bytes > new_bytes)
++        g_effectdeck_lice_image_bytes.fetch_sub(old_bytes-new_bytes, std::memory_order_relaxed);
++      m_effectdeck_image_bytes = m_effectdeck_image_bytes - old_bytes + new_bytes;
++    }
++#endif
+   }
+ 
+   return rv?1.0:0.0;
+@@ -889,13 +1028,17 @@ void eel_lice_state::gfx_blurto(EEL_F x, EEL_F y)
+ 
+   SetImageDirty(dest);
+   
+-  int srcx = (int)x;
+-  int srcy = (int)y;
+-  int srcw=(int) (*m_gfx_x-x);
+-  int srch=(int) (*m_gfx_y-y);
+-  if (srch < 0) { srch=-srch; srcy = (int)*m_gfx_y; }
+-  if (srcw < 0) { srcw=-srcw; srcx = (int)*m_gfx_x; }
+-  LICE_Blur(dest,dest,srcx,srcy,srcx,srcy,srcw,srch);
++  const EEL_F bx=effectdeck_gfx_coord(x), by=effectdeck_gfx_coord(y);
++  const EEL_F gx=effectdeck_gfx_coord(*m_gfx_x), gy=effectdeck_gfx_coord(*m_gfx_y);
++  int srcx = (int)bx;
++  int srcy = (int)by;
++  int srcw=(int) (gx-bx);
++  int srch=(int) (gy-by);
++  if (srch < 0) { srch=-srch; srcy = (int)gy; }
++  if (srcw < 0) { srcw=-srcw; srcx = (int)gx; }
++  // NaN を含むときは今までどおり何もしない(arm64 では幅 0 になっていた)。
++  if (x==x && y==y && *m_gfx_x==*m_gfx_x && *m_gfx_y==*m_gfx_y)
++    LICE_Blur(dest,dest,srcx,srcy,srcx,srcy,srcw,srch);
+   *m_gfx_x = x;
+   *m_gfx_y = y;
+ }
+@@ -942,12 +1085,15 @@ void eel_lice_state::gfx_transformblit(EEL_F **parms, int div_w, int div_h, EEL_
+         1.0f,LICE_BLIT_MODE_COPY);      
+     }
+   }
+-  LICE_TransformBlit2(dest,bm,(int)floor(parms[1][0]),(int)floor(parms[2][0]),(int)floor(parms[3][0]),(int)floor(parms[4][0]),tab,div_w,div_h, (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++  EEL_F fx=floor(parms[1][0]), fy=floor(parms[2][0]), fw=floor(parms[3][0]), fh=floor(parms[4][0]);
++  effectdeck_gfx_span(&fx,&fw); effectdeck_gfx_span(&fy,&fh);
++  LICE_TransformBlit2(dest,bm,(int)fx,(int)fy,(int)fw,(int)fh,tab,div_w,div_h, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+ }
+ 
+ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
+ {
+-  int a = np>0 ? ((int)floor(parms[0][0]))-1 : -1;
++  // 番号も座標と同じく収めてから 1 を引く(-Inf などで INT_MIN - 1 になっていた)。
++  int a = np>0 ? ((int)effectdeck_gfx_coord(floor(parms[0][0])))-1 : -1;
+ 
+   if (a>=0 && a < m_gfx_fonts.GetSize())
+   {
+@@ -1006,58 +1152,11 @@ EEL_F eel_lice_state::gfx_setfont(void *opaque, int np, EEL_F **parms)
+         if (!s->font) s->font=LICE_CreateFont();
+         if (s->font)
+         {
+-          const int fw = (fontflag&EELFONT_FLAG_BOLD) ? FW_BOLD : FW_NORMAL;
+           const bool italic = !!(fontflag&EELFONT_FLAG_ITALIC);
+           const bool underline = !!(fontflag&EELFONT_FLAG_UNDERLINE);
+-          HFONT hf=NULL;
+-#if defined(_WIN32) && !defined(WDL_NO_SUPPORT_UTF8)
+-          WCHAR wf[256];
+-          if (WDL_DetectUTF8(s->last_fontname)>0 &&
+-              GetVersion()<0x80000000 &&
+-              MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s->last_fontname,-1,wf,256))
+-          {
+-            hf = CreateFontW(sz,0,0,0,fw,italic,underline,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,DEFAULT_PITCH,wf);
+-          }
+-#endif
+-          if (!hf) hf = CreateFont(sz,0,0,0,fw,italic,underline,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,DEFAULT_PITCH,s->last_fontname);
+-
+-          if (!hf)
+-          {
+-            s->use_fonth=0; // disable this font
+-          }
+-          else
+-          {
+-            TEXTMETRIC tm;
+-            tm.tmHeight = sz;
+-
+-            if (!m_framebuffer && LICE_FUNCTION_VALID(__LICE_CreateBitmap)) m_framebuffer=__LICE_CreateBitmap(1,64,64);
+-
+-            if (m_framebuffer && LICE_FUNCTION_VALID(LICE__GetDC))
+-            {
+-              HGDIOBJ oldFont = 0;
+-              HDC hdc=LICE__GetDC(m_framebuffer);
+-              if (hdc)
+-              {
+-                oldFont = SelectObject(hdc,hf);
+-                GetTextMetrics(hdc,&tm);
+-
+-#if defined(_WIN32) && !defined(WDL_NO_SUPPORT_UTF8)
+-                if (GetVersion()<0x80000000 &&
+-                    GetTextFaceW(hdc,sizeof(wf)/sizeof(wf[0]),wf) &&
+-                    WideCharToMultiByte(CP_UTF8,0,wf,-1,s->actual_fontname,sizeof(s->actual_fontname),NULL,NULL))
+-                {
+-                  s->actual_fontname[sizeof(s->actual_fontname)-1]=0;
+-                }
+-                else
+-#endif
+-                  GetTextFace(hdc, sizeof(s->actual_fontname), s->actual_fontname);
+-                SelectObject(hdc,oldFont);
+-              }
+-            }
+-
+-            s->use_fonth=wdl_max(tm.tmHeight,1);
+-            LICE__SetFromHFont(s->font,hf, (fontflag & ~EELFONT_FLAG_MASK) | 512 /*LICE_FONT_FLAG_OWNS_HFONT*/);
+-          }
++          s->use_fonth=ETLICE_ConfigureFont(s->font,s->last_fontname,sz,
++                            !!(fontflag&EELFONT_FLAG_BOLD),italic,underline,
++                            s->actual_fontname,sizeof(s->actual_fontname));
+         }
+       }
+     }
+@@ -1118,6 +1217,9 @@ void eel_lice_state::gfx_blitext2(int np, EEL_F **parms, int blitmode)
+   coords[5]=np > 6 ? parms[6][0] : *m_gfx_y;
+   coords[6]=np > 7 ? parms[7][0] : coords[2]*sc;
+   coords[7]=np > 8 ? parms[8][0] : coords[3]*sc;
++  // 元(0-3)と先(4-7)の矩形。LICE は幅を反転したり端を足したりを int のまま行う。
++  effectdeck_gfx_span(&coords[0],&coords[2]); effectdeck_gfx_span(&coords[1],&coords[3]);
++  effectdeck_gfx_span(&coords[4],&coords[6]); effectdeck_gfx_span(&coords[5],&coords[7]);
+  
+   const bool isFromFB = bm == m_framebuffer;
+   SetImageDirty(dest);
+@@ -1149,20 +1251,20 @@ void eel_lice_state::gfx_blitext2(int np, EEL_F **parms, int blitmode)
+                 np > 12 ? (float)parms[12][0]:1.0f, // dtdy
+                 np > 13 ? (float)parms[13][0]:0.0f, // dsdxdy
+                 np > 14 ? (float)parms[14][0]:0.0f, // dtdxdy
+-                np <= 15 || parms[15][0] > 0.5, (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++                np <= 15 || parms[15][0] > 0.5, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+   }
+   else if (fabs(angle)>0.000000001)
+   {
+     LICE_RotatedBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+       (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3],
+-      (float)angle,true, (float)*m_gfx_a,getCurModeForBlit(isFromFB),
+-       np > 9 ? (float)parms[9][0] : 0.0f,
+-       np > 10 ? (float)parms[10][0] : 0.0f);
++      (float)angle,true, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB),
++       np > 9 ? (float)effectdeck_gfx_coord(parms[9][0]) : 0.0f,
++       np > 10 ? (float)effectdeck_gfx_coord(parms[10][0]) : 0.0f);
+   }
+   else
+   {
+     LICE_ScaledBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+-      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+   }
+ }
+ 
+@@ -1179,6 +1281,13 @@ void eel_lice_state::gfx_blitext(EEL_F img, EEL_F *coords, EEL_F angle)
+   LICE_IBitmap *bm=GetImageForIndex(img,"gfx_blitext:src");
+   if (!bm) return;
+   
++  // gfx_blit2 と同じく元と先の矩形・回す中心を収める(写しで。coords は呼ぶ側の表)。
++  EEL_F c[10];
++  memcpy(c,coords,sizeof(c));
++  coords=c;
++  effectdeck_gfx_span(&c[0],&c[2]); effectdeck_gfx_span(&c[1],&c[3]);
++  effectdeck_gfx_span(&c[4],&c[6]); effectdeck_gfx_span(&c[5],&c[7]);
++  c[8]=effectdeck_gfx_coord(c[8]); c[9]=effectdeck_gfx_coord(c[9]);
+   SetImageDirty(dest);
+   const bool isFromFB = bm == m_framebuffer;
+  
+@@ -1203,13 +1312,13 @@ void eel_lice_state::gfx_blitext(EEL_F img, EEL_F *coords, EEL_F angle)
+   {
+     LICE_RotatedBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+       (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3],(float)angle,
+-      true, (float)*m_gfx_a,getCurModeForBlit(isFromFB),
++      true, effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB),
+           (float)coords[8],(float)coords[9]);
+   }
+   else
+   {
+     LICE_ScaledBlit(dest,bm,(int)coords[4],(int)coords[5],(int)coords[6],(int)coords[7],
+-      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], (float)*m_gfx_a,getCurModeForBlit(isFromFB));
++      (float)coords[0],(float)coords[1],(float)coords[2],(float)coords[3], effectdeck_gfx_alpha(*m_gfx_a),getCurModeForBlit(isFromFB));
+   }
+ }
+ 
+@@ -1230,7 +1339,7 @@ void eel_lice_state::gfx_getpixel(EEL_F *r, EEL_F *g, EEL_F *b)
+   LICE_IBitmap *dest = GetImageForIndex(*m_gfx_dest,"gfx_getpixel");
+   if (!dest) return;
+ 
+-  int ret=LICE_FUNCTION_VALID(LICE_GetPixel)?LICE_GetPixel(dest,(int)*m_gfx_x, (int)*m_gfx_y):0;
++  int ret=LICE_FUNCTION_VALID(LICE_GetPixel)?LICE_GetPixel(dest,(int)effectdeck_gfx_coord(*m_gfx_x), (int)effectdeck_gfx_coord(*m_gfx_y)):0;
+ 
+   *r=LICE_GETR(ret)/255.0;
+   *g=LICE_GETG(ret)/255.0;
+@@ -1258,7 +1367,9 @@ static int __drawTextWithFont(LICE_IBitmap *dest, const RECT *rect, LICE_IFont *
+       int lineh = LICE__DrawText(font,dest,buf,thislen?thislen:1,&r,DT_SINGLELINE|DT_NOPREFIX|DT_CALCRECT);
+       if (!measureOnly)
+       {
+-        r.right += tr.left;
++        // 位置は ±2^28 まで(effectdeck_gfx_coord)。字の幅と行の高さは書体しだいで大きいので
++        // int のまま足さない。
++        r.right = (int)effectdeck_gfx_coord((EEL_F)r.right + tr.left);
+         lineh = LICE__DrawText(font,dest,buf,thislen?thislen:1,&tr,DT_SINGLELINE|DT_NOPREFIX|flags);
+         if (wantYoutput) *wantYoutput = tr.top;
+       }
+@@ -1266,7 +1377,7 @@ static int __drawTextWithFont(LICE_IBitmap *dest, const RECT *rect, LICE_IFont *
+       {
+         if (r.right > maxx) maxx=r.right;
+       }
+-      tr.top += lineh;
++      tr.top = (int)effectdeck_gfx_coord((EEL_F)tr.top + lineh);
+ 
+       buflen -= thislen+1;
+       buf += thislen+1;      
+@@ -1407,22 +1518,22 @@ void eel_lice_state::gfx_drawstr(void *opaque, EEL_F **parms, int nparms, int fo
+       {
+         RECT r={0,0,0,0};
+         __drawTextWithFont(dest,&r,GetActiveFont(),s,s_len,
+-          getCurColor(),getCurMode(),(float)*m_gfx_a,0,NULL,fmtparms);
++          getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),0,NULL,fmtparms);
+       }
+     }
+     else
+     {    
+-      RECT r={(int)floor(*m_gfx_x),(int)floor(*m_gfx_y),0,0};
++      RECT r={(int)floor(effectdeck_gfx_coord(*m_gfx_x)),(int)floor(effectdeck_gfx_coord(*m_gfx_y)),0,0};
+       int flags=DT_NOCLIP;
+       if (formatmode == 0 && nparms >= 4)
+       {
+         flags=(int)*parms[1];
+         flags &= (DT_CENTER|DT_RIGHT|DT_VCENTER|DT_BOTTOM|DT_NOCLIP);
+-        r.right=(int)*parms[2];
+-        r.bottom=(int)*parms[3];
++        r.right=(int)effectdeck_gfx_coord(*parms[2]);
++        r.bottom=(int)effectdeck_gfx_coord(*parms[3]);
+       }
+       *m_gfx_x=__drawTextWithFont(dest,&r,GetActiveFont(),s,s_len,
+-        getCurColor(),getCurMode(),(float)*m_gfx_a,flags,m_gfx_y,NULL);
++        getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),flags,m_gfx_y,NULL);
+     }
+   }
+ }
+@@ -1440,10 +1551,10 @@ void eel_lice_state::gfx_drawchar(EEL_F ch)
+   char buf[32];
+   const int buflen = WDL_MakeUTFChar(buf, a, sizeof(buf));
+ 
+-  RECT r={(int)floor(*m_gfx_x),(int)floor(*m_gfx_y),0,0};
++  RECT r={(int)floor(effectdeck_gfx_coord(*m_gfx_x)),(int)floor(effectdeck_gfx_coord(*m_gfx_y)),0,0};
+   *m_gfx_x = __drawTextWithFont(dest,&r,
+                          GetActiveFont(),buf,buflen,
+-                         getCurColor(),getCurMode(),(float)*m_gfx_a,DT_NOCLIP,NULL,NULL);
++                         getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),DT_NOCLIP,NULL,NULL);
+ 
+ }
+ 
+@@ -1461,8 +1572,8 @@ void eel_lice_state::gfx_drawnumber(EEL_F n, EEL_F ndigits)
+   else if (a > 16) a=16;
+   snprintf(buf,sizeof(buf),"%.*f",a,n);
+ 
+-  RECT r={(int)floor(*m_gfx_x),(int)floor(*m_gfx_y),0,0};
++  RECT r={(int)floor(effectdeck_gfx_coord(*m_gfx_x)),(int)floor(effectdeck_gfx_coord(*m_gfx_y)),0,0};
+   *m_gfx_x = __drawTextWithFont(dest,&r,
+                            GetActiveFont(),buf,(int)strlen(buf),
+-                           getCurColor(),getCurMode(),(float)*m_gfx_a,DT_NOCLIP,NULL,NULL);
++                           getCurColor(),getCurMode(),effectdeck_gfx_alpha(*m_gfx_a),DT_NOCLIP,NULL,NULL);
+ }
+diff --git a/sources/ysfx_api_reaper.cpp b/sources/ysfx_api_reaper.cpp
+index d29d81d..e2528d7 100644
+--- a/sources/ysfx_api_reaper.cpp
++++ b/sources/ysfx_api_reaper.cpp
+@@ -170,6 +170,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_slider_show(void *opaque, EEL_F *mask_or_s
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend(void *opaque, INT_PTR np, EEL_F **parms)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)np; (void)parms;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+@@ -223,6 +227,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend(void *opaque, INT_PTR np, EEL_F *
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_buf(void *opaque, EEL_F *offset_, EEL_F *buf_, EEL_F *len_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)offset_; (void)buf_; (void)len_;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+@@ -256,6 +264,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_buf(void *opaque, EEL_F *offset_,
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_str(void *opaque, EEL_F *offset_, EEL_F *str_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)offset_; (void)str_;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+@@ -297,6 +309,10 @@ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisend_str(void *opaque, EEL_F *offset_,
+ 
+ static EEL_F NSEEL_CGEN_CALL ysfx_api_midisyx(void *opaque, EEL_F *offset_, EEL_F *buf_, EEL_F *len_)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)opaque; (void)offset_; (void)buf_; (void)len_;
++    return 0;
++#endif
+     if (ysfx_get_thread_id() != ysfx_thread_id_dsp)
+         return 0;
+ 
+diff --git a/sources/ysfx_config.cpp b/sources/ysfx_config.cpp
+index 35552de..e98b54a 100644
+--- a/sources/ysfx_config.cpp
++++ b/sources/ysfx_config.cpp
+@@ -104,8 +104,12 @@ void ysfx_register_audio_format(ysfx_config_t *config, ysfx_audio_format_t *afmt
+ 
+ void ysfx_register_builtin_audio_formats(ysfx_config_t *config)
+ {
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    (void)config;
++#else
+     config->audio_formats.push_back(ysfx_audio_format_wav);
+     config->audio_formats.push_back(ysfx_audio_format_flac);
++#endif
+ }
+ 
+ void ysfx_set_log_reporter(ysfx_config_t *config, ysfx_log_reporter_t *reporter)
+diff --git a/sources/ysfx_preprocess.cpp b/sources/ysfx_preprocess.cpp
+index a2bd76b..208f664 100644
+--- a/sources/ysfx_preprocess.cpp
++++ b/sources/ysfx_preprocess.cpp
+@@ -39,7 +39,15 @@ bool ysfx_preprocess(ysfx::text_reader &reader, ysfx_parse_error *error, std::st
+         file_str.Append(linep);
+     }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    // EffectDeck: the host holds the raw source to 1 MiB. Hold the expanded
++    // text to the same budget; a short <? loop(...) printf(...) ?> block would
++    // otherwise hand the compiler up to the 64 MiB default.
++    const int max_size = 1024 * 1024;
++    EEL2_PreProcessor pproc(max_size + 1);
++#else
+     EEL2_PreProcessor pproc;
++#endif
+ 
+     for (auto it = preprocessor_values.begin(); it != preprocessor_values.end(); ++it) {
+         pproc.define(it->first.c_str(), it->second);
+@@ -52,6 +60,15 @@ bool ysfx_preprocess(ysfx::text_reader &reader, ysfx_parse_error *error, std::st
+         return false;
+     }
+ 
++#if defined(YSFX_EFFECTDECK_SANDBOX)
++    // printf stops appending past the limit, so anything longer is truncated.
++    if (pp_str.GetLength() > max_size) {
++        error->line = 0;
++        error->message = "Preprocessed source exceeds the 1 MB limit.";
++        return false;
++    }
++#endif
++
+     in_str.append(pp_str.Get(), pp_str.GetLength());
+     return true;
+ }
+diff --git a/thirdparty/WDL/source/WDL/eel2/eel_fft.h b/thirdparty/WDL/source/WDL/eel2/eel_fft.h
+index 6b64d03..0bb274e 100644
+--- a/thirdparty/WDL/source/WDL/eel2/eel_fft.h
++++ b/thirdparty/WDL/source/WDL/eel2/eel_fft.h
+@@ -287,7 +287,9 @@ static EEL_F * fft_func(int dir, EEL_F **blocks, EEL_F *start, EEL_F *length)
+ 
+ 
+ 	// check to make sure we don't cross a boundary
+-	if (offs/NSEEL_RAM_ITEMSPERBLOCK != (offs + (ilen<<itemSizeShift) - 1)/NSEEL_RAM_ITEMSPERBLOCK) 
++	// 終わりの番地は 64bit で出す(offs が INT_MAX 近くだと int のまま足して溢れる)。結果は同じで、
++	// 溢れていた番地はブロックをまたぐので今までどおり何もしない。
++	if (offs/NSEEL_RAM_ITEMSPERBLOCK != (offs + (WDL_INT64)(ilen<<itemSizeShift) - 1)/NSEEL_RAM_ITEMSPERBLOCK)
+ 	{ 
+ 		return start; 
+ 	}
+@@ -337,7 +339,10 @@ static EEL_F * NSEEL_CGEN_CALL eel_convolve_c(EEL_F **blocks,EEL_F *dest, EEL_F
+ {
+ 	const int dest_offs = (int)(*dest + 0.0001);
+ 	const int src_offs = (int)(*src + 0.0001);
+-  const int len = ((int)(*lenptr + 0.0001)) * 2;
++  // 2 倍する前に範囲を見る。2^30 以上や大きな負の数を int のまま 2 倍すると溢れる(INT_MIN 近くは
++  // 折り返して小さな正の数になり、掛け算をしていた)。範囲の外は下の len < 1 で何もしない。
++  const int len_in = (int)(*lenptr + 0.0001);
++  const int len = len_in < 1 || len_in > NSEEL_RAM_ITEMSPERBLOCK/2 ? 0 : len_in * 2;
+   EEL_F *srcptr,*destptr;
+ 
+   if (len < 1 || len > NSEEL_RAM_ITEMSPERBLOCK || dest_offs < 0 || src_offs < 0 || 
+diff --git a/thirdparty/WDL/source/WDL/eel2/eel_mdct.h b/thirdparty/WDL/source/WDL/eel2/eel_mdct.h
+index 0800fc3..58ab3ec 100644
+--- a/thirdparty/WDL/source/WDL/eel2/eel_mdct.h
++++ b/thirdparty/WDL/source/WDL/eel2/eel_mdct.h
+@@ -712,7 +712,8 @@ static EEL_F * NSEEL_CGEN_CALL mdct_func(int dir, EEL_F **blocks, EEL_F *start,
+ 
+ 
+   // check to make sure we don't cross a boundary
+-  if (offs / NSEEL_RAM_ITEMSPERBLOCK != (offs + ilen * 2 - 1) / NSEEL_RAM_ITEMSPERBLOCK)
++  // fft_func と同じく終わりの番地は 64bit で出す(offs が INT_MAX 近くだと int のまま足して溢れる)。
++  if (offs / NSEEL_RAM_ITEMSPERBLOCK != (offs + (WDL_INT64)ilen * 2 - 1) / NSEEL_RAM_ITEMSPERBLOCK)
+   {
+     return start;
+   }
+diff --git a/thirdparty/WDL/source/WDL/eel2/eel_strings.h b/thirdparty/WDL/source/WDL/eel2/eel_strings.h
+index 7991721..8939246 100644
+--- a/thirdparty/WDL/source/WDL/eel2/eel_strings.h
++++ b/thirdparty/WDL/source/WDL/eel2/eel_strings.h
+@@ -198,6 +198,9 @@ class eel_string_context_state
+     const char *GetStringForIndex(EEL_F val, EEL_STRING_STORAGECLASS **stringContainerOut=NULL, bool is_for_write=false)
+     {
+       int idx = (int) (val+0.5);
++      // 負の番号はどの表にも無い。INT_MIN 近く(大きな負の数や -Inf は飽和する)から下の
++      // EEL_STRING_*_BASE を引くと int が溢れるので、-1 にそろえる(結果は同じ NULL)。
++      if (idx < 0) idx = -1;
+       if (idx>=0 && idx < EEL_STRING_MAX_USER_STRINGS)
+       {
+         if (stringContainerOut)
+@@ -904,7 +907,8 @@ static EEL_F NSEEL_CGEN_CALL _eel_strcpysubstr(void *opaque, INT_PTR nparm, EEL_
+         if (nparm >= 4)
+         {
+           const int a = (int) parms[3][0];
+-          if (a<0) maxlen += a;
++          // maxlen が 1 未満なら結果は空で変わらない。先に見ないと INT_MIN 近くで溢れる。
++          if (a<0) { if (maxlen > 0) maxlen += a; }
+           else if (a<maxlen) maxlen=a;
+         }
+ 
+@@ -1414,7 +1418,7 @@ static EEL_F NSEEL_CGEN_CALL _eel_strdelsub(void *opaque, EEL_F *strOut, EEL_F *
+       int l=(int)*len;
+       if (p<0)
+       {
+-        l+=p;
++        if (l > 0) l+=p; // l が 1 未満なら消さないので同じ。先に見ないと INT_MIN 近くで溢れる
+         p=0;
+       }
+       if (l>0)
+diff --git a/thirdparty/WDL/source/WDL/eel2/glue_port.h b/thirdparty/WDL/source/WDL/eel2/glue_port.h
+index e7d06f3..95a3df7 100644
+--- a/thirdparty/WDL/source/WDL/eel2/glue_port.h
++++ b/thirdparty/WDL/source/WDL/eel2/glue_port.h
+@@ -426,6 +426,9 @@ BC_DECLASM_N(2pdd,CFUNC_2PDD,1)
+ BC_DECLASM_N(2pdds,CFUNC_2PDDS,1)
+ 
+ BC_DECLASM_N2(megabuf,MEGABUF,0)
++// megabuf には即値の席が無い（ブロックの表は rt から読む）。nseel-compiler.c はこれを見て
++// __NSEEL_RAMAlloc を書き込まない。
++#define GLUE_MEGABUF_NO_IMMEDIATE
+ BC_DECLASM_N2(gmegabuf,GMEGABUF,2)
+ 
+ BC_DECLASM_N_EXPORT(generic1parm,GENERIC1PARM,2)
+@@ -454,6 +457,34 @@ static void *GLUE_realAddress(void *fn, int *size)
+ 
+ #define EEL_BC_TRUE ((EEL_F*)(INT_PTR)1)
+ 
++// EffectDeck: + と *（ADD・MUL・ADD_OP_FAST・MUL_OP_FAST）は、オペランドが 2 つとも NaN のとき、残る NaN
++// （ペイロードと符号）が機械の命令の 1 つめのオペランドで決まる（x86-64 の addsd・mulsd は 1 つめを静かにした
++// もの、arm64 の fadd・fmul は信号の NaN が先で、そのあと 1 つめ）。C の a + b はコンパイラがオペランドを
++// 入れ替えてよいので、版ごと・実行系ごとに違った（x86-64 の Linux では portable が top を、vm-block・vm-goto が
++// top2 を残した）。命令を asm で書いて、1 つめを式の左（top2・升の値）に決める。glue_port_vm.h の実行系も
++// これを使う。NaN が 1 つ以下なら C の a + b と同じビット。フィルタを通すもの（ADD_OP など）は NaN が 0 に
++// なるので C のまま。
++#if (defined(__clang__) || defined(__GNUC__)) && defined(__x86_64__)
++static inline EEL_F effectdeck_nan_order_fadd(EEL_F a, EEL_F b) { __asm__("addsd %1, %0" : "+x"(a) : "x"(b)); return a; }
++static inline EEL_F effectdeck_nan_order_fmul(EEL_F a, EEL_F b) { __asm__("mulsd %1, %0" : "+x"(a) : "x"(b)); return a; }
++#elif (defined(__clang__) || defined(__GNUC__)) && defined(__aarch64__)
++static inline EEL_F effectdeck_nan_order_fadd(EEL_F a, EEL_F b)
++{
++  EEL_F r;
++  __asm__("fadd %d0, %d1, %d2" : "=w"(r) : "w"(a), "w"(b));
++  return r;
++}
++static inline EEL_F effectdeck_nan_order_fmul(EEL_F a, EEL_F b)
++{
++  EEL_F r;
++  __asm__("fmul %d0, %d1, %d2" : "=w"(r) : "w"(a), "w"(b));
++  return r;
++}
++#else
++static inline EEL_F effectdeck_nan_order_fadd(EEL_F a, EEL_F b) { return a + b; }
++static inline EEL_F effectdeck_nan_order_fmul(EEL_F a, EEL_F b) { return a * b; }
++#endif
++
+ 
+ 
+ 
+@@ -702,7 +733,7 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+       break;
+ 
+       case EEL_BC_ADD:
+-        fp_top2 += fp_top;
++        fp_top2 = effectdeck_nan_order_fadd(fp_top2, fp_top);
+         fp_rewind(1);
+       break;
+       case EEL_BC_SUB:
+@@ -710,7 +741,7 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+         fp_rewind(1);
+       break;
+       case EEL_BC_MUL:
+-        fp_top2 *= fp_top;
++        fp_top2 = effectdeck_nan_order_fmul(fp_top2, fp_top);
+         fp_rewind(1);
+       break;
+       case EEL_BC_DIV:
+@@ -740,7 +771,10 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+         *(p1 = p2) = denormal_filter_double2(*p2 - fp_pop());
+       break;
+       case EEL_BC_ADD_OP_FAST:
+-        *(p1 = p2) += fp_pop();        
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fadd(*p2, v);
++        }
+       break;
+       case EEL_BC_SUB_OP_FAST:
+         *(p1 = p2) -= fp_pop();
+@@ -752,7 +786,10 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+         *(p1 = p2) = denormal_filter_double2(*p2 / fp_pop());
+       break;
+       case EEL_BC_MUL_OP_FAST:
+-        *(p1 = p2) *= fp_pop();
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fmul(*p2, v);
++        }
+       break;
+       case EEL_BC_DIV_OP_FAST:
+         *(p1 = p2) /= fp_pop();
+@@ -802,12 +839,14 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+ 
+         }
+       break;
++      // シフトの量は下 5 bit だけ使う(arm64 の JIT、asm-nseel-aarch64-gcc.c の lsl / asr と同じ)。
++      // 32 以上や負の量、負の数の左シフトは C では未定義なので、量を切って左シフトは unsigned で行う。
+       case EEL_BC_SHR:
+-        fp_top2 = (EEL_F) (((int)fp_top2) >> (int)fp_top);
++        fp_top2 = (EEL_F) (((int)fp_top2) >> (((int)fp_top) & 31));
+         fp_rewind(1);
+       break;
+       case EEL_BC_SHL:
+-        fp_top2 = (EEL_F) (((int)fp_top2) << (int)fp_top);
++        fp_top2 = (EEL_F) (int) (((unsigned int)(int)fp_top2) << (((int)fp_top) & 31));
+         fp_rewind(1);
+       break;
+       case EEL_BC_SQR:
+@@ -844,7 +883,8 @@ static void GLUE_CALL_CODE(INT_PTR bp, INT_PTR cp, INT_PTR rt)
+       case EEL_BC_INVSQRT:
+         {
+           float y = (float)fp_top;
+-          int i  = 0x5f3759df - ( (* (int *) &y) >> 1 );
++          // 負の数だと int のまま引いて溢れる。unsigned で引く(結果のビットは今までと同じ)。
++          int i  = (int) (0x5f3759dfu - (unsigned int) ( (* (int *) &y) >> 1 ));
+           y  = *(float *) &i;
+           fp_top  = y * ( 1.5F - ( (fp_top * 0.5) * y * y ) );
+         }
+diff --git a/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h b/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
+new file mode 100644
+index 0000000..77b087b
+--- /dev/null
++++ b/thirdparty/WDL/source/WDL/eel2/glue_port_vm.h
+@@ -0,0 +1,811 @@
++// glue_port_vm.h — EffectDeck: glue_port.h のバイトコードを解く別の実行系（ns-eel.h の NSEEL_EXEC_*）。
++//
++// **バイトコードと字句・構文・compile は WDL のまま。**解き方だけ替える。
++// nseel-compiler.c が EEL_VM_FUNC・EEL_VM_GOTO・EEL_VM_FPREG を決めて何度か読む（読むたびに関数が 1 つ増える）。
++//   EEL_VM_FUNC   作る関数の名前
++//   EEL_VM_GOTO   0: switch（GLUE_CALL_CODE と同じ）。1: computed goto（ラベルの番地の表。各命令の終わりで
++//                 次を引いて飛ぶ。実行時に機械語は作らない）
++//   EEL_VM_FPREG  1: 浮動小数の積み場の先頭をローカル（レジスタ）に置く。メモリには先頭より下だけ
++//   EEL_VM_MASK   1: goto の表を 128 に取り、番号の下 7 bit で引く（範囲の比較と選択を省く）。0..127 は
++//                 比べる版と同じ（表の空きは何もしない）。128 以上と負の番号は別の命令に化けるが、
++//                 compile が書く番号は EEL_BC_*（1..EEL_BC_DBG_GETSTACKPTR）だけで、即値は各命令が飛ばす
++// どれも 1 回の呼び出しで nframes 回まわす。GLUE_CALL_CODE の用意（64 KiB の積み場。Darwin の arm64 は
++// ___chkstk_darwin で頁ごとに触る）は 1 回だけ。各回の頭の状態は GLUE_CALL_CODE を呼び直したのと同じ
++// （iptr・stackptr・p1..p3・wtp・積み場の深さ。積み場の中身は前の回の残り＝もとも前の呼び出しの残り）。
++// 回の前後で pre(ctx, i) / post(ctx, i) を呼ぶ（ysfx の spl の読み書き）。
++// **1 命令の中身は glue_port.h の GLUE_CALL_CODE と同じ式にする。あちらを変えたらここも。**
++// 式を変えると FMA の縮約（-ffp-contract=on は 1 つの式の中だけ）や評価の順が変わりうる。
++
++#ifndef EEL_VM_FUNC
++#error "EEL_VM_FUNC を決めてから読む"
++#endif
++
++#if EEL_VM_GOTO
++  #define VM_OP(x) vm_op_##x:
++  #define VM_NEXT VM_DISPATCH()
++#else
++  #define VM_OP(x) case EEL_BC_##x:
++  #define VM_NEXT break
++#endif
++
++#ifdef NSEEL_VM_PROFILE
++  #define VM_PROFILE(inst) do { \
++      unsigned int vm_i_ = (unsigned int)(inst) < EEL_VM_NOPS ? (unsigned int)(inst) : 0; \
++      nseel_vm_profile_ops[vm_i_]++; nseel_vm_profile_pairs[vm_prev][vm_i_]++; vm_prev = vm_i_; } while (0)
++#else
++  #define VM_PROFILE(inst) do { } while (0)
++#endif
++
++#if EEL_VM_GOTO && EEL_VM_MASK
++  #define VM_TAB_SIZE 128
++  #define VM_TAB_INDEX(inst) ((unsigned int)(inst) & (VM_TAB_SIZE - 1))
++#elif EEL_VM_GOTO
++  #define VM_TAB_SIZE EEL_VM_NOPS
++  #define VM_TAB_INDEX(inst) ((unsigned int)(inst) < EEL_VM_NOPS ? (unsigned int)(inst) : 0)
++#endif
++#if EEL_VM_GOTO
++  // 表の外（0 と知らない番号）は switch で当たる case が無いのと同じく何もしない。
++  #define VM_DISPATCH() do { \
++      inst = *(EEL_BC_TYPE *)iptr; \
++      iptr += sizeof(EEL_BC_TYPE); \
++      VM_PROFILE(inst); \
++      goto *vm_tab[VM_TAB_INDEX(inst)]; \
++    } while (0)
++#endif
++
++#if EEL_VM_FPREG
++  // 要素 e0..ek。ek は _fpt、e0..e(k-1) は _fpsp[-k]..._fpsp[-1]。_fpsp は ek の置き場（中身は使わない）。
++  // 空のとき _fpsp = fpstack（1 つ下に余分を取ってあるので、最初の push の書き込みは配列の中）。
++  #define fp_top (_fpt)
++  #define fp_top2 (_fpsp[-1])
++  #define fp_push(x) do { EEL_F vm_v_ = (x); *_fpsp++ = _fpt; _fpt = vm_v_; } while (0)
++  #define fp_pop() (_fpv = _fpt, _fpt = *--_fpsp, _fpv)
++  #define fp_rewind(x) do { _fpsp -= (x); _fpt = *_fpsp; } while (0)
++  // fp_top2 = v; fp_rewind(1); と同じ（v を先に計算する）
++  #define fp_set2_rewind1(v) do { EEL_F vm_v_ = (v); --_fpsp; _fpt = vm_v_; } while (0)
++#else
++  #define fp_top (_fpstacktop[0])
++  #define fp_top2 (_fpstacktop[-1])
++  #define fp_push(x) *++_fpstacktop=(x)
++  #define fp_pop() (*_fpstacktop--)
++  #define fp_rewind(x) (_fpstacktop -= (x))
++  #define fp_set2_rewind1(v) do { fp_top2 = (v); fp_rewind(1); } while (0)
++#endif
++
++static void EEL_VM_FUNC(INT_PTR bp, INT_PTR cp, INT_PTR rt, unsigned int nframes,
++                        NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *cbctx)
++{
++  char __stack[EEL_BC_STACKSIZE];
++  char *iptr, *stackptr;
++  EEL_F *p1, *p2, *p3, *wtp;
++  EEL_BC_TYPE inst;
++  unsigned int frame;
++#if EEL_VM_FPREG
++  EEL_F fpstack[GLUE_MAX_FPSTACK_SIZE + 1];
++  EEL_F *_fpsp, _fpt = 0.0, _fpv;
++#else
++  EEL_F fpstack[GLUE_MAX_FPSTACK_SIZE];
++  EEL_F *_fpstacktop;
++#endif
++#ifdef NSEEL_VM_PROFILE
++  unsigned int vm_prev;
++#endif
++#if EEL_VM_GOTO
++#if EEL_VM_MASK
++  // 空きを先に「何もしない」で埋めて、命令の分を上書きする。
++  #pragma clang diagnostic push
++  #pragma clang diagnostic ignored "-Winitializer-overrides"
++#endif
++  static const void *const vm_tab[VM_TAB_SIZE] = {
++#if EEL_VM_MASK
++    [0 ... VM_TAB_SIZE - 1] = &&vm_op_unknown,
++#endif
++    [0] = &&vm_op_unknown,
++    [EEL_BC_NOP] = &&vm_op_NOP,
++    [EEL_BC_RET] = &&vm_op_RET,
++    [EEL_BC_JMP_NC] = &&vm_op_JMP_NC,
++    [EEL_BC_JMP_IF_P1_Z] = &&vm_op_JMP_IF_P1_Z,
++    [EEL_BC_JMP_IF_P1_NZ] = &&vm_op_JMP_IF_P1_NZ,
++    [EEL_BC_MOV_FPTOP_DV] = &&vm_op_MOV_FPTOP_DV,
++    [EEL_BC_MOV_P1_DV] = &&vm_op_MOV_P1_DV,
++    [EEL_BC_MOV_P2_DV] = &&vm_op_MOV_P2_DV,
++    [EEL_BC_MOV_P3_DV] = &&vm_op_MOV_P3_DV,
++    [EEL_BC__RESET_WTP] = &&vm_op__RESET_WTP,
++    [EEL_BC_PUSH_P1] = &&vm_op_PUSH_P1,
++    [EEL_BC_PUSH_P1PTR_AS_VALUE] = &&vm_op_PUSH_P1PTR_AS_VALUE,
++    [EEL_BC_POP_P1] = &&vm_op_POP_P1,
++    [EEL_BC_POP_P2] = &&vm_op_POP_P2,
++    [EEL_BC_POP_P3] = &&vm_op_POP_P3,
++    [EEL_BC_POP_VALUE_TO_ADDR] = &&vm_op_POP_VALUE_TO_ADDR,
++    [EEL_BC_MOVE_STACK] = &&vm_op_MOVE_STACK,
++    [EEL_BC_STORE_P1_TO_STACK_AT_OFFS] = &&vm_op_STORE_P1_TO_STACK_AT_OFFS,
++    [EEL_BC_MOVE_STACKPTR_TO_P1] = &&vm_op_MOVE_STACKPTR_TO_P1,
++    [EEL_BC_MOVE_STACKPTR_TO_P2] = &&vm_op_MOVE_STACKPTR_TO_P2,
++    [EEL_BC_MOVE_STACKPTR_TO_P3] = &&vm_op_MOVE_STACKPTR_TO_P3,
++    [EEL_BC_SET_P2_FROM_P1] = &&vm_op_SET_P2_FROM_P1,
++    [EEL_BC_SET_P3_FROM_P1] = &&vm_op_SET_P3_FROM_P1,
++    [EEL_BC_COPY_VALUE_AT_P1_TO_ADDR] = &&vm_op_COPY_VALUE_AT_P1_TO_ADDR,
++    [EEL_BC_SET_P1_FROM_WTP] = &&vm_op_SET_P1_FROM_WTP,
++    [EEL_BC_SET_P2_FROM_WTP] = &&vm_op_SET_P2_FROM_WTP,
++    [EEL_BC_SET_P3_FROM_WTP] = &&vm_op_SET_P3_FROM_WTP,
++    [EEL_BC_POP_FPSTACK_TO_PTR] = &&vm_op_POP_FPSTACK_TO_PTR,
++    [EEL_BC_POP_FPSTACK_TOSTACK] = &&vm_op_POP_FPSTACK_TOSTACK,
++    [EEL_BC_PUSH_VAL_AT_P1_TO_FPSTACK] = &&vm_op_PUSH_VAL_AT_P1_TO_FPSTACK,
++    [EEL_BC_PUSH_VAL_AT_P2_TO_FPSTACK] = &&vm_op_PUSH_VAL_AT_P2_TO_FPSTACK,
++    [EEL_BC_PUSH_VAL_AT_P3_TO_FPSTACK] = &&vm_op_PUSH_VAL_AT_P3_TO_FPSTACK,
++    [EEL_BC_POP_FPSTACK_TO_WTP] = &&vm_op_POP_FPSTACK_TO_WTP,
++    [EEL_BC_SET_P1_Z] = &&vm_op_SET_P1_Z,
++    [EEL_BC_SET_P1_NZ] = &&vm_op_SET_P1_NZ,
++    [EEL_BC_LOOP_LOADCNT] = &&vm_op_LOOP_LOADCNT,
++    [EEL_BC_LOOP_END] = &&vm_op_LOOP_END,
++#if NSEEL_LOOPFUNC_SUPPORT_MAXLEN > 0
++    [EEL_BC_WHILE_SETUP] = &&vm_op_WHILE_SETUP,
++#endif
++    [EEL_BC_WHILE_BEGIN] = &&vm_op_WHILE_BEGIN,
++    [EEL_BC_WHILE_END] = &&vm_op_WHILE_END,
++    [EEL_BC_WHILE_CHECK_RV] = &&vm_op_WHILE_CHECK_RV,
++    [EEL_BC_BNOT] = &&vm_op_BNOT,
++    [EEL_BC_EQUAL] = &&vm_op_EQUAL,
++    [EEL_BC_EQUAL_EXACT] = &&vm_op_EQUAL_EXACT,
++    [EEL_BC_NOTEQUAL] = &&vm_op_NOTEQUAL,
++    [EEL_BC_NOTEQUAL_EXACT] = &&vm_op_NOTEQUAL_EXACT,
++    [EEL_BC_ABOVE] = &&vm_op_ABOVE,
++    [EEL_BC_BELOWEQ] = &&vm_op_BELOWEQ,
++    [EEL_BC_ADD] = &&vm_op_ADD,
++    [EEL_BC_SUB] = &&vm_op_SUB,
++    [EEL_BC_MUL] = &&vm_op_MUL,
++    [EEL_BC_DIV] = &&vm_op_DIV,
++    [EEL_BC_AND] = &&vm_op_AND,
++    [EEL_BC_OR] = &&vm_op_OR,
++    [EEL_BC_OR0] = &&vm_op_OR0,
++    [EEL_BC_XOR] = &&vm_op_XOR,
++    [EEL_BC_ADD_OP] = &&vm_op_ADD_OP,
++    [EEL_BC_SUB_OP] = &&vm_op_SUB_OP,
++    [EEL_BC_ADD_OP_FAST] = &&vm_op_ADD_OP_FAST,
++    [EEL_BC_SUB_OP_FAST] = &&vm_op_SUB_OP_FAST,
++    [EEL_BC_MUL_OP] = &&vm_op_MUL_OP,
++    [EEL_BC_DIV_OP] = &&vm_op_DIV_OP,
++    [EEL_BC_MUL_OP_FAST] = &&vm_op_MUL_OP_FAST,
++    [EEL_BC_DIV_OP_FAST] = &&vm_op_DIV_OP_FAST,
++    [EEL_BC_AND_OP] = &&vm_op_AND_OP,
++    [EEL_BC_OR_OP] = &&vm_op_OR_OP,
++    [EEL_BC_XOR_OP] = &&vm_op_XOR_OP,
++    [EEL_BC_UMINUS] = &&vm_op_UMINUS,
++    [EEL_BC_ASSIGN] = &&vm_op_ASSIGN,
++    [EEL_BC_ASSIGN_FAST] = &&vm_op_ASSIGN_FAST,
++    [EEL_BC_ASSIGN_FAST_FROMFP] = &&vm_op_ASSIGN_FAST_FROMFP,
++    [EEL_BC_ASSIGN_FROMFP] = &&vm_op_ASSIGN_FROMFP,
++    [EEL_BC_MOD] = &&vm_op_MOD,
++    [EEL_BC_MOD_OP] = &&vm_op_MOD_OP,
++    [EEL_BC_SHR] = &&vm_op_SHR,
++    [EEL_BC_SHL] = &&vm_op_SHL,
++    [EEL_BC_SQR] = &&vm_op_SQR,
++    [EEL_BC_MIN] = &&vm_op_MIN,
++    [EEL_BC_MAX] = &&vm_op_MAX,
++    [EEL_BC_MIN_FP] = &&vm_op_MIN_FP,
++    [EEL_BC_MAX_FP] = &&vm_op_MAX_FP,
++    [EEL_BC_ABS] = &&vm_op_ABS,
++    [EEL_BC_SIGN] = &&vm_op_SIGN,
++    [EEL_BC_INVSQRT] = &&vm_op_INVSQRT,
++    [EEL_BC_FXCH] = &&vm_op_FXCH,
++    [EEL_BC_POP_FPSTACK] = &&vm_op_POP_FPSTACK,
++    [EEL_BC_FCALL] = &&vm_op_FCALL,
++    [EEL_BC_BOOLTOFP] = &&vm_op_BOOLTOFP,
++    [EEL_BC_FPTOBOOL] = &&vm_op_FPTOBOOL,
++    [EEL_BC_FPTOBOOL_REV] = &&vm_op_FPTOBOOL_REV,
++    [EEL_BC_CFUNC_1PDD] = &&vm_op_CFUNC_1PDD,
++    [EEL_BC_CFUNC_2PDD] = &&vm_op_CFUNC_2PDD,
++    [EEL_BC_CFUNC_2PDDS] = &&vm_op_CFUNC_2PDDS,
++    [EEL_BC_MEGABUF] = &&vm_op_MEGABUF,
++    [EEL_BC_GMEGABUF] = &&vm_op_GMEGABUF,
++    [EEL_BC_GENERIC1PARM] = &&vm_op_GENERIC1PARM,
++    [EEL_BC_GENERIC2PARM] = &&vm_op_GENERIC2PARM,
++    [EEL_BC_GENERIC3PARM] = &&vm_op_GENERIC3PARM,
++    [EEL_BC_GENERIC1PARM_RETD] = &&vm_op_GENERIC1PARM_RETD,
++    [EEL_BC_GENERIC2PARM_RETD] = &&vm_op_GENERIC2PARM_RETD,
++    [EEL_BC_GENERIC2XPARM_RETD] = &&vm_op_GENERIC2XPARM_RETD,
++    [EEL_BC_GENERIC3PARM_RETD] = &&vm_op_GENERIC3PARM_RETD,
++    [EEL_BC_USERSTACK_PUSH] = &&vm_op_USERSTACK_PUSH,
++    [EEL_BC_USERSTACK_POP] = &&vm_op_USERSTACK_POP,
++    [EEL_BC_USERSTACK_POPFAST] = &&vm_op_USERSTACK_POPFAST,
++    [EEL_BC_USERSTACK_PEEK] = &&vm_op_USERSTACK_PEEK,
++    [EEL_BC_USERSTACK_PEEK_INT] = &&vm_op_USERSTACK_PEEK_INT,
++    [EEL_BC_USERSTACK_PEEK_TOP] = &&vm_op_USERSTACK_PEEK_TOP,
++    [EEL_BC_USERSTACK_EXCH] = &&vm_op_USERSTACK_EXCH,
++    [EEL_BC_DBG_GETSTACKPTR] = &&vm_op_DBG_GETSTACKPTR,
++  };
++#if EEL_VM_MASK
++  #pragma clang diagnostic pop
++#endif
++#endif
++
++  for (frame = 0; frame < nframes; ++frame)
++  {
++    if (pre) pre(cbctx, frame);
++    iptr = (char *)cp;
++    stackptr = __stack + EEL_BC_STACKSIZE;
++    p1 = NULL; p2 = NULL; p3 = NULL; wtp = (EEL_F *)bp;
++#if EEL_VM_FPREG
++    _fpsp = fpstack;
++#else
++    _fpstacktop = fpstack - 1;
++#endif
++#ifdef NSEEL_VM_PROFILE
++    vm_prev = 0;
++#endif
++
++#if EEL_VM_GOTO
++    VM_DISPATCH();
++    vm_op_unknown:
++      VM_NEXT;
++#else
++    for (;;)
++    {
++      inst = *(EEL_BC_TYPE *)iptr;
++      iptr += sizeof(EEL_BC_TYPE);
++      VM_PROFILE(inst);
++      switch (inst)
++      {
++#endif
++      VM_OP(FXCH)
++        {
++          EEL_F a = fp_top;
++          fp_top=fp_top2;
++          fp_top2=a;
++        }
++      VM_NEXT;
++      VM_OP(POP_FPSTACK) fp_rewind(1); VM_NEXT;
++      VM_OP(NOP) VM_NEXT;
++      VM_OP(RET)
++        if (EEL_BC_STACK_POP() > __stack+EEL_BC_STACKSIZE)
++        {
++          goto vm_frame_done;
++        }
++        iptr = *(void **)(stackptr - EEL_BC_STACK_POP_SIZE);
++      VM_NEXT;
++      VM_OP(JMP_NC)
++        iptr += sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr;
++      VM_NEXT;
++      VM_OP(JMP_IF_P1_Z)
++        iptr += p1 ? sizeof(GLUE_JMP_TYPE) : sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr;
++      VM_NEXT;
++      VM_OP(JMP_IF_P1_NZ)
++        iptr += p1 ? sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr : sizeof(GLUE_JMP_TYPE);
++      VM_NEXT;
++      VM_OP(MOV_FPTOP_DV)
++        fp_push(**(EEL_F **)iptr);
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(MOV_P1_DV)
++        p1 = *(void **)iptr;
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(MOV_P2_DV)
++        p2 = *(void **)iptr;
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(MOV_P3_DV)
++        p3 = *(void **)iptr;
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(_RESET_WTP)
++        wtp = *(void **)iptr;
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(PUSH_P1)
++        EEL_BC_STACK_PUSH(void *, p1);
++      VM_NEXT;
++      VM_OP(PUSH_P1PTR_AS_VALUE)
++        EEL_BC_STACK_PUSH(EEL_F, *p1);
++      VM_NEXT;
++      VM_OP(POP_P1)
++        p1 = *(EEL_F **) stackptr;
++        EEL_BC_STACK_POP();
++      VM_NEXT;
++      VM_OP(POP_P2)
++        p2 = *(EEL_F **) stackptr;
++        EEL_BC_STACK_POP();
++      VM_NEXT;
++      VM_OP(POP_P3)
++        p3 = *(EEL_F **) stackptr;
++        EEL_BC_STACK_POP();
++      VM_NEXT;
++      VM_OP(POP_VALUE_TO_ADDR)
++        **(EEL_F**)iptr = *(EEL_F *)stackptr;
++        EEL_BC_STACK_POP();
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(MOVE_STACK)
++        stackptr += *(int *)iptr;
++        iptr += sizeof(int);
++      VM_NEXT;
++      VM_OP(STORE_P1_TO_STACK_AT_OFFS)
++        *(void **) (stackptr + *(int *)iptr) = p1;
++        iptr += sizeof(int);
++      VM_NEXT;
++      VM_OP(MOVE_STACKPTR_TO_P1)
++        p1 = (double *)stackptr;
++      VM_NEXT;
++      VM_OP(MOVE_STACKPTR_TO_P2)
++        p2 = (double *)stackptr;
++      VM_NEXT;
++      VM_OP(MOVE_STACKPTR_TO_P3)
++        p3 = (double *)stackptr;
++      VM_NEXT;
++      VM_OP(SET_P2_FROM_P1)
++        p2=p1;
++      VM_NEXT;
++      VM_OP(SET_P3_FROM_P1)
++        p3=p1;
++      VM_NEXT;
++      VM_OP(COPY_VALUE_AT_P1_TO_ADDR)
++        **(EEL_F **)iptr = *p1;
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(SET_P1_FROM_WTP)
++        p1 = wtp;
++      VM_NEXT;
++      VM_OP(SET_P2_FROM_WTP)
++        p2 = wtp;
++      VM_NEXT;
++      VM_OP(SET_P3_FROM_WTP)
++        p3 = wtp;
++      VM_NEXT;
++      VM_OP(POP_FPSTACK_TO_PTR)
++        **((EEL_F **)iptr) = fp_pop();
++        iptr += sizeof(void *);
++      VM_NEXT;
++      VM_OP(POP_FPSTACK_TOSTACK)
++        EEL_BC_STACK_PUSH(EEL_F, fp_pop());
++      VM_NEXT;
++      VM_OP(PUSH_VAL_AT_P1_TO_FPSTACK)
++        fp_push(*p1);
++      VM_NEXT;
++      VM_OP(PUSH_VAL_AT_P2_TO_FPSTACK)
++        fp_push(*p2);
++      VM_NEXT;
++      VM_OP(PUSH_VAL_AT_P3_TO_FPSTACK)
++        fp_push(*p3);
++      VM_NEXT;
++      VM_OP(POP_FPSTACK_TO_WTP)
++        *wtp++ = fp_pop();
++      VM_NEXT;
++      VM_OP(SET_P1_Z)
++        p1=NULL;
++      VM_NEXT;
++      VM_OP(SET_P1_NZ)
++        p1 = EEL_BC_TRUE;
++      VM_NEXT;
++
++      VM_OP(LOOP_LOADCNT)
++        if ((EEL_BC_STACK_PUSH(int, (int)fp_pop())) < 1)
++        {
++          EEL_BC_STACK_POP();
++          iptr+= sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr;
++        }
++        else
++        {
++          iptr += sizeof(GLUE_JMP_TYPE);
++#if NSEEL_LOOPFUNC_SUPPORT_MAXLEN > 0
++          if ((*(int *)stackptr) > NSEEL_LOOPFUNC_SUPPORT_MAXLEN) (*(int *)stackptr) = NSEEL_LOOPFUNC_SUPPORT_MAXLEN;
++#endif
++          EEL_BC_STACK_PUSH(void *, wtp);
++        }
++      VM_NEXT;
++      VM_OP(LOOP_END)
++        wtp = *(void **) (stackptr);
++        if (--(*(int *)(stackptr+EEL_BC_STACK_POP_SIZE)) <= 0)
++        {
++          stackptr += EEL_BC_STACK_POP_SIZE*2;
++          iptr += sizeof(GLUE_JMP_TYPE);
++        }
++        else
++        {
++          iptr += sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr; // back to the start!
++        }
++      VM_NEXT;
++
++#if NSEEL_LOOPFUNC_SUPPORT_MAXLEN > 0
++      VM_OP(WHILE_SETUP)
++        EEL_BC_STACK_PUSH(int,NSEEL_LOOPFUNC_SUPPORT_MAXLEN);
++      VM_NEXT;
++#endif
++      VM_OP(WHILE_BEGIN)
++        EEL_BC_STACK_PUSH(void *, wtp);
++      VM_NEXT;
++      VM_OP(WHILE_END)
++        wtp = *(EEL_F **) stackptr;
++        EEL_BC_STACK_POP();
++
++#if NSEEL_LOOPFUNC_SUPPORT_MAXLEN > 0
++        if (--(*(int *)stackptr) <= 0)
++        {
++          EEL_BC_STACK_POP();
++          iptr += sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr; // endpt
++        }
++        else
++        {
++          iptr += sizeof(GLUE_JMP_TYPE);
++        }
++#endif
++      VM_NEXT;
++      VM_OP(WHILE_CHECK_RV)
++        if (p1)
++        {
++          iptr += sizeof(GLUE_JMP_TYPE)+*(GLUE_JMP_TYPE *)iptr; // loop
++        }
++        else
++        {
++          // done
++#if NSEEL_LOOPFUNC_SUPPORT_MAXLEN > 0
++          EEL_BC_STACK_POP();
++#endif
++          iptr += sizeof(GLUE_JMP_TYPE);
++        }
++      VM_NEXT;
++      VM_OP(BNOT)
++        p1 = p1 ? NULL : EEL_BC_TRUE;
++      VM_NEXT;
++      VM_OP(EQUAL)
++        p1 = fabs(fp_top - fp_top2) < NSEEL_CLOSEFACTOR ? EEL_BC_TRUE : NULL;
++        fp_rewind(2);
++      VM_NEXT;
++      VM_OP(EQUAL_EXACT)
++        p1 = fp_top == fp_top2 ? EEL_BC_TRUE : NULL;
++        fp_rewind(2);
++      VM_NEXT;
++      VM_OP(NOTEQUAL)
++        p1 = fabs(fp_top - fp_top2) >= NSEEL_CLOSEFACTOR ? EEL_BC_TRUE : NULL;
++        fp_rewind(2);
++      VM_NEXT;
++      VM_OP(NOTEQUAL_EXACT)
++        p1 = fp_top != fp_top2 ? EEL_BC_TRUE : NULL;
++        fp_rewind(2);
++      VM_NEXT;
++      VM_OP(ABOVE)
++        p1 = fp_top < fp_top2 ? EEL_BC_TRUE : NULL;
++        fp_rewind(2);
++      VM_NEXT;
++      VM_OP(BELOWEQ)
++        p1 = fp_top >= fp_top2 ? EEL_BC_TRUE : NULL;
++        fp_rewind(2);
++      VM_NEXT;
++
++      // fp_top2 op= fp_top; fp_rewind(1); と同じ（fp_top2 = fp_top2 op fp_top）
++      VM_OP(ADD)
++        fp_set2_rewind1(effectdeck_nan_order_fadd(fp_top2, fp_top)); // glue_port.h の注
++      VM_NEXT;
++      VM_OP(SUB)
++        fp_set2_rewind1(fp_top2 - fp_top);
++      VM_NEXT;
++      VM_OP(MUL)
++        fp_set2_rewind1(effectdeck_nan_order_fmul(fp_top2, fp_top));
++      VM_NEXT;
++      VM_OP(DIV)
++        fp_set2_rewind1(fp_top2 / fp_top);
++      VM_NEXT;
++      VM_OP(AND)
++        fp_set2_rewind1((EEL_F) (((WDL_INT64)fp_top) & (WDL_INT64)(fp_top2)));
++      VM_NEXT;
++      VM_OP(OR)
++        fp_set2_rewind1((EEL_F) (((WDL_INT64)fp_top) | (WDL_INT64)(fp_top2)));
++      VM_NEXT;
++      VM_OP(OR0)
++        fp_top = (EEL_F) ((WDL_INT64)(fp_top));
++      VM_NEXT;
++      VM_OP(XOR)
++        fp_set2_rewind1((EEL_F) (((WDL_INT64)fp_top) ^ (WDL_INT64)(fp_top2)));
++      VM_NEXT;
++
++      VM_OP(ADD_OP)
++        *(p1 = p2) = denormal_filter_double2(*p2 + fp_pop());
++      VM_NEXT;
++      VM_OP(SUB_OP)
++        *(p1 = p2) = denormal_filter_double2(*p2 - fp_pop());
++      VM_NEXT;
++      VM_OP(ADD_OP_FAST)
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fadd(*p2, v);
++        }
++      VM_NEXT;
++      VM_OP(SUB_OP_FAST)
++        *(p1 = p2) -= fp_pop();
++      VM_NEXT;
++      VM_OP(MUL_OP)
++        *(p1 = p2) = denormal_filter_double2(*p2 * fp_pop());
++      VM_NEXT;
++      VM_OP(DIV_OP)
++        *(p1 = p2) = denormal_filter_double2(*p2 / fp_pop());
++      VM_NEXT;
++      VM_OP(MUL_OP_FAST)
++        {
++          const EEL_F v = fp_pop();
++          *(p1 = p2) = effectdeck_nan_order_fmul(*p2, v);
++        }
++      VM_NEXT;
++      VM_OP(DIV_OP_FAST)
++        *(p1 = p2) /= fp_pop();
++      VM_NEXT;
++      VM_OP(AND_OP)
++        p1 = p2;
++        *p2 = (EEL_F) (((WDL_INT64)*p2) & (WDL_INT64)fp_pop());
++      VM_NEXT;
++      VM_OP(OR_OP)
++        p1 = p2;
++        *p2 = (EEL_F) (((WDL_INT64)*p2) | (WDL_INT64)fp_pop());
++      VM_NEXT;
++      VM_OP(XOR_OP)
++        p1 = p2;
++        *p2 = (EEL_F) (((WDL_INT64)*p2) ^ (WDL_INT64)fp_pop());
++      VM_NEXT;
++      VM_OP(UMINUS)
++        fp_top = -fp_top;
++      VM_NEXT;
++      VM_OP(ASSIGN)
++        *p2 = denormal_filter_double2(*p1);
++        p1 = p2;
++      VM_NEXT;
++      VM_OP(ASSIGN_FAST)
++        *p2 = *p1;
++        p1 = p2;
++      VM_NEXT;
++      VM_OP(ASSIGN_FAST_FROMFP)
++        *p2 = fp_pop();
++        p1 = p2;
++      VM_NEXT;
++      VM_OP(ASSIGN_FROMFP)
++        *p2 = denormal_filter_double2(fp_pop());
++        p1 = p2;
++      VM_NEXT;
++      VM_OP(MOD)
++        {
++          int a = (int) fabs(fp_pop());
++          fp_top = a ? (EEL_F) (((WDL_INT64)fabs(fp_top)) % a) : 0.0;
++        }
++      VM_NEXT;
++      VM_OP(MOD_OP)
++        {
++          int a = (int) fabs(fp_pop());
++          *p2 = a ? (EEL_F) (((WDL_INT64)fabs(*p2)) % a) : 0.0;
++          p1=p2;
++        }
++      VM_NEXT;
++      VM_OP(SHR)
++        fp_set2_rewind1((EEL_F) (((int)fp_top2) >> (((int)fp_top) & 31)));
++      VM_NEXT;
++      VM_OP(SHL)
++        fp_set2_rewind1((EEL_F) (int) (((unsigned int)(int)fp_top2) << (((int)fp_top) & 31)));
++      VM_NEXT;
++      VM_OP(SQR)
++        fp_top *= fp_top;
++      VM_NEXT;
++      VM_OP(MIN)
++        if (*p1 > *p2) p1 = p2;
++      VM_NEXT;
++      VM_OP(MAX)
++        if (*p1 < *p2) p1 = p2;
++      VM_NEXT;
++      VM_OP(MIN_FP)
++        {
++          EEL_F a=fp_pop();
++          if (a<fp_top) fp_top=a;
++        }
++      VM_NEXT;
++      VM_OP(MAX_FP)
++        {
++          EEL_F a=fp_pop();
++          if (a>fp_top) fp_top=a;
++        }
++      VM_NEXT;
++      VM_OP(ABS)
++        fp_top = fabs(fp_top);
++      VM_NEXT;
++      VM_OP(SIGN)
++        if (fp_top<0.0) fp_top=-1.0;
++        else if (fp_top>0.0) fp_top=1.0;
++      VM_NEXT;
++      VM_OP(DBG_GETSTACKPTR)
++        fp_top = (int)(stackptr - __stack);
++      VM_NEXT;
++      VM_OP(INVSQRT)
++        {
++          float y = (float)fp_top;
++          int i  = (int) (0x5f3759dfu - (unsigned int) ( (* (int *) &y) >> 1 ));
++          y  = *(float *) &i;
++          fp_top  = y * ( 1.5F - ( (fp_top * 0.5) * y * y ) );
++        }
++      VM_NEXT;
++      VM_OP(FCALL)
++        {
++          char *newiptr = *(char **)iptr;
++          EEL_BC_STACK_PUSH(void *, (iptr += sizeof(void *)));
++          iptr = newiptr;
++        }
++      VM_NEXT;
++      VM_OP(BOOLTOFP)
++        fp_push(p1 ? 1.0 : 0.0);
++      VM_NEXT;
++      VM_OP(FPTOBOOL)
++        p1 = fabs(fp_pop()) >= NSEEL_CLOSEFACTOR ? EEL_BC_TRUE : NULL;
++      VM_NEXT;
++      VM_OP(FPTOBOOL_REV)
++        p1 = fabs(fp_pop()) < NSEEL_CLOSEFACTOR ? EEL_BC_TRUE : NULL;
++      VM_NEXT;
++
++      VM_OP(CFUNC_1PDD)
++        {
++          double (*f)(double) = *(double (**)(double)) iptr;
++          fp_top = f(fp_top);
++          iptr += sizeof(void *);
++        }
++      VM_NEXT;
++      VM_OP(CFUNC_2PDD)
++        {
++          double (*f)(double,double) = *(double (**)(double,double))iptr;
++          fp_set2_rewind1(f(fp_top2,fp_top));
++          iptr += sizeof(void *);
++        }
++      VM_NEXT;
++      VM_OP(CFUNC_2PDDS)
++        {
++          double (*f)(double,double) = *(double (**)(double,double))iptr;
++          *p2 = f(*p2,fp_pop());
++          p1 = p2;
++          iptr += sizeof(void *);
++        }
++      VM_NEXT;
++
++      VM_OP(MEGABUF)
++        {
++          unsigned int idx=(unsigned int) (fp_pop() + NSEEL_CLOSEFACTOR);
++          EEL_F **f = (EEL_F **)rt,*f2;
++          p1 = (idx < NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK && (f2=f[idx/NSEEL_RAM_ITEMSPERBLOCK])) ?
++              (f2 + (idx&(NSEEL_RAM_ITEMSPERBLOCK-1))) :
++             __NSEEL_RAMAlloc((void*)rt,idx);
++        }
++      VM_NEXT;
++      VM_OP(GMEGABUF)
++        {
++          p1 = __NSEEL_RAMAllocGMEM(*(EEL_F ****)iptr,(int) (fp_pop() + NSEEL_CLOSEFACTOR));
++          iptr += sizeof(void *)*2; // also includes ptr to __NSEEL_RAMAllocGMEM, which we ignore
++        }
++      VM_NEXT;
++      VM_OP(GENERIC1PARM)
++        {
++          EEL_F *(*f)(void *,EEL_F*) = *(EEL_F *(**)(void *, EEL_F *)) (iptr+sizeof(void *));
++          p1 = f(*(void **)iptr,p1);
++          iptr += sizeof(void *)*2;
++        }
++      VM_NEXT;
++      VM_OP(GENERIC2PARM)
++        {
++          EEL_F *(*f)(void *,EEL_F*,EEL_F*) = *(EEL_F *(**)(void *, EEL_F *, EEL_F *)) (iptr+sizeof(void *));
++          p1 = f(*(void **)iptr,p2, p1);
++          iptr += sizeof(void *)*2;
++        }
++      VM_NEXT;
++      VM_OP(GENERIC3PARM)
++        {
++          EEL_F *(*f)(void *,EEL_F*,EEL_F*,EEL_F*) = *(EEL_F *(**)(void *, EEL_F *, EEL_F *, EEL_F *)) (iptr+sizeof(void *));
++          p1 = f(*(void **)iptr,p3, p2, p1);
++          iptr += sizeof(void *)*2;
++        }
++      VM_NEXT;
++      VM_OP(GENERIC1PARM_RETD)
++        {
++          EEL_F (*f)(void *,EEL_F*) = *(EEL_F (**)(void *, EEL_F *)) (iptr+sizeof(void *));
++          fp_push(f(*(void **)iptr,p1));
++          iptr += sizeof(void *)*2;
++        }
++      VM_NEXT;
++      VM_OP(GENERIC2PARM_RETD)
++        {
++          EEL_F (*f)(void *,EEL_F*,EEL_F*) = *(EEL_F (**)(void *, EEL_F *, EEL_F *)) (iptr+sizeof(void *));
++          fp_push(f(*(void **)iptr,p2, p1));
++          iptr += sizeof(void *)*2;
++        }
++      VM_NEXT;
++      VM_OP(GENERIC2XPARM_RETD)
++        {
++          EEL_F (*f)(void *,void *,EEL_F*,EEL_F*) = *(EEL_F (**)(void *, void *, EEL_F *, EEL_F *)) (iptr+2*sizeof(void *));
++          fp_push(f(*(void **)iptr,((void **)iptr)[1],p2, p1));
++          iptr += sizeof(void *)*3;
++        }
++      VM_NEXT;
++      VM_OP(GENERIC3PARM_RETD)
++        {
++          EEL_F (*f)(void *,EEL_F*,EEL_F*,EEL_F*) = *(EEL_F (**)(void *, EEL_F *, EEL_F *, EEL_F *)) (iptr+sizeof(void *));
++          fp_push(f(*(void **)iptr,p3, p2, p1));
++          iptr += sizeof(void *)*2;
++        }
++      VM_NEXT;
++
++      VM_OP(USERSTACK_PUSH)
++        {
++          UINT_PTR *sptr = *(UINT_PTR **)iptr;
++          (*sptr) += 8;
++          (*sptr) &= *(UINT_PTR*)(iptr+sizeof(void *));
++          (*sptr) |= *(UINT_PTR*)(iptr+2*sizeof(void *));
++          *(EEL_F *)*sptr = *p1;
++        }
++        iptr += sizeof(void*)*3;
++      VM_NEXT;
++      VM_OP(USERSTACK_POP)
++        {
++          UINT_PTR *sptr = *(UINT_PTR **)iptr;
++          *p1 = *(EEL_F *)*sptr;
++          (*sptr) -= 8;
++          (*sptr) &= *(UINT_PTR*)(iptr+sizeof(void *));
++          (*sptr) |= *(UINT_PTR*)(iptr+2*sizeof(void *));
++        }
++        iptr += sizeof(void*)*3;
++      VM_NEXT;
++      VM_OP(USERSTACK_POPFAST)
++        {
++          UINT_PTR *sptr = *(UINT_PTR **)iptr;
++          p1 = (EEL_F *)*sptr;
++          (*sptr) -= 8;
++          (*sptr) &= *(UINT_PTR*)(iptr+sizeof(void *));
++          (*sptr) |= *(UINT_PTR*)(iptr+2*sizeof(void *));
++        }
++        iptr += sizeof(void*)*3;
++      VM_NEXT;
++      VM_OP(USERSTACK_PEEK)
++        {
++          UINT_PTR sptr = **(UINT_PTR **)iptr;
++          sptr -= sizeof(EEL_F) * (int)(fp_pop());
++          sptr &= *(UINT_PTR*)(iptr+sizeof(void *));
++          sptr |= *(UINT_PTR*)(iptr+2*sizeof(void *));
++          p1 = (EEL_F *)sptr;
++        }
++        iptr += sizeof(void*)*3;
++      VM_NEXT;
++      VM_OP(USERSTACK_PEEK_INT)
++        {
++          UINT_PTR sptr = **(UINT_PTR **)iptr;
++          sptr -= *(UINT_PTR*)(iptr+sizeof(void*));
++          sptr &= *(UINT_PTR*)(iptr+2*sizeof(void *));
++          sptr |= *(UINT_PTR*)(iptr+3*sizeof(void *));
++          p1 = (EEL_F *)sptr;
++        }
++        iptr += sizeof(void*)*4;
++      VM_NEXT;
++      VM_OP(USERSTACK_PEEK_TOP)
++        p1 = **(EEL_F ***)iptr;
++        iptr += sizeof(void*);
++      VM_NEXT;
++      VM_OP(USERSTACK_EXCH)
++        {
++          EEL_F *p=**(EEL_F ***)iptr;
++          EEL_F a=*p;
++          *p=*p1;
++          *p1=a;
++        }
++        iptr += sizeof(void*);
++      VM_NEXT;
++#if !EEL_VM_GOTO
++      }
++    }
++#endif
++vm_frame_done:
++    if (post) post(cbctx, frame);
++  }
++}
++
++#undef VM_OP
++#undef VM_NEXT
++#undef VM_PROFILE
++#undef VM_DISPATCH
++#undef VM_TAB_SIZE
++#undef VM_TAB_INDEX
++#undef fp_top
++#undef fp_top2
++#undef fp_push
++#undef fp_pop
++#undef fp_rewind
++#undef fp_set2_rewind1
++#undef EEL_VM_FUNC
++#undef EEL_VM_GOTO
++#undef EEL_VM_FPREG
++#undef EEL_VM_MASK
+diff --git a/thirdparty/WDL/source/WDL/eel2/ns-eel.h b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
+index 6590a81..be8ab91 100644
+--- a/thirdparty/WDL/source/WDL/eel2/ns-eel.h
++++ b/thirdparty/WDL/source/WDL/eel2/ns-eel.h
+@@ -182,6 +182,42 @@ NSEEL_CODEHANDLE NSEEL_code_compile_ex(NSEEL_VMCTX ctx, const char *code, int li
+ char *NSEEL_code_getcodeerror(NSEEL_VMCTX ctx);
+ int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx);
+ void NSEEL_code_execute(NSEEL_CODEHANDLE code);
++
++// EffectDeck (effectdeck_exec_select): portable（EEL_TARGET_PORTABLE）のバイトコードの解き方を実行時に選ぶ（glue_port_vm.h）。
++// バイトコードは同じ。どれも NSEEL_EXEC_PORTABLE と 1 ビットも違わない結果を返す（Tools/jsfx-bench の --diff）。
++// JIT で建てたときは NSEEL_EXEC_PORTABLE だけ（ほかを渡しても 1 回ずつ NSEEL_code_execute）。
++#define NSEEL_EXEC_PORTABLE 0   // GLUE_CALL_CODE（glue_port.h の switch）を 1 回ずつ
++#define NSEEL_EXEC_BLOCK 1      // 同じ switch。nframes 回を 1 回の入口で（積み場の用意が 1 回）
++#define NSEEL_EXEC_GOTO 2       // computed goto（ラベルの番地の表）+ 1 回の入口
++#define NSEEL_EXEC_GOTO_FPREG 3 // NSEEL_EXEC_GOTO + 浮動小数の積み場の先頭をレジスタに
++#define NSEEL_EXEC_GOTO_FPREG_MASK 4 // NSEEL_EXEC_GOTO_FPREG + 表を 128 に取って範囲の比較を省く
++#define NSEEL_EXEC_COUNT 5
++// アプリが使う既定（ysfx_new が読む）。速さを測って 1 ビットも違わないものの中から選んだ（docs/jsfx-bench.md）。
++// iPhone 16 では _MASK と並び（7 本の合計は GOTO_FPREG が少し速い）、_MASK は表の外の番号が別の命令に
++// 化けうるので GOTO_FPREG にした。
++#ifndef NSEEL_EXEC_DEFAULT
++#define NSEEL_EXEC_DEFAULT NSEEL_EXEC_GOTO_FPREG
++#endif
++typedef void (*NSEEL_FRAME_CALLBACK)(void *ctx, unsigned int frame);
++// pre(ctx, i) → code を 1 回 → post(ctx, i) を i = 0..nframes-1。pre / post は NULL でもよい。
++// code が NULL・中身が空のときも pre / post は呼ぶ（NSEEL_code_execute が何もしないのと同じ）。
++void NSEEL_code_execute_frames(NSEEL_CODEHANDLE code, int mode, unsigned int nframes,
++                               NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx);
++// rand() の列を最初からにする（全部の VM で 1 つの列。比べるためだけ）。
++void NSEEL_rand_reset(void);
++// この建て方で使えるか（JIT の建て方は NSEEL_EXEC_PORTABLE だけ）。
++int NSEEL_code_exec_mode_available(int mode);
++const char *NSEEL_code_exec_mode_name(int mode);
++#ifdef NSEEL_VM_PROFILE
++// 命令の数（1 つずつと、続いた 2 つの組）。測るための建て方（-DNSEEL_VM_PROFILE）だけ。
++// 番号は glue_port.h の EEL_BC_*。0 は「回の頭」（組の 1 つめ）と知らない番号。
++int NSEEL_vm_profile_nops(void);
++const char *NSEEL_vm_profile_opname(int op);
++const unsigned long long *NSEEL_vm_profile_ops(void);    // [nops]
++const unsigned long long *NSEEL_vm_profile_pairs(void);  // [nops * nops]、[前 * nops + 後]
++void NSEEL_vm_profile_reset(void);
++#endif
++
+ void NSEEL_code_free(NSEEL_CODEHANDLE code);
+ int *NSEEL_code_getstats(NSEEL_CODEHANDLE code); // 4 ints...source bytes, static code bytes, call code bytes, data bytes
+   
+diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c b/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c
+index 4ac7059..1d2579f 100644
+--- a/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c
++++ b/thirdparty/WDL/source/WDL/eel2/nseel-cfunc.c
+@@ -39,6 +39,15 @@
+ #define UPPER_MASK 0x80000000UL /* most significant w-r bits */
+ #define LOWER_MASK 0x7fffffffUL /* least significant r bits */
+ 
++// EffectDeck: 種の位置を関数の外へ出した（NSEEL_rand_reset が 0 に戻す。0 は次の rand で同じ種から作り直す）。
++static unsigned int __idx;
++
++// EffectDeck: rand の列を最初からにする（実行系どうしを比べるときに、同じ列を引かせるため。音の道では呼ばない）。
++void NSEEL_rand_reset(void)
++{
++  __idx = 0;
++}
++
+ static unsigned int genrand_int32(void)
+ {
+ 
+@@ -47,7 +56,6 @@ static unsigned int genrand_int32(void)
+     /* mag01[x] = x * MATRIX_A  for x=0,1 */
+ 
+     static unsigned int mt[N]; /* the array for the state vector  */
+-    static unsigned int __idx;
+ 
+     unsigned int mti = __idx;
+ 
+diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
+index 5dee9a7..5058019 100644
+--- a/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
++++ b/thirdparty/WDL/source/WDL/eel2/nseel-compiler.c
+@@ -672,7 +672,11 @@ functionType *nseel_getFunctionByName(compileContext *ctx, const char *name, int
+     NSEEL_HOSTSTUB_LeaveMutex();
+   }
+   idx=functable_lowerbound(fnTable1,fn1size,name,&match);
+-  if (match) return fnTable1+idx;
++  if (match)
++  {
++    if (mchk) *mchk = 0;
++    return fnTable1+idx;
++  }
+ 
+   if ((!ctx || !(ctx->current_compile_flags&NSEEL_CODE_COMPILE_FLAG_ONLY_BUILTIN_FUNCTIONS)) && tab->list)
+   {
+@@ -1347,7 +1351,7 @@ opcodeRec *nseel_resolve_named_symbol(compileContext *ctx, opcodeRec *rec, int p
+       }
+       if (match_parmcnt_pos < 3) match_parmcnt[match_parmcnt_pos++] = (f->nParams&FUNCTIONTYPE_PARAMETERCOUNTMASK);
+       f++;
+-      if (stricmp(f->name,sname)) break;
++      if (chkamt < 0 || stricmp(f->name,sname)) break;
+     }
+   }
+   if (ctx->last_error_string[0]) lstrcatn(ctx->last_error_string, ", ", sizeof(ctx->last_error_string));
+@@ -1720,8 +1724,14 @@ static void *nseel_getBuiltinFunctionAddress(compileContext *ctx,
+ 
+     case FN_MEMORY:
+       {
++#ifndef GLUE_MEGABUF_NO_IMMEDIATE
+         static void *replptrs[4]={&__NSEEL_RAMAlloc,};      
+         *replList = replptrs;
++#endif
++        // portable（glue_port.h）の megabuf には即値の席が無い。席の無い命令に EEL_GLUE_set_immediate を
++        // かけると、命令の後ろの 8 バイト（0 でなければ最大 5 バイト先）に __NSEEL_RAMAlloc を書く。
++        // 命令列の最後の x[] だと書き先は確保した塊の外で、先に作ったインライン関数の中身の頭を潰し、
++        // 同じ節で 2 回目からその関数を写した所が壊れていた（Tools/jsfx-bench/diff/megabuf_tail.jsfx）。
+         *abiInfo = BIF_LASTPARMONSTACK|BIF_FPSTACKUSE(1)|BIF_CLEARDENORMAL;
+         #ifdef GLUE_MEM_NEEDS_PPROC
+           *pProc = NSEEL_PProc_RAM;
+@@ -2106,8 +2116,9 @@ start_over: // when an opcode changed substantially in optimization, goto here t
+                 RESTART_DIRECTVALUE(ret);
+               }
+             break;
+-            case FN_SHL:      RESTART_DIRECTVALUE(((int)op->parms.parms[0]->parms.dv.directValue) << ((int)op->parms.parms[1]->parms.dv.directValue));
+-            case FN_SHR:      RESTART_DIRECTVALUE(((int)op->parms.parms[0]->parms.dv.directValue) >> ((int)op->parms.parms[1]->parms.dv.directValue));
++            // 定数のシフトも実行時(glue_port.h の EEL_BC_SHL / EEL_BC_SHR)と同じく量は下 5 bit、左は unsigned で
++            case FN_SHL:      RESTART_DIRECTVALUE((int) (((unsigned int)(int)op->parms.parms[0]->parms.dv.directValue) << (((int)op->parms.parms[1]->parms.dv.directValue) & 31)));
++            case FN_SHR:      RESTART_DIRECTVALUE(((int)op->parms.parms[0]->parms.dv.directValue) >> (((int)op->parms.parms[1]->parms.dv.directValue) & 31));
+             case FN_POW:      RESTART_DIRECTVALUE(pow(op->parms.parms[0]->parms.dv.directValue, op->parms.parms[1]->parms.dv.directValue));
+             case FN_DIVIDE:   RESTART_DIRECTVALUE(op->parms.parms[0]->parms.dv.directValue / op->parms.parms[1]->parms.dv.directValue);
+             case FN_MULTIPLY: RESTART_DIRECTVALUE(op->parms.parms[0]->parms.dv.directValue * op->parms.parms[1]->parms.dv.directValue);
+@@ -2783,7 +2794,7 @@ unsigned char *compileCodeBlockWithRet(compileContext *ctx, opcodeRec *rec, int
+     p+=GLUE_FUNC_LEAVE_SIZE;
+   #endif
+   memcpy(p,&GLUE_RET,sizeof(GLUE_RET)); p+=sizeof(GLUE_RET);
+-#if defined(__arm__) || defined(__aarch64__)
++#if (defined(__arm__) || defined(__aarch64__)) && !defined(EEL_DOESNT_NEED_EXEC_PERMS)
+   __clear_cache(newblock2,p);
+ #endif
+   
+@@ -5130,7 +5141,7 @@ had_error:
+       memcpy(writeptr,&GLUE_RET,sizeof(GLUE_RET)); writeptr += sizeof(GLUE_RET);
+       ctx->l_stats[1]=size;
+       handle->code_size = (int) (writeptr - (unsigned char *)handle->code);
+-#if defined(__arm__) || defined(__aarch64__)
++#if (defined(__arm__) || defined(__aarch64__)) && !defined(EEL_DOESNT_NEED_EXEC_PERMS)
+       __clear_cache(handle->code,writeptr);
+ #endif
+     }
+@@ -5217,6 +5228,147 @@ void NSEEL_code_execute(NSEEL_CODEHANDLE code)
+ 
+ }
+ 
++//------------------------------------------------------------------------------
++// EffectDeck: 実行系を選ぶ（ns-eel.h の NSEEL_EXEC_*、glue_port_vm.h）。
++#if defined(EEL_TARGET_PORTABLE) && !defined(EEL_PORTABLE_TAILCALL)
++#define EEL_VM_NOPS ((unsigned int)EEL_BC_DBG_GETSTACKPTR + 1u)
++typedef char nseel_vm_mask_table_fits[EEL_VM_NOPS <= 128 ? 1 : -1]; // EEL_VM_MASK の表は 128
++#ifdef NSEEL_VM_PROFILE
++static unsigned long long nseel_vm_profile_ops[EEL_VM_NOPS];
++static unsigned long long nseel_vm_profile_pairs[EEL_VM_NOPS][EEL_VM_NOPS];
++#endif
++
++#define EEL_VM_FUNC nseel_vm_switch
++#define EEL_VM_GOTO 0
++#define EEL_VM_FPREG 0
++#define EEL_VM_MASK 0
++#include "glue_port_vm.h"
++
++#define EEL_VM_FUNC nseel_vm_goto
++#define EEL_VM_GOTO 1
++#define EEL_VM_FPREG 0
++#define EEL_VM_MASK 0
++#include "glue_port_vm.h"
++
++#define EEL_VM_FUNC nseel_vm_goto_fpreg
++#define EEL_VM_GOTO 1
++#define EEL_VM_FPREG 1
++#define EEL_VM_MASK 0
++#include "glue_port_vm.h"
++
++#define EEL_VM_FUNC nseel_vm_goto_fpreg_mask
++#define EEL_VM_GOTO 1
++#define EEL_VM_FPREG 1
++#define EEL_VM_MASK 1
++#include "glue_port_vm.h"
++
++#ifdef NSEEL_VM_PROFILE
++int NSEEL_vm_profile_nops(void) { return (int)EEL_VM_NOPS; }
++const unsigned long long *NSEEL_vm_profile_ops(void) { return nseel_vm_profile_ops; }
++const unsigned long long *NSEEL_vm_profile_pairs(void) { return &nseel_vm_profile_pairs[0][0]; }
++void NSEEL_vm_profile_reset(void)
++{
++  memset(nseel_vm_profile_ops,0,sizeof(nseel_vm_profile_ops));
++  memset(nseel_vm_profile_pairs,0,sizeof(nseel_vm_profile_pairs));
++}
++const char *NSEEL_vm_profile_opname(int op)
++{
++#define VM_NAME(x) [EEL_BC_##x] = #x,
++  static const char *const names[EEL_VM_NOPS] = {
++    [0] = "(start)",
++    VM_NAME(NOP) VM_NAME(RET) VM_NAME(JMP_NC) VM_NAME(JMP_IF_P1_Z) VM_NAME(JMP_IF_P1_NZ)
++    VM_NAME(MOV_FPTOP_DV) VM_NAME(MOV_P1_DV) VM_NAME(MOV_P2_DV) VM_NAME(MOV_P3_DV) VM_NAME(_RESET_WTP)
++    VM_NAME(PUSH_P1) VM_NAME(PUSH_P1PTR_AS_VALUE) VM_NAME(POP_P1) VM_NAME(POP_P2) VM_NAME(POP_P3)
++    VM_NAME(POP_VALUE_TO_ADDR) VM_NAME(MOVE_STACK) VM_NAME(STORE_P1_TO_STACK_AT_OFFS)
++    VM_NAME(MOVE_STACKPTR_TO_P1) VM_NAME(MOVE_STACKPTR_TO_P2) VM_NAME(MOVE_STACKPTR_TO_P3)
++    VM_NAME(SET_P2_FROM_P1) VM_NAME(SET_P3_FROM_P1) VM_NAME(COPY_VALUE_AT_P1_TO_ADDR)
++    VM_NAME(SET_P1_FROM_WTP) VM_NAME(SET_P2_FROM_WTP) VM_NAME(SET_P3_FROM_WTP)
++    VM_NAME(POP_FPSTACK_TO_PTR) VM_NAME(POP_FPSTACK_TOSTACK) VM_NAME(PUSH_VAL_AT_P1_TO_FPSTACK)
++    VM_NAME(PUSH_VAL_AT_P2_TO_FPSTACK) VM_NAME(PUSH_VAL_AT_P3_TO_FPSTACK) VM_NAME(POP_FPSTACK_TO_WTP)
++    VM_NAME(SET_P1_Z) VM_NAME(SET_P1_NZ) VM_NAME(LOOP_LOADCNT) VM_NAME(LOOP_END)
++#if NSEEL_LOOPFUNC_SUPPORT_MAXLEN > 0
++    VM_NAME(WHILE_SETUP)
++#endif
++    VM_NAME(WHILE_BEGIN) VM_NAME(WHILE_END) VM_NAME(WHILE_CHECK_RV) VM_NAME(BNOT) VM_NAME(EQUAL)
++    VM_NAME(EQUAL_EXACT) VM_NAME(NOTEQUAL) VM_NAME(NOTEQUAL_EXACT) VM_NAME(ABOVE) VM_NAME(BELOWEQ)
++    VM_NAME(ADD) VM_NAME(SUB) VM_NAME(MUL) VM_NAME(DIV) VM_NAME(AND) VM_NAME(OR) VM_NAME(OR0) VM_NAME(XOR)
++    VM_NAME(ADD_OP) VM_NAME(SUB_OP) VM_NAME(ADD_OP_FAST) VM_NAME(SUB_OP_FAST) VM_NAME(MUL_OP)
++    VM_NAME(DIV_OP) VM_NAME(MUL_OP_FAST) VM_NAME(DIV_OP_FAST) VM_NAME(AND_OP) VM_NAME(OR_OP)
++    VM_NAME(XOR_OP) VM_NAME(UMINUS) VM_NAME(ASSIGN) VM_NAME(ASSIGN_FAST) VM_NAME(ASSIGN_FAST_FROMFP)
++    VM_NAME(ASSIGN_FROMFP) VM_NAME(MOD) VM_NAME(MOD_OP) VM_NAME(SHR) VM_NAME(SHL) VM_NAME(SQR)
++    VM_NAME(MIN) VM_NAME(MAX) VM_NAME(MIN_FP) VM_NAME(MAX_FP) VM_NAME(ABS) VM_NAME(SIGN)
++    VM_NAME(INVSQRT) VM_NAME(FXCH) VM_NAME(POP_FPSTACK) VM_NAME(FCALL) VM_NAME(BOOLTOFP)
++    VM_NAME(FPTOBOOL) VM_NAME(FPTOBOOL_REV) VM_NAME(CFUNC_1PDD) VM_NAME(CFUNC_2PDD) VM_NAME(CFUNC_2PDDS)
++    VM_NAME(MEGABUF) VM_NAME(GMEGABUF) VM_NAME(GENERIC1PARM) VM_NAME(GENERIC2PARM) VM_NAME(GENERIC3PARM)
++    VM_NAME(GENERIC1PARM_RETD) VM_NAME(GENERIC2PARM_RETD) VM_NAME(GENERIC2XPARM_RETD)
++    VM_NAME(GENERIC3PARM_RETD) VM_NAME(USERSTACK_PUSH) VM_NAME(USERSTACK_POP) VM_NAME(USERSTACK_POPFAST)
++    VM_NAME(USERSTACK_PEEK) VM_NAME(USERSTACK_PEEK_INT) VM_NAME(USERSTACK_PEEK_TOP)
++    VM_NAME(USERSTACK_EXCH) VM_NAME(DBG_GETSTACKPTR)
++  };
++#undef VM_NAME
++  return op >= 0 && (unsigned int)op < EEL_VM_NOPS && names[op] ? names[op] : "?";
++}
++#endif
++#endif
++
++void NSEEL_code_execute_frames(NSEEL_CODEHANDLE code, int mode, unsigned int nframes,
++                               NSEEL_FRAME_CALLBACK pre, NSEEL_FRAME_CALLBACK post, void *ctx)
++{
++  codeHandleType *h = (codeHandleType *)code;
++  unsigned int i;
++#if defined(EEL_TARGET_PORTABLE) && !defined(EEL_PORTABLE_TAILCALL)
++  if (h && h->code && nframes)
++  {
++    switch (mode)
++    {
++      case NSEEL_EXEC_BLOCK:
++        nseel_vm_switch((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
++      return;
++      case NSEEL_EXEC_GOTO:
++        nseel_vm_goto((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
++      return;
++      case NSEEL_EXEC_GOTO_FPREG:
++        nseel_vm_goto_fpreg((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
++      return;
++      case NSEEL_EXEC_GOTO_FPREG_MASK:
++        nseel_vm_goto_fpreg_mask((INT_PTR)h->workTable,(INT_PTR)h->code,(INT_PTR)h->ramPtr,nframes,pre,post,ctx);
++      return;
++      default: break;
++    }
++  }
++#else
++  (void)mode;
++#endif
++  for (i = 0; i < nframes; ++i)
++  {
++    if (pre) pre(ctx,i);
++    NSEEL_code_execute(code);
++    if (post) post(ctx,i);
++  }
++}
++
++int NSEEL_code_exec_mode_available(int mode)
++{
++#if defined(EEL_TARGET_PORTABLE) && !defined(EEL_PORTABLE_TAILCALL)
++  return mode >= 0 && mode < NSEEL_EXEC_COUNT;
++#else
++  return mode == NSEEL_EXEC_PORTABLE;
++#endif
++}
++
++const char *NSEEL_code_exec_mode_name(int mode)
++{
++  switch (mode)
++  {
++    case NSEEL_EXEC_PORTABLE: return "portable";
++    case NSEEL_EXEC_BLOCK: return "vm-block";
++    case NSEEL_EXEC_GOTO: return "vm-goto";
++    case NSEEL_EXEC_GOTO_FPREG: return "vm-goto-fpreg";
++    case NSEEL_EXEC_GOTO_FPREG_MASK: return "vm-goto-fpreg-mask";
++  }
++  return "?";
++}
++
+ int NSEEL_code_geterror_flag(NSEEL_VMCTX ctx)
+ {
+   compileContext *c=(compileContext *)ctx;
+@@ -5708,7 +5860,7 @@ opcodeRec *nseel_createFunctionByName(compileContext *ctx, const char *name, int
+       return o;
+     }
+     f++;
+-    if (stricmp(f->name,name)) break;
++    if (chkamt < 0 || stricmp(f->name,name)) break;
+   }
+   return NULL;
+ }
+diff --git a/thirdparty/WDL/source/WDL/eel2/nseel-ram.c b/thirdparty/WDL/source/WDL/eel2/nseel-ram.c
+index ccc8580..057cfc3 100644
+--- a/thirdparty/WDL/source/WDL/eel2/nseel-ram.c
++++ b/thirdparty/WDL/source/WDL/eel2/nseel-ram.c
+@@ -309,28 +309,36 @@ EEL_F NSEEL_CGEN_CALL __NSEEL_RAM_MemSumProducts(EEL_F **blocks,EEL_F *dest, EEL
+ EEL_F * NSEEL_CGEN_CALL __NSEEL_RAM_MemCpy(EEL_F **blocks,EEL_F *dest, EEL_F *src, EEL_F *lenptr)
+ {
+   const int mem_size=NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK;
+-  int dest_offs = (int)(*dest + 0.0001);
+-  int src_offs = (int)(*src + 0.0001);
+-  int len = (int)(*lenptr + 0.0001);
++  int dest_offs, src_offs, len;
+   int want_mmove=0;
+ 
+-  // trim to front
+-  if (src_offs<0)
+   {
+-    len += src_offs;
+-    dest_offs -= src_offs;
+-    src_offs=0;
+-  }
+-  if (dest_offs<0)
+-  {
+-    len += dest_offs;
+-    src_offs -= dest_offs;
+-    dest_offs=0;
+-  }
+-  if (src_offs + len > mem_size) len = mem_size-src_offs;
+-  if (dest_offs + len > mem_size) len = mem_size-dest_offs;
++    // **切り詰めは 64bit で行う。** 番地と長さは int に飽和した値(INT_MIN/INT_MAX 近く)で
++    // 来るので、int のまま足し引きすると溢れる。範囲の検査は今までどおりで、通った値は
++    // mem_size に収まる。
++    WDL_INT64 d = (int)(*dest + 0.0001), s = (int)(*src + 0.0001), l = (int)(*lenptr + 0.0001);
++
++    // trim to front
++    if (s<0)
++    {
++      l += s;
++      d -= s;
++      s=0;
++    }
++    if (d<0)
++    {
++      l += d;
++      s -= d;
++      d=0;
++    }
++    if (s + l > mem_size) l = mem_size-s;
++    if (d + l > mem_size) l = mem_size-d;
+ 
+-  if (src_offs == dest_offs || len < 1) return dest;
++    if (s == d || l < 1) return dest;
++    dest_offs = (int)d;
++    src_offs = (int)s;
++    len = (int)l;
++  }
+ 
+   if (src_offs < dest_offs && src_offs+len > dest_offs)
+   {
+@@ -392,19 +400,25 @@ EEL_F * NSEEL_CGEN_CALL __NSEEL_RAM_MemCpy(EEL_F **blocks,EEL_F *dest, EEL_F *sr
+ 
+ EEL_F * NSEEL_CGEN_CALL __NSEEL_RAM_MemSet(EEL_F **blocks,EEL_F *dest, EEL_F *v, EEL_F *lenptr)
+ {  
+-  int offs = (int)(*dest + 0.0001);
+-  int len = (int)(*lenptr + 0.0001);
++  int offs, len;
+   EEL_F t;
+-  if (offs<0) 
+   {
+-    len += offs;
+-    offs=0;
+-  }
+-  if (offs >= NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK) return dest;
++    // __NSEEL_RAM_MemCpy と同じく切り詰めは 64bit で(memset(-2147483648, 0, -2147483648) で
++    // len += offs が溢れていた)。範囲の検査は今までどおり。
++    WDL_INT64 o = (int)(*dest + 0.0001), l = (int)(*lenptr + 0.0001);
++    if (o<0)
++    {
++      l += o;
++      o=0;
++    }
++    if (o >= NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK) return dest;
+ 
+-  if (offs+len > NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK) len = NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK - offs;
++    if (o+l > NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK) l = NSEEL_RAM_BLOCKS*NSEEL_RAM_ITEMSPERBLOCK - o;
+ 
+-  if (len < 1) return dest;
++    if (l < 1) return dest;
++    offs = (int)o;
++    len = (int)l;
++  }
+   
+ 
+   t=*v; // set value
+diff --git a/thirdparty/WDL/source/WDL/heapbuf.h b/thirdparty/WDL/source/WDL/heapbuf.h
+index bf2a632..6e0a79f 100644
+--- a/thirdparty/WDL/source/WDL/heapbuf.h
++++ b/thirdparty/WDL/source/WDL/heapbuf.h
+@@ -224,7 +224,9 @@ class WDL_HeapBuf
+           const int newsz=hb->GetSize();
+           Resize(newsz,true);
+           if (GetSize()!=newsz) Resize(0);
+-          else memcpy(Get(),hb->Get(),newsz);
++          // EffectDeck: 空の写し（newsz 0）では Get() が NULL。memcpy に NULL を渡すのは 0 バイトでも未定義
++          // （UBSan が strncat(#a, #空) の WDL_FastString の代入で止まった）
++          else if (newsz) memcpy(Get(),hb->Get(),newsz);
+         }
+       }
+ 
+diff --git a/thirdparty/WDL/source/WDL/lice/lice.cpp b/thirdparty/WDL/source/WDL/lice/lice.cpp
+index d1a7c30..2e37605 100644
+--- a/thirdparty/WDL/source/WDL/lice/lice.cpp
++++ b/thirdparty/WDL/source/WDL/lice/lice.cpp
+@@ -25,6 +25,15 @@
+ 
+ #define IGNORE_SCALING(mode) ((mode)&LICE_BLIT_IGNORE_SCALING)
+ 
++// 固定小数(16.16)の位置と色は、大きな倍率・傾き・元の座標だと int の足し込みが溢れる(未定義)。
++// 今までの結果(溢れたら折り返す)のまま、unsigned で足して未定義にしない。位置は折り返しても
++// 読む前の範囲の検査で元の画像の外を読まない。
++static inline int lice_wrap_add(int a, int b) { return (int) ((unsigned int)a + (unsigned int)b); }
++static inline int lice_wrap_muladd(int a, int m, int b) { return (int) ((unsigned int)a*(unsigned int)m + (unsigned int)b); }
++// gradBlit の色と alpha は傾きの足し込みで画素ごとに育ち(±32767)、合成の掛け算(乗算・オーバーレイ・
++// HSV)が int を溢れる。gfx_a と同じ ±8(8*256)へ収める。0..1 の範囲の中は変わらない。
++static inline int lice_grad_chan(int v) { return v < -2048 ? -2048 : v > 2048 ? 2048 : v; }
++
+ #define DO_RECT_SC(mode) \
+   const int __sc = (int)dest->Extended(LICE_EXT_GET_SCALING,NULL); \
+   if (__sc>0) { \
+@@ -291,11 +300,11 @@ template<class COMBFUNC> class _LICE_Template_Blit0 // these always templated
+             }
+ 
+             ++pout;
+-            curx+=idx;
++            curx=lice_wrap_add(curx,idx);
+           }
+         }
+         destpx += destpxspan;
+-        icury+=idy;
++        icury=lice_wrap_add(icury,idy);
+       }
+     }
+ 
+@@ -345,15 +354,15 @@ class _LICE_Template_Blit1 // these controlled by LICE_FAVOR_SIZE_EXTREME
+       while (h--)
+       {
+         int r=ir,g=ig,b=ib,a=ia;
+-        ir+=drdy; ig+=dgdy; ib+=dbdy; ia+=dady;
++        ir=lice_wrap_add(ir,drdy); ig=lice_wrap_add(ig,dgdy); ib=lice_wrap_add(ib,dbdy); ia=lice_wrap_add(ia,dady);
+         LICE_pixel_chan *pout=dest;
+         int n=w;
+         while (n--)
+         {
+-          const int aa=a/65536;
+-          DOPIX(pout,r/65536,g/65536,b/65536,aa,aa);
++          const int aa=lice_grad_chan(a/65536);
++          DOPIX(pout,lice_grad_chan(r/65536),lice_grad_chan(g/65536),lice_grad_chan(b/65536),aa,aa);
+           pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-          r+=drdx; g+=dgdx; b+=dbdx; a+=dadx;
++          r=lice_wrap_add(r,drdx); g=lice_wrap_add(g,dgdx); b=lice_wrap_add(b,dbdx); a=lice_wrap_add(a,dadx);
+         }
+         dest+=dest_span;
+       }
+@@ -468,11 +477,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+             }
+ 
+             pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-            curx+=idx;
++            curx=lice_wrap_add(curx,idx);
+           }
+         }
+         dest+=dest_span;
+-        icury+=idy;
++        icury=lice_wrap_add(icury,idy);
+       }
+     }
+     static void scaleBlit(LICE_pixel_chan *dest, const LICE_pixel_chan *src, int w, int h, 
+@@ -515,7 +524,7 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+               }
+ 
+               pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-              curx+=idx;
++              curx=lice_wrap_add(curx,idx);
+             }
+           }
+           else if (cury == clipbottom-1)
+@@ -536,11 +545,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+               }
+ 
+               pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-              curx+=idx;
++              curx=lice_wrap_add(curx,idx);
+             }
+           }
+           dest+=dest_span;
+-          icury+=idy;
++          icury=lice_wrap_add(icury,idy);
+         }
+       }
+       else
+@@ -565,11 +574,11 @@ class _LICE_Template_Blit2 // these controlled by LICE_FAVOR_SIZE
+               }
+ 
+               pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-              curx+=idx;
++              curx=lice_wrap_add(curx,idx);
+             }
+           }
+           dest+=dest_span;
+-          icury+=idy;
++          icury=lice_wrap_add(icury,idy);
+         }
+       }
+     }
+@@ -654,13 +663,13 @@ class _LICE_Template_Blit3 // stuff controlled by LICE_FAVOR_SPEED
+             }
+ 
+             pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-            thisx+=idsdx;
+-            thisy+=idtdx;
++            thisx=lice_wrap_add(thisx,idsdx);
++            thisy=lice_wrap_add(thisy,idtdx);
+           }
+-          idsdx+=idsdxdy;
+-          idtdx+=idtdxdy;
+-          isrcx+=idsdy;
+-          isrcy+=idtdy;
++          idsdx=lice_wrap_add(idsdx,idsdxdy);
++          idtdx=lice_wrap_add(idtdx,idtdxdy);
++          isrcx=lice_wrap_add(isrcx,idsdy);
++          isrcy=lice_wrap_add(isrcy,idtdy);
+           dest+=dest_span;
+         }
+       }
+@@ -684,13 +693,13 @@ class _LICE_Template_Blit3 // stuff controlled by LICE_FAVOR_SPEED
+             }
+ 
+             pout += sizeof(LICE_pixel)/sizeof(LICE_pixel_chan);
+-            thisx+=idsdx;
+-            thisy+=idtdx;
++            thisx=lice_wrap_add(thisx,idsdx);
++            thisy=lice_wrap_add(thisy,idtdx);
+           }
+-          idsdx+=idsdxdy;
+-          idtdx+=idtdxdy;
+-          isrcx+=idsdy;
+-          isrcy+=idtdy;
++          idsdx=lice_wrap_add(idsdx,idsdxdy);
++          idtdx=lice_wrap_add(idtdx,idtdxdy);
++          isrcx=lice_wrap_add(isrcx,idsdy);
++          isrcy=lice_wrap_add(isrcy,idtdy);
+           dest+=dest_span;
+         }
+       }
+@@ -1329,12 +1338,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+   {
+     if (ficurx < 0) // increase dstx, decrease dstw
+     {
+-      int n = (int)((fidx-1-ficurx)/fidx);
+-      dstw-=n;
+-      dstx+=n;
+-      ficurx+=fidx*n;
+-    }
+-    if ((ficurx + fidx*(dstw-1)) >= srcbm_w*65536.0)
++      double n = ceil( - (ficurx/(double)fidx));
++      if (n<0) return;
++      if (n >= dstw) return;
++      dstw-=(int)n;
++      dstx+=(int)n;
++      ficurx+=fidx*(int)n;
++    }
++    if ((ficurx + fidx*(double)(dstw-1)) >= srcbm_w*65536.0)
+     {
+       int neww = (int)(((srcbm_w-1)*65536.0 - ficurx)/fidx);
+       if (neww < dstw) dstw=neww;
+@@ -1349,12 +1360,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+   {
+     if (ficury < 0) // increase dsty, decrease dsth
+     {
+-      int n = (int) ((fidy-1-ficury)/fidy);
+-      dsth-=n;
+-      dsty+=n;
+-      ficury+=fidy*n;
+-    }
+-    if ((ficury + fidy*(dsth-1)) >= srcbm_h*65536.0)
++      double n = ceil( - (ficury / (double) fidy));
++      if (n<0) return;
++      if (n >= dsth) return;
++      dsth-=(int)n;
++      dsty+=(int)n;
++      ficury+=fidy*(int)n;
++    }
++    if ((ficury + fidy*(double)(dsth-1)) >= srcbm_h*65536.0)
+     {
+       int newh = (int)(((srcbm_h-1)*65536.0 - ficury)/fidy);
+       if (newh < dsth) dsth=newh;
+@@ -1373,8 +1386,14 @@ void LICE_ScaledBlit(LICE_IBitmap *dest, LICE_IBitmap *src,
+   LICE_pixel_chan *pdest = (LICE_pixel_chan *)dest->getBits();
+   if (!psrc || !pdest) return;
+ 
+-  const int srcoffs_x = (int)((ficurx + (fidx<0 ? fidx*dstw : 0))*(1.0/65536.0));
+-  const int srcoffs_y = (int)((ficury + (fidy<0 ? fidy*dsth : 0))*(1.0/65536.0));
++  int srcoffs_x = (int)((ficurx + (fidx<0 ? fidx*dstw : 0))*(1.0/65536.0));
++  int srcoffs_y = (int)((ficury + (fidy<0 ? fidy*dsth : 0))*(1.0/65536.0));
++
++  if (srcoffs_x < 0) { if (fidx>=0) return; srcoffs_x=0; }
++  if (srcoffs_y < 0) { if (fidy>=0) return; srcoffs_y=0; }
++  // 元の画像の外から始まるなら下の clip_r / clip_b が 1 未満で描かない。先に帰る(反転した軸は
++  // 元で切っていないので srcoffs が大きく、srcoffs_y * src_span が int で溢れて psrc が飛ぶ)。
++  if (srcoffs_x >= srcbm_w || srcoffs_y >= srcbm_h) return;
+ 
+   if (src->isFlipped())
+   {
+@@ -2048,10 +2067,10 @@ void LICE_MultiplyAddRect(LICE_IBitmap *dest, int x, int y, int w, int h,
+     while (n--) 
+     {
+       LICE_pixel_chan *ptr=(LICE_pixel_chan *)p++;
+-      _LICE_MakePixelClamp(ptr,(ptr[LICE_PIXEL_R]*ir+ir2)>>8,
+-                          (ptr[LICE_PIXEL_G]*ig+ig2)>>8,
+-                          (ptr[LICE_PIXEL_B]*ib+ib2)>>8,
+-                          (ptr[LICE_PIXEL_A]*ia+ia2)>>8);
++      _LICE_MakePixelClamp(ptr,lice_wrap_muladd(ptr[LICE_PIXEL_R],ir,ir2)>>8,
++                          lice_wrap_muladd(ptr[LICE_PIXEL_G],ig,ig2)>>8,
++                          lice_wrap_muladd(ptr[LICE_PIXEL_B],ib,ib2)>>8,
++                          lice_wrap_muladd(ptr[LICE_PIXEL_A],ia,ia2)>>8);
+     }
+     p+=sp-w;
+   }
+diff --git a/thirdparty/WDL/source/WDL/lice/lice_arc.cpp b/thirdparty/WDL/source/WDL/lice/lice_arc.cpp
+index 231389b..046d9fc 100644
+--- a/thirdparty/WDL/source/WDL/lice/lice_arc.cpp
++++ b/thirdparty/WDL/source/WDL/lice/lice_arc.cpp
+@@ -307,6 +307,7 @@ public:
+       xlo = lice_max(xlo, clip[0]);
+       xhi = lice_min(xhi, clip[2]-1);
+     }
++    if (xlo > xhi) return; // 描かない線は番地も作らない(大きな円だと画像の外を指す)
+     LICE_pixel* px = dest->getBits()+y*dest->getRowSpan()+xlo;
+     while (xlo <= xhi) 
+     {
+@@ -325,6 +326,7 @@ public:
+       ylo = lice_max(ylo, clip[1]);
+       yhi = lice_min(yhi, clip[3]-1);
+     }
++    if (ylo > yhi) return; // 同じく。大きな円だと ylo*span が int で溢れる
+     int span=dest->getRowSpan();
+     LICE_pixel* px = dest->getBits()+ylo*span+x;
+     while (ylo <= yhi) 
+@@ -418,7 +420,7 @@ public:
+       }
+       
+       ++x;
+-      yf=sqrt(r2-(double)(x*x));
++      yf=sqrt(r2-(double)x*x); // x*x は半径が 65536 を超えると int で溢れる
+       yl=(int)(yf+0.5);
+     }
+   }
+@@ -511,6 +513,28 @@ static void __DrawCircleClipped(LICE_IBitmap* dest, float cx, float cy, float ra
+ }
+ 
+ 
++// **画像より大きな円を早く片付ける。** 回すのには半径に比例した時間が掛かり、ysfx が収める
++// 半径 2^28 だと 1 本で数十秒止まる。輪(塗らない円と弧)の画素は中心から半径 ±2 px の帯の中に
++// しか無い(中心と半径を整数に丸める分と AA の 1 px)ので、画像の画素が丸ごと帯の外なら描かない。
++// 塗る円は、画像が丸ごと内側なら画像を覆う半径まで縮める。どちらも画像に書く画素は変わらない。
++// 戻り値: 描かないなら 0 未満、描くなら使う半径。
++static float __CircleRadiusForImage(int w, int h, float cx, float cy, float rad, bool filled)
++{
++  if (!(rad > 64.0f) || cx != cx || cy != cy || w < 1 || h < 1) return rad; // 小さい円・負の半径・NaN は今までどおり
++  const double fx = cx, fy = cy, mx = w-1, my = h-1;
++  const double nx = fx < 0.0 ? -fx : fx > mx ? fx-mx : 0.0, ny = fy < 0.0 ? -fy : fy > my ? fy-my : 0.0;
++  const double ax = fx < mx*0.5 ? mx-fx : fx, ay = fy < my*0.5 ? my-fy : fy;
++  const double dmin = sqrt(nx*nx+ny*ny), dmax = sqrt(ax*ax+ay*ay);
++  if (dmin > rad + 8.0) return -1.0f;
++  if (dmax < rad - 8.0)
++  {
++    if (!filled) return -1.0f;
++    const float r2 = (float) (dmax + 64.0); // float の丸め(2^28 付近で 32)を見込んで余らせる
++    if (r2 < rad && r2 >= dmax + 8.0) return r2;
++  }
++  return rad;
++}
++
+ static void __DrawArc(int w, int h, LICE_IBitmap* dest, float cx, float cy, float rad, double anglo, double anghi,
+   LICE_pixel color, int ialpha, bool aa, int mode)
+ {
+@@ -526,6 +550,7 @@ static void __DrawArc(int w, int h, LICE_IBitmap* dest, float cx, float cy, floa
+       __LICE_SC(rad);
+     }
+   }
++  if (__CircleRadiusForImage(w, h, cx, cy, rad, false) < 0.0f) return;
+   // -2PI <= anglo <= anghi <= 2PI
+   anglo += 2.0*_PI;
+   anghi += 2.0*_PI;
+@@ -636,6 +661,7 @@ void LICE_Circle(LICE_IBitmap* dest, float cx, float cy, float r, LICE_pixel col
+   if (!ia) return;
+ 
+   if (CachedCircle(dest, cx, cy, r, color, alpha, mode|LICE_BLIT_IGNORE_SCALING, aa, false)) return;
++  if (__CircleRadiusForImage(w, h, cx, cy, r, false) < 0.0f) return;
+ 
+   if (dest->isFlipped()) cy=h-1-cy;
+ 
+@@ -671,6 +697,8 @@ void LICE_FillCircle(LICE_IBitmap* dest, float cx, float cy, float r, LICE_pixel
+   if (!ia) return;
+ 
+   if (CachedCircle(dest, cx, cy, r, color, alpha, mode|LICE_BLIT_IGNORE_SCALING, aa, true)) return;
++  r = __CircleRadiusForImage(w, h, cx, cy, r, true);
++  if (r < 0.0f) return;
+ 
+   if (dest->isFlipped()) cy=h-1-cy;
+ 
+diff --git a/thirdparty/WDL/source/WDL/lice/lice_line.cpp b/thirdparty/WDL/source/WDL/lice/lice_line.cpp
+index 5314da1..5a431cd 100644
+--- a/thirdparty/WDL/source/WDL/lice/lice_line.cpp
++++ b/thirdparty/WDL/source/WDL/lice/lice_line.cpp
+@@ -1678,8 +1678,17 @@ void LICE_FillTrapezoidF(LICE_IBitmap* dest, double fx1a, double fx1b, int y1, d
+ 
+   if (y1<0)
+   {
+-    a -= dxady*y1;
+-    b -= dxbdy*y1;
++    // 画面の上から入る辺を y=0 まで進める。傾き(最大 2^29)× 行数を int のまま掛けると溢れるので
++    // 64bit で進め、進んだ x は ±2^28 に収める。画面の行は 2048 までで 1 行に動くのは 2^13 px
++    // までなので、画面の外に居る x は収めても外のまま(描く画素は変わらない)。
++    const long long lim = (long long)1 << 28;
++    const long long a64 = a - (long long)dxady*y1, b64 = b - (long long)dxbdy*y1;
++    const long long xa = x1a + (astep<0 ? -(a64>>16) : (a64>>16));
++    const long long xb = x1b + (bstep<0 ? -(b64>>16) : (b64>>16));
++    x1a = (int) (xa < -lim ? -lim : xa > lim ? lim : xa);
++    x1b = (int) (xb < -lim ? -lim : xb > lim ? lim : xb);
++    a = (int) (a64 & 65535);
++    b = (int) (b64 & 65535);
+     y1=0;
+   }
+   if (a< 0 || a >= 65536)
+diff --git a/thirdparty/WDL/source/WDL/wdlstring.h b/thirdparty/WDL/source/WDL/wdlstring.h
+index 131de32..7376f14 100644
+--- a/thirdparty/WDL/source/WDL/wdlstring.h
++++ b/thirdparty/WDL/source/WDL/wdlstring.h
+@@ -165,7 +165,9 @@ class WDL_String
+       int l=m_hb.GetSize()-1;
+       char *p=(char *)m_hb.Get();
+       if (l<0 || !*p || position < 0 || position >= l) return;
+-      if (position+len > l) len=l-position;
++      // position+len は len が INT_MAX 近く(str_delsub の長さは飽和する)だと溢れて負になり、
++      // 切り詰めを抜けた len で memmove の長さが負(巨大)になっていた。引き算で比べる。
++      if (len > l-position) len=l-position;
+       if (len>0)
+       {
+         memmove(p+position,p+position+len,l-position-len+1);

@@ -1,0 +1,97 @@
+{
+  "effetune_plugin_presets": {
+    "Volume": {
+      "Bad": null,
+      "Quiet": {
+        "vl": -12
+      }
+    }
+  },
+  "effetune_presets": {
+    "Bare": [
+      {
+        "en": true,
+        "nm": "Volume",
+        "vl": -6.5
+      }
+    ],
+    "Long": {
+      "pipeline": [
+        {
+          "enabled": true,
+          "name": "Volume",
+          "parameters": {
+            "vl": -3
+          }
+        },
+        {
+          "enabled": false,
+          "name": "Section",
+          "parameters": {
+            "cm": "Tone"
+          }
+        },
+        {
+          "channel": "R",
+          "enabled": true,
+          "inputBus": 1,
+          "name": "Hi Pass Filter",
+          "parameters": {
+            "fr": 120,
+            "sl": -12
+          }
+        }
+      ]
+    },
+    "Null": null,
+    "Warm": {
+      "plugins": [
+        {
+          "cm": "Drive",
+          "en": true,
+          "nm": "Section"
+        },
+        {
+          "en": true,
+          "nm": "Volume",
+          "vl": -6.5
+        },
+        {
+          "ch": "L",
+          "en": true,
+          "fr": 80,
+          "ib": 1,
+          "nm": "Hi Pass Filter",
+          "ob": 2,
+          "sl": -24
+        }
+      ]
+    }
+  },
+  "pipeline": [
+    {
+      "enabled": true,
+      "name": "Volume",
+      "parameters": {
+        "vl": -3
+      }
+    },
+    {
+      "enabled": false,
+      "name": "Section",
+      "parameters": {
+        "cm": "Tone"
+      }
+    },
+    {
+      "channel": "R",
+      "enabled": true,
+      "inputBus": 1,
+      "name": "Hi Pass Filter",
+      "parameters": {
+        "fr": 120,
+        "sl": -12
+      }
+    }
+  ]
+}

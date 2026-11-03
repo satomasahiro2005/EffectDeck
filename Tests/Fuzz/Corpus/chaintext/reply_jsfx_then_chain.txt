@@ -1,0 +1,9 @@
+```jsfx
+desc:Chat Soft Clip
+@sample
+spl0 = buf[0];
+```
+
+```
+[{"jsfx":"Chat Soft Clip","ib":7,"ch":"left"},{"nm":"volume","vl":"99"}]
+```

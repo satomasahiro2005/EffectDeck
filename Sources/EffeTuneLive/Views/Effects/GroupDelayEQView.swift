@@ -15,7 +15,8 @@
 //  latency を動かす口は下の Latency（setHeadBlock）の方。
 //
 //  帯の遅延 15 本と taps は**カーネルのパラメータではない**（designer:485）。
-//  鎖にも PipelineStore にも載らないので、アプリを立ち上げ直すと消える。
+//  valuesには載らないので、Node.designに上流と同じ綴り（tp / d0-14）で持つ
+//  （DSP/DesignParams.swift）。置き場が作るときにそこから組み、変わるたびに書き戻す。
 //
 //  --- 図を出していない理由 ---
 //  材料はある。designer.filter?.response に目標と実測の群遅延（ms）が入っていて、
@@ -25,6 +26,7 @@
 //  --- 状態の置き場 ---
 //  designer はビューの中では持てない。下の ETGroupDelayEQDesigners を参照。
 
+import Combine
 import SwiftUI
 import Foundation
 
@@ -53,6 +55,8 @@ final class ETGroupDelayEQDesigners {
         let designer: GroupDelayEQDesigner
         /// 最後に面倒を見た instance の世代。
         var tapId: UInt32
+        /// 遅延とtapsが変わるたびにNode.designへ書き戻す見張り。Entryと一緒に捨てる。
+        var watch: AnyCancellable?
         init(designer: GroupDelayEQDesigner, tapId: UInt32) {
             self.designer = designer
             self.tapId = tapId
@@ -70,10 +74,25 @@ final class ETGroupDelayEQDesigners {
     /// 繋ぐのは onAppear から呼ぶ sync(node:) の方。
     func designer(for node: EffeTuneDSP.Node) -> GroupDelayEQDesigner {
         if let found = entries[node.id] { return found.designer }
-        let made = GroupDelayEQDesigner(sampleRate: EffeTuneDSP.shared.sampleRate,
-                                        taps: Self.taps(of: node),
-                                        headBlock: Self.headBlock(of: node))
-        entries[node.id] = Entry(designer: made, tapId: 0)
+        let rate = EffeTuneDSP.shared.sampleRate
+        let taps = Self.taps(of: node)
+        let made = GroupDelayEQDesigner(sampleRate: rate,
+                                        taps: taps,
+                                        headBlock: Self.headBlock(of: node),
+                                        delaysMs: GroupDelayEQDesign.delays(designParams: node.design,
+                                                                            taps: taps,
+                                                                            sampleRate: rate))
+        let entry = Entry(designer: made, tapId: 0)
+        let id = node.id
+        // @Publishedは書く直前に新しい値を流すので、組で受けた値をそのまま書く。
+        // 最初の1回（今の値）は落とす。作っただけでは材料は変わっていない。
+        entry.watch = Publishers.CombineLatest(made.$delaysMs, made.$taps)
+            .dropFirst()
+            .sink { delays, taps in
+                EffeTuneDSP.shared.setDesign(
+                    GroupDelayEQDesign.designParams(taps: taps, delaysMs: delays), nodeID: id)
+            }
+        entries[node.id] = entry
         return made
     }
 
@@ -81,6 +100,10 @@ final class ETGroupDelayEQDesigners {
     /// 作り直されたときに呼ぶ。
     func sync(node: EffeTuneDSP.Node) {
         release()
+        // カードがまだ出ていなくても、段が遅延を持っていれば作って繋ぐ（鎖を読んだ直後・
+        // instanceの作り直し。ETAssetReattach.one）。全部0msなら作らない。繋ぐと資産を外しに行き、
+        // AssetUpload.clearが音を一瞬止める（下のonAppearの但し書き）。
+        if entries[node.id] == nil, Self.hasDelay(node) { _ = designer(for: node) }
         guard let entry = entries[node.id] else { return }
         let designer = entry.designer
 
@@ -113,7 +136,7 @@ final class ETGroupDelayEQDesigners {
     /// engine には触らない（designer:684-685 の refresh が頭で cancel する）。
     private func release() {
         guard !entries.isEmpty else { return }
-        let alive = Set(EffeTuneDSP.shared.chain.map(\.id))
+        let alive = Set(EffeTuneDSP.shared.nodes.map(\.id))
         let doomed = entries.filter { !alive.contains($0.key) }
         for (id, entry) in doomed {
             entry.designer.attach(instance: 0)
@@ -121,13 +144,37 @@ final class ETGroupDelayEQDesigners {
         }
     }
 
+    /// 段の材料が外から変わった（プリセットの適用・既定へ戻す）。
+    /// ltとNode.designから組み直してdesignerへ渡す。同じ値ならどの口も黙って戻る。
+    func adopt(node: EffeTuneDSP.Node) {
+        if let designer = entries[node.id]?.designer {
+            let taps = Self.taps(of: node)
+            // tapsを先に。遅延の上限はtapsで決まる（group_delay_eq.js:147-162と同じ順）。
+            designer.setTaps(taps)
+            designer.setDelays(GroupDelayEQDesign.delays(designParams: node.design, taps: taps,
+                                                         sampleRate: designer.sampleRate))
+            designer.setHeadBlock(Self.headBlock(of: node))
+        }
+        sync(node: node)
+    }
+
     // MARK: 鎖に残っている値から戻す
 
-    /// taps は fd（filterDelaySamples）= taps/2 から戻せる（designer:832）。
+    /// tapsはNode.designのtpから。無ければfd（filterDelaySamples）= taps/2から戻す（designer:832）。
+    /// fdから戻す道は、材料を書いていなかった頃の鎖のため。
     private static func taps(of node: EffeTuneDSP.Node) -> Int {
-        guard let param = node.spec.params.first(where: { $0.name == "filterDelaySamples" }),
-              node.values.indices.contains(param.offset) else { return 16384 }
-        return Int(node.values[param.offset].rounded()) * 2
+        var delay: Float?
+        if let param = node.spec.params.first(where: { $0.name == "filterDelaySamples" }),
+           node.values.indices.contains(param.offset) {
+            delay = node.values[param.offset]
+        }
+        return GroupDelayEQDesign.taps(designParams: node.design, filterDelaySamples: delay)
+    }
+
+    /// 段が0msでない遅延を持っているか。
+    private static func hasDelay(_ node: EffeTuneDSP.Node) -> Bool {
+        GroupDelayEQDesign.delays(designParams: node.design, taps: taps(of: node),
+                                  sampleRate: EffeTuneDSP.shared.sampleRate).contains { $0 != 0 }
     }
 
     /// headBlock は lt（latencyMode）の**添字**から戻せる（designer:831）。
@@ -213,7 +260,7 @@ struct GroupDelayEQView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            status
+            status.etLocalAudioOnly()
 
             if !graphOnly {
                 bandStrip
@@ -241,20 +288,20 @@ struct GroupDelayEQView: View {
     private var status: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(designer.stage.message)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
                 .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                 .fixedSize(horizontal: false, vertical: true)
 
             if let warning = designer.warning {
                 Text(warning)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if let details = details {
                 Text(details)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -286,13 +333,14 @@ struct GroupDelayEQView: View {
 
     private var bandStrip: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+            // 文字を大きくした人には見出しとボタンを 2 段にして、どちらも切らない。
+            ETAdaptiveStack { stacked in
                 Text("BANDS")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                textButton("Reset") { designer.reset() }
+                if !stacked { Spacer(minLength: 0) }
+                ETTextActionButton(title: "Reset") { designer.reset() }
             }
             chips
         }
@@ -311,7 +359,7 @@ struct GroupDelayEQView: View {
                 .padding(.vertical, 1)
             }
             .onChange(of: selected) { _, new in
-                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
+                etWithAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(new, anchor: .center) }
             }
         }
     }
@@ -324,9 +372,9 @@ struct GroupDelayEQView: View {
         } label: {
             VStack(spacing: 1) {
                 Text(GroupDelayEQBands.shortName(band))
-                    .font(.system(size: 12, weight: isPicked ? .bold : .regular))
+                    .etFont(size: 12, weight: isPicked ? .bold : .regular)
                 Text(String(format: "%+.1f", delay(band)))
-                    .font(.system(size: 10, design: .monospaced))
+                    .etFont(size: 10, design: .monospaced)
                     .opacity(isFlat ? 0.45 : 1)
             }
             .foregroundStyle(isPicked ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
@@ -338,6 +386,7 @@ struct GroupDelayEQView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(GroupDelayEQBands.fullName(band))
         .accessibilityValue(GroupDelayEQBands.delayText(delay(band)))
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
     }
 
     // MARK: 選んでいる帯
@@ -346,16 +395,16 @@ struct GroupDelayEQView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("BAND \(selected + 1) · \(GroupDelayEQBands.fullName(selected))")
-                    .font(.system(size: 10, weight: .semibold))
+                    .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-                textButton("Reset Band") { designer.setDelay(0, band: selected) }
+                ETTextActionButton(title: "Reset Band") { designer.setDelay(0, band: selected) }
             }
 
             HStack(spacing: 8) {
                 Text("Delay")
-                    .font(.system(size: 13))
+                    .etFont(size: 13)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 ETValueField(text: GroupDelayEQBands.delayText(delay(selected)),
@@ -364,7 +413,7 @@ struct GroupDelayEQView: View {
                     designer.setDelay(min(max(typed, -limit), limit), band: selected)
                 }
                 Text(GroupDelayEQBands.angleText(band: selected, milliseconds: delay(selected)))
-                    .font(.system(size: 11, design: .monospaced))
+                    .etFont(size: 11, design: .monospaced)
                     .foregroundStyle(.secondary)
             }
 
@@ -411,7 +460,7 @@ struct GroupDelayEQView: View {
                            options: [(name: String, selected: Bool)],
                            action: @escaping (Int) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 14))
+            Text(title).etFont(size: 14)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
                       alignment: .leading, spacing: 6) {
@@ -420,7 +469,7 @@ struct GroupDelayEQView: View {
                         action(position)
                     } label: {
                         Text(option.name)
-                            .font(.system(size: 13, weight: option.selected ? .bold : .regular))
+                            .etFont(size: 13, weight: option.selected ? .bold : .regular)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(option.selected ? AnyShapeStyle(.white)
@@ -438,19 +487,6 @@ struct GroupDelayEQView: View {
                 }
             }
         }
-    }
-
-    /// 字だけのボタン。当たり判定は 44pt まで広げる
-    /// （15BandGEQView.swift:329-338 と同じ）。
-    private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12))
-                .foregroundStyle(.tint)
-                .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: 値の出し入れ

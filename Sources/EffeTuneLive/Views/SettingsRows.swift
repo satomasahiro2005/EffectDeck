@@ -27,17 +27,25 @@ struct ETSegmentedChoice<Value: Hashable & Identifiable>: View {
     /// 名前が画面に 2 度出て、どちらが効いている値なのか読めなくなる。
     var detail: String? = nil
     @Binding var selection: Value
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // **名前は出す。**セグメントだけ並べると、何の設定なのかが
             // 画面のどこにも書いていない状態になる（節を束ねたときにそうなった）。
             // 消してよかったのは選択肢ごとの説明であって、設定の名前ではない。
-            HStack(spacing: 8) {
+            // 文字を大きくした人には、名前と実測を縦に積む（横に並べると名前が潰れる）。
+            let layout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                // 題 15・実測 13 は ETNoticeRow と同じ（指定しないと本文の 17 になる）。
                 Text(title)
+                    .font(.body)
                 if let detail {
-                    Spacer(minLength: 8)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                     Text(detail)
+                        .font(.footnote)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
@@ -68,8 +76,9 @@ struct ETChoiceRow: View {
         Button(action: action) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
+                    // 題も note も etFont（文字サイズに追従）。ETNoticeRow と同じ 15 / 13。
                     Text(title)
-                        .font(.system(size: 16))
+                        .font(.body)
                         .foregroundStyle(.primary)
                     Text(note)
                         .font(.footnote)
@@ -78,7 +87,7 @@ struct ETChoiceRow: View {
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "checkmark")
-                    .font(.system(size: 14, weight: .semibold))
+                    .etFont(size: 14, weight: .semibold)
                     .foregroundStyle(.tint)
                     // 消さずに透かす。消すと選び直すたびに行の幅が動く。
                     .opacity(selected ? 1 : 0)
@@ -99,7 +108,7 @@ struct ETNoticeRow: View {
     let systemImage: String
     let tone: ETNoticeTone
     let title: String
-    let detail: String
+    let detail: String?
     var mono: String? = nil
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
@@ -109,16 +118,20 @@ struct ETNoticeRow: View {
             icon
 
             VStack(alignment: .leading, spacing: 4) {
+                // 題・detail・mono・ボタンはどれも etFont（文字サイズに追従）。
+                // ConnectionTipsView の題と同じ 15 semibold で、2 つは揃えておくこと。
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let mono {
                     Text(mono)
-                        .font(.system(size: 11, design: .monospaced))
+                        .etFont(size: 11, design: .monospaced)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -139,16 +152,17 @@ struct ETNoticeRow: View {
     @ViewBuilder
     private var icon: some View {
         let base = Image(systemName: systemImage)
-            .font(.system(size: 15))
+            .font(.body)
             .foregroundStyle(iconStyle)
-            .frame(width: 20)
+            .modifier(ETNoticeIconWidth())
         switch tone {
         // **記号ぜんぶを動かさない。**breathe（拡大縮小）と wiggle（揺れ）は
         // 記号そのものが動くので、一覧の中で目に刺さる。
         // 層を順に光らせる variableColor だけにする。indefinite なので
         // 引き金を渡さなくても回り続ける。
-        case .active:  base.symbolEffect(.variableColor.iterative.reversing)
-        case .normal:  base.symbolEffect(.variableColor.iterative)
+        // -ETFreezeLive（監査用）では動かさない。回り続ける記号は読み上げの木を毎回揺らす。
+        case .active:  base.symbolEffect(.variableColor.iterative.reversing, isActive: !ETScreenshotSeed.freezeLive)
+        case .normal:  base.symbolEffect(.variableColor.iterative, isActive: !ETScreenshotSeed.freezeLive)
         case .warning: base
         }
     }
@@ -160,6 +174,16 @@ struct ETNoticeRow: View {
         case .active:  return AnyShapeStyle(.tint)
         case .warning: return AnyShapeStyle(.orange)
         }
+    }
+}
+
+/// 記号の列の幅。既定の文字サイズでは今までと同じ 20pt の固定幅で、
+/// 文字サイズが上がると 15pt の記号と一緒に広がる（広い記号を 20pt に押し込まず、本文を右へ押さない）。
+private struct ETNoticeIconWidth: ViewModifier {
+    @ScaledMetric(relativeTo: .subheadline) private var width: CGFloat = 20
+
+    func body(content: Content) -> some View {
+        content.frame(width: width)
     }
 }
 

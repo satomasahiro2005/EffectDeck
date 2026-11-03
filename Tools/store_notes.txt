@@ -1,0 +1,24 @@
+New since 2026.10.16
+
+Undo
+- Undo and Redo for the effect chain: parameter changes, adding, removing and moving effects. Shake your iPhone, swipe left or right with three fingers, or press ⌘Z / ⇧⌘Z on a keyboard.
+
+Follow Volume
+- An effect can follow the output volume. Choose Follow Volume in the card's ⋯ menu, then add keyframes with the + on the strip under the card name.
+- JSFX can read the output volume through effectdeck_output_volume.
+
+Also new
+- EffeTune 2.16.0 (DSP 0.16.0): Note Spectrogram Chords & Key, Rhythm Analyzer drums, 10 Mastering presets.
+- EffeTune 2.15.0: SFZ Note Player Detection.
+- Add Effect search groups results into Effects / Plugins / Presets and also finds common names (de-esser, goniometer, brir).
+- An effect you add now goes outside Sections, unless you drop it onto a Section card.
+- Chroma Spiral and Stereo Meter use the space better when collapsed. Note Spectrogram has an opaque keyboard, sharper notes and a legend readable in light mode.
+- Floating Meters and graphs use less CPU.
+- Accessibility: VoiceOver labels, larger text, standard buttons.
+
+Fixes
+- iPad (two columns): the top-right buttons could stop responding after closing a sheet by tapping outside it.
+
+Previous update (2026.10.16):
+
+- Remote Control for EffeTune 2.14 on a computer, Floating Meters (Picture in Picture), SFZ Note Player, and smoother dragging.

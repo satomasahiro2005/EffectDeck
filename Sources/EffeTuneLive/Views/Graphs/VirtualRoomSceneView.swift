@@ -6,6 +6,8 @@
 //  寸法は下のスライダーで触る。
 //
 //  掴んでいる間も指を離すまで待たずに値を送る（§8）。
+//  **掴んでから離すまでを取り消しの 1 手にする。**送るたびに鎖が変わるので、そのままだと
+//  persistSoon の区切り（0.5 秒）ごとに手が積まれる。並べ替えと同じく EffeTuneDSP.undoHeld で止める。
 
 import SwiftUI
 
@@ -16,9 +18,14 @@ struct VirtualRoomSceneView: View {
     /// 掴んだ先を部屋の座標（m）で返す。
     var moveListener: (CGPoint) -> Void = { _ in }
     var moveSpeaker: (CGPoint) -> Void = { _ in }
+    /// 指が触れている間 true。渡す側が EffeTuneDSP.undoHeld へ写す。
+    var holdUndo: (Bool) -> Void = { _ in }
 
     /// いま掴んでいるもの。指を離すまで持ち替えない。
     @State private var holding: Handle?
+    /// 指が触れているか。**onEnded が来ずに終わったとき（取り消された・画面が消えた）も
+    /// false に戻る**ので、undoHeld を立てたままにしない。
+    @GestureState private var touching = false
 
     private enum Handle { case listener, speaker }
 
@@ -28,12 +35,26 @@ struct VirtualRoomSceneView: View {
     var body: some View {
         GeometryReader { geo in
             let plot = Plot(size: geo.size, layout: layout)
-            Canvas { context, _ in draw(in: &context, plot: plot) }
+            let canvas = Canvas { context, _ in draw(in: &context, plot: plot) }
                 .contentShape(Rectangle())
-                .gesture(interactive ? drag(plot: plot) : nil)
+            // 畳んだ図（interactive が false）は掴めないので印を敷かない。敷くと払いと長押しが止まる。
+            if interactive {
+                canvas
+                    .gesture(drag(plot: plot))
+                    .etOwnsDrag()
+            } else {
+                canvas
+            }
         }
         .frame(height: interactive ? 200 : 120)
         .accessibilityLabel("Room layout")
+        .onChange(of: touching) { _, now in
+            if !now { holding = nil }
+            holdUndo(now)
+        }
+        .onDisappear {
+            if touching || holding != nil { holdUndo(false) }
+        }
     }
 
     // MARK: - 座標
@@ -126,6 +147,7 @@ struct VirtualRoomSceneView: View {
 
     private func drag(plot: Plot) -> some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($touching) { _, active, _ in active = true }
             .onChanged { value in
                 let listener = plot.point(layout.listener)
                 let left = plot.point(layout.left)

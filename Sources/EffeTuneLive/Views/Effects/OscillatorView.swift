@@ -201,9 +201,8 @@ struct OscillatorView: View {
                                             @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 14))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .etFont(size: 14)
+                .etRowTitle()
             content()
         }
         .padding(.vertical, 2)
@@ -215,7 +214,7 @@ struct OscillatorView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                .etFont(size: 13, weight: selected ? .semibold : .regular)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))

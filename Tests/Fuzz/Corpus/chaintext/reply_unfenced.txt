@@ -1,0 +1,3 @@
+I built this [1] chain for you. buf[0] is not a chain.
+[{"nm":"Section","cm":"Drive","en":true},{"nm":"Volume","vl":-6.5,"en":true},{"nm":"Hi Pass Filter","fr":80,"sl":-24,"en":true,"ib":1,"ob":2,"ch":"L"},{"nm":"Oscilloscope","tm":"Normal","dt":0.02,"tl":0.1}]
+That's all.

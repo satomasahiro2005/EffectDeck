@@ -1,0 +1,6 @@
+# LeakSanitizer の抑え（CMakePresets.json の asan / engine が LSAN_OPTIONS で読む）。
+#
+# ETPipeline_SetExternalProcessorAt は差し替えた記述をわざと解放しない。
+# 音のスレッドが古いポインタを読み込んだ直後かもしれず、解放すると解放後の読み出しになる
+# （ETPipeline.c の gExternal の説明）。1 回 56 バイトで、差し替えは人の操作のときだけ。
+leak:ETPipeline_SetExternalProcessorAt

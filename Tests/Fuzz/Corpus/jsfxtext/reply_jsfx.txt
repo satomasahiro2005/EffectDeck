@@ -1,0 +1,24 @@
+Here's a simple soft clipper you can use in EffectDeck.
+
+```jsfx
+desc:Chat Soft Clip
+author:EffectDeck test kit
+slider1:6<0,24,0.1>Drive (dB)
+slider2:-3<-24,0,0.1>Output (dB)
+
+@init
+drive = 10^(6/20);
+out = 10^(-3/20);
+
+@slider
+drive = 10^(slider1/20);
+out = 10^(slider2/20);
+
+@sample
+x = spl0 * drive;
+spl0 = x / (1 + abs(x)) * out;
+x = spl1 * drive;
+spl1 = x / (1 + abs(x)) * out;
+```
+
+Copy this whole reply, then in EffectDeck use Import JSFX > From Clipboard.

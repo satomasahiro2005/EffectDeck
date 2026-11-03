@@ -111,14 +111,14 @@ final class RoomEQStore: ObservableObject {
             // 後から書いても遅延だけ前の設計のまま残る。
             //
             // 並べ替えを跨ぐので、位置は instance から引き直す。
-            guard let at = dsp.chain.firstIndex(where: { $0.instance == instance }) else { return }
+            guard let at = dsp.nodes.firstIndex(where: { $0.instance == instance }) else { return }
             // lt は普通そのまま戻る値なので、外れているときだけ直す。
             // 毎回書くと node.values が変わり、それを見張っている onChange が
             // もう一度送り直しに来る。
             let offset = RoomEQDesigner.ParameterOffset.latencyMode
             let want = RoomEQDesigner.parameterValue(forLatencyMode: mode)
-            if dsp.chain[at].values.indices.contains(offset),
-               dsp.chain[at].values[offset] != want {
+            if dsp.nodes[at].values.indices.contains(offset),
+               dsp.nodes[at].values[offset] != want {
                 dsp.setValue(want, at: at, offset: offset)
             }
             dsp.setValue(Float(design.filterDelaySamples),
@@ -144,6 +144,21 @@ final class RoomEQStore: ObservableObject {
         return design(node: node)
     }
 
+    /// 既定へ戻す。上流の Reset は足した時の getParameters() を丸ごと当てる
+    /// （pipeline-item-builder.js:392-410）。そこには設計の設定（pm / tp / sm / … / bs）と
+    /// 測定の割り当て（ms / mn と ms0-15 / mn0-15、room_eq.js:1085-1111）が全部入っていて、
+    /// 足した時は空（:911-914）なので、測定が外れて補正は素通しに戻る。
+    /// lt / fd / dy / gn は呼び手（EffeTuneDSP.resetParams）が値として戻している。
+    func reset(node: EffeTuneDSP.Node) {
+        guard let session = sessions[node.id] else { return }
+        session.correction.clear(engine: EffeTuneDSP.shared.engine, instance: node.instance)
+        update(node.id) {
+            $0.config = RoomEQConfig()
+            $0.sources = []
+            $0.measurement = ""
+        }
+    }
+
     static let notRouted =
         "This effect is not routed to any channel. Change Routing first."
 
@@ -162,7 +177,7 @@ final class RoomEQStore: ObservableObject {
 
     /// 鎖に居ない段を落とす。
     private func prune() {
-        let live = Set(EffeTuneDSP.shared.chain.map(\.id))
+        let live = Set(EffeTuneDSP.shared.nodes.map(\.id))
         // 回しながら消すので、鍵は先に控える。
         for id in Array(sessions.keys) where !live.contains(id) {
             sessions[id] = nil

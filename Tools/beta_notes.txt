@@ -1,0 +1,56 @@
+日本語版は英語版の下にあります。
+The Japanese version follows below.
+
+This beta includes work in progress that is not yet in the App Store version.
+
+New
+
+- Undo and Redo for the effect chain: parameter changes, adding, removing and moving effects. Shake your iPhone (Settings → Accessibility → Touch → Shake to Undo), swipe left or right with three fingers, or press ⌘Z / ⇧⌘Z on a keyboard. One drag of a slider is one step.
+- Updated to EffeTune 2.16.0: Note Spectrogram can show chords and the key (Chords & Key), Rhythm Analyzer can show drums, and 10 Mastering presets were added.
+- Follow Volume: an effect can follow the output volume. Choose Follow Volume in the card's ⋯ menu, then add keyframes with the + on the strip under the card name. Tap a keyframe to edit its values; tap it again (or long-press) for Smooth / Hold and Delete. Please check that the sound changes smoothly with the volume, and that dragging a keyframe does not move the card.
+- JSFX can read the output volume through the read-only variable effectdeck_output_volume (0 to 1, -1 when unknown).
+- Add Effect search groups results into Effects / Plugins / Presets, lists well-known effects first and also finds common names (de-esser, goniometer, snail, brir).
+- SFZ Note Player Detection (EffeTune 2.15.0).
+
+Changes
+
+- An effect you add now goes outside Sections, unless you drop it onto a Section card.
+- Chroma Spiral and Stereo Meter use the space better when collapsed.
+- Note Spectrogram: opaque keyboard, sharper notes, legend readable in light mode.
+- Floating Meters and graphs use less CPU.
+- Small text buttons (Invert Gains, Import, Reset) are now standard buttons.
+- Some accessibility improvements (VoiceOver labels, text size, Command-Z on iPad).
+
+Fixes
+
+- iPad (two columns): the top-right buttons could stop responding after closing a sheet by tapping outside it.
+
+If anything looks or sounds wrong, please use Settings → About → Report a problem.
+
+日本語
+
+本ベータ版には、App Store版に未搭載の開発中の内容を含みます。
+
+【新機能】
+
+・エフェクトの鎖を取り消し・やり直しできるようにしました（パラメータの変更、エフェクトの追加・削除・移動）。iPhoneを振る（設定→アクセシビリティ→タッチ→シェイクで取り消し）、3本指で左右にスワイプ、キーボードの⌘Z／⇧⌘Zで操作します。スライダーを1回動かした分が1手です。
+・EffeTune 2.16.0に追従しました。Note Spectrogramで和音と調を表示でき（Chords & Key）、Rhythm Analyzerでドラムを表示でき、Masteringのプリセットが10本増えました。
+・Follow Volume：エフェクトを出力の音量に合わせて変えられます。カードの⋯からFollow Volumeを選び、名前の下の帯の+でキーフレームを足します。キーフレームを押すと値を直せ、もう一度押す（または長押し）とSmooth／HoldとDeleteが出ます。音量を変えたときに音がなめらかに変わるか、キーフレームを引いてもカードが動かないかをご確認ください。
+・JSFXから、読み取り専用の変数effectdeck_output_volume（0〜1、読めないときは-1）で出力の音量を読めます。
+・Add Effectの検索で、結果をEffects／Plugins／Presetsに分け、よく使われるエフェクトを上に出し、一般的な呼び名（de-esser、goniometer、snail、brir）でも見つかるようにしました。
+・SFZ Note PlayerのDetection（EffeTune 2.15.0）。
+
+【変更】
+
+・エフェクトを足したとき、Sectionのカードにドロップした場合を除いてSectionの外に置くようにしました。
+・Chroma SpiralとStereo Meterを畳んだときの表示を広く使うようにしました。
+・Note Spectrogramの鍵盤が透けず、ノートがくっきりし、明るい外観でも凡例が読めるようになりました。
+・Floating Metersとグラフの処理を軽くしました。
+・小さな文字だけのボタン（Invert Gains、Import、Resetなど）を標準のボタンにしました。
+・アクセシビリティを一部改善しました（VoiceOverの読み上げ、文字の大きさ、iPadの⌘Z）。
+
+【不具合の修正】
+
+・iPad（2列表示）で、シートを外側のタップで閉じた後、右上のボタンが反応しなくなることがある不具合を修正しました。
+
+表示や音に問題がある場合は、Settings → About → Report a problemからご報告ください。

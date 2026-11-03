@@ -1,0 +1,7 @@
+Here is a chain for you:
+
+```json
+[{"nm":"volume","vl":99},{"nm":"Tape Warmth"},{"nm":"Saturation","xx":1}]
+```
+
+Copy the whole reply and use Presets > Import from clipboard in EffectDeck.

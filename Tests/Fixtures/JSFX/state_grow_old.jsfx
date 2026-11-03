@@ -1,0 +1,12 @@
+desc:State Grow Old
+author:nemut.ai
+slider2:0<0,1000,1>-y from @init
+
+@init
+// **slider1 が無い版。**state_grow_new.jsfx へ入れて、欠けたつまみを見る。
+kept = 7;
+
+@serialize
+file_var(0, kept);
+
+@sample

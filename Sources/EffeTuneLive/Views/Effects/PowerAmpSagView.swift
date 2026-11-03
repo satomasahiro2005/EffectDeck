@@ -48,6 +48,7 @@ struct PowerAmpSagView: View {
         // このカードごと作り直される。
         VStack(alignment: .leading, spacing: 12) {
             PowerAmpSagGraphs(tapId: node.tapId)
+                .etLocalAudioOnly()
 
             ForEach(node.spec.params) { param in
                 ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)

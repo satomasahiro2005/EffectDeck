@@ -30,28 +30,6 @@ enum ETGraphMetrics {
     static let readoutSize: CGFloat = 11
 }
 
-/// 目盛りのラベルを置くための余白。
-struct ETGraphInsets: Equatable {
-    var leading: CGFloat
-    var trailing: CGFloat
-    var top: CGFloat
-    var bottom: CGFloat
-
-    init(leading: CGFloat = 26, trailing: CGFloat = 8, top: CGFloat = 6, bottom: CGFloat = 14) {
-        self.leading = leading
-        self.trailing = trailing
-        self.top = top
-        self.bottom = bottom
-    }
-
-    /// 左に dB、下に周波数を出す普通の形。
-    static let standard = ETGraphInsets()
-    /// 下だけラベルを出す形（メーターなど）。
-    static let bottomOnly = ETGraphInsets(leading: 8, trailing: 8, top: 4, bottom: 14)
-    /// ラベル無し。
-    static let none = ETGraphInsets(leading: 2, trailing: 2, top: 2, bottom: 2)
-}
-
 /// 描くときの塗り。ここだけ見れば配色が分かるようにしておく。
 enum ETGraphShading {
     static var grid: GraphicsContext.Shading { .style(.quaternary) }
@@ -62,168 +40,13 @@ enum ETGraphShading {
     /// アクセント色の 55%（effetune-theme.css:95）。canvas 側の 0.85
     /// （spectrum-overlay.css:16）は描く側が context.opacity で掛ける。
     static var overlay: GraphicsContext.Shading { .style(AnyShapeStyle(.tint).opacity(0.55)) }
-}
-
-// MARK: - 軸
-
-enum ETAxisScale {
-    case linear
-    case logarithmic
-}
-
-struct ETAxisTick {
-    let value: Double
-    /// nil なら線だけ引いて字は出さない。
-    let label: String?
-    /// 0 dB の線のように、他より濃く引きたいもの。
-    let emphasized: Bool
-
-    init(_ value: Double, _ label: String? = nil, emphasized: Bool = false) {
-        self.value = value
-        self.label = label
-        self.emphasized = emphasized
-    }
-}
-
-struct ETAxis {
-    var scale: ETAxisScale
-    var lower: Double
-    var upper: Double
-    var ticks: [ETAxisTick]
-    var isFrequency: Bool
-
-    init(scale: ETAxisScale = .linear, lower: Double, upper: Double, ticks: [ETAxisTick] = [], isFrequency: Bool = false) {
-        self.scale = scale
-        self.lower = lower
-        self.upper = upper
-        self.ticks = ticks
-        self.isFrequency = isFrequency
-    }
-
-    /// 0（下端・左端）から 1（上端・右端）へ。範囲の外もそのまま返す。
-    /// web 版は PEQ の曲線を枠の外まで伸ばしているので、ここでも丸めない。
-    func normalized(_ value: Double) -> Double {
-        switch scale {
-        case .linear:
-            guard upper != lower else { return 0 }
-            return (value - lower) / (upper - lower)
-        case .logarithmic:
-            let lo = max(lower, 1e-9)
-            let hi = max(upper, lo * 1.000001)
-            let v = max(value, 1e-9)
-            return (log10(v) - log10(lo)) / (log10(hi) - log10(lo))
-        }
-    }
-
-    func value(atNormalized t: Double) -> Double {
-        switch scale {
-        case .linear:
-            return lower + t * (upper - lower)
-        case .logarithmic:
-            let lo = max(lower, 1e-9)
-            let hi = max(upper, lo * 1.000001)
-            return pow(10, log10(lo) + t * (log10(hi) - log10(lo)))
-        }
-    }
-
-    func clamp(_ value: Double) -> Double {
-        min(max(value, min(lower, upper)), max(lower, upper))
-    }
-
-    // MARK: 出来合いの軸
-
-    /// 20Hz〜20kHz を対数で。線は 10 本、字は詰まらないよう 4 つだけ。
-    static func frequency(_ lower: Double = 20, _ upper: Double = 20000,
-                          labelsEverywhere: Bool = false) -> ETAxis {
-        let decades: [Double] = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 40000]
-        let named: Set<Double> = [20, 100, 1000, 10000]
-        let ticks = decades
-            .filter { $0 >= lower && $0 <= upper }
-            .map { hz -> ETAxisTick in
-                let show = labelsEverywhere || named.contains(hz) || hz == upper
-                return ETAxisTick(hz, show ? ETFormat.hzTick(hz) : nil)
-            }
-        return ETAxis(scale: .logarithmic, lower: lower, upper: upper, ticks: ticks, isFrequency: true)
-    }
-
-    /// dB を線形で。0 の線だけ濃くする。
-    static func decibels(_ range: ClosedRange<Double>, step: Double = 6,
-                         unit: Bool = false) -> ETAxis {
-        var ticks: [ETAxisTick] = []
-        if step > 0 {
-            var v = (range.lowerBound / step).rounded(.up) * step
-            while v <= range.upperBound + 0.0001 {
-                let text = unit ? "\(Int(v.rounded()))dB" : "\(Int(v.rounded()))"
-                ticks.append(ETAxisTick(v, text, emphasized: abs(v) < 0.0001))
-                v += step
-            }
-        }
-        return ETAxis(scale: .linear, lower: range.lowerBound, upper: range.upperBound, ticks: ticks)
-    }
-
-    /// 目盛りを自分で並べる線形の軸。
-    static func linear(_ range: ClosedRange<Double>, ticks: [Double] = [],
-                       label: (Double) -> String = { ETFormat.number($0) }) -> ETAxis {
-        ETAxis(scale: .linear, lower: range.lowerBound, upper: range.upperBound,
-               ticks: ticks.map { ETAxisTick($0, label($0)) })
-    }
-
-    /// 線も字も無い軸。行を並べるだけのとき（メーターの縦）に使う。
-    static func blank(_ range: ClosedRange<Double> = 0...1) -> ETAxis {
-        ETAxis(scale: .linear, lower: range.lowerBound, upper: range.upperBound)
-    }
-}
-
-// MARK: - 位置の換算
-
-/// 図の中の座標と値を行き来する。Canvas の中でも外（指の位置）でも同じ式を使う。
-struct ETPlot {
-    let rect: CGRect
-    let xAxis: ETAxis
-    let yAxis: ETAxis
-
-    init(size: CGSize, x: ETAxis, y: ETAxis, insets: ETGraphInsets) {
-        let w = max(1, size.width - insets.leading - insets.trailing)
-        let h = max(1, size.height - insets.top - insets.bottom)
-        rect = CGRect(x: insets.leading, y: insets.top, width: w, height: h)
-        xAxis = x
-        yAxis = y
-    }
-
-    func x(_ value: Double) -> CGFloat {
-        rect.minX + CGFloat(xAxis.normalized(value)) * rect.width
-    }
-
-    func y(_ value: Double) -> CGFloat {
-        rect.maxY - CGFloat(yAxis.normalized(value)) * rect.height
-    }
-
-    func point(_ xValue: Double, _ yValue: Double) -> CGPoint {
-        CGPoint(x: x(xValue), y: y(yValue))
-    }
-
-    /// 枠からはみ出す点を縁に留めた位置。指で掴む印を描くときに使う。
-    func clampedPoint(_ xValue: Double, _ yValue: Double) -> CGPoint {
-        CGPoint(x: min(max(x(xValue), rect.minX), rect.maxX),
-                y: min(max(y(yValue), rect.minY), rect.maxY))
-    }
-
-    func xValue(at px: CGFloat) -> Double {
-        xAxis.value(atNormalized: Double((px - rect.minX) / rect.width))
-    }
-
-    func yValue(at py: CGFloat) -> Double {
-        yAxis.value(atNormalized: Double((rect.maxY - py) / rect.height))
-    }
-
-    /// 指の位置から、軸の範囲に収めた値を取る。
-    func values(at location: CGPoint) -> (x: Double, y: Double) {
-        (xAxis.clamp(xValue(at: location.x)), yAxis.clamp(yValue(at: location.y)))
-    }
-
-    func contains(_ location: CGPoint) -> Bool {
-        rect.insetBy(dx: -12, dy: -12).contains(location)
-    }
+    /// Compare のときの出口の線。上流の --et-graph-overlay-compare は
+    /// 文字色の 90%（effetune-theme.css:96）。
+    static var overlayCompare: GraphicsContext.Shading { .style(AnyShapeStyle(.primary).opacity(0.9)) }
+    /// Compare で出口が入口より上の所の塗り。上流の --et-graph-overlay-positive は
+    /// 警告色の 55%（effetune-theme.css:97）。下の所は overlay（アクセント色の 55%）で塗る
+    /// （spectrum-overlay.js:579）。
+    static var overlayPositive: GraphicsContext.Shading { .style(Color.orange.opacity(0.55)) }
 }
 
 // MARK: - 上に出す値
@@ -252,6 +75,14 @@ struct GraphCanvas<Overlay: View>: View {
     /// 畳んだカードから渡る高さの上限。nil なら height をそのまま使う。
     @Environment(\.etGraphMaxHeight) private var maxHeight
     @Environment(\.scenePhase) private var scenePhase
+    /// PoC: PC の鎖を編集しているあいだの Analyzer（Views/RemoteScannerView.swift の ETRemoteMeasurementDim）。
+    @Environment(\.etMeasurementDimmed) private var measurementDimmed
+    /// 格子の層の鍵（ETGraphGrid）。外観とコントラストで線と字の色が変わる。
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// 値の行の高さは文字サイズに追従させる。通常のサイズでは 17pt のまま。
+    @ScaledMetric(relativeTo: .caption2) private var readoutHeight = ETGraphMetrics.readoutHeight
     @GestureState private var previewActive = false
     var insets: ETGraphInsets
     /// 掴んでいる値。空なら caption を出す。
@@ -259,8 +90,26 @@ struct GraphCanvas<Overlay: View>: View {
     var caption: String?
     /// 読み値の行の**右端**に出す札。印を出したいときだけ。
     var badge: String?
+    /// 読み値の行の右端（札の左）に置く部品。PEQ の重ね表示の切り替え
+    /// （FrequencyResponseGraph）。図の面は印を掴むのに使っているので、面の上には置かない。
+    var accessory: AnyView?
     /// 中身を枠で切るか。PEQ の曲線のように外へ出したいものは false。
     var clipsContent: Bool
+    /// なぞった周波数をプレビュー音で鳴らすか。**解析の図だけが立てる。**
+    /// 周波数軸の図すべてで鳴らしていたら、EQ の印を動かすたびに鳴った
+    /// （FrequencyResponseGraph は図のどこを触っても最寄りの印を掴む）。
+    var previewsFrequency: Bool
+    /// 上の値の行（readoutHeight ぶん）を取るか。図の中に見出しを自分で描く図
+    /// （Rhythm Analyzer）だけが false にして、行の分の空きを無くす。
+    var showsHeader: Bool
+    /// 図の外周に 1pt の枠を引くか。渦巻きのように丸い図は false にする
+    /// （四角い枠が丸い図の周りの空きを目立たせる）。
+    var framed: Bool
+    /// 図の面を縦横 1:1 にするか。幅を測って高さに入れ直す方式だと開いた最初の 1 回だけ
+    /// 高さが跳ねるので、レイアウトに任せる。true のとき height は使わない。
+    var isSquare: Bool
+    /// Audio Graphs（VoiceOver の「再生」とデータの要約）に渡す中身。nil なら何も付けない。
+    var chart: ETChartAccess?
     var draw: (inout GraphicsContext, ETPlot) -> Void
     var overlay: (ETPlot) -> Overlay
 
@@ -271,7 +120,13 @@ struct GraphCanvas<Overlay: View>: View {
          readout: [ETReadoutItem] = [],
          caption: String? = nil,
          badge: String? = nil,
+         accessory: AnyView? = nil,
          clipsContent: Bool = true,
+         previewsFrequency: Bool = false,
+         showsHeader: Bool = true,
+         framed: Bool = true,
+         isSquare: Bool = false,
+         chart: ETChartAccess? = nil,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void,
          @ViewBuilder overlay: @escaping (ETPlot) -> Overlay) {
         self.x = x
@@ -281,30 +136,50 @@ struct GraphCanvas<Overlay: View>: View {
         self.readout = readout
         self.caption = caption
         self.badge = badge
+        self.accessory = accessory
         self.clipsContent = clipsContent
+        self.previewsFrequency = previewsFrequency
+        self.showsHeader = showsHeader
+        self.framed = framed
+        self.isSquare = isSquare
+        self.chart = chart
         self.draw = draw
         self.overlay = overlay
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            header
+            // 札の押せる範囲は上下に広げてある。下側が図の下に隠れないよう、見出しを前に出す。
+            if showsHeader { header.zIndex(1) }
             GeometryReader { geo in
                 ZStack {
-                    Canvas { context, size in
-                        let plot = ETPlot(size: size, x: x, y: y, insets: insets)
-                        Self.drawGrid(&context, plot)
-                        if clipsContent {
-                            context.drawLayer { layer in
-                                layer.clip(to: Path(plot.rect.insetBy(dx: -0.5, dy: -0.5)))
-                                draw(&layer, plot)
+                    // 格子は軸・余白・大きさが同じあいだ描き直さない（下の ETGraphGrid）。
+                    // 以前は格子と中身が 1 枚の Canvas で、沈めるときの不透明度（0.3）は
+                    // 合わさった絵に掛かっていた。Canvas が 2 枚だと 1 枚ずつに掛かり、
+                    // Spectrogram の不透明な絵から格子が透けてしまう。
+                    // compositingGroup で 1 枚の絵に戻して、掛かり方を前と同じにする。
+                    // overlay は前から別の View だったので、グループの外に置く。
+                    ZStack {
+                        ETGraphGrid(x: x, y: y, insets: insets, size: geo.size,
+                                    colorScheme: colorScheme, contrast: colorSchemeContrast,
+                                    framed: framed)
+                            .equatable()
+                        Canvas { context, size in
+                            let plot = ETPlot(size: size, x: x, y: y, insets: insets)
+                            if clipsContent {
+                                context.drawLayer { layer in
+                                    layer.clip(to: Path(plot.rect.insetBy(dx: -0.5, dy: -0.5)))
+                                    draw(&layer, plot)
+                                }
+                            } else {
+                                draw(&context, plot)
                             }
-                        } else {
-                            draw(&context, plot)
                         }
                     }
+                    .compositingGroup()
                     overlay(ETPlot(size: geo.size, x: x, y: y, insets: insets))
                 }
+                // etOwnsDrag-exempt: 解析の図の試聴の音を出すだけで何も動かさない。畳んだ図の払いと長押しを止めないため印を付けない（印は印を掴む子の面が付ける）
                 .simultaneousGesture(DragGesture(minimumDistance: 0)
                     .updating($previewActive) { _, active, _ in active = x.isFrequency || y.isFrequency }
                     .onChanged { touch in
@@ -316,10 +191,15 @@ struct GraphCanvas<Overlay: View>: View {
                         }
                         ETPreviewTone_SetFrequency(x.isFrequency ? plot.xValue(at: touch.location.x) : plot.yValue(at: touch.location.y))
                     }
-                    .onEnded { _ in ETPreviewTone_SetFrequency(0) })
+                    .onEnded { _ in ETPreviewTone_SetFrequency(0) },
+                    // 立てない図ではジェスチャごと外す。子の印を掴むジェスチャは残る。
+                    including: previewsFrequency ? .all : .subviews)
+                .etChartAccess(chart)
             }
-            .frame(height: min(height, maxHeight ?? height))
+            .etGraphSized(isSquare: isSquare, height: min(height, maxHeight ?? height))
         }
+        // 読み値の行ごと沈める。数字も手元の音のもの。
+        .etDimmedWhenMeasuring(measurementDimmed)
         .onDisappear { ETPreviewTone_SetFrequency(0) }
         .onChange(of: previewActive) { wasActive, active in
             if wasActive && !active { ETPreviewTone_SetFrequency(0) }
@@ -335,7 +215,7 @@ struct GraphCanvas<Overlay: View>: View {
             if readout.isEmpty {
                 if let caption {
                     Text(caption)
-                        .font(.system(size: ETGraphMetrics.readoutSize))
+                        .etFont(size: ETGraphMetrics.readoutSize)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -346,43 +226,85 @@ struct GraphCanvas<Overlay: View>: View {
                 // 進んでいる位置の動きを引き継がないので、**行が動いている最中に
                 // 値が変わると、字だけが先に着く**（並べ替えの 0.22 秒のあいだ、
                 // 読み値は 30Hz で変わるのでほぼ必ず起きる）。
-                ForEach(Array(readout.enumerated()), id: \.offset) { _, item in
-                    HStack(spacing: 3) {
-                        if !item.label.isEmpty {
-                            Text(item.label)
-                                .font(.system(size: 9, weight: .semibold))
-                                .tracking(0.4)
-                                .foregroundStyle(.secondary)
+                //
+                // 内側の HStack は並びを変えない（外と同じ spacing）。読み上げのために
+                // 1 つの要素にまとめる入れ物。まとめないと「BAND」「1」「FREQ」…を
+                // 1 つずつスワイプで読むことになり、読んでいる間に値が変わってしまう。
+                HStack(spacing: 10) {
+                    ForEach(Array(readout.enumerated()), id: \.offset) { _, item in
+                        HStack(spacing: 3) {
+                            if !item.label.isEmpty {
+                                Text(item.label)
+                                    .etFont(size: 9, weight: .semibold)
+                                    .tracking(0.4)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(item.value)
+                                .etFont(size: ETGraphMetrics.readoutSize, weight: .medium,
+                                        design: .monospaced)
                         }
-                        Text(item.value)
-                            .font(.system(size: ETGraphMetrics.readoutSize, weight: .medium,
-                                          design: .monospaced))
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.updatesFrequently)
             }
             Spacer(minLength: 0)
-            // 右端の札。行の高さは下で固定してあるので、出ても位置は動かない。
+            if let accessory {
+                accessory.fixedSize()
+            }
+            // 右端の札。行の高さは下で決めているので、出ても位置は動かない。
             if let badge {
                 Text(badge)
+                    // 札は伸ばさない（行が 2 段になると図が下へ押される）。
+                    // 代わりに Large Content Viewer で、長押しして大きく読めるようにする。
                     .font(.system(size: 10, weight: .heavy))
                     .tracking(0.5)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.tint, in: .capsule)
+                    .etBadgeBackground()
                     // 行の高さは下の frame が決めているので、
                     // 札が大きくても位置は動かない。
                     .fixedSize()
+                    .accessibilityShowsLargeContentViewer()
             }
         }
-        .frame(height: ETGraphMetrics.readoutHeight, alignment: .leading)
+        // 高さは文字サイズに追従する（通常は 17pt）。値が入ったり消えたりしても
+        // 行が 1 つのままなので、掴んでいる間に図が動かない。
+        // 大きい文字では 2 段にせず、縮めて 1 行に収める。
+        .frame(minHeight: readoutHeight, alignment: .leading)
         .lineLimit(1)
-        .minimumScaleFactor(0.8)
+        .minimumScaleFactor(typeSize.isAccessibilitySize ? 0.5 : 0.8)
+    }
+}
+
+/// 格子と目盛りの字だけを描く層。
+/// 中身（draw）は毎フレーム変わるが、格子は軸・余白・大きさが同じあいだ描き直さなくてよい。
+/// 別の層にして .equatable() で飛ばす（計測では drawGrid が canvas の 672 サンプル中 489 だった）。
+private struct ETGraphGrid: View, Equatable {
+    let x: ETAxis
+    let y: ETAxis
+    let insets: ETGraphInsets
+    /// size / colorScheme / contrast は比べるための鍵にだけ使う。
+    /// 線と字の色（.quaternary / .tertiary / .secondary）は外観とコントラストで変わるので、
+    /// Canvas が環境の変化で自分から描き直すかどうかに頼らず鍵に入れてある。
+    /// body は読まないが、消してはいけない。
+    let size: CGSize
+    let colorScheme: ColorScheme
+    let contrast: ColorSchemeContrast
+    let framed: Bool
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            Self.drawGrid(&context, ETPlot(size: canvasSize, x: x, y: y, insets: insets),
+                          framed: framed)
+        }
+        .accessibilityHidden(true)
     }
 
     // MARK: 格子
 
-    static func drawGrid(_ context: inout GraphicsContext, _ plot: ETPlot) {
+    static func drawGrid(_ context: inout GraphicsContext, _ plot: ETPlot, framed: Bool) {
         let rect = plot.rect
 
         // 縦線と、その下の字。
@@ -415,7 +337,9 @@ struct GraphCanvas<Overlay: View>: View {
             }
         }
 
-        context.stroke(Path(rect), with: ETGraphShading.grid, lineWidth: 1)
+        if framed {
+            context.stroke(Path(rect), with: ETGraphShading.grid, lineWidth: 1)
+        }
     }
 
     private static func tickText(_ s: String) -> Text {
@@ -434,73 +358,65 @@ extension GraphCanvas where Overlay == EmptyView {
          caption: String? = nil,
          badge: String? = nil,
          clipsContent: Bool = true,
+         previewsFrequency: Bool = false,
+         showsHeader: Bool = true,
+         framed: Bool = true,
+         isSquare: Bool = false,
+         chart: ETChartAccess? = nil,
          draw: @escaping (inout GraphicsContext, ETPlot) -> Void) {
         self.init(x: x, y: y, height: height, insets: insets, readout: readout,
-                  caption: caption, badge: badge, clipsContent: clipsContent, draw: draw,
+                  caption: caption, badge: badge, clipsContent: clipsContent,
+                  previewsFrequency: previewsFrequency, showsHeader: showsHeader,
+                  framed: framed, isSquare: isSquare, chart: chart, draw: draw,
                   overlay: { _ in EmptyView() })
     }
 }
 
-// MARK: - 値の書き方
+// MARK: - 図の面の大きさ
 
-enum ETFormat {
+private struct ETGraphSizedModifier: ViewModifier {
+    let isSquare: Bool
+    let height: CGFloat
 
-    /// 目盛りの字。1000 以上は k に畳む。
-    static func hzTick(_ hz: Double) -> String {
-        hz >= 1000 ? "\(Int((hz / 1000).rounded()))k" : "\(Int(hz.rounded()))"
-    }
-
-    /// 上に出す周波数。掴んでいる間はこちらを使う。
-    static func hz(_ hz: Double) -> String {
-        if hz >= 10000 { return String(format: "%.1f kHz", hz / 1000) }
-        if hz >= 1000  { return String(format: "%.2f kHz", hz / 1000) }
-        if hz >= 100   { return String(format: "%.0f Hz", hz) }
-        return String(format: "%.1f Hz", hz)
-    }
-
-    /// dB。符号を必ず出す（+4.5 / -12.0）。
-    static func gain(_ db: Double, decimals: Int = 1) -> String {
-        String(format: "%+.\(decimals)f dB", db)
-    }
-
-    /// dB。符号は負のときだけ（レベル表示向け）。
-    static func db(_ db: Double, decimals: Int = 1) -> String {
-        if !db.isFinite { return "-inf dB" }
-        return String(format: "%.\(decimals)f dB", db)
-    }
-
-    static func number(_ v: Double) -> String {
-        abs(v) >= 100 ? String(format: "%.0f", v)
-            : abs(v) >= 10 ? String(format: "%.1f", v)
-            : String(format: "%.2f", v)
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isSquare {
+            content.aspectRatio(1, contentMode: .fit)
+        } else {
+            content.frame(height: height)
+        }
     }
 }
 
-/// 振幅・電力から dB へ。テレメトリは線形で来るものが多い
-/// （例: dsp/plugins/analyzer/level_meter/kernel.cpp:168 の peak と rms は線形の振幅）。
-enum ETdB {
-    static let floor: Double = -144
-
-    static func fromAmplitude(_ amplitude: Double, floor: Double = ETdB.floor) -> Double {
-        guard amplitude > 0, amplitude.isFinite else { return floor }
-        return max(floor, 20 * log10(amplitude))
+extension View {
+    fileprivate func etGraphSized(isSquare: Bool, height: CGFloat) -> some View {
+        modifier(ETGraphSizedModifier(isSquare: isSquare, height: height))
     }
+}
 
-    static func fromAmplitude(_ amplitude: Float, floor: Double = ETdB.floor) -> Double {
-        fromAmplitude(Double(amplitude), floor: floor)
+// MARK: - 小さな札の地
+
+/// 小さな札（10pt 前後の白い字を .tint の地に載せたもの）の地。
+///
+/// 通常の見た目は `.background(.tint, in: .capsule)` と同じ。
+/// 「コントラストを上げる」がオンのときだけ地を黒で 30% 沈めて、白い字との比を上げる。
+/// 小さい字は .tint（システムの青）の地だと約 3.6〜4.0:1 で、AA に届かないため。
+private struct ETBadgeBackgroundModifier: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func body(content: Content) -> some View {
+        content.background {
+            Capsule().fill(.tint)
+            if contrast == .increased {
+                Capsule().fill(Color.black.opacity(0.3))
+            }
+        }
     }
+}
 
-    static func fromPower(_ power: Double, floor: Double = ETdB.floor) -> Double {
-        guard power > 0, power.isFinite else { return floor }
-        return max(floor, 10 * log10(power))
-    }
-
-    static func amplitude(_ db: Double) -> Double {
-        pow(10, db / 20)
-    }
-
-    /// NaN や -inf を軸の下端に落とす。描く直前に通す。
-    static func finite(_ db: Double, floor: Double) -> Double {
-        db.isFinite ? max(db, floor) : floor
+extension View {
+    /// 札の地。Routing や OVERLOAD の札も同じにしたいときに使う。
+    func etBadgeBackground() -> some View {
+        modifier(ETBadgeBackgroundModifier())
     }
 }

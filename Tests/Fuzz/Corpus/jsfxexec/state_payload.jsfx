@@ -1,0 +1,21 @@
+desc:State Payload
+author:nemut.ai
+slider1:0<0,100,1>Step
+slider2:0<0,100000,1>-Counter readback
+
+@init
+// **kept にはここで触らない。**payload だけで戻ることを見る fixture。
+// @init でも書く形は state_init.jsfx が見る。
+step = 0;
+
+@slider
+step = slider1;
+
+@block
+kept += step;
+slider2 = kept;
+
+@serialize
+file_var(0, kept);
+
+@sample

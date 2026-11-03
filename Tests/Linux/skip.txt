@@ -1,0 +1,6 @@
+# Tests/Linux/skip.txt
+# Linux（Tests/Linux/run.sh）で飛ばすテスト。1行に1つ、`Class/testMethod  # 理由`（理由は必須）。
+# `Class  # 理由` と書くとクラスごと飛ばす。
+#
+# **入れてよいのは、LinuxのFoundationがDarwinと違うせいで落ちるものだけ。**
+# アプリの振る舞いをLinuxに合わせて変えない。Macでは全部走る。

@@ -5,6 +5,7 @@ import AVFoundation
 import AudioToolbox
 import CoreAudioKit
 import UIKit
+import os
 
 @MainActor
 final class ETAUHost: ObservableObject {
@@ -56,9 +57,78 @@ final class ETAUHost: ObservableObject {
     }
     private var renderConfiguration: RenderConfiguration?
 
-    private init() { refresh() }
+    private let log = Logger(subsystem: "ai.nemut.effetune", category: "au")
+    private var observers: [NSObjectProtocol] = []
+    /// 通知の束をまとめる待ち（scheduleRefresh）。
+    private var pendingRefresh: Task<Void, Never>?
+    /// 前に報告へ書いた Apple 以外の名前の行。同じなら書き直さない（前面へ戻るたびに増えないように）。
+    private var lastOutsiderLine: String?
 
-    func refresh() {
+    /// 鎖を戻したときに一覧に無かった AU。登録が後から届いたらここから作る。
+    ///
+    /// **捨てずに覚えておく理由。**AUv3 は他のアプリの拡張で、登録は系が後から
+    /// 届けることがある（登録変更の通知はそのために在る）。起動直後の一覧に無いだけで
+    /// 諦めると、保存した鎖のカードが起動のたびに「Audio Unit unavailable」のままになる。
+    /// 消えたノードは remove / removeAll で一緒に消すので、ここに残り続けることは無い。
+    private struct PendingRestore {
+        let componentID: String
+        let state: Data?
+        var channels: Int
+    }
+    private var pendingRestores: [String: PendingRestore] = [:]
+
+    private init() {
+        refresh(reason: "launch")
+        observeRegistrations()
+    }
+
+    /// 一覧を作り直すきっかけを張る。
+    ///
+    /// **以前は起動直後に 1 回聞くだけだった。**その後に入れた AU も、後から登録が
+    /// 届いた AU も、アプリを作り直すまで一覧に出なかった（Issue #10）。
+    /// 通知は 2 つとも張る。AVFoundation の方は manager が一覧を更新したとき、
+    /// AudioToolbox の方は系の登録が変わったときに出る。どちらが先に来るかは
+    /// 決まっていないので、両方で数え直す（数え直しは安い）。
+    /// 前面へ戻ったときも数え直す。AU のアプリを入れてから戻ってくる流れで、
+    /// 通知を取りこぼしていても一覧が追いつく。
+    /// 起動 5 秒後の 1 回は、通知が来ないまま登録だけ遅れて届く場合を報告で
+    /// 見分けるため（launch の行と launch+5s の行の数が違えばそれ）。
+    private func observeRegistrations() {
+        let center = NotificationCenter.default
+        let triggers: [(Notification.Name, String)] = [
+            (AVAudioUnitComponentManager.registrationsChangedNotification, "avf-registrations"),
+            (Notification.Name(kAudioComponentRegistrationsChangedNotification as String),
+             "ac-registrations"),
+            (UIApplication.willEnterForegroundNotification, "foreground"),
+        ]
+        for (name, reason) in triggers {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) {
+                [weak self] _ in
+                Task { @MainActor in self?.scheduleRefresh(reason: reason) }
+            })
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            self?.refresh(reason: "launch+5s")
+        }
+    }
+
+    /// 通知からの数え直しはまとめてから 1 回にする。
+    ///
+    /// **登録の変更通知は束で来る。**シミュレータの起動直後に avf-registrations が
+    /// 20ms のあいだに 81 回届き、そのたびに全部の部品を数えて同じ報告の行を 81 本残した。
+    /// 最後の通知から少し待って 1 回だけ数える。理由は最後に来たものを残す。
+    private func scheduleRefresh(reason: String) {
+        pendingRefresh?.cancel()
+        pendingRefresh = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingRefresh = nil
+            self.refresh(reason: reason)
+        }
+    }
+
+    func refresh(reason: String = "manual") {
         let manager = AVAudioUnitComponentManager.shared()
         let types: [OSType] = [kAudioUnitType_Effect, kAudioUnitType_MusicEffect]
         var found: [Entry] = []
@@ -74,8 +144,99 @@ final class ETAUHost: ObservableObject {
                       manufacturer: $0.manufacturerName)
             }
         }
-        entries = Array(Set(found)).sorted {
+
+        // **型を 0（全部）にして 2 通りで数える。**一覧の 2 種の絞り込みより前で、
+        // 系がこのプロセスに何を返しているかを報告に残すため（ETAUCensus の頭を参照）。
+        let wildcard = AudioComponentDescription(componentType: 0,
+                                                 componentSubType: 0,
+                                                 componentManufacturer: 0,
+                                                 componentFlags: 0,
+                                                 componentFlagsMask: 0)
+        let managerAll = manager.components(matching: wildcard).map {
+            ETAUCensus.Item(type: $0.audioComponentDescription.componentType,
+                            subType: $0.audioComponentDescription.componentSubType,
+                            manufacturer: $0.audioComponentDescription.componentManufacturer,
+                            name: $0.name, maker: $0.manufacturerName)
+        }
+        let scanned = Self.scanComponents(matching: wildcard)
+        var countQuery = wildcard
+        let count = AudioComponentCount(&countQuery)
+
+        // FindNext だけが見つけた効果も一覧へ足す。
+        // manager がどこかで取りこぼしても、系に登録があれば選べるようにするため。
+        // 作るのは同じ description からの AUAudioUnit.instantiate なので、経路は変わらない。
+        let listedIDs = Set(found.map(\.id))
+        let added = scanned.filter {
+            ETAUCensus.effectTypes.contains($0.type) && !listedIDs.contains($0.key)
+        }
+        found += added.map {
+            Entry(description: AudioComponentDescription(componentType: $0.type,
+                                                         componentSubType: $0.subType,
+                                                         componentManufacturer: $0.manufacturer,
+                                                         componentFlags: 0,
+                                                         componentFlagsMask: 0),
+                  name: $0.name, manufacturer: $0.maker)
+        }
+
+        let sorted = Array(Set(found)).sorted {
             $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+        // 同じなら差し替えない。Plugins の面を開くたびに数え直すので、
+        // 毎回差し替えると開いている一覧が描き直される。
+        if sorted != entries { entries = sorted }
+
+        record(ETAUCensus.summary(reason: reason, listed: sorted.count, manager: managerAll,
+                                  scanned: scanned, count: count, added: added.count))
+        let outsiders = ETAUCensus.outsiderLine(manager: managerAll, scanned: scanned)
+        if outsiders != lastOutsiderLine {
+            lastOutsiderLine = outsiders
+            if !outsiders.isEmpty { record(outsiders) }
+        }
+
+        restorePending()
+    }
+
+    /// AudioComponentFindNext で系の登録を頭から辿る。
+    /// manager とは別の口なので、片方だけが取りこぼしていれば報告で判る。
+    private static func scanComponents(matching description: AudioComponentDescription)
+        -> [ETAUCensus.Item] {
+        var query = description
+        var items: [ETAUCensus.Item] = []
+        var current: AudioComponent?
+        // 上限は念のため。辿り方を間違えて同じものを返し続けても止まるように。
+        while items.count < 4096, let next = AudioComponentFindNext(current, &query) {
+            current = next
+            var found = AudioComponentDescription()
+            guard AudioComponentGetDescription(next, &found) == noErr else { continue }
+            var copied: Unmanaged<CFString>?
+            let full = AudioComponentCopyName(next, &copied) == noErr
+                ? (copied?.takeRetainedValue() as String?) ?? ""
+                : ""
+            let parts = ETAUCensus.splitName(full)
+            items.append(ETAUCensus.Item(type: found.componentType,
+                                         subType: found.componentSubType,
+                                         manufacturer: found.componentManufacturer,
+                                         name: parts.name, maker: parts.maker))
+        }
+        return items
+    }
+
+    /// 報告に添える行（ETLogTap）と os_log と、-ETConsole 1 のときの標準出力。
+    /// AudioIO の診断の行と同じ 3 か所へ出す。
+    private func record(_ line: String) {
+        log.notice("\(line, privacy: .public)")
+        ETLogTap.record(line)
+        if ETConsoleLog.on { print(line) }
+    }
+
+    /// 一覧に載るようになった AU を、戻せなかったノードへ作る。
+    private func restorePending() {
+        for (instanceID, pending) in pendingRestores {
+            guard let entry = entry(id: pending.componentID) else { continue }
+            pendingRestores[instanceID] = nil
+            record("au late restore \(pending.componentID)")
+            create(entry, instanceID: instanceID, state: pending.state,
+                   channels: pending.channels)
         }
     }
 
@@ -135,13 +296,17 @@ final class ETAUHost: ObservableObject {
 
     func restore(componentID: String, instanceID: String, state: Data?, channels: Int = 2) {
         guard let entry = entry(id: componentID) else {
+            pendingRestores[instanceID] = PendingRestore(componentID: componentID,
+                                                         state: state, channels: channels)
             revision &+= 1
             return
         }
+        pendingRestores[instanceID] = nil
         create(entry, instanceID: instanceID, state: state, channels: channels)
     }
 
     func remove(instanceID: String) {
+        pendingRestores[instanceID] = nil
         if let instance = instances.removeValue(forKey: instanceID) {
             instance.loadTask?.cancel()
             if let token = instance.parameterObserver,
@@ -154,6 +319,7 @@ final class ETAUHost: ObservableObject {
     }
 
     func removeAll() {
+        pendingRestores.removeAll()
         ETAUExternalBridge.shared.clear()
         for instance in instances.values {
             instance.loadTask?.cancel()
@@ -195,6 +361,7 @@ final class ETAUHost: ObservableObject {
 
     func setChannels(_ channels: Int, instanceID: String) {
         instances[instanceID]?.channels = channels
+        pendingRestores[instanceID]?.channels = channels
     }
 
     func status(instanceID: String) -> String {
@@ -203,9 +370,29 @@ final class ETAUHost: ObservableObject {
         return instance.loading ? "Loading…" : "Ready"
     }
 
+    /// 画面をCoreAudioKitに頼むか。nilは読み込み中。
+    ///
+    /// **シミュレータでは、AppleのAU（AUDelayなど）には頼まない。**カードのパラメータ行で出す
+    /// （ExternalProcessorView。実機では頼む: usesParameterRows）。iOS 27のシミュレータでは、CoreAudioKitがAUDelayに付けるAUDelayViewControllerが
+    /// viewDidLoadで落ちる。自分の資源の画像（DelayModeNormal / DelayModeInverted）が引けず、
+    /// nilがNSNullになってUISegmentedControl(items:)へ渡り、字として読まれる
+    /// （2026-09-28のクラッシュレポート。こちらはviewを読んだだけ）。
+    /// Objective-Cの例外なので捕まえられず、カードを開いたまま保存した鎖は起動のたびに落ちる。
     func providesUserInterface(instanceID: String) -> Bool? {
         guard let instance = instances[instanceID], !instance.loading else { return nil }
+        guard !Self.usesParameterRows(instance.entry) else { return false }
         return instance.unit?.providesUserInterface ?? false
+    }
+
+    /// CoreAudioKitの画面を使わず、パラメータ行で出すAU。**シミュレータの Apple の AU だけ。**
+    /// 落ちたのは iOS 27 のシミュレータで、実機では Apple の AU も自分の画面で動く
+    /// （d850d29 で実機まで止めてしまい、利用者が使っていた AUDelay などの画面が出なくなっていた）。
+    private static func usesParameterRows(_ entry: Entry) -> Bool {
+        #if targetEnvironment(simulator)
+        entry.description.componentManufacturer == kAudioUnitManufacturer_Apple
+        #else
+        false
+        #endif
     }
 
     func parameters(instanceID: String) -> [AUParameter] {
@@ -236,7 +423,8 @@ final class ETAUHost: ObservableObject {
             completion(controller)
             return
         }
-        guard unit.providesUserInterface else {
+        // providesUserInterfaceと同じ理由で、AppleのAUには頼まない。
+        guard unit.providesUserInterface, !Self.usesParameterRows(instance.entry) else {
             completion(nil)
             return
         }

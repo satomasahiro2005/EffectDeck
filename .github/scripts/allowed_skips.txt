@@ -1,0 +1,12 @@
+# .github/scripts/check_xcresult_skips.py が「予定外の skip」と言わないもの（CI の macos の logic）。
+# 1行に1つ、`Suite/testName()  # 理由`（理由は必須）。名前は xcresult の nodeIdentifier のまま。
+#
+# **落ちる試験や重い試験を黙らせるためにここへ足さない。**足してよいのは、走る場の成り行きで
+# 確かめようが無い回を試験自身が XCTSkip で断るものだけ。理由には XCTSkip の場所を書く。
+#
+# RemoteFileDownloadTests/testBodyGrowingPastTheLimitIsRejectedBeforeItEnds() の XCTSkipIf は
+# ここに書かない。飛ぶのは Linux（Tests/Linux の swift test。URLSession.bytes の代役が本文を
+# 全部受けてから渡す）だけで、iOS では bytesArriveOnlyWhenComplete が false なので飛ばない。
+# iOS で飛んだら、本文の途中で断るかをどこでも見ていないことになる（ここで落とすべきもの）。
+
+JSFXStabilityTests/testDestroyWaitsForARunningSaveState()  # Tests/Unit/JSFXStabilityTests.swift の XCTSkip。SaveState が Destroy と重なる前に終わった回は見るものが無い（重なるかは runner の混み具合の成り行き）

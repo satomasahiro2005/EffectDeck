@@ -1,0 +1,11 @@
+desc:Output Volume State
+author:nemut.ai
+slider1:0.5<0,1,0.01>Gain
+
+@block
+// 音量を読むだけ。つまみにも @serialize にも出さない（状態に入らないことを見る）。
+v = effectdeck_output_volume;
+
+@sample
+spl0 *= slider1;
+spl1 *= slider1;

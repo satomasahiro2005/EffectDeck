@@ -1,0 +1,14 @@
+desc:Trigger Count
+author:nemut.ai
+slider1:0<0,1024,1>-Fire count
+slider2:0<0,1024,1>-Last mask
+
+@init
+fired = 0;
+
+@block
+trigger ? (fired += 1);
+slider1 = fired;
+slider2 = trigger;
+
+@sample

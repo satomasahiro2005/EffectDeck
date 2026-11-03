@@ -1,0 +1,24 @@
+# CodeQL の設定（.github/workflows/codeql.yml の init が読む）。
+#
+# 問い合わせは security-extended（既定の code-scanning より多く、security-and-quality より少ない）。
+# 2026-09 に CodeQL 2.27.1 で c-cpp（codeql.yml と同じ建て方）を 3 つとも回して数えた:
+#   code-scanning 58 本 → 1 件、security-extended 95 本 → 1 件（同じもの）、
+#   security-and-quality 180 本 → 81 件。81 件のうち 72 件は Tests/Native の浮動小数の == の照合
+#   （試験は同じ値が返ることを見ているので正しい）、4 件は Vendor の見出しのコメントや enum の書き方。
+# 増えた分がほぼ全部ノイズなので、品質の問い合わせは入れない。actions はどれでも 0 件だった。
+queries:
+  - uses: security-extended
+
+# 上流（submodule）と作った物は結果に出さない。
+# **c-cpp（build-mode: manual）には効かない。**建てたときに読んだファイルは全部取り込まれ、CodeQL も
+# 「manual では paths-ignore は効かない」と知らせる（Code scanning の状態の頁に note が 1 つ出る）。
+# c-cpp は建てるものを自分のソースに絞り（Vendor は見出しを 4 本読むだけ）、建てる場所を
+# checkout の外に置いて同じ効き目にしている（codeql.yml）。
+# actions は根の .github/workflows しか読まないので、今はここが無くても結果は同じ。
+# 建てずに読む言語を足したときに Vendor の中身（上流の JS など）を拾わないよう置いておく。
+paths-ignore:
+  - Vendor/**
+  - build/**
+  - out/**
+  - out-sim/**
+  - .build/**

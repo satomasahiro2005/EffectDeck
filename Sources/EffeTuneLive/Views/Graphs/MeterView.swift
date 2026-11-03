@@ -74,6 +74,10 @@ struct MeterView: View {
     /// 読み値の行の右端に出す札。
     var badge: String?
 
+    // 通常の見た目は変えない。色以外で区別する設定か、コントラストを上げる設定のときだけ印を赤にする。
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     /// 保持しているピーク。段ごと。
     @State private var held: [Int: Hold] = [:]
 
@@ -157,9 +161,13 @@ struct MeterView: View {
                     }
 
                     // 振り切れた印。
+                    // 棒と同じ色だと、振り切れたときは棒も右端まで届いているので溶けて見えない。
+                    // 通常は今までの色のまま。色の区別に頼れない設定のときだけ赤にして目立たせる。
+                    // 印は右端の位置と形でも分かる（色だけの手がかりにならない）。
                     if channel.clipped {
                         let mark = CGRect(x: row.maxX - 4, y: row.minY, width: 4, height: row.height)
-                        context.fill(Path(mark), with: ETGraphShading.curve)
+                        let strong = differentiateWithoutColor || colorSchemeContrast == .increased
+                        context.fill(Path(mark), with: strong ? .color(.red) : ETGraphShading.curve)
                     }
 
                     // 段の名前。枠の左の余白に置く。

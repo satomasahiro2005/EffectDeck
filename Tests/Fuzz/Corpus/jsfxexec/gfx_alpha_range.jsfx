@@ -1,0 +1,45 @@
+desc:EffectDeck gfx alpha range
+author:nemut.ai
+tags:test
+
+@sample
+spl0 = spl0;
+
+@gfx 96 64
+W = gfx_w; H = gfx_h;
+gfx_setimgdim(3, 32, 32);
+gfx_dest = 3;
+gfx_set(1, 0.5, 0.25, 0.5);
+gfx_rect(0, 0, 32, 32);
+gfx_dest = -1;
+gfx_set(0.3, 0.6, 0.9, 1);
+gfx_rect(0, 0, W, H);
+// gfx_a の端（巨大・負・0..1 の外）と、色・alpha が傾きで育つ gradrect を全部の合成で
+m = 0;
+loop(6,
+  k = 0;
+  loop(5,
+    gfx_mode = m * 16 + (k == 4);
+    gfx_r = 1; gfx_g = 0.5; gfx_b = 0.25;
+    gfx_a = k == 0 ? 1000000000 : k == 1 ? -1000000000 : k == 2 ? 200 : k == 3 ? -16 : 12;
+    gfx_rect(0, 0, W, H);
+    gfx_rect(1, 1, W - 2, H - 2, 0);
+    gfx_line(0, 0, W, 0);
+    gfx_line(0, 0, W, H * 0.7, 1);
+    gfx_circle(W / 2, H / 2, H / 3, 1, 1);
+    gfx_circle(W / 2, H / 2, H / 3, 0, 1);
+    gfx_roundrect(2, 2, W - 4, H - 4, 6, 1);
+    gfx_arc(W / 2, H / 2, H / 4, 0, $pi, 1);
+    gfx_triangle(0, 0, W, 0, 0, H);
+    gfx_x = 0; gfx_y = 0; gfx_setpixel(1, 0.5, 0.25);
+    gfx_x = 0; gfx_y = 0; gfx_drawstr("EffectDeck");
+    gfx_x = 0; gfx_y = 0; gfx_blit(3, 1, 0);
+    gfx_blit(3, 1, 0.5);
+    gfx_blit(3, 1, 0, 0, 0, 32, 32, 0, 0, W, H);
+    gfx_gradrect(0, 0, W, H, 200, 200, 200, 200);
+    gfx_gradrect(0, 0, W, H, 200, 200, 200, 2);
+    gfx_gradrect(0, 0, W, H, 0, 0, 0, 0, 10, 10, 10, 10, -10, -10, -10, -10);
+    k += 1;
+  );
+  m += 1;
+);

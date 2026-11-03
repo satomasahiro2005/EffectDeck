@@ -1,0 +1,31 @@
+desc:Fuzz Multichannel
+author:nemut.ai
+slider1:0<0,63,1>Channel
+slider2:0<-1,1,0.01>Offset
+
+in_pin:1
+in_pin:2
+in_pin:3
+in_pin:4
+out_pin:1
+out_pin:2
+out_pin:3
+out_pin:4
+
+@init
+ext_nodenorm = 1;
+pdc_delay = 0;
+
+@slider
+ch = slider1;
+
+@block
+chans = num_ch;
+pos = play_position + beat_position + tempo * ts_num / max(ts_denom, 1);
+
+@sample
+i = 0;
+loop(num_ch, spl(i) = spl(i) + slider2; i += 1;);
+spl(ch) = -spl(ch);
+spl63 = spl0;
+spl7 = spl1;

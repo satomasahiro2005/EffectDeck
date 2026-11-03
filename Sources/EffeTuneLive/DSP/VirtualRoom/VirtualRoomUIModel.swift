@@ -11,8 +11,11 @@
 //  §53 のとおり、**保存値は書き換えない。**効く値へ寄せるのは kernel の仕事で、
 //  ここは同じ規則で「いま実際に鳴っている配置」を描くためだけに真似る。
 
-import CoreGraphics
 import Foundation
+// LinuxのFoundationはCGPointなどを全部持っていてCoreGraphicsが無い（GraphMath.swiftと同じ）。
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 enum ETVirtualRoom {
 

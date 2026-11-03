@@ -30,6 +30,199 @@ enum ETMetrics {
     /// 引き算の結果 0 になり、minimum を付けても実機で角が消えていた。
     /// 見た目が先なので数値にしてある。変えるのはこの 1 行。
     static let innerRadius: CGFloat = 8
+
+    /// 文字サイズに追従させた数値欄の高さ（UIKit 側で測るとき用）。
+    /// SwiftUI の中では ETValueFrame の @ScaledMetric を使い、これは ETTapOutside のように
+    /// View の外から当たりを測る所だけが読む。既定の文字サイズでは controlHeight と同じ。
+    static var scaledControlHeight: CGFloat {
+        UIFontMetrics(forTextStyle: .footnote).scaledValue(for: controlHeight)
+    }
+}
+
+// MARK: - アクセシビリティの共通部品
+//
+// 他のビューはここだけを使う。
+//   .etFont(size: 14)                      文字サイズ設定に追従する .font(.system(size:))
+//   .etValueFrame() / .etValueFrame(isField: true)   数値欄の枠（68x30 を文字サイズに追従させる）
+//   etWithAnimation(.snappy) { ... }       視差効果を減らすとき動かさない withAnimation
+//   ETMotion.animation(.snappy)            同じ判定で Animation? だけ欲しいとき
+//   .etAnimation(.snappy, value: x)        同じ判定の .animation(_:value:)
+//   ETAssistiveState                       VoiceOver / スイッチコントロールが動いているか（DynamicProperty）
+
+/// 文字サイズ設定に追従する固定ポイントのフォント。
+///
+/// **既定の文字サイズ（Large）では .font(.system(size:)) と同じ大きさ。**
+/// @ScaledMetric は relativeTo の文字スタイルの伸び方で size を拡大する。
+/// 伸び方を揃えるため、size から近い文字スタイルを選ぶ（relativeTo を渡せば上書き）。
+private struct ETFontModifier: ViewModifier {
+    @ScaledMetric private var scaledSize: CGFloat
+    private let weight: Font.Weight
+    private let design: Font.Design
+
+    init(size: CGFloat, relativeTo style: Font.TextStyle,
+         weight: Font.Weight, design: Font.Design) {
+        _scaledSize = ScaledMetric(wrappedValue: size, relativeTo: style)
+        self.weight = weight
+        self.design = design
+    }
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: scaledSize, weight: weight, design: design))
+    }
+}
+
+enum ETFontStyle {
+    /// 既定サイズが近い文字スタイル。16 は callout、15 は subheadline、14 と 13 は footnote、
+    /// 12 は caption、11 以下は caption2。
+    static func nearest(to size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case 32...:   return .largeTitle
+        case 26...:   return .title
+        case 21...:   return .title2
+        case 19...:   return .title3
+        case 17...:   return .body
+        case 16...:   return .callout
+        case 15...:   return .subheadline
+        case 13...:   return .footnote
+        case 12...:   return .caption
+        default:      return .caption2
+        }
+    }
+}
+
+extension View {
+    /// `.font(.system(size:weight:design:))` の、文字サイズ設定に追従する版。
+    /// 既定のサイズでは見た目が変わらない。ツールバーのように伸ばせない所には使わない。
+    func etFont(size: CGFloat,
+                relativeTo style: Font.TextStyle? = nil,
+                weight: Font.Weight = .regular,
+                design: Font.Design = .default) -> some View {
+        modifier(ETFontModifier(size: size,
+                                relativeTo: style ?? ETFontStyle.nearest(to: size),
+                                weight: weight, design: design))
+    }
+}
+
+/// 数値欄の枠。68x30 を文字サイズに追従させる。
+///
+/// 既定の文字サイズ（Large）では今までと同じ 68x30 の固定の枠。
+/// 他の文字サイズでは、字と同じ比率で枠も伸び縮みする（字だけ変わって枠が合わなくなるのを防ぐ）。
+/// 組み方が変わるのはアクセシビリティサイズだけで、そこでは
+/// 縮めずに（minimumScaleFactor は外す）枠のほうを広げる。
+/// - `isField: false`（ValueBox）: 字の長さに合わせて最小の枠より広がる。
+///   それでも幅を超える値（"20.00 kHz"）は、"20.00 k…" と単位を落とさず折り返して全部出す。
+/// - `isField: true`（TextField）: TextField は余白を取れるだけ取るので幅は決め打ち。
+///   アクセシビリティサイズでは 9 字の "-12.50 dB" が入るよう 1.3 倍にする。
+private struct ETValueFrame: ViewModifier {
+    @ScaledMetric(relativeTo: .footnote) private var width = ETMetrics.valueWidth
+    @ScaledMetric(relativeTo: .footnote) private var height = ETMetrics.controlHeight
+    @Environment(\.dynamicTypeSize) private var typeSize
+    let isField: Bool
+    let shrinks: Bool
+    /// 通常サイズで 1 行に固定するか（ValueBox だけ。ほかの Text は今までどおり行数を指定しない）。
+    let singleLine: Bool
+
+    func body(content: Content) -> some View {
+        if !typeSize.isAccessibilitySize {
+            // ValueBox は 1 行のまま（今まで Text 側に付けていた lineLimit(1) をここへ移した）。
+            if singleLine {
+                content
+                    .lineLimit(1)
+                    .minimumScaleFactor(shrinks ? 0.7 : 1)
+                    .frame(width: width, height: height)
+            } else {
+                content
+                    .minimumScaleFactor(shrinks ? 0.7 : 1)
+                    .frame(width: width, height: height)
+            }
+        } else if isField {
+            content
+                .frame(width: width * 1.3)
+                .frame(minHeight: height)
+        } else {
+            // 縮めず折り返す。欄の枠の中で字が詰まらないよう、左右に余白を足す。
+            content
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
+                .frame(minWidth: width, minHeight: height)
+        }
+    }
+}
+
+extension View {
+    /// 数値欄の枠と、アクセシビリティサイズより下での縮小の下限。ValueBox・ETValueField・ParameterRow の欄が使う。
+    /// `shrinks: false` は通常サイズでも字を縮めない（今まで縮めていなかった欄用）。
+    func etValueFrame(isField: Bool = false, shrinks: Bool = true, singleLine: Bool = false) -> some View {
+        modifier(ETValueFrame(isField: isField, shrinks: shrinks, singleLine: singleLine))
+    }
+}
+
+/// 視差効果を減らす設定のときは動かさない。
+///
+/// ドラッグへの追従はそのままでよい（指に付いてくる動きは酔いの原因にならない）。
+/// 動かさないのは、カードの開閉・並べ替えの着地・チップの切り替えのような、
+/// 押したあとに画面が勝手に動く所だけ。
+enum ETMotion {
+    @MainActor
+    static func animation(_ animation: Animation?) -> Animation? {
+        UIAccessibility.isReduceMotionEnabled ? nil : animation
+    }
+}
+
+/// `withAnimation` の、視差効果を減らす設定に従う版。
+@MainActor
+func etWithAnimation<Result>(_ animation: Animation? = .default,
+                             _ body: () throws -> Result) rethrows -> Result {
+    try withAnimation(ETMotion.animation(animation), body)
+}
+
+private struct ETAnimationModifier<V: Equatable>: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let animation: Animation?
+    let value: V
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : animation, value: value)
+    }
+}
+
+extension View {
+    /// `.animation(_:value:)` の、視差効果を減らす設定に従う版。
+    func etAnimation<V: Equatable>(_ animation: Animation?, value: V) -> some View {
+        modifier(ETAnimationModifier(animation: animation, value: value))
+    }
+}
+
+/// VoiceOver かスイッチコントロールが動いているか。
+///
+/// View の中では `private var assistive = ETAssistiveState()` として持つ
+/// （環境値なので、設定が変わると View が作り直される）。
+/// UIViewRepresentable は private な保持を足すと memberwise init が private になり
+/// 呼び出し側が壊れるので、`reorderLongPress(in: context.environment)` を使う
+/// （makeUIView / updateUIView の context は常に最新の環境値を持つ）。
+/// 並べ替えの長押しは通常 0.25 秒、動いているときだけシステム既定の 0.5 秒にする。
+struct ETAssistiveState: DynamicProperty {
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilitySwitchControlEnabled) private var switchControl
+
+    var isRunning: Bool { voiceOver || switchControl }
+
+    /// 並べ替えを始める長押しの秒数。
+    var reorderLongPress: Double { isRunning ? 0.5 : 0.25 }
+
+    /// 環境値を直接渡すとき用（UIViewRepresentable の context.environment）。
+    static func reorderLongPress(in environment: EnvironmentValues) -> Double {
+        environment.accessibilityVoiceOverEnabled || environment.accessibilitySwitchControlEnabled ? 0.5 : 0.25
+    }
+}
+
+enum ETAssistive {
+    /// View の外から見るとき用（環境値が使えない所）。
+    @MainActor
+    static var isRunning: Bool {
+        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
+    }
 }
 
 /// エフェクトの入切。EffeTune は各エフェクトの頭に ON のバッジを置いている。
@@ -38,12 +231,139 @@ struct PowerBadge: View {
 
     var body: some View {
         Text("ON")
-            .font(.system(size: 11, weight: .heavy))
+            .etFont(size: 11, weight: .heavy)
             .tracking(0.5)
             .foregroundStyle(isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-            .frame(width: 42, height: 26)
+            .modifier(ETPowerBadgeFrame())
             .background(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary),
                         in: .capsule)
+    }
+}
+
+/// ON バッジの枠。通常の文字サイズでは今までどおり 42x26 の固定。
+///
+/// 字（etFont）だけが伸びて枠が固定のままだと、アクセシビリティサイズで "ON" が "…" に潰れる。
+/// そこでは字を縮めず、字の大きさに合わせて枠のほうを広げる（最小は文字サイズに追従した 42x26）。
+private struct ETPowerBadgeFrame: ViewModifier {
+    @ScaledMetric(relativeTo: .caption2) private var width: CGFloat = 42
+    @ScaledMetric(relativeTo: .caption2) private var height: CGFloat = 26
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    func body(content: Content) -> some View {
+        if typeSize.isAccessibilitySize {
+            content
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .frame(minWidth: width, minHeight: height)
+        } else {
+            content.frame(width: 42, height: 26)
+        }
+    }
+}
+
+/// 名前と操作子を並べる行。通常は横一列、アクセシビリティサイズでは縦に積む。
+///
+/// 数値欄（ETValueField）は幅が決め打ちなので、大きな文字で横に並べると名前の列が
+/// 数文字分しか残らず、"Fr…" や "Gai/n" になる。ParameterRow と同じく、そこでだけ縦にする。
+/// 通常サイズの並びは今までの HStack（中央揃え）のまま。
+///
+/// `content` には積んでいるかどうかを渡す。Spacer は縦では場所を取るだけなので、
+/// 横のときだけ置くのに使う。
+struct ETAdaptiveStack<Content: View>: View {
+    private let spacing: CGFloat?
+    private let stackedSpacing: CGFloat
+    private let content: (_ stacked: Bool) -> Content
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    // Environment を private で持つので、memberwise init には頼れない。
+    init(spacing: CGFloat? = 8, stackedSpacing: CGFloat = 4,
+         @ViewBuilder content: @escaping (_ stacked: Bool) -> Content) {
+        self.spacing = spacing
+        self.stackedSpacing = stackedSpacing
+        self.content = content
+    }
+
+    var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: stackedSpacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content(stacked) }
+    }
+}
+
+/// 見出しや節の頭に置く、文字だけの操作（Reset / Import など）。
+///
+/// 小さい青字だけだとボタンに見えず、押せる場所も分からなかった。標準の small bordered にする。
+/// 見た目（カプセル）と並びの高さは標準のまま、押せる面だけを label の中で 44pt まで広げる
+/// （余白を足して同じだけ引く。外側に contentShape を付けても Button の当たりは広がらない）。
+/// footnote の 1 行は標準で約 16pt なので、上下 14 ずつで 44pt。
+struct ETTextActionButton: View {
+    let title: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.footnote)
+                .padding(.vertical, 14)
+                .contentShape(.rect)
+                .padding(.vertical, -14)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+}
+
+/// 名前（見出し）・メニュー・入切の行。PEQ のバンドの頭に使う。
+///
+/// 横に並べると、メニューの値（"Peaking"）が UIKit のラベルに狭い幅で渡されて
+/// 1 字ずつ折り返し、カードの高さの計算も合わなくなる（次の行が本文に重なった）。
+/// アクセシビリティサイズでは、見出しと入切を上、メニューを下の 1 行に積み、
+/// メニューは折り返さない大きさ（fixedSize）で出す。通常サイズは今までの 1 行のまま。
+struct ETMenuHeader<MenuContent: View, Trailing: View>: View {
+    private let title: String
+    private let menu: MenuContent
+    private let trailing: Trailing
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    init(title: String, @ViewBuilder menu: () -> MenuContent, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title
+        self.menu = menu()
+        self.trailing = trailing()
+    }
+
+    private var label: some View {
+        Text(title)
+            .etFont(size: 10, weight: .semibold)
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+    }
+
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    label
+                    Spacer(minLength: 0)
+                    trailing
+                }
+                menu
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            HStack(spacing: 8) {
+                label
+                // L 以下は今のまま。それより大きいと細い提案幅で「Peak-/ing」と折り返し、
+                // カードの高さが伸びきらず次の行と重なるので、折り返さず内容の幅を使う。
+                menu
+                    .fixedSize(horizontal: typeSize > .large, vertical: false)
+                Spacer(minLength: 0)
+                trailing
+            }
+        }
     }
 }
 
@@ -52,11 +372,10 @@ struct ValueBox: View {
     let text: String
 
     var body: some View {
+        // 1 行にするかは etValueFrame が決める（アクセシビリティサイズでは折り返して単位を残す）。
         Text(text)
-            .font(.system(size: 13, design: .monospaced))
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etFont(size: 13, design: .monospaced)
+            .etValueFrame(singleLine: true)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 }
@@ -92,11 +411,10 @@ struct ETValueField: View {
             set: { draft = $0 }))
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.center)
-            .font(.system(size: 13, design: .monospaced))
+            .etFont(size: 13, design: .monospaced)
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
             .focused($focused)
-            .frame(width: ETMetrics.valueWidth, height: ETMetrics.controlHeight)
+            .etValueFrame(isField: true)
             .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: ETMetrics.innerRadius, style: .continuous)
                 .stroke(.tint, lineWidth: editing ? 1 : 0))
@@ -112,6 +430,8 @@ struct ETValueField: View {
                     apply()
                 }
             }
+            // 何も無い所・カードの名前・2列の左の一覧を触ったときも確定させる（ETTapOutside）。
+            .etCommitsOnTapOutside($focused) { apply() }
             .accessibilityLabel(label)
             .accessibilityValue(text)
     }
@@ -121,6 +441,105 @@ struct ETValueField: View {
         focused = false
         guard let typed = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
         commit(typed)
+    }
+}
+
+/// **打ち込み中の数値欄の外を触ったら、欄を確定させる。**窓に認識器を1つだけ付ける。
+///
+/// 数値欄（ETValueField・ParameterRow）が確定するのは、Return・キーボードを下げる・
+/// 別の欄を触るの3つだけだった。iPadで数を打って何も無い所・カードの名前・2列の左の一覧を
+/// 触っても欄は打ち込み中のまま残り、打った値が渡らなかった（シミュレータ、10枚とも）。
+///
+/// **SwiftUIの.onTapGestureでは拾い切れない。**地（ScrollViewの背面）に付けると、
+/// カードの中の余白・自分のonTapGestureを持つカードの名前・左の一覧に届かない。
+/// 親に付けると子の欄や部品と取り合う。窓の認識器は触りを奪わず
+/// （cancelsTouchesInView = false）、ほかの認識器と同時に立つので、押した部品はそのまま動く。
+///
+/// - **字の欄の上では受けない。**別の欄へ移る・同じ欄の中でカーソルを動かすのはUIKitに任せる
+///   （別の欄へ移ったときは欄が外れて今も確定する）。受けると、移った先の欄まで外れうる。
+/// - **打ち込み中の欄の塗りの中でも受けない。**数値欄の塗りは高さ30pt（ETMetrics.controlHeight）で、
+///   中の字の欄は1行ぶんの高さしか持たないことがある。そのときの上下の帯は字の欄ではないので、
+///   見ないと、同じ欄の端を触っただけで確定して打ち込みが終わる。
+/// - **外すのは数値欄だけ。**合図を受けた欄が自分で確定する（etCommitsOnTapOutside）。
+///   ほかの字の欄（Sectionの名前・プリセットの名前・検索）やJSFXのキーボード受けは触らない。
+@MainActor
+final class ETTapOutside: NSObject, UIGestureRecognizerDelegate {
+    /// 外を触った合図。
+    nonisolated static let tapped = Notification.Name("ETTapOutside")
+    private static let shared = ETTapOutside()
+
+    /// 前面の窓に付ける。付いていれば何もしない。数値欄が打ち込みを始めたときに呼ぶ。
+    /// 付けるのは最初の1回だけで、後は付けたまま（欄が無いときは合図を受ける相手が居ないだけ）。
+    static func install() {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let window = (scene as? UIWindowScene)?.keyWindow,
+                  !(window.gestureRecognizers ?? []).contains(where: { $0.delegate === shared })
+            else { continue }
+            let recognizer = UITapGestureRecognizer(target: shared, action: #selector(ETTapOutside.fire(_:)))
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesEnded = false
+            recognizer.requiresExclusiveTouchType = false
+            recognizer.delegate = shared
+            window.addGestureRecognizer(recognizer)
+        }
+    }
+
+    @objc private func fire(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        NotificationCenter.default.post(name: Self.tapped, object: nil)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldReceive touch: UITouch) -> Bool {
+        var view = touch.view
+        while let current = view {
+            if current is UITextInput { return false }
+            view = current.superview
+        }
+        return !Self.insideEditingBox(touch)
+    }
+
+    /// 打ち込み中の字の欄を、塗りの高さ（ETMetrics.controlHeight）まで上下に広げた中を触ったか。
+    /// 欄は塗りの真ん中に居るので、触った所から上下に塗りの半分ずつずらした点を引けば、
+    /// 帯のどこを触っても片方が欄に当たる。当たった欄が打ち込み中のときだけ枠を測って比べる。
+    private static func insideEditingBox(_ touch: UITouch) -> Bool {
+        guard let window = touch.window else { return false }
+        let point = touch.location(in: window)
+        let height = ETMetrics.scaledControlHeight
+        let reach = height / 2
+        for dy in [reach, -reach] {
+            var hit = window.hitTest(CGPoint(x: point.x, y: point.y + dy), with: nil)
+            while let current = hit, !(current is UITextInput) { hit = current.superview }
+            guard let field = hit, field.isFirstResponder else { continue }
+            let frame = field.convert(field.bounds, to: window)
+            let band = max(0, (height - frame.height) / 2)
+            if frame.insetBy(dx: 0, dy: -band).contains(point) { return true }
+        }
+        return false
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+}
+
+extension View {
+    /// 数値欄に付ける。打ち込み中に外を触ったら`commit`を呼ぶ（ETTapOutside）。
+    ///
+    /// **@FocusStateを落とすだけにせず、ここで確定させる。**iPhoneではカードの名前を触ると
+    /// カードが畳まれて欄ごと消え、消えた欄にはonChange(of: focused)が来ない。
+    /// 合図は触った瞬間に届くので、畳まれる前に確定できる。
+    /// `commit`は欄の@FocusStateも落とすこと（落とさないと打ち込み中のまま残る）。
+    func etCommitsOnTapOutside(_ focused: FocusState<Bool>.Binding,
+                               commit: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: focused.wrappedValue) { _, now in
+                if now { ETTapOutside.install() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ETTapOutside.tapped)) { _ in
+                if focused.wrappedValue { commit() }
+            }
     }
 }
 
@@ -227,8 +646,7 @@ extension View {
     where T: RawRepresentable & Equatable, T.RawValue == String {
         self
             .onAppear {
-                guard dsp.chain.indices.contains(index),
-                      let raw = dsp.chain[index].display[key],
+                guard let raw = dsp.node(at: index)?.display[key],
                       let v = T(rawValue: raw) else { return }
                 value.wrappedValue = v
             }
@@ -243,8 +661,7 @@ extension View {
                  dsp: EffeTuneDSP, on: String = "true", off: String = "false") -> some View {
         self
             .onAppear {
-                guard dsp.chain.indices.contains(index),
-                      let raw = dsp.chain[index].display[key] else { return }
+                guard let raw = dsp.node(at: index)?.display[key] else { return }
                 value.wrappedValue = raw == on
             }
             .onChange(of: value.wrappedValue) { _, v in
@@ -257,8 +674,7 @@ extension View {
                  dsp: EffeTuneDSP) -> some View {
         self
             .onAppear {
-                guard dsp.chain.indices.contains(index),
-                      let raw = dsp.chain[index].display[key],
+                guard let raw = dsp.node(at: index)?.display[key],
                       let v = Double(raw) else { return }
                 value.wrappedValue = v
             }
@@ -319,7 +735,9 @@ enum ETNumberText {
         guard v.isFinite else { return "—" }
         let value = abs(v) < 1e-9 ? 0 : v   // -0 と 1e-17 を 0 に寄せる
         let decimals: Int
-        if step > 0 {
+        // **無限の刻みを通さない。**inc は strtod そのままで、`inf` や 1e999 が来る。
+        // -log10(inf) は -inf で、Int() がメインスレッドで落ちる。
+        if step > 0, step.isFinite {
             // -1e-9 は境界対策。step=1 で -log10(1) が -0.0 側に転ぶと 1 桁になる。
             decimals = min(6, max(0, Int(ceil(-log10(step) - 1e-9))))
         } else if value == value.rounded() {
@@ -398,9 +816,6 @@ extension String {
         switch self {
         case "eq":   return "EQ"
         case "lofi": return "Lo-Fi"
-        // control に居るのは Section だけで、音を触らない。効果と同じ顔で
-        // 「Control」と出ると効果の一種に見えるので、何をするものかで呼ぶ。
-        case "control": return "Grouping"
         default:     return prefix(1).uppercased() + dropFirst()
         }
     }
@@ -520,13 +935,20 @@ struct PowerToggleStyle: ToggleStyle {
             configuration.isOn.toggle()
         } label: {
             Image(systemName: configuration.isOn ? "power.circle.fill" : "power.circle")
-                .font(.system(size: 20, weight: .medium))
+                .etFont(size: 20, weight: .medium)
                 .foregroundStyle(configuration.isOn ? AnyShapeStyle(.tint)
                                                     : AnyShapeStyle(.secondary))
-                .frame(width: ETMetrics.hitTarget, height: ETMetrics.hitTarget)
+                .frame(minWidth: ETMetrics.hitTarget, minHeight: ETMetrics.hitTarget)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        // Button で描くと、支援技術に「入切できる」と「いま入／切」が伝わるかが OS 任せになる。
+        // 読み上げの木だけ本物の Toggle にする（見た目は上の Button のまま）。
+        // .automatic を明示するのは、環境の .power を継いで makeBody が入れ子で呼ばれないため。
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.automatic)
+        }
     }
 }
 
@@ -554,6 +976,8 @@ struct MasterPowerToggleStyle: ToggleStyle {
         Button {
             configuration.isOn.toggle()
         } label: {
+            // この 2 つの字（11・12pt）は etFont にしない。ツールバーの枠は伸ばせず、
+            // 伸ばすと隣のボタンを押しのける。代わりに下の Large Content Viewer を出す。
             HStack(spacing: 4) {
                 // 絵で入切を言う。切っているときは斜線入り。
                 Image(systemName: configuration.isOn ? "power" : "power.dotted")
@@ -582,6 +1006,15 @@ struct MasterPowerToggleStyle: ToggleStyle {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.automatic)
+        }
+        // ツールバーは伸ばせないので字は固定のまま、長押しで大きな表示を出す
+        // （文字サイズをアクセシビリティサイズにしているときだけ出る）。
+        .accessibilityShowsLargeContentViewer {
+            Label("Effects", systemImage: configuration.isOn ? "power" : "power.dotted")
+        }
     }
 }
 
@@ -601,6 +1034,24 @@ extension EnvironmentValues {
     /// 畳んでもカードが縮まない＝畳めないのと同じだった。
     /// GraphCanvas の 1 箇所で当たるので、12 本ある図に個別の細工は要らない。
     @Entry var etGraphMaxHeight: CGFloat? = nil
+
+    /// 図に最新の枠を届けるか。偽のあいだETTelemetryFeedは知らせを止める。
+    ///
+    /// 2列のときはカードを全部開くので、画面の外にも図が並ぶ。
+    /// 立てたり落としたりするのはETLiveRowだけで、1列のときは常に真。
+    @Entry var etGraphLive: Bool = true
+
+    /// カードを開いたままにするか。**2列のときだけ真。**
+    ///
+    /// 開閉の印（カードの矢印とSectionの44ptのボタン）を出さない。
+    /// ただし図を持つカードは図だけの形にできるので、矢印を出す。
+    /// 開いているかどうかはPipelineViewが渡すisExpandedが決めていて、
+    /// iPhoneの開閉の覚え（dsp.expanded / dsp.collapsedFully）は書かない。
+    @Entry var etCardsPinnedOpen: Bool = false
+
+    /// 音量に追従する PEQ の、もう1台（相方）が鳴らしている値。nil なら無い。
+    /// PEQ の図が2台ぶんを足した曲線を描く（EffeTuneDSP.soundingPEQ）。読むだけの印は薄く出す。
+    @Entry var etPEQCompanionValues: [Float]? = nil
 }
 
 /// 組（Section とその配下）の上と下に引く横線。
@@ -623,5 +1074,21 @@ extension String {
     /// 頭が prefix なら、その先を返す。違えば nil。
     func dropPrefixIfPresent(_ prefix: String) -> String? {
         hasPrefix(prefix) ? String(dropFirst(prefix.count)) : nil
+    }
+}
+
+extension View {
+    /// ナビゲーションバーの題を、アプリの字として描く（題の行は iOS が描くので、アプリの「標準より小さくしない」が
+    /// 届かず、最小の設定で題だけ小さくなった）。navigationTitle も置くので、戻るボタンや読み上げはそのまま。
+    func etNavigationTitle(_ title: String) -> some View {
+        navigationTitle(title)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .etFont(size: 17, weight: .semibold)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
     }
 }

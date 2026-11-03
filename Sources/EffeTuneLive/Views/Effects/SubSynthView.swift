@@ -15,10 +15,11 @@
 //    横 5Hz〜1000Hz の対数（同 450 と 503）。格子は 5/10/20/50/100/200/500（同 447）で、
 //      字は幅が狭いときの 4 つ（同 448）
 //    縦 -30〜+6 dB、格子は 6 dB ごと（同 462-464）
-//    線は 2 本。dry は Dry HPF だけを掛けたもの（同 501-519。Dry Level は入らない）、
+//    線は 2 本。dry は Dry Level に Dry HPF を掛けたもの（2.12.0 の _dryResponseDb、同 549-562。
+//      2.11.0 までは Dry Level が入らなかった）、
 //      sub は Sub Level に Sub LPF と Sub HPF を掛けたもの（同 525-554）
-//    軸名は同 479-483 の「Frequency (Hz)」「Level (dB)」。GraphCanvas は軸名を持たないので
-//      見出しに入れてある。
+//    軸名は同 479-483 の「Frequency (Hz)」「Level (dB)」。GraphCanvas は軸名を持たず、
+//      見出しにも入れない（見出しは線の名前だけ）。
 //
 //  上流は図をコントロールの後ろに置く（同 405）が、このアプリの他のカードは
 //  図が先なので、そちらに合わせてある。
@@ -68,7 +69,7 @@ struct SubSynthView: View {
             y: ETAxis.decibels(Self.decibelRange, step: 6),
             height: ETGraphMetrics.height,
             insets: .standard,
-            caption: "Sub and Dry, Level (dB) over Frequency (Hz)",
+            caption: "Sub / Dry",
             clipsContent: true,
             draw: { context, plot in
                 for trace in traces {
@@ -105,13 +106,14 @@ struct SubSynthView: View {
         let subHpfSlope = DynamicsParams.value(node, "shs")
         let dryHpfHz = DynamicsParams.value(node, "dhf")
         let dryHpfSlope = DynamicsParams.value(node, "dhs")
+        let dryLevel = DynamicsParams.value(node, "dl") / 100
 
         let dry = ETFrequencyCurve.sampled(id: "dry", count: Self.samples,
                                            from: Self.lowHz, to: Self.highHz,
                                            subdued: true) { hz in
             SubSynthResponse.decibels(
-                SubSynthResponse.magnitude(hz: hz, cutoff: dryHpfHz,
-                                           slope: dryHpfSlope, isHighpass: true))
+                dryLevel * SubSynthResponse.magnitude(hz: hz, cutoff: dryHpfHz,
+                                                      slope: dryHpfSlope, isHighpass: true))
         }
         let sub = ETFrequencyCurve.sampled(id: "sub", count: Self.samples,
                                            from: Self.lowHz, to: Self.highHz) { hz in
@@ -159,7 +161,7 @@ struct SubSynthView: View {
         } label: {
             // 上流の option と同じ字（同 351）。
             Text(slope == 0 ? "Off" : "\(abs(slope))dB/oct")
-                .font(.system(size: 12, weight: isSelected ? .bold : .regular))
+                .etFont(size: 12, weight: isSelected ? .bold : .regular)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))

@@ -70,7 +70,7 @@ private struct SWRadioHUD: View {
     let isAM: Bool
     let isEnabled: Bool
 
-    @ObservedObject private var telemetry = Telemetry.shared
+    @ETTelemetryFeed private var telemetry
 
     /// 1 つ前の数え上げ。差を経過時間で割って毎秒の回数にする（js:1764-1778）。
     @State private var lastStaticCount: UInt32?
@@ -137,29 +137,21 @@ private struct SWRadioHUD: View {
     private var content: some View {
         if !isEnabled {
             // js:2070-2076 の messages。
-            placeholder("Effect is off", nil)
+            placeholder("Effect is off")
         } else if let t = latest {
             cards(t)
         } else {
-            placeholder("Waiting for audio", "Start playback to view the receiver status.")
+            placeholder("Waiting for audio")
         }
     }
 
-    private func placeholder(_ title: String, _ detail: String?) -> some View {
-        VStack(spacing: 4) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: Self.cardHeight * 2 + Self.gap)
-        .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
+    private func placeholder(_ title: String) -> some View {
+        Text(title)
+            .etFont(size: 13, weight: .semibold)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.cardHeight * 2 + Self.gap)
+            .background(.quaternary, in: .rect(cornerRadius: ETMetrics.innerRadius, style: .continuous))
     }
 
     private func cards(_ t: ETSWRadioTelemetry) -> some View {
@@ -202,16 +194,16 @@ private struct SWRadioHUD: View {
     private func card(_ item: ETSWRadioCard, flashing: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(item.title)
-                .font(.system(size: 9, weight: .semibold))
+                .etFont(size: 9, weight: .semibold)
                 .tracking(0.4)
                 .foregroundStyle(.secondary)
             Text(item.value)
-                .font(.system(size: 13, design: .monospaced))
+                .etFont(size: 13, design: .monospaced)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             if let detail = item.detail {
                 Text(detail)
-                    .font(.system(size: 10, design: .monospaced))
+                    .etFont(size: 10, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -285,6 +277,7 @@ struct SWRadioSimulatorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             SWRadioHUD(tapId: node.tapId, isAM: mode == "AM", isEnabled: node.enabled)
+                .etLocalAudioOnly()
             if !graphOnly {
                 tabStrip
                 Divider()
@@ -322,7 +315,7 @@ struct SWRadioSimulatorView: View {
                         tab = item
                     } label: {
                         Text(item.title)
-                            .font(.system(size: 12, weight: tab == item ? .bold : .regular))
+                            .etFont(size: 12, weight: tab == item ? .bold : .regular)
                             .foregroundStyle(tab == item ? AnyShapeStyle(.white)
                                                          : AnyShapeStyle(.secondary))
                             .padding(.horizontal, 10)

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- GitHub Actions の release.yml が xcodebuild -exportArchive に渡す書き出しの設定。
+     手動署名（signingStyle=manual）。Apple Distribution の証明書は Environment release の secret の p12
+     （DIST_P12_BASE64）から一時キーチェーンに入れ、App Store のプロファイルは Tools/asc.py profile が
+     API キーで取って ~/Library/MobileDevice/Provisioning Profiles へ置く。書き出しは API キーを使わず、
+     Apple 側に何も作らせない（クラウド署名にしない。開発用証明書も増えない）。
+     これは Mac の手元の ~/signing/export.plist（Scripts/ship.sh 用）と同じ中身。
+     上げるのは別の段（altool）なので destination は export。ビルド番号は release.yml が ASC の最大 + 1 に
+     決めて書庫に入れてあるので、書き出しに上げさせない（manageAppVersionAndBuildNumber=false）。 -->
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution: Masahiro Sato (C82ST8T9MN)</string>
+	<key>teamID</key>
+	<string>C82ST8T9MN</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>ai.nemut.effetune</key>
+		<string>EffeTuneLive-AppStore</string>
+		<key>ai.nemut.effetune.extension</key>
+		<string>EffeTuneLiveExt-AppStore</string>
+		<key>ai.nemut.effetune.share</key>
+		<string>EffectDeckShare-AppStore</string>
+	</dict>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>

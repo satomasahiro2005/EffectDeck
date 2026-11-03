@@ -1,0 +1,99 @@
+# App Store Connect への書き込みを、Mac なしで手で回す（Tools/asc.py を API キーで）。
+#
+#   regen-profile  arg1 = プロファイルの名前、arg2 = bundle ID
+#                  bundle ID に INTER_APP_AUDIO が無ければ足し、同じ名前のプロファイルを消して
+#                  IOS_APP_STORE を配布用証明書で作り直す（asc.py regen-profile）
+#   beta-submit    arg1 = 版（MARKETING_VERSION）、arg2 = ビルド番号
+#                  処理済みのビルドを探し、Tools/beta_notes.txt を What to Test に書いて、外部グループ
+#                  "EffectDeck Public Beta" に足し、TestFlight の審査へ出す（asc.py beta-submit）
+#
+# main からだけ。Environment "release"（必須レビュアー = 本人）の承認を待つ。
+# What to Test の本文は notes_ref（既定 main）のブランチの Tools/beta_notes.txt を読む
+# （TestFlight を main 以外のブランチから出したときは、そのブランチを渡す）。
+# 鍵は回の間だけ置き、最後に必ず消す（testflight-internal.yml と同じ置き方）。
+name: ASC ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      op:
+        description: regen-profile（arg1=名前 arg2=bundle ID）か beta-submit（arg1=版 arg2=ビルド番号）
+        required: true
+        type: choice
+        options: [regen-profile, beta-submit]
+      arg1:
+        description: regen-profile はプロファイルの名前、beta-submit は版
+        required: true
+        type: string
+      arg2:
+        description: regen-profile は bundle ID、beta-submit はビルド番号
+        required: true
+        type: string
+      notes_ref:
+        description: beta-submit で Tools/beta_notes.txt を読むブランチ
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  op:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 15
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      OP: ${{ inputs.op }}
+      ARG1: ${{ inputs.arg1 }}
+      ARG2: ${{ inputs.arg2 }}
+      NOTES_REF: ${{ inputs.notes_ref }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: API キーを置く
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        shell: bash
+        # set -x は使わない。鍵は表示しない。
+        run: |
+          test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID" && test -n "$ASC_KEY_P8"
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          key="$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          if printf '%s' "$ASC_KEY_P8" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$ASC_KEY_P8" > "$key"
+          else
+            printf '%s' "$ASC_KEY_P8" | base64 --decode > "$key"
+          fi
+          grep -q 'BEGIN PRIVATE KEY' "$key"
+      - name: regen-profile
+        if: inputs.op == 'regen-profile'
+        shell: bash
+        run: python3 Tools/asc.py regen-profile "$ARG1" "$ARG2"
+      - name: beta-submit
+        if: inputs.op == 'beta-submit'
+        shell: bash
+        run: |
+          ref=${NOTES_REF:-main}
+          git fetch --no-tags --depth 1 origin "refs/heads/$ref"
+          git show "FETCH_HEAD:Tools/beta_notes.txt" > Tools/beta_notes.txt
+          echo "What to Test（$ref の Tools/beta_notes.txt、$(wc -c < Tools/beta_notes.txt) バイト）:"
+          cat Tools/beta_notes.txt
+          build_id=$(python3 Tools/asc.py wait-build "$ARG1" "$ARG2" 1)
+          echo "版 $ARG1 ビルド $ARG2 = $build_id"
+          state=$(python3 Tools/asc.py beta-submit "$build_id")
+          echo "betaReviewState: $state"
+          echo "### beta-submit: $ARG1 ($ARG2) → $state" >> "$GITHUB_STEP_SUMMARY"
+      - name: 鍵を消す
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$HOME"/.appstoreconnect/private_keys/AuthKey_*.p8
+          rm -rf "$HOME/.appstoreconnect"

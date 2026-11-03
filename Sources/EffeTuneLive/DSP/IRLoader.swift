@@ -5,11 +5,15 @@
 //  （IRLibrary は Documents/IR へ写すところで止まっていて、
 //   AssetUpload.send の呼び手は FIR 系の designer だけだった）。
 //
-//  やることは 2 つ。
+//  やることは3つ。
 //    1. 音のファイルを float の面へ読む（AVAudioFile。WAV / FLAC / AIFF / CAF）
-//    2. 上流の解決規則で topology と rate divider を決めて AssetUpload.send へ渡す
+//    2. 上流の解決規則でtopologyとrate dividerを決める
+//    3. 畳み込みのレートへ伸縮し、上流と同じ下ごしらえ（頭の無音・Direct Cut・正規化）を
+//       かけ、32MiBに収まる長さへ切ってAssetUpload.sendへ渡す
 //
-//  解決規則は js/ir-library/ir-plugin-contract.js:104-200
+//  1はIRDecode.swift、2と3の計算はIRPreparation.swift（どちらもFoundationだけで単体テストに入る。
+//  IRPreparationは上流の答えと照合している）。
+//  解決規則は js/ir-library/ir-plugin-contract.js:104-206
 //  (resolveIrProcessingConfig) をそのまま写したもの。推測は入れていない。
 //
 //  **4ch の True Stereo が通るようにしてある。** BRIR（ダミーヘッドで測った
@@ -18,28 +22,10 @@
 //  上流で知られている。channelMode が auto のとき、4ch かつ処理幅 2ch なら
 //  自動で True Stereo になる（同 :150-155）。
 
-import AVFoundation
 import Foundation
 import os
 
-enum ETIRLoadError: LocalizedError {
-    case cannotOpen(String)
-    case emptyFile
-    case tooManyChannels(Int)
-    case unsupportedRate(Double)
-    /// 上流の resolveIrProcessingConfig が返す拒否の文。そのまま出す。
-    case rejected(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .cannotOpen(let why): return "Could not read the file. \(why)"
-        case .emptyFile: return "The file contains no audio."
-        case .tooManyChannels(let n): return "This impulse response has \(n) channels; up to 16 are supported."
-        case .unsupportedRate(let r): return "Unsupported sample rate \(Int(r))."
-        case .rejected(let message): return message
-        }
-    }
-}
+// ETIRLoadErrorはIRPreparation.swiftにある（単体テストのバンドルからも見えるように）。
 
 enum ETIRLoader {
 
@@ -57,247 +43,75 @@ enum ETIRLoader {
     @MainActor
     @discardableResult
     static func reload(irId: String,
+                       nodeID: UUID,
                        engine: UInt32,
                        instance: UInt32,
                        processingRate: Double,
                        routedChannels: Int,
                        channelMode: String,
                        latency: String,
-                       convolutionRate: String) -> String? {
+                       convolutionRate: String,
+                       options: ETIRPreparation.Options) -> String? {
         guard !irId.isEmpty,
               let entry = IRLibrary.shared.entries.first(where: { $0.id == irId })
         else { return nil }
         return try? load(url: entry.url,
+                         nodeID: nodeID,
                          engine: engine,
                          instance: instance,
                          processingRate: processingRate,
                          routedChannels: routedChannels,
                          channelMode: channelMode,
                          latency: latency,
-                         convolutionRate: convolutionRate)
+                         convolutionRate: convolutionRate,
+                         options: options)
     }
 
-    /// 読み込んだ IR。面ごとに分かれた float と、その素材のレート。
-    struct Decoded {
-        var channels: [[Float]]
-        var sampleRate: Double
-        var frames: Int
-    }
+    /// 読み込んだ IR。面ごとに分かれた float と、その素材のレート（IRDecode.swift）。
+    typealias Decoded = ETIRDecoded
 
     // MARK: - 読む
 
-    /// ファイルを float の面へ読む。
-    ///
-    /// **ここでは伸縮しない。** 素材のレートのまま返す。
-    /// 合わせるのは load の側（カーネルは「処理レート ÷ rate_divider」で
-    /// 書かれていることを検算するので、そこへ合わせる必要がある）。
+    /// ファイルを float の面へ読む。素材のレートのまま返す。
+    /// 中身は IRDecode.swift（ETIRDecode.decode）。幅・長さ・レートの門と、非有限を 0 にする
+    /// ところは単体テストで見ている（IRDecodeTests）。
     static func decode(_ url: URL) throws -> Decoded {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
-        let file: AVAudioFile
-        do {
-            file = try AVAudioFile(forReading: url)
-        } catch {
-            throw ETIRLoadError.cannotOpen(error.localizedDescription)
-        }
-
-        let format = file.processingFormat
-        let channelCount = Int(format.channelCount)
-        guard channelCount >= 1, channelCount <= 16 else {
-            throw ETIRLoadError.tooManyChannels(channelCount)
-        }
-        let frames = Int(file.length)
-        guard frames > 0 else { throw ETIRLoadError.emptyFile }
-        guard format.sampleRate > 0 else { throw ETIRLoadError.unsupportedRate(format.sampleRate) }
-
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format,
-                                            frameCapacity: AVAudioFrameCount(frames)) else {
-            throw ETIRLoadError.cannotOpen("could not allocate a buffer")
-        }
-        do {
-            try file.read(into: buffer)
-        } catch {
-            throw ETIRLoadError.cannotOpen(error.localizedDescription)
-        }
-        let read = Int(buffer.frameLength)
-        guard read > 0 else { throw ETIRLoadError.emptyFile }
-
-        // processingFormat は常に deinterleaved float32 なので面がそのまま取れる。
-        guard let data = buffer.floatChannelData else {
-            throw ETIRLoadError.cannotOpen("the decoder did not return float samples")
-        }
-        var channels = [[Float]]()
-        channels.reserveCapacity(channelCount)
-        for ch in 0..<channelCount {
-            let plane = data[ch]
-            var out = [Float](repeating: 0, count: read)
-            out.withUnsafeMutableBufferPointer { dst in
-                dst.baseAddress?.update(from: plane, count: read)
-            }
-            // 非有限が 1 つでもあると makePayload が弾くので、ここで潰す。
-            for i in 0..<read where !out[i].isFinite { out[i] = 0 }
-            channels.append(out)
-        }
-        return Decoded(channels: channels, sampleRate: format.sampleRate, frames: read)
-    }
-
-    // MARK: - 解決
-
-    /// 上流 resolveIrProcessingConfig の答え。
-    struct Resolved {
-        var topology: ETAssetTopology
-        /// 送る面の数。mono は 1、indep は処理幅、true は 4、matrix は素材のまま。
-        var assetChannels: Int
-        var processingChannels: UInt32
-        var paths: [ETAssetPath]
-        var headBlock: UInt32
-        var rateDivider: UInt32
-        /// auto を解いた結果。UI に出す用。
-        var channelMode: String
-        var rateMode: String
-    }
-
-    /// ir-plugin-contract.js:104-200 をそのまま写したもの。
-    ///
-    /// - Parameters:
-    ///   - sampleRate: **処理レート**（engine のレート）。素材のレートではない
-    ///   - channelCount: 素材の面の数
-    ///   - routedChannels: このエフェクトが処理する幅
-    ///   - channelMode: "auto" / "mono" / "indep" / "true" / "multi"
-    ///   - latency: "0" / "128" / "256" / "512" / "1024"
-    ///   - convolutionRate: "auto" / "full" / "half" / "quarter"
-    static func resolve(sampleRate: Double,
-                        channelCount: Int,
-                        routedChannels: Int,
-                        channelMode: String,
-                        latency: String,
-                        convolutionRate: String) throws -> Resolved {
-        guard sampleRate.isFinite, sampleRate > 0 else {
-            throw ETIRLoadError.rejected("The current audio sample rate is unavailable.")
-        }
-        guard channelCount >= 1, channelCount <= 16 else {
-            throw ETIRLoadError.rejected("This impulse response has an unsupported channel count.")
-        }
-        guard routedChannels >= 1, routedChannels <= 16 else {
-            throw ETIRLoadError.rejected("The selected audio channels are not available.")
-        }
-        guard ["auto", "mono", "indep", "true", "multi"].contains(channelMode) else {
-            throw ETIRLoadError.rejected("Choose a supported channel mode.")
-        }
-
-        guard let headBlock = UInt32(latency),
-              [0, 128, 256, 512, 1024].contains(headBlock) else {
-            throw ETIRLoadError.rejected("Choose a supported latency setting.")
-        }
-
-        var rateMode = convolutionRate
-        if headBlock == 0 { rateMode = "full" }
-        if rateMode == "auto" { rateMode = sampleRate >= 88200 ? "half" : "full" }
-        guard ["full", "half", "quarter"].contains(rateMode) else {
-            throw ETIRLoadError.rejected("Choose a supported convolution rate.")
-        }
-        if rateMode == "quarter" && sampleRate < 176400 {
-            throw ETIRLoadError.rejected(
-                "Quarter rate is available at sample rates of 176.4 kHz or higher.")
-        }
-        let rateDivider: UInt32 = rateMode == "quarter" ? 4 : (rateMode == "half" ? 2 : 1)
-
-        var resolvedMode = channelMode
-        if resolvedMode == "auto" {
-            if channelCount == 1 {
-                resolvedMode = "mono"
-            } else if channelCount == 4 && routedChannels == 2 {
-                resolvedMode = "true"
-            } else if channelCount == routedChannels {
-                resolvedMode = "indep"
-            } else {
-                resolvedMode = "multi"
-            }
-        }
-
-        let topology: ETAssetTopology
-        let assetChannels: Int
-        var paths = [ETAssetPath]()
-        switch resolvedMode {
-        case "mono":
-            topology = .mono
-            assetChannels = 1
-        case "true":
-            guard channelCount == 4, routedChannels == 2 else {
-                throw ETIRLoadError.rejected(
-                    "True Stereo requires a four-channel IR and a stereo channel selection.")
-            }
-            topology = .trueStereo
-            assetChannels = 4
-        case "indep":
-            guard channelCount >= routedChannels else {
-                throw ETIRLoadError.rejected(
-                    "Independent mode requires one IR channel for each selected audio channel.")
-            }
-            topology = .independent
-            assetChannels = routedChannels
-        default:
-            // diagonalPaths（同 :41-52）。素材と処理幅の小さい方まで、1 対 1 で結ぶ。
-            let count = min(channelCount, routedChannels, 16)
-            guard count > 0 else {
-                throw ETIRLoadError.rejected("Matrix mode could not create a valid channel route.")
-            }
-            for i in 0..<count {
-                paths.append(ETAssetPath(inputSlot: UInt32(i),
-                                         outputSlot: UInt32(i),
-                                         irChannel: UInt32(i)))
-            }
-            topology = .matrix
-            assetChannels = channelCount
-        }
-
-        return Resolved(topology: topology,
-                        assetChannels: assetChannels,
-                        processingChannels: UInt32(routedChannels),
-                        paths: paths,
-                        headBlock: headBlock,
-                        rateDivider: rateDivider,
-                        channelMode: resolvedMode,
-                        rateMode: rateMode)
+        try ETIRDecode.decode(url)
     }
 
     // MARK: - 送る
 
-    /// 読んで、解決して、送る。**MainActor で呼ぶこと**（AssetUpload.swift 冒頭）。
+    /// 読んで、解決して、下ごしらえして、送る。**MainActor で呼ぶこと**（AssetUpload.swift 冒頭）。
     ///
+    /// 同期のまま。呼び手（IRReverbView.apply、EffeTuneDSP.reloadAsset）は戻り値の1行と
+    /// 成否をその場で使い、続けて組み直しや遅延の判定をする。非同期にすると送る順番が
+    /// 入れ替わりうるので、重い伸縮は面ごとに別のコアへ散らすだけにしてある
+    /// （ETIRPreparation.resampleChannels）。
+    ///
+    /// - Parameters:
+    ///   - nodeID: 段の id。EDC グラフ（ETIRGraphStore）を段ごとに置くため。
+    ///   - options: 下ごしらえのつまみ（dc / co / dt / tr）。段のNode.designから引く
+    ///     （ETIRPreparation.Options(designParams:)）。
     /// - Returns: UI へ出す 1 行。「4ch True Stereo / 48000 Hz / 1.2 s」の形。
     @MainActor
     @discardableResult
     static func load(url: URL,
+                     nodeID: UUID,
                      engine: UInt32,
                      instance: UInt32,
                      processingRate: Double,
                      routedChannels: Int,
                      channelMode: String,
                      latency: String,
-                     convolutionRate: String) throws -> String {
+                     convolutionRate: String,
+                     options: ETIRPreparation.Options) throws -> String {
         let decoded = try decode(url)
-        let resolved = try resolve(sampleRate: processingRate,
-                                   channelCount: decoded.channels.count,
-                                   routedChannels: routedChannels,
-                                   channelMode: channelMode,
-                                   latency: latency,
-                                   convolutionRate: convolutionRate)
-
-        // 送る面の数を topology に合わせる。
-        //   mono   先頭 1 面だけ
-        //   indep  先頭から処理幅ぶん
-        //   true   4 面そのまま
-        //   matrix 素材のまま
-        var channels = decoded.channels
-        if resolved.assetChannels < channels.count {
-            channels = Array(channels.prefix(resolved.assetChannels))
-        } else if resolved.assetChannels > channels.count {
-            // indep で素材が足りない場合は resolve が弾いているので、ここには来ない。
-            throw ETIRLoadError.rejected(
-                "This impulse response does not have enough channels for the selected mode.")
-        }
+        let resolved = try ETIRPreparation.resolve(sampleRate: processingRate,
+                                                   channelCount: decoded.channels.count,
+                                                   routedChannels: routedChannels,
+                                                   channelMode: channelMode,
+                                                   latency: latency,
+                                                   convolutionRate: convolutionRate)
 
         // **ヘッダに書くのは「処理レート ÷ rate_divider」。素材のレートではない。**
         // カーネルの検算がそう書いてある（ir_reverb/kernel.cpp:486-496）:
@@ -305,18 +119,32 @@ enum ETIRLoader {
         // `sample_rate_` はカーネルの処理レート。ここを素材のレートで書くと
         // commit が ET_ERR_ARGS(-1) で落ちる。
         //
-        // だから**中身もそのレートへ合わせる**。44.1kHz の IR を 96kHz の鎖へ
-        // 入れるのは普通にあるので、ここで伸縮する。
-        let targetRate = processingRate / Double(resolved.rateDivider)
-        let headerRate = Int(targetRate.rounded())
-        if abs(decoded.sampleRate - targetRate) > 0.5 {
-            channels = channels.map { resample($0, from: decoded.sampleRate, to: targetRate) }
-        }
+        // だから中身もそのレート（resolved.convolutionRate）へ伸縮してから、上流と同じ
+        // 下ごしらえをかけて、送る面を選ぶ（上流の_resamplePcm → prepareIr → emitPreparedIr）。
+        // 正規化はfcで測るので、wetの大きさは素材のレートにもdividerにも依らない。
+        let staged = try ETIRPreparation.stage(decoded.channels,
+                                               sourceRate: decoded.sampleRate,
+                                               resolved: resolved,
+                                               options: options)
+
+        // カーネルの32MiBに収まる長さへ切る（ir_reverb.js:530-548のmaximumIrFramesForKernel）。
+        // 192kHzではフレーム数が倍になるので、48k/96kで入る長いIRでもここで切ることがある。
+        // 以前は切らずにAssetUpload.sendがtooLargeで弾いていた。
+        let isMatrix = resolved.topology == .matrix
+        let limit = AssetUpload.maximumFrames(
+            sourceFrames: staged.frames,
+            assetChannels: resolved.assetChannels,
+            topology: resolved.topology,
+            processingChannels: Int(resolved.processingChannels),
+            headBlock: Int(resolved.headBlock),
+            pathCount: isMatrix ? resolved.paths.count : 0,
+            inputCount: isMatrix ? Set(resolved.paths.map(\.inputSlot)).count : 0)
+        let emitted = ETIRPreparation.truncate(staged.channels, maxFrames: limit)
 
         try AssetUpload.send(engine: engine,
                              instance: instance,
-                             channels: channels,
-                             sampleRate: headerRate,
+                             channels: emitted.channels,
+                             sampleRate: resolved.convolutionRate,
                              topology: resolved.topology,
                              paths: resolved.paths,
                              headBlock: resolved.headBlock,
@@ -327,46 +155,49 @@ enum ETIRLoader {
         // 入れ直しのときは呼び手（reloadAssets）がまとめて 1 回呼ぶ。
         EffeTuneDSP.shared.republish()
 
-        let seconds = Double(decoded.frames) / decoded.sampleRate
+        // EDC グラフ。**Current は今カーネルへ送った面そのもの、Original は decay・trim の前の面**
+        // （上流の emit.analysis / prepare.analysis.original と同じ。IRAnalysis.swift の冒頭）。
+        // 重いので解析は裏へ出し、送るところまでは同期のまま。キーが前と同じなら走らない。
+        let attributes = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        ETIRGraphStore.shared.analyze(
+            nodeID: nodeID,
+            key: ETIRGraphStore.Key(path: url.path,
+                                    modified: attributes?.contentModificationDate,
+                                    fileSize: attributes?.fileSize,
+                                    processingRate: processingRate,
+                                    rateDivider: resolved.rateDivider,
+                                    convolutionRate: resolved.convolutionRate,
+                                    topology: resolved.topology.rawValue,
+                                    assetChannels: resolved.assetChannels,
+                                    directCut: options.directCut,
+                                    cutOffsetMs: options.cutOffsetMs,
+                                    decayPercent: options.decayPercent,
+                                    trimPercent: options.trimPercent,
+                                    emittedFrames: emitted.channels.first?.count ?? 0),
+            source: ETIRGraphSource(originalChannels: staged.originalChannels,
+                                    emittedChannels: emitted.channels,
+                                    sampleRate: resolved.convolutionRate,
+                                    onsetFrame: staged.onsetFrame,
+                                    cutFrame: staged.cutFrame,
+                                    sourceStartFrame: staged.sourceStartFrame))
+
+        let frames = emitted.channels.first?.count ?? 0
+        // 長さはふつう素材の長さ。カーネルに収めるために切ったときは、送った長さを出す
+        // （以前はtooLargeで弾いていたので、切ったことが見えるのはここだけ）。
+        let seconds = emitted.truncated
+            ? Double(frames) / Double(resolved.convolutionRate)
+            : Double(decoded.frames) / decoded.sampleRate
         let name = displayName(resolved.channelMode)
         // 出すのは素材のレート。送ったレートは中身の都合なので出さない。
         let line = String(format: "%dch %@ / %d Hz / %.2f s",
                           decoded.channels.count, name,
                           Int(decoded.sampleRate.rounded()), seconds)
-        log.notice("IR 送り込み \(line, privacy: .public) divider=\(resolved.rateDivider)")
+        log.notice("IR 送り込み \(line, privacy: .public) divider=\(resolved.rateDivider) fc=\(resolved.convolutionRate) frames=\(frames) start=\(staged.sourceStartFrame) truncated=\(emitted.truncated)")
         return line
     }
 
-    /// 線形で伸縮する。
-    ///
-    /// **凝ったものにしない。** IR は元から尾を引く波形で、変換の誤差は
-    /// 畳み込みの結果に埋もれる。上流は WebAudio の decodeAudioData に
-    /// 任せていて、そこも素材を文脈のレートへ合わせるだけ。
-    /// 端は両側とも自分自身で押さえる（外挿しない）。
-    static func resample(_ input: [Float], from: Double, to: Double) -> [Float] {
-        guard from > 0, to > 0, input.count > 1 else { return input }
-        let ratio = to / from
-        let count = max(1, Int((Double(input.count) * ratio).rounded()))
-        var out = [Float](repeating: 0, count: count)
-        let last = input.count - 1
-        for i in 0..<count {
-            let x = Double(i) / ratio
-            let i0 = min(last, Int(x))
-            let i1 = min(last, i0 + 1)
-            let t = Float(x - Double(i0))
-            out[i] = input[i0] + (input[i1] - input[i0]) * t
-        }
-        return out
-    }
-
-    /// ir_reverb.js:1746-1756 の _channelModeName と同じ出し方。
+    /// ir_reverb.js:1746-1756 の _channelModeName と同じ出し方（IRDecode.swift）。
     static func displayName(_ mode: String) -> String {
-        switch mode {
-        case "mono": return "Mono"
-        case "indep": return "Independent"
-        case "true": return "True Stereo"
-        case "multi": return "Multi-channel"
-        default: return mode
-        }
+        ETIRDecode.displayName(mode)
     }
 }

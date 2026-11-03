@@ -30,8 +30,11 @@ import UIKit
 
 /// 長押しで掴み、指について動かし、離すまでを渡す。
 struct ETDragHandle: UIViewRepresentable {
-    /// 掴んだ。
-    let began: () -> Void
+    /// 長押しで掴むか。**2列の右では掴まない。**並べ替えは左の一覧（ChainMinimap）でやる。
+    /// 払って消すほうはどちらでも残す。
+    var reorders = true
+    /// 掴んだ。渡すのは掴んだ点の高さ（自分の面の上端から）。
+    let began: (CGFloat) -> Void
     /// 指が動いた。渡すのは掴んだ時点からの移動量。**縦だけでなく横も渡す。**
     /// 並べ替えの判定は縦しか見ないが、掴んだものは指について両方向へ動く
     /// （Shortcuts も同じ。指から離れた絵は掴んでいる感じがしない）。
@@ -48,6 +51,7 @@ struct ETDragHandle: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let v = HoleView()
         context.coordinator.anchor = v
+        context.coordinator.longPressDuration = ETAssistiveState.reorderLongPress(in: context.environment)
         // **付けるのは階層に入ってから。**makeUIView も updateUIView も
         // superview がまだ無い時点で走ることがあり、そこで諦めると
         // 二度と呼ばれずに認識器が付かないままになる（実機で確認、
@@ -60,7 +64,9 @@ struct ETDragHandle: UIViewRepresentable {
 
     func updateUIView(_ v: UIView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.longPressDuration = ETAssistiveState.reorderLongPress(in: context.environment)
         context.coordinator.attach()
+        context.coordinator.syncReorders()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -71,6 +77,10 @@ struct ETDragHandle: UIViewRepresentable {
         weak var anchor: UIView?
         private weak var recognizer: UILongPressGestureRecognizer?
         private weak var panRecognizer: UIPanGestureRecognizer?
+        /// 掴みを始める長押しの秒数。普段は 0.25、VoiceOver かスイッチコントロールが動いているときだけ
+        /// システム既定の 0.5（手の震えや、指を置いて考える人が、触れただけで掴んでしまわないように）。
+        /// 値は updateUIView が書く。環境値は認識器の側から読めないので、ここに写して持つ。
+        var longPressDuration: Double = 0.25
         /// いま動いている払いが自分のものか。
         private var mineSwipe = false
         /// いま動いている掴みが自分のものか。
@@ -102,7 +112,7 @@ struct ETDragHandle: UIViewRepresentable {
             // そこを越えていれば取り合いにならない。
             // 払いと送りは別の口で見ているので、ここを詰めても取られない
             // （gestureRecognizerShouldBegin で送っている最中は立てない）。
-            g.minimumPressDuration = 0.25
+            g.minimumPressDuration = longPressDuration
             // 長押しの判定中に指がぶれても外さない。掴んだ後は自由に動かす。
             // つまみを動かしている最中（10pt 以上動いた）は立たない。
             g.allowableMovement = 10
@@ -114,13 +124,28 @@ struct ETDragHandle: UIViewRepresentable {
             g.delegate = self
             host.addGestureRecognizer(g)
             recognizer = g
+            syncReorders()
 
             // **横へ払う。**縦のスクロールと喧嘩しないよう、
             // 立つかどうかを向きで決める（gestureRecognizerShouldBegin）。
             let pan = UIPanGestureRecognizer(target: self, action: #selector(swipe(_:)))
+            // **指 1 本だけ。**3 本指の左右は iOS の取り消し・やり直しなので、
+            // 払いまで立つとカードが一緒に横へ動く（実機、2026-11-03）。
+            pan.maximumNumberOfTouches = 1
             pan.delegate = self
             host.addGestureRecognizer(pan)
             panRecognizer = pan
+        }
+
+        /// 掴まないときは長押しを眠らせる。立たなければ送りを預かること（holdScroll）も無い。
+        func syncReorders() {
+            guard let recognizer else { return }
+            // 設定が途中で変わったときも追従する。
+            if recognizer.minimumPressDuration != longPressDuration {
+                recognizer.minimumPressDuration = longPressDuration
+            }
+            guard recognizer.isEnabled != parent.reorders else { return }
+            recognizer.isEnabled = parent.reorders
         }
 
         /// 横へ払う。長押しと同じく、自分の行の上のぶんだけ通す。
@@ -175,7 +200,7 @@ struct ETDragHandle: UIViewRepresentable {
                 mine = true
                 origin = Self.finger(g, in: window)
                 holdScroll(from: anchor)
-                parent.began()
+                parent.began(p.y)
             case .changed:
                 guard mine, let window = anchor.window else { return }
                 let now = Self.finger(g, in: window)
@@ -254,6 +279,21 @@ struct ETDragHandle: UIViewRepresentable {
             true
         }
 
+        /// **指を置いた所が触りを全部自分で受ける面なら、その指は掴みにも払いにも渡さない。**
+        ///
+        /// JSFXの@gfxやEQの印を掴む面は、SwiftUIのDragGestureで指を受けている。
+        /// SwiftUIのジェスチャはUIViewとして当たりの連なりに出てこないので、
+        /// ownsDragが遡っても「誰も居ない」になり、canvasの中で左へ引くと
+        /// スクリプトのつまみと一緒に行が払われて削除が出ていた（実機、2026-09-27）。
+        /// そういう面には`etOwnsDrag()`で印を敷き、ここで置いた点を見る。
+        ///
+        /// 見るのは**置いた瞬間の点**。引いているうちに面の外へ出ても、その指は面のもの。
+        /// 器そのものの縦の送りはここを通らないので、今のまま変わらない。
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let host = g.view else { return true }
+            return !ETDragOwnerMark.covers(touch, in: host)
+        }
+
         /// **払いは横向きのときだけ立てる。**
         ///
         /// 付けている先は鎖を載せている UIScrollView なので、向きを見ずに
@@ -276,6 +316,7 @@ struct ETDragHandle: UIViewRepresentable {
             }
             guard let pan = g as? UIPanGestureRecognizer, pan === panRecognizer,
                   let anchor else { return true }
+            guard pan.numberOfTouches <= 1 else { return false }
             guard anchor.bounds.contains(pan.location(in: anchor)) else { return false }
             let v = pan.velocity(in: anchor)
             guard abs(v.x) > abs(v.y) * 1.5 else { return false }
@@ -353,5 +394,58 @@ struct ETDragHandle: UIViewRepresentable {
             super.layoutSubviews()
             if window != nil { onEnterHierarchy?() }
         }
+    }
+}
+
+extension View {
+    /// **指の触りを全部自分で受ける面**だと、行の掴みと払いに知らせる。
+    ///
+    /// SwiftUIのジェスチャで指を受ける面（JSFXのcanvas、EQの印を掴む面）と、
+    /// 中身が自前で触りを読むかもしれない面（AUのUI）に付ける。
+    /// UISliderのようなUIControlや入れ子のUIScrollViewはownsDragが自分で見つけるので要らない。
+    ///
+    /// **規則（Tools/check_repo.py の drag）。**Views の下で `DragGesture(` などを使う所は、
+    /// そのジェスチャを付けた View か祖先に続けて `.etOwnsDrag()` を書く。付けない所は
+    /// ジェスチャの行か、その上の `//` のかたまりに
+    ///
+    ///     // etOwnsDrag-exempt: 理由
+    ///
+    /// と書く（理由は必須）。指を置く面が行の掴みと払いと取り合ってよい理由を書く:
+    /// 読むだけで何も動かさない図、鎖の外の画面など。印を付けると、その面の上では
+    /// 払いも長押しも立たなくなるので、掴む取っ手が無い面（畳んだ図）には付けない。
+    /// タップだけの面は対象外（onTapGesture は見ない）。
+    func etOwnsDrag() -> some View {
+        background(ETDragOwnerAnchor())
+    }
+}
+
+/// 場所を知らせるだけの面。当たりは取らない（HoleViewと同じ）。
+private struct ETDragOwnerAnchor: UIViewRepresentable {
+    func makeUIView(context: Context) -> ETDragOwnerMark { ETDragOwnerMark() }
+
+    func updateUIView(_ view: ETDragOwnerMark, context: Context) {}
+}
+
+/// 触りを全部自分で受ける面の場所。**windowに入っている間だけ数える。**
+private final class ETDragOwnerMark: UIView {
+    /// いまwindowに入っている印。弱く持つ（外れた面を引き留めない）。
+    private static let live = NSHashTable<ETDragOwnerMark>.weakObjects()
+
+    /// 指を置いた点がどれかの印の上か。
+    ///
+    /// **数えるのは認識器を付けた器の中の印だけ。**全画面のcanvasやシートの中の図は
+    /// 同じwindowに居ても鎖の指とは関係ない。
+    static func covers(_ touch: UITouch, in host: UIView) -> Bool {
+        live.allObjects.contains { mark in
+            mark.window != nil && !mark.isHidden && mark.isDescendant(of: host)
+                && mark.bounds.contains(touch.location(in: mark))
+        }
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { Self.live.add(self) } else { Self.live.remove(self) }
     }
 }

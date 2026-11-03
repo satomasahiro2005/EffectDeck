@@ -1,0 +1,39 @@
+desc:Fuzz Memory
+author:nemut.ai
+slider1:256<16,4096,1>Size
+slider2:0<0,65536,1>Offset
+
+@init
+n = 256;
+memset(0, 0, 8192);
+mem_set_values(0, 1, 0.5, 0.25);
+memcpy(1024, 0, n);
+fft(0, n);
+ifft(0, n);
+fft_real(2048, n);
+ifft_real(2048, n);
+fft_permute(0, n);
+fft_ipermute(0, n);
+convolve_c(0, 1024, n);
+mem_multiply_sum(0, 1024, n);
+mem_insert_shuffle(0, 16, 3);
+stack_push(n);
+stack_exch(x);
+stack_pop(y);
+top = __memtop();
+freembuf(65536);
+
+@slider
+n = min(slider1, 4096);
+off = slider2;
+
+@block
+memset(off, 0, n);
+buf = off + n;
+buf[0] = samplesblock;
+
+@sample
+i = (i + 1) % n;
+off[i] = spl0;
+spl0 = off[(i + n / 2) % n];
+spl1 = 0[i] * spl1;

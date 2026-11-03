@@ -49,9 +49,15 @@ struct ETSpectrumReading {
         return ETdB.finite(Double(current[i]), floor: floor)
     }
 
-    /// 1/12 オクターブで均した current。図に重ねるときだけ通す
+    /// 図に重ねるときの current。1/12 オクターブで均す
     /// （Spectrum Analyzer 自身の図は上流も生の bin を描く）。
-    var smoothedCurrent: [Float] { ETSpectrumSmoothing.twelfthOctave(decibels: current) }
+    ///
+    /// **HQ（v2、対数セル）の枠は均さない。**上流の HQ も analyzer のセルをそのまま描く
+    /// （v2.11.0 の spectrum-overlay.js:372-375）。ETSpectrumSmoothing の窓は
+    /// bin 番号で端を決めるので、対数セルに掛けると幅がセル番号で変わる。
+    var overlayCurrent: [Float] {
+        highQuality ? current : ETSpectrumSmoothing.twelfthOctave(decibels: current)
+    }
 
     /// 枠が無い・版が違う・形が合わないものは nil。
     /// 0 を返して図を描くと「値が無い」と「値が 0」の区別がつかなくなる。

@@ -5,12 +5,12 @@
 //  設計は RoomEQDesigner（DSP/Designers/RoomEQDesigner.swift）が持っていて、
 //  ここはその呼び手。測定と設定は RoomEQStore（DSP/RoomEQStore.swift）に置く。
 //
-//  --- 図は出していない ---
-//  上流の図は「測った周波数特性」と「それを打ち消す補正」を重ねたもので、
-//  材料は測定ストアと designer の previews から来る
-//  （plugins/eq/room_eq.js:1619-1620）。previews は移していない
-//  （RoomEQDesigner.swift の頭「移していない: previews」）ので、曲線は描けない。
-//  出せるのは入った内容の 1 行と状態。
+//  --- 図 ---
+//  上流は設定の下に Graph の選択肢・Preview channel と応答の図を置く
+//  （plugins/eq/room_eq.js:3406-3410）。材料は設計の previews
+//  （DSP/Designers/RoomEQPreview.swift）、描くのは RoomEQResponseGraph。
+//  選んだ図とチャンネルは上流が鎖に書かない（getParameters() に無い）ので、
+//  ETCardSelection にだけ覚える（畳んでも消えないが、アプリを終うと既定へ戻る）。
 //
 //  --- DSP へ行くのは 4 つだけ ---
 //  ETEffect.params は lt / fd / dy / gn（Generated/EffectCatalog.swift:599-612、
@@ -47,13 +47,18 @@ struct RoomEQView: View {
     @State private var picking = false
     /// 読み込みで落ちた理由。設計と送り込みの失敗は correction.state に出る。
     @State private var failure: String?
+    /// 図の選択。既定は上流と同じ Frequency とチャンネル 0（room_eq.js:954-956）。
+    @State private var responseView: RoomEQResponseView = .frequency
+    @State private var previewChannel = 0
 
     private var session: RoomEQStore.Session { store.session(for: node.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !graphOnly { measurement }
-            notice
+            // 測定・状態の行・応答の図は手元で測って設計したもの。PC の鎖を編集しているあいだは
+            // 出さない（上流 2.14.0 の local-audio-only）。
+            if !graphOnly { measurement.etLocalAudioOnly() }
+            notice.etLocalAudioOnly()
             if !graphOnly {
                 settings
 
@@ -64,7 +69,10 @@ struct RoomEQView: View {
                     }
                 }
             }
+            responseGraph.etLocalAudioOnly()
         }
+        .etRemembers($responseView, key: "roomEQ.graph", node: node.id)
+        .etRemembers($previewChannel, key: "roomEQ.previewChannel", node: node.id)
         // instance が作り直されると資産は消える（EffeTuneDSP.swift:577-586）。
         .onChange(of: node.instance) { _, _ in resend() }
         // independent は channels == processingChannels が条件なので、
@@ -104,7 +112,7 @@ struct RoomEQView: View {
             }
 
             Text(session.sources.isEmpty ? Self.importHint : session.measurement)
-                .font(.system(size: 11))
+                .etFont(size: 11)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -132,11 +140,15 @@ struct RoomEQView: View {
             for url in urls {
                 let decoded = try ETIRLoader.decode(url)
                 // **伸縮しない。** config とレートが違えば designer 側の
-                // 窓付き sinc が直す（RoomEQDesigner の impulseMagnitude）。
+                // 窓付き sinc が直す（RoomEQDesigner.analyzeImpulse）。
                 let sampleRate = Int(decoded.sampleRate.rounded())
                 for plane in decoded.channels {
+                    // 立ち上がりは上流の測定と同じ決め方（onset.js:25-30 の detectOnset）。
+                    // 補正の設計（min / lin）は使わず、位相・群遅延・インパルスの図の基準になる。
                     sources.append(RoomEQSource(impulses: [
-                        RoomEQImpulse(data: plane, sampleRate: sampleRate)
+                        RoomEQImpulse(data: plane, sampleRate: sampleRate,
+                                      onsetIndex: ETCrosstalkLoader.detectOnset(plane,
+                                                                                sampleRate: sampleRate))
                     ]))
                 }
                 names.append(url.lastPathComponent)
@@ -200,32 +212,23 @@ struct RoomEQView: View {
     private var notice: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(headline)
-                .font(.system(size: 12, weight: .semibold))
+                .etFont(size: 12, weight: .semibold)
 
             if let failure {
                 Text(failure)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else if case .failed(let why) = session.correction.state {
                 Text(why)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if session.sources.isEmpty {
-                Text("""
-                     Room correction is an FIR built from a room measurement. Import one \
-                     to design it. Channel Delay and Output Gain work without it; the \
-                     delay is counted in samples.
-                     """)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             ForEach(warnings, id: \.self) { warning in
                 Text(warning)
-                    .font(.system(size: 11))
+                    .etFont(size: 11)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -238,11 +241,11 @@ struct RoomEQView: View {
     /// 入った内容の 1 行、あるいはいま何をしているか。
     ///
     /// **.sent は「鳴っている」ではない。** commit の直後は preparing で、
-    /// 音が何ブロックか通ってから active になる（AssetUpload.swift:561-565）。
+    /// 音が何ブロックか通ってから active になる（AssetUpload.swift:541-545）。
     /// 無音のあいだは preparing のまま進まないので、そう書く。
     private var headline: String {
         // 資産を staging へ写す口が無い build では何も始まらない
-        // （AssetUpload.swift:624-636 の stagingAddressUnavailable）。
+        // （AssetUpload.swift:458 の stagingAddressUnavailable）。
         guard AssetUpload.canStage else { return "This build cannot load correction assets" }
         guard !session.sources.isEmpty else { return "No correction curve" }
 
@@ -283,6 +286,66 @@ struct RoomEQView: View {
                 return "Full phase correction is not available here. The filter was built with linear phase."
             }
         }
+    }
+
+    // MARK: 図
+
+    /// 上流の Graph の選択肢・Preview channel・応答の図（room_eq.js:2419-2628）。
+    /// 設計が済むまでは材料が無いので出さない。畳んだカード（図だけ）では選択肢を隠す。
+    @ViewBuilder
+    private var responseGraph: some View {
+        if let design = session.correction.design, !design.previews.isEmpty {
+            let previews = design.previews
+            // 上流もチャンネルが減ったら 0 へ戻す（:2400）。
+            let channel = previews.indices.contains(previewChannel) ? previewChannel : 0
+            VStack(alignment: .leading, spacing: 12) {
+                if !graphOnly {
+                    graphRow
+                    // 2 本以上のときだけ出す（:2401）。
+                    if previews.count > 1 { previewChannelRow(count: previews.count, selected: channel) }
+                }
+                if let preview = previews[channel] {
+                    RoomEQResponseGraph(view: responseView, preview: preview, config: design.config)
+                }
+            }
+        }
+    }
+
+    private var graphRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Graph").etFont(size: 14)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)],
+                      alignment: .leading, spacing: 6) {
+                ForEach(RoomEQResponseView.allCases) { view in
+                    choice(view.label, selected: responseView == view) { responseView = view }
+                }
+            }
+        }
+    }
+
+    /// チャンネルの名前は段の Ch の先頭から数える（room_eq.js:1318-1331 の _channelStartIndex）。
+    private func previewChannelRow(count: Int, selected: Int) -> some View {
+        HStack {
+            Text("Graph Preview Ch").etFont(size: 14)
+            Spacer(minLength: 8)
+            Picker("Graph Preview Ch", selection: Binding(get: { selected },
+                                                         set: { previewChannel = $0 })) {
+                ForEach(0..<count, id: \.self) { i in
+                    Text("Ch \(channelStart + i)").tag(i)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .etFont(size: 14)
+        }
+    }
+
+    /// 段の Ch の先頭（1 から）。対（"34" など）はその先頭、1 本はその番号、Stereo と All は 1。
+    private var channelStart: Int {
+        let spec = Int(node.channelSpec)
+        if spec >= 16 { return (spec - 16) * 2 + 1 }
+        if spec >= 0 { return spec + 1 }
+        return 1
     }
 
     // MARK: 設計の設定
@@ -338,7 +401,7 @@ struct RoomEQView: View {
         if options.isEmpty { options = [RoomEQConfig.allowedTaps[0]] }
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Taps").font(.system(size: 14))
+            Text("Taps").etFont(size: 14)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 6)],
                       alignment: .leading, spacing: 6) {
                 ForEach(options, id: \.self) { taps in
@@ -355,7 +418,7 @@ struct RoomEQView: View {
     /// RoomEQDesigner.swift:290-297）ので、選べる札にしない。
     private var phaseRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Phase").font(.system(size: 14))
+            Text("Phase").etFont(size: 14)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 6)],
                       alignment: .leading, spacing: 6) {
                 ForEach([RoomEQPhase.minimum, RoomEQPhase.linear], id: \.self) { phase in
@@ -407,9 +470,8 @@ struct RoomEQView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .etFont(size: 14)
+                    .etRowTitle()
                 Spacer(minLength: 4)
                 // 打ち込みも受ける。**下書きに text を渡さない**——"2.00 oct" のような
                 // 単位付きの字は Double(_:) が nil を返して黙って捨てられる。
@@ -418,11 +480,15 @@ struct RoomEQView: View {
                     value.wrappedValue = min(max(typed, range.lowerBound), range.upperBound)
                 }
             }
-            if logarithmic {
-                ETLogSlider(value: value, range: range)
-            } else {
-                ETSlider(value: value, range: range, step: step)
+            Group {
+                if logarithmic {
+                    ETLogSlider(value: value, range: range)
+                } else {
+                    ETSlider(value: value, range: range, step: step)
+                }
             }
+            .accessibilityLabel(title)
+            .accessibilityValue(text)
         }
         .padding(.vertical, 2)
     }
@@ -432,7 +498,7 @@ struct RoomEQView: View {
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(name)
-                .font(.system(size: 13, weight: selected ? .bold : .regular))
+                .etFont(size: 13, weight: selected ? .bold : .regular)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
@@ -449,7 +515,7 @@ struct RoomEQView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .etFont(size: 13, weight: .semibold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(.tint)

@@ -18,19 +18,23 @@
 //   [ { "name": "Tube Simulator",
 //       "groups": [ { "label": "Pre", "presets": [ { "id":…, "label":…, "params": {…} } ] } ] } ]
 
+// 評価できなかったプラグイン（getSystemPresetGroups() が配列を返さないものも）は stderr に
+// `!! <rel> を評価できない: …`、plugins.txt に在るのに .js が無いものは `!! <rel>.js が無い` と出して
+// 飛ばす。gen_effect_presets.py は ET_STRICT=1 のとき、その行を見て止める。
+//
+// 試験（node --test Tools/effect_presets_dump.test.mjs）から読めるよう、関数を export し、
+// 直接起動されたときだけ main を走らせる。
+
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const pluginsDir = process.argv[2]
-    ? path.resolve(process.argv[2])
-    : path.join(here, '..', 'Vendor', 'effetune', 'plugins');
 
 // plugins.txt の [plugins] 節。1 行が
 //   analyzer/level_meter: Level Meter | Analyzer | LevelMeterPlugin | css
-function readPluginList(file) {
+export function readPluginList(file) {
     const out = [];
     let inPlugins = false;
     for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -53,7 +57,7 @@ function rehome(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function groupsOf(source, className, filename) {
+export function groupsOf(source, className, filename) {
     const context = vm.createContext({
         PluginBase: class { registerProcessor() {} },
         console,
@@ -64,7 +68,10 @@ function groupsOf(source, className, filename) {
         `${source}\n;window.__groups = ${className}.getSystemPresetGroups();`,
         context, { filename });
     const groups = context.window.__groups;
-    if (!Array.isArray(groups)) return [];
+    // 黙って [] にすると、そのプラグインのプリセットが !! 無しで消える。投げて dumpPlugins に報せさせる。
+    if (!Array.isArray(groups)) {
+        throw new TypeError(`${className}.getSystemPresetGroups() が配列でない（${groups === null ? 'null' : typeof groups}）`);
+    }
     return rehome(groups).map(group => ({
         label: typeof group.label === 'string' ? group.label : '',
         presets: (group.presets || []).map(p => ({
@@ -73,17 +80,17 @@ function groupsOf(source, className, filename) {
     }));
 }
 
-function main() {
-    const listFile = path.join(pluginsDir, 'plugins.txt');
-    if (!fs.existsSync(listFile)) {
-        process.stderr.write(`!! plugins.txt が無い ${listFile}\n`);
-        return 1;
-    }
-
+// plugins.txt に載っているプラグインのうち、出荷時プリセットを持つものを並びのまま返す。
+// 評価できなかったもの・.js が無いものは report に `!! …` を渡して飛ばす。
+export function dumpPlugins(pluginsDir, report) {
     const out = [];
-    for (const { rel, name, className } of readPluginList(listFile)) {
+    for (const { rel, name, className } of readPluginList(path.join(pluginsDir, 'plugins.txt'))) {
         const file = path.join(pluginsDir, `${rel}.js`);
-        if (!fs.existsSync(file)) continue;
+        // 固定した版では 108 本とも在る。無ければ上流が動かした（そのプリセットが黙って消える）。
+        if (!fs.existsSync(file)) {
+            report(`!! ${rel}.js が無い（plugins.txt には在る）`);
+            continue;
+        }
         const source = fs.readFileSync(file, 'utf8');
         // 持っていないものは評価もしない。読むだけで済む篩い。
         if (!source.includes('getSystemPresetGroups')) continue;
@@ -91,14 +98,40 @@ function main() {
         try {
             groups = groupsOf(source, className, `${rel}.js`);
         } catch (e) {
-            process.stderr.write(`!! ${rel} を評価できない: ${e.message}\n`);
+            report(`!! ${rel} を評価できない: ${e.message}`);
             continue;
         }
         if (groups.some(g => g.presets.length > 0)) out.push({ name, groups });
     }
+    return out;
+}
 
+function main(argv) {
+    const pluginsDir = argv[0]
+        ? path.resolve(argv[0])
+        : path.join(here, '..', 'Vendor', 'effetune', 'plugins');
+    const listFile = path.join(pluginsDir, 'plugins.txt');
+    if (!fs.existsSync(listFile)) {
+        process.stderr.write(`!! plugins.txt が無い ${listFile}\n`);
+        return 1;
+    }
+    const out = dumpPlugins(pluginsDir, message => process.stderr.write(`${message}\n`));
     process.stdout.write(JSON.stringify(out, null, 1));
     return 0;
 }
 
-process.exit(main());
+// process.exit() は使わない。Mac のパイプは stdout が非同期なので、
+// 書き切る前に終わり 65536 バイトで切れる。exitCode なら出し切ってから終わる。
+function isEntry() {
+    if (!process.argv[1]) return false;
+    try {
+        const self = fs.realpathSync(fileURLToPath(import.meta.url));
+        return pathToFileURL(fs.realpathSync(process.argv[1])).href === pathToFileURL(self).href;
+    } catch {
+        return false;
+    }
+}
+
+if (isEntry()) {
+    process.exitCode = main(process.argv.slice(2));
+}

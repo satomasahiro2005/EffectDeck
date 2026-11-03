@@ -1,13 +1,24 @@
 //  ETPipeline.c
 
+// nanosleep は POSIX。-std=c11 の glibc では宣言が隠れる（Darwin は隠さない）。
+// 本体（iOS）には効かせない。机の上で測るときに建つようにするだけ。
+#if !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 199309L
+#endif
+
 #include "ETPipeline.h"
 #include "effetune/abi.h"
 
 #include <string.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <time.h>
+#if defined(_WIN32)
+// 本体（iOS）には関係ない。Tests/Native を Windows で建てるときの時計と待ちのため。
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
-#define ET_PIPE_SLOTS 4
 #define ET_PIPE_HEADER 8
 #define ET_PIPE_NODE   12
 #define ET_PIPE_VERSION 1
@@ -19,10 +30,26 @@ typedef struct {
     uint32_t active;     // 有効なノードの数。表示用
 } ETPipeDescriptor;
 
+// **descriptor の受け渡しは 3 面の三重バッファ。**
+//
+// 面はいつも「UI が書いている面（gWrite）」「間に置いてある面（gShared）」
+// 「音のスレッドが読んでいる面（gRead）」の 3 つに分かれていて、持ち主は交換でしか変わらない。
+// UI は書き終えた面を gShared と交換して、空いた面を次に書く。音のスレッドは
+// 新しい印（ET_PIPE_FRESH）が付いているときだけ自分の面と交換する。
+// **UI は音のスレッドが持っている面に決して触らない。**
+//
+// 以前は 4 面を順に回していて、音のスレッドが et_pipeline_configure の中に居る間に
+// UI が 4 回 Publish すると、読んでいる最中の面を memset して書き直していた（TSan で確認、
+// Tests/Native/pipeline_threads.c の slot_reuse）。configure は遅延線を確保するので長引きうる。
+#define ET_PIPE_SLOTS 3
+#define ET_PIPE_SLOT_MASK 0x3
+#define ET_PIPE_FRESH 0x4
+
 static ETPipeDescriptor gSlots[ET_PIPE_SLOTS];
 static int              gWrite = 0;              // UI スレッドだけが触る
+static _Atomic int      gShared = 1;             // 面の番号 | ET_PIPE_FRESH（まだ拾われていない）
+static int              gRead = 2;               // 音のスレッドだけが触る
 
-static _Atomic int      gPending = -1;           // 音のスレッドへ渡す面。-1 は無し
 static _Atomic int      gBypass  = 0;
 static _Atomic uint_least64_t gCount = 0;
 
@@ -40,6 +67,16 @@ static _Atomic uint_least32_t gActive = 0;
 // FIR を持つエフェクト（Phase Select EQ など）を入れると増える。
 // configure のあとに読む。音のスレッドが書き、UI が読む。
 static _Atomic uint_least32_t gLatency = 0;
+// 壊す側と音のスレッドの受け渡し（ETPipeline_DestroyInstances）。
+// **両側とも seq_cst。**「自分の印を立ててから相手の印を読む」を両方がやるので、
+// どちらかが必ず相手を見る。緩めると両方が素通りして同時に engine に入る。
+// 音のスレッドは atomic を書いて読むだけで、待たない・確保しない。
+static _Atomic int gHold = 0;     // 壊している途中の呼び手の数
+static _Atomic int gInside = 0;   // 音のスレッドが engine の中に居る
+// 入口で止められた回数。gInside は入口で一瞬 1 になるので、止めている間も
+// 1 が見え続けることがある（ブロックを詰めて回すと抜けられなかった）。
+// 止めたあとに 1 増えたら、音のスレッドは外に居てもう入れない。
+static _Atomic uint_least32_t gBounced = 0;
 // The descriptor is published by the control thread and read by the render
 // thread. Its context is owned by the adapter; replacement must be coordinated
 // by the caller after the render thread has stopped using the old context.
@@ -63,10 +100,18 @@ static double bitsDouble(uint64_t bits);
 typedef int32_t (*ETPipelineExternalCallback)(void *, uint32_t, float *, uint32_t,
                                               uint32_t, double, int8_t);
 typedef uint32_t (*ETPipelineExternalLatencyCallback)(void *, uint32_t);
-#if defined(__clang__) || defined(__GNUC__)
+// 上流にパッチが当たっていない engine にはこの関数が無い。弱い参照にして、無ければ NULL で読む。
+// weak_import は Apple の ld だけが解する。GCC はほかの所では黙って捨てて強い参照にする
+// （Linux では NULL 判定が常に真になり、旧来の後段処理が死んだコードになる）ので、
+// Apple 以外は ELF の weak にする。
+#if defined(__APPLE__) && (defined(__clang__) || defined(__GNUC__))
 extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback,
                                                ETPipelineExternalLatencyCallback, void *)
     __attribute__((weak_import));
+#elif defined(__clang__) || defined(__GNUC__)
+extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback,
+                                               ETPipelineExternalLatencyCallback, void *)
+    __attribute__((weak));
 #else
 extern void et_pipeline_set_external_callback(uint32_t, ETPipelineExternalCallback,
                                                ETPipelineExternalLatencyCallback, void *);
@@ -83,6 +128,9 @@ static int32_t pipelineExternalCallback(void *context, uint32_t index, float *au
     // AU/JSFX instantiation is asynchronous. Until the adapter is ready the
     // node is a bypass, not a pipeline-wide render failure.
     if (processor == NULL || processor->process == NULL) return ET_OK;
+    // -2 より小さい値は descriptor に無い。以前はチャンネル 0 のモノとして処理していた。
+    // engine は configure で弾くのでここへは来ないが、来たら黙って別の所を触らない。
+    if (channelSpec < ET_CHANNEL_ALL) return ET_ERR_ARGS;
     uint32_t first = 0;
     uint32_t selected = channels;
     if (channelSpec != ET_CHANNEL_ALL) {
@@ -142,7 +190,8 @@ void ETPipeline_SetEngine(uint32_t engine)
     // 溜まっている面も捨てる。中の instance 番号は前の engine のもので、
     // et_engine_prepare の destroyAllInstances でもう消えている。
     // 残すと次のブロックで ET_ERR_DESC になる（engine.cpp:674 slot == nullptr）。
-    atomic_store_explicit(&gPending, -1, memory_order_relaxed);
+    // 面の番号は残して印だけ落とす（面の持ち主は変えない）。
+    atomic_fetch_and_explicit(&gShared, ET_PIPE_SLOT_MASK, memory_order_acq_rel);
     atomic_store_explicit(&gNativeExternalCallback,
                           et_pipeline_set_external_callback != NULL ? 1 : 0,
                           memory_order_release);
@@ -249,10 +298,8 @@ void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
 {
     if (count > ET_PIPE_MAX_NODES) count = ET_PIPE_MAX_NODES;
 
-    int slot = gWrite;
-    gWrite = (gWrite + 1) % ET_PIPE_SLOTS;
-
-    ETPipeDescriptor *d = &gSlots[slot];
+    // gWrite は UI の持ち物。音のスレッドはこの面を持っていない（上の三重バッファの説明）。
+    ETPipeDescriptor *d = &gSlots[gWrite];
     memset(d, 0, sizeof(*d));
 
     writeU32(d->bytes, ET_PIPE_VERSION);
@@ -275,7 +322,12 @@ void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
         if (nodes[i].enabled == 1 && nodes[i].sectionGate) d->active++;
     }
 
-    atomic_store_explicit(&gPending, slot, memory_order_release);
+    // 書いた面を間に置き、代わりに間にあった面をもらう。release で中身を渡し、
+    // acquire で「音のスレッドがその面を読み終えた」ことを受け取る。
+    // 前の面がまだ拾われていなければ、それは上書きされて捨てられる（最新だけが要る）。
+    const int previous = atomic_exchange_explicit(&gShared, gWrite | ET_PIPE_FRESH,
+                                                  memory_order_acq_rel);
+    gWrite = previous & ET_PIPE_SLOT_MASK;
 }
 
 void ETPipeline_SetBypass(int bypass)
@@ -338,11 +390,92 @@ int ETPipeline_HasConfigured(void)
     return atomic_load_explicit(&gConfigured, memory_order_relaxed);
 }
 
-void ETPipeline_ApplyPending(void)
+// 音のスレッドが engine に入る。壊している途中なら入らずに 0 を返す。
+static int enterEngine(void)
 {
-    const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
-    if (engine == 0) return;
+    atomic_store_explicit(&gInside, 1, memory_order_seq_cst);
+    if (atomic_load_explicit(&gHold, memory_order_seq_cst) == 0) return 1;
+    atomic_store_explicit(&gInside, 0, memory_order_seq_cst);
+    atomic_fetch_add_explicit(&gBounced, 1, memory_order_seq_cst);
+    return 0;
+}
 
+static void leaveEngine(void)
+{
+    atomic_store_explicit(&gInside, 0, memory_order_seq_cst);
+}
+
+// 待つ側（UI）の時計と小休止。本体（iOS）は POSIX の側を通る。
+static long long monotonicNanos(void)
+{
+#if defined(_WIN32)
+    LARGE_INTEGER frequency, counter;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return (long long)((double)counter.QuadPart * 1e9 / (double)frequency.QuadPart);
+#else
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (long long)t.tv_sec * 1000000000LL + t.tv_nsec;
+#endif
+}
+
+static void napBriefly(void)
+{
+#if defined(_WIN32)
+    Sleep(0);   // 0.1 ms の眠りは無いので、ほかのスレッドに譲るだけ
+#else
+    const struct timespec nap = {0, 100000};
+    nanosleep(&nap, NULL);
+#endif
+}
+
+int ETPipeline_DestroyInstances(uint32_t engine, const uint32_t *instances, uint32_t count)
+{
+    if (engine == 0 || instances == NULL || count == 0) return 1;
+    atomic_fetch_add_explicit(&gHold, 1, memory_order_seq_cst);
+    // 待つのは中に入っている 1 ブロックぶんだけ。次のブロックは入口で止まる。
+    // 数え始めは印を立てたあと。前から止まっていた分を数えないため。
+    const uint_least32_t bounced = atomic_load_explicit(&gBounced, memory_order_seq_cst);
+    // **待つのは 50 ms まで。**native だけなら 1 ブロック（5 ms ほど）で抜けるが、
+    // JSFX の 1 ブロックには上限が無い（EEL の loop/while は入れ子で何百万回でも回る）。
+    // 呼び手はメインなので、待ち切ると画面ごと止まる。諦めたら何も壊さずに
+    // 印を下ろして 0 を返す。呼び手はメインの外で間を置いて呼び直す。
+    const long long start = monotonicNanos();
+    while (atomic_load_explicit(&gInside, memory_order_seq_cst) &&
+           atomic_load_explicit(&gBounced, memory_order_seq_cst) == bounced) {
+        if (monotonicNanos() - start > 50000000LL) {
+            atomic_fetch_sub_explicit(&gHold, 1, memory_order_seq_cst);
+            return 0;
+        }
+        napBriefly();
+    }
+    int destroyed = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (instances[i] != 0) {
+            et_instance_destroy(engine, instances[i]);
+            destroyed = 1;
+        }
+    }
+    if (destroyed) {
+        // **壊すと engine の鎖は組めていない状態に戻る**（destroyInstance が
+        // invalidatePipeline() を呼ぶ。engine.cpp:396-401。遅れも 0 になる）。以前はここで
+        // 何もせず、次の Publish が拾われるまで HasConfigured() が 1、LastStatus() が ET_OK の
+        // まま残っていた（実機: cfgStatus=0 proc=-2）。音のスレッドは入口で止めてあるので、
+        // ここを書くのはいまここだけ。次の configure が上書きする。
+        // engine は見つからない番号なら鎖を残すが、こちらからは見分けられないので落とす側に
+        // 倒す。呼び手（EffeTuneDSP.retire）は壊したら必ず組み直すので、素通しは多くて 1 ブロック。
+        atomic_store_explicit(&gConfigured, 0, memory_order_relaxed);
+        atomic_store_explicit(&gActive, 0, memory_order_relaxed);
+        atomic_store_explicit(&gLatency, 0, memory_order_relaxed);
+        atomic_store_explicit(&gStatus, ET_ERR_STATE, memory_order_relaxed);
+    }
+    atomic_fetch_sub_explicit(&gHold, 1, memory_order_seq_cst);
+    return 1;
+}
+
+static void applyPending(uint32_t engine)
+{
     // 溜まっている差し替えを反映する。
     // configure は確保を伴うが、鎖を変えたときだけなので毎ブロックでは起きない。
     // 音のスレッドから呼ぶ。処理と同じスレッドに寄せて競合を無くすため。
@@ -351,14 +484,21 @@ void ETPipeline_ApplyPending(void)
     // 以前はこの中身が Process の先頭に埋まっていて、その Process は
     // AudioIO のレンダーブロックが `if awake` の内側でしか呼ばない。
     // PowerGate が無音で休んでいる間は Process ごと飛ぶので、
-    // **無音の間に鎖を変えると descriptor が gPending に積まれたまま消費されない。**
+    // **無音の間に鎖を変えると descriptor が溜まったまま消費されない。**
     // エフェクトを足しても、鎖を戻しても、プリセットを読んでも、
     // グラフは古いままで、音が戻るまで何も効かない。
     // 反映は処理と別なので、休んでいても必ず通す。
-    int pending = atomic_exchange_explicit(&gPending, -1, memory_order_acquire);
-    if (pending < 0) return;
+    //
+    // 新しい面が無ければ何もしない（毎ブロック通るので、交換は印があるときだけ）。
+    if (!(atomic_load_explicit(&gShared, memory_order_relaxed) & ET_PIPE_FRESH)) return;
+    // 読み終えた自分の面を間に置き、新しい面をもらう。acquire で UI の書いた中身を受け取り、
+    // release で「この面はもう読まない」を UI に渡す。
+    const int taken = atomic_exchange_explicit(&gShared, gRead, memory_order_acq_rel);
+    gRead = taken & ET_PIPE_SLOT_MASK;
+    // 見てから交換するまでの間に SetEngine が印を落としていたら、捨てられた面なので組まない。
+    if (!(taken & ET_PIPE_FRESH)) return;
 
-    const ETPipeDescriptor *d = &gSlots[pending];
+    const ETPipeDescriptor *d = &gSlots[gRead];
     et_status st = et_pipeline_configure(engine, d->bytes, d->length);
     // 呼んだ事実そのものを数える。0 なら Publish が一度も拾われていない。
     atomic_fetch_add_explicit(&gConfigures, 1, memory_order_relaxed);
@@ -374,6 +514,16 @@ void ETPipeline_ApplyPending(void)
                           memory_order_relaxed);
 }
 
+void ETPipeline_ApplyPending(void)
+{
+    const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
+    if (engine == 0) return;
+    // 壊している途中なら溜まっている面は次のブロックへ残す。
+    if (!enterEngine()) return;
+    applyPending(engine);
+    leaveEngine();
+}
+
 int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSeconds)
 {
     atomic_fetch_add_explicit(&gCount, 1, memory_order_relaxed);
@@ -381,9 +531,15 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     const uint32_t engine = atomic_load_explicit(&gEngine, memory_order_relaxed);
     if (engine == 0 || channels == 0 || frames == 0) return ET_ERR_ARGS;
 
-    ETPipeline_ApplyPending();
+    // 壊している途中は触らない。バスは入力のままなので、このブロックは素通しになる。
+    if (!enterEngine()) return ET_ERR_STATE;
 
-    if (!atomic_load_explicit(&gConfigured, memory_order_relaxed)) return ET_ERR_STATE;
+    applyPending(engine);
+
+    if (!atomic_load_explicit(&gConfigured, memory_order_relaxed)) {
+        leaveEngine();
+        return ET_ERR_STATE;
+    }
 
     const uint32_t bypass = atomic_load_explicit(&gBypass, memory_order_relaxed) ? 1u : 0u;
     // process のエラーは gStatus に入れない。入れると configure の結果を潰してしまい、
@@ -393,6 +549,7 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
                                                                memory_order_relaxed));
     const int32_t status = (int32_t)et_pipeline_process(engine, channels, frames,
                                                          timeSeconds, bypass);
+    leaveEngine();
     if (status != ET_OK) return status;
     if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire) &&
         !atomic_load_explicit(&gNativeExternalCallback, memory_order_acquire)) {

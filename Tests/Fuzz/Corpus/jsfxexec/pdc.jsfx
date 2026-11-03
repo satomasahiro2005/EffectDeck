@@ -1,0 +1,9 @@
+desc:PDC
+author:nemut.ai
+
+@init
+pdc_delay = 64;
+pdc_bot_ch = 0;
+pdc_top_ch = 2;
+
+@sample

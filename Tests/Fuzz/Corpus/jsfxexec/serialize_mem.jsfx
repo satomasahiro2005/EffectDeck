@@ -1,0 +1,25 @@
+desc:Fuzz Serialize Memory
+author:nemut.ai
+slider1:16<0,4096,1>Count
+slider2:0<0,1,1>-Hidden
+
+@init
+n = 16;
+i = 0;
+loop(64, i[0] = i * 0.5; i += 1;);
+#name = "state";
+
+@slider
+n = slider1;
+
+@block
+avail = file_avail(0);
+
+@serialize
+file_var(0, n);
+file_mem(0, 0, n);
+file_string(0, #name);
+avail = file_avail(0);
+avail >= 0 ? file_var(0, tail);
+
+@sample
