@@ -111,6 +111,16 @@ if(NOT MSVC)
   foreach(t pipeline_cb pipeline_legacy pipeline_threads)
     target_include_directories(${t} PRIVATE "${ET_NATIVE_ABI_INCLUDE}")
   endforeach()
+
+  # Virtual Room の音響の数字（docs/virtual-room-stop.md の A〜D）。C++20。
+  # 上流から読むのは xorshift_rng.h と core/nothrow_storage.h だけで、パッチの有無に関係しない。
+  enable_language(CXX)
+  set(ET_VIRTUAL_ROOM "${ET_REPO}/EffectDeckLocalDSP/spatial/virtual_room")
+  et_native_test(virtual_room
+    SOURCES virtual_room.cpp "${ET_VIRTUAL_ROOM}/virtual_room_engine.cpp")
+  set_target_properties(virtual_room PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+  target_include_directories(virtual_room PRIVATE "${ET_VIRTUAL_ROOM}" "${ET_REPO}/Generated/dsp"
+    "${ET_REPO}/Vendor/effetune/dsp/include" "${ET_REPO}/Vendor/effetune/dsp")
 endif()
 
 # ---- 本物の engine（任意。-DET_NATIVE_WITH_ENGINE=ON） -----------------------
