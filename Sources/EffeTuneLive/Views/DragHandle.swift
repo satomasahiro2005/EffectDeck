@@ -123,6 +123,9 @@ struct ETDragHandle: UIViewRepresentable {
             // **横へ払う。**縦のスクロールと喧嘩しないよう、
             // 立つかどうかを向きで決める（gestureRecognizerShouldBegin）。
             let pan = UIPanGestureRecognizer(target: self, action: #selector(swipe(_:)))
+            // **指 1 本だけ。**3 本指の左右は iOS の取り消し・やり直しなので、
+            // 払いまで立つとカードが一緒に横へ動く（実機、2026-11-03）。
+            pan.maximumNumberOfTouches = 1
             pan.delegate = self
             host.addGestureRecognizer(pan)
             panRecognizer = pan
@@ -302,6 +305,7 @@ struct ETDragHandle: UIViewRepresentable {
             }
             guard let pan = g as? UIPanGestureRecognizer, pan === panRecognizer,
                   let anchor else { return true }
+            guard pan.numberOfTouches <= 1 else { return false }
             guard anchor.bounds.contains(pan.location(in: anchor)) else { return false }
             let v = pan.velocity(in: anchor)
             guard abs(v.x) > abs(v.y) * 1.5 else { return false }

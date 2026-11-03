@@ -290,6 +290,8 @@ struct PipelineView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { updateWideEnough($0) }
+        // 振って取り消すための first responder（UndoShakeResponder.swift）。
+        .background(ETUndoShakeResponder())
         .sheet(item: presentedSheet, onDismiss: runAfterSheet) { which in
             switch which {
             case .picker:
