@@ -182,13 +182,15 @@ struct RenderState {
   float fdnBand[kFdnLines][kBandCount];  // 帰還ゲイン
   float fdnInput[kFdnLines][kSourceCount];
   float fdnOutput[kEarCount][kFdnLines];
-  float preDelay;       // mixing time。出力レートのサンプル
+  /// FDN の入口の遅れ。出力レートのサンプル。late の鳴り始めから
+  /// いちばん短い遅延線のぶんを引いたもの（B）。
+  float preDelay;
   std::uint32_t seed;   // 変わったら late だけ作り直す（§32）
   /// 線形。Output Gain に**全体の正規化**を掛けたもの（§16）。
   /// 直接音だけを 1 に揃えて early と late を足すと、部屋を広げるほど大きくなる。
   float outputGain;
   float rt60[kBandCount];
-  float mixingTime;     // 秒
+  float mixingTime;     // late の鳴り始め（秒）。1 次の像の終わり
 
   /// 耳介の FIR。全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
   /// delay は出力レートのサンプル（整数）。gain は 0 番が必ず 1。
@@ -331,7 +333,6 @@ struct Acoustics {
   double surface;              // m^2
   double volume;               // m^3
   double meanFreePath;         // m
-  double mixingTime;           // 秒
 };
 
 inline Acoustics buildAcoustics(const Geometry &geometry, const Params &params) noexcept {
@@ -363,9 +364,8 @@ inline Acoustics buildAcoustics(const Geometry &geometry, const Params &params) 
     acoustics.rt60[band] = clampDouble(eyring * decay, 0.05, 20.0);
   }
 
-  // §23。平均自由行程から反射の間隔を出し、その 6 倍を混合時間とする。
-  const double reflectionInterval = acoustics.meanFreePath / kSpeedOfSound;
-  acoustics.mixingTime = clampDouble(6.0 * reflectionInterval, 0.015, 0.100);
+  // 前はここで平均自由行程の 6 倍を混合時間にしていた（§23）。late の入口は今は
+  // 1 次の像の終わりで決める（buildRenderState）。6 倍だと早期反射との間が無音になった。
   return acoustics;
 }
 
@@ -391,6 +391,18 @@ inline double headShadowAlpha(double cosine) noexcept {
 
 // 16 本の遅延を対数等間隔に置き、seed で揺らす。乱数で全部決めると
 // 固まる場所ができて late が金属的になる。奇数・相異にして周期の重なりを避ける。
+//
+// **下限は 2.5 ms。**前は 8 ms で、既定の部屋（平均反射間隔 6.5 ms）だと
+// 名目 3.7〜6.8 ms の短い 8 本が全部 8 ms へ張り付き、衝突よけで 385, 387, … 399 と
+// 2 サンプルおきに積み重なっていた（stop.md の E）。8 本が 4% の中に固まると
+// late が櫛形に色づくうえ、late の入口が preDelay + 8 ms まで遅れる。
+//
+// 揺らしは ±4%、並べたあと隣どうしを 3% 以上離す。隣の名目の比は 4^(1/16) = 9% なので、
+// 揺らしを ±12% にすると順番が入れ替わって重なる。
+inline constexpr double kFdnShortestSeconds = 0.0025;
+inline constexpr double kFdnJitter = 0.04;
+inline constexpr double kFdnMinSpacing = 0.03;
+
 inline void buildFdnDelays(const Acoustics &acoustics, double internalRate, std::uint32_t seed,
                            std::uint32_t *out) noexcept {
   effetune::dsp::XorShiftRng rng(seed, seed ^ 0x9E3779B9u);
@@ -398,25 +410,33 @@ inline void buildFdnDelays(const Acoustics &acoustics, double internalRate, std:
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     const double position = (static_cast<double>(line) + 0.5) / static_cast<double>(kFdnLines);
     const double spread = 0.55 * std::pow(2.2 / 0.55, position);
-    const double jitter = 1.0 + 0.12 * rng.nextFloatSigned();
-    const double seconds = clampDouble(base * spread * jitter, 0.008, 0.120);
-    std::uint32_t samples = static_cast<std::uint32_t>(seconds * internalRate);
-    samples |= 1u;
-    if (samples < 9u) {
-      samples = 9u;
+    const double jitter = 1.0 + kFdnJitter * rng.nextFloatSigned();
+    const double seconds = clampDouble(base * spread * jitter, kFdnShortestSeconds, 0.120);
+    out[line] = static_cast<std::uint32_t>(seconds * internalRate + 0.5) | 1u;
+  }
+  // 短い順に並べ、隣を 3% 以上・奇数で離す。線の並び自体に意味は無い
+  // （Hadamard で全部混ぜるので、どの線がどの長さでも同じ）。
+  for (std::uint32_t line = 1u; line < kFdnLines; ++line) {
+    const std::uint32_t value = out[line];
+    std::uint32_t at = line;
+    while (at > 0u && out[at - 1u] > value) {
+      out[at] = out[at - 1u];
+      --at;
     }
-    bool collided = true;
-    while (collided) {
-      collided = false;
-      for (std::uint32_t earlier = 0u; earlier < line; ++earlier) {
-        if (out[earlier] == samples) {
-          samples += 2u;
-          collided = true;
-          break;
-        }
-      }
+    out[at] = value;
+  }
+  // 上限は engine の遅延線（0.13 秒ぶん）に収める。部屋の上限（20 x 30 x 10 m）でも
+  // 名目の最長は 70 ms ほどなので、ここで頭を打つことはまず無い。
+  const auto ceiling = static_cast<std::uint32_t>(0.125 * internalRate) | 1u;
+  for (std::uint32_t line = 1u; line < kFdnLines; ++line) {
+    const auto spaced = static_cast<std::uint32_t>(
+        std::ceil(static_cast<double>(out[line - 1u]) * (1.0 + kFdnMinSpacing)));
+    if (out[line] < spaced) {
+      out[line] = spaced | 1u;
     }
-    out[line] = samples;
+    if (out[line] > ceiling) {
+      out[line] = ceiling;
+    }
   }
 }
 
@@ -510,13 +530,10 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     }
   }
 
-  // 最後の正規化に使う。
-  //   earlyEnergy  無相関で足したときのエネルギー（中高域はこちらに近い）
-  //   lowSum       低域で**同相に足したとき**の利得（[耳][音源]）
-  // 低い周波数では経路の差が波長よりずっと短いので、像は全部同じ向きに
-  // 足される。エネルギー和だけで割ると低域だけ持ち上がって歪む。
+  // 最後の正規化に使う。earlyEnergy は無相関で足したときのエネルギー
+  // （中高域はこちらに近い）。低域で同相に足したときの高さは、遅れが全部
+  // 決まってから複素数で足す（下の「全体の高さ」）。
   double earlyEnergy = 0.0;
-  double lowSum[kEarCount][kSourceCount] = {};
   double sourceNormalization[kSourceCount];
 
   for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
@@ -593,9 +610,6 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
         path.band[2] =
             static_cast<float>(level * surfaceResponse[2] * std::pow(alpha, shadowAmount));
 
-        if (image < state.imagesPerSource) {
-          lowSum[ear][source] += static_cast<double>(path.band[0]);
-        }
         if (image != 0u && image < state.imagesPerSource) {
           // 3 帯域の平均で数える。帯域の割り方は足すと素通しへ戻るので、
           // これが**その経路が運ぶエネルギー**の目安になる。
@@ -643,19 +657,53 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     }
   }
 
+  // ------------------------------------------------------------ late の入口
+  //
+  // **late は 1 次の像が着き終わった所から鳴らす**（stop.md の B）。
+  // 前は平均自由行程の 6 倍（既定の部屋で 38.9 ms）を入口にしていたが、
+  // 2 次の像でも 22.7 ms で終わるので、その間が完全な無音になっていた。
+  // 1 次の終わりなら疎な 2 次の像の下を late が埋め、部屋の寸法にも付いて動く
+  // （§23 の「時刻 0 から鳴らさない」「幾何から決める」はそのまま）。
+  // 元の JS の固定 6 ms は使わない。
+  double firstOrderEnd = 0.0;
+  for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+      for (std::uint32_t image = 0u; image < kFirstOrderImages; ++image) {
+        firstOrderEnd = std::max(
+            firstOrderEnd, static_cast<double>(state.path[pathIndex(ear, source, image)].delay));
+      }
+    }
+  }
+
   // ------------------------------------------------------------ late
   const std::uint32_t seed = packedSeed(params);
-  const double internalRate = sampleRate / static_cast<double>(lateRateDivider(sampleRate));
+  const std::uint32_t divider = lateRateDivider(sampleRate);
+  const double internalRate = sampleRate / static_cast<double>(divider);
   state.seed = seed;
   buildFdnDelays(acoustics, internalRate, seed, state.fdnDelay);
 
+  double delaySum = 0.0;
+  std::uint32_t shortest = state.fdnDelay[0];
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+    delaySum += static_cast<double>(state.fdnDelay[line]);
+    shortest = std::min(shortest, state.fdnDelay[line]);
     const double seconds = static_cast<double>(state.fdnDelay[line]) / internalRate;
     for (std::uint32_t band = 0u; band < kBandCount; ++band) {
       // §22。3T/RT60 で -60 dB になる。
       const double gain = std::pow(10.0, -3.0 * seconds / acoustics.rt60[band]);
       state.fdnBand[line][band] = static_cast<float>(clampDouble(gain, 0.0, 0.9999));
     }
+  }
+
+  // 入口へ入れた音は、いちばん短い線のぶんだけ遅れて初めて出てくる。
+  // **その長さを引いて**、late の最初の音が 1 次の終わりに揃うようにする。
+  // 前は mixing time に遅延線の 8 ms を上乗せしていた。
+  state.preDelay = static_cast<float>(clampDouble(
+      firstOrderEnd - static_cast<double>(shortest) * static_cast<double>(divider), 1.0, 1e9));
+  // mixingTime は「late の鳴り始め」（tailSeconds と画面が使う）。
+  state.mixingTime = static_cast<float>(firstOrderEnd / sampleRate);
+  for (std::uint32_t band = 0u; band < kBandCount; ++band) {
+    state.rt60[band] = static_cast<float>(acoustics.rt60[band]);
   }
 
   effetune::dsp::XorShiftRng rng(seed ^ 0x5BF03635u, seed + 0x85EBCA6Bu);
@@ -670,33 +718,80 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     state.fdnOutput[1][line] = outputRight[line];
   }
 
+  // 3 帯域の割り方（相補な 1 次）の Gram 行列。白い音を入れたとき、帯域 i と j の
+  // 出力の内積がいくつになるか。1 次ローパスの応答は a(1-a)^n なので閉じた形で出る。
+  // 全部足すと 1（足すと素通しへ戻る）。direct と late の**白で測ったエネルギー**を
+  // 帯域ごとのゲインと減衰から出すのに使う。
+  double gram[kBandCount][kBandCount];
+  {
+    const double a1 = 1.0 - std::exp(-2.0 * kPi * kBandSplitLow / sampleRate);
+    const double a2 = 1.0 - std::exp(-2.0 * kPi * kBandSplitHigh / sampleRate);
+    const auto cross = [](double x, double y) { return x * y / (1.0 - (1.0 - x) * (1.0 - y)); };
+    const double r11 = cross(a1, a1);
+    const double r12 = cross(a1, a2);
+    const double r22 = cross(a2, a2);
+    gram[0][0] = r11;
+    gram[0][1] = gram[1][0] = r12 - r11;
+    gram[0][2] = gram[2][0] = a1 - r12;
+    gram[1][1] = r22 - 2.0 * r12 + r11;
+    gram[1][2] = gram[2][1] = a2 - r22 - a1 + r12;
+    gram[2][2] = 1.0 - 2.0 * a2 + r22;
+  }
+
   // late の高さ。**直接音に対する比（DRR）で決める。**
   //
   // 前は部屋定数から 16*pi*r^2/R を出していたが、あれは実測の部屋で成り立つ式で、
   // 材質を極端にすると簡単に 2 桁ずれる。元の JS と同じく比を直に置く。
-  // 100% で 8 dB。**Room Amount はエネルギー比に掛ける**ので、200% で +3 dB。
   //
-  // 直交帰還の FDN は入力エネルギーを ||b||^2/(1-g^2) だけ吐くので、そこから
-  // 1 本あたりの入力ゲインを逆算する。直接音は §16 でエネルギー 1 に揃えてある。
+  // **DRR の定義: 音源ごとに、両耳の direct エネルギーの和 / 両耳の late エネルギーの和。**
+  // 100% で 8 dB。Room Amount は像と同じく振幅に掛けるので、エネルギー比には 2 乗で効き、
+  // 200% で late が +6 dB（DRR は約 2 dB）。前のコメントは「+3 dB」と書いていたが、
+  // 式は前から 2 乗だった。像（early）も振幅で 2 倍なので、早期と late の釣り合いが崩れない。
+  //
+  // FDN が吐くエネルギー（1 耳）は ||b||^2 ||c||^2 / (Σd (1 - p^2))（stop.md の A）。
+  // 遅延線が d_i サンプルあると、入れたエネルギーは Σd_i 個の枠へ散って、1 サンプルごとに
+  // p^2 ずつ減る。||c||^2 = 1（±1/4 が 16 本）、b = lateGain * (±1)。
+  // **前の式は Σd が抜けていて、late が 39 dB 足りなかった。**
+  //
+  // 帯域ごとに減り方が違う（材質で RT60 が帯域ごとに違う）ので、白で測ったエネルギーは
+  // Σ_ij G_ij / (Σd (1 - p_i p_j)) になる。direct も同じ G で測る（頭部陰影の帯域ゲインが効く）。
+  // こうしておくと、BRIR を白で測った DRR が狙いの値に乗る。
   constexpr double kDirectToReverbDecibels = 8.0;
-  const double targetLate =
+  const double lateRatio =
       std::pow(10.0, -kDirectToReverbDecibels / 10.0) * roomAmount * roomAmount;
-  const double perSample = std::pow(10.0, -3.0 / (acoustics.rt60[1] * internalRate));
-  const double leak = clampDouble(1.0 - perSample * perSample, 1e-9, 1.0);
-  const double lateGain = std::sqrt(targetLate * leak / static_cast<double>(kFdnLines));
-  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
-      state.fdnInput[line][source] = static_cast<float>(
-          static_cast<double>(inputSigns[source][line]) * lateGain * sourceNormalization[source]);
+  double decay[kBandCount];
+  for (std::uint32_t band = 0u; band < kBandCount; ++band) {
+    decay[band] = std::pow(10.0, -3.0 / (acoustics.rt60[band] * internalRate));
+  }
+  // lateGain = 1 のときの 1 耳の late エネルギー（白）。
+  double latePerUnit = 0.0;
+  for (std::uint32_t i = 0u; i < kBandCount; ++i) {
+    for (std::uint32_t j = 0u; j < kBandCount; ++j) {
+      latePerUnit += gram[i][j] / clampDouble(1.0 - decay[i] * decay[j], 1e-9, 1.0);
     }
   }
+  latePerUnit *= static_cast<double>(kFdnLines) / delaySum;
 
-  // late の入口も同じだけ寄せる。寄せないと早期反射との間が開く。
-  state.preDelay = static_cast<float>(
-      clampDouble(acoustics.mixingTime * sampleRate - shift, 1.0, 1e9));
-  state.mixingTime = static_cast<float>(acoustics.mixingTime);
-  for (std::uint32_t band = 0u; band < kBandCount; ++band) {
-    state.rt60[band] = static_cast<float>(acoustics.rt60[band]);
+  double lateGain[kSourceCount];
+  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    double direct = 0.0;
+    for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+      const PathState &path = state.path[pathIndex(ear, source, 0u)];
+      for (std::uint32_t i = 0u; i < kBandCount; ++i) {
+        for (std::uint32_t j = 0u; j < kBandCount; ++j) {
+          direct += static_cast<double>(path.band[i]) * gram[i][j] *
+                    static_cast<double>(path.band[j]);
+        }
+      }
+    }
+    // 両耳で direct * lateRatio、1 耳ではその半分。
+    lateGain[source] = std::sqrt(direct * lateRatio * 0.5 / latePerUnit);
+  }
+  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+      state.fdnInput[line][source] =
+          static_cast<float>(static_cast<double>(inputSigns[source][line]) * lateGain[source]);
+    }
   }
 
   // ------------------------------------------------------------ 全体の高さ
@@ -707,40 +802,114 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // こちらは実時間なので peak では測れない。エネルギーの和で割る。
   //
   // 耳介の FIR も全帯域に掛かるぶんだけ足し引きするので、その利得も入れる。
-  // 耳介の FIR は低域では素通し（tap の和がそのまま利得）、中高域では
-  // くぼみを作るので二乗和で効く。割り方をそれぞれに合わせる。
   double pinnaEnergy = 0.0;
-  double pinnaLow = 0.0;
   for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
     const double g = static_cast<double>(state.pinnaGain[tap]);
     pinnaEnergy += g * g;
-    pinnaLow += g;
+  }
+
+  // 1 耳・1 音源あたりの late エネルギー（中域の減衰で数える。early の数え方に揃える）と、
+  // L=R の低音で 1 耳に積もる late エネルギー（低域の減衰で数え、2 音源ぶん足す）。
+  double lateEnergy = 0.0;
+  double lateLowEnergy = 0.0;
+  {
+    const double mid = clampDouble(1.0 - decay[1] * decay[1], 1e-9, 1.0);
+    const double low = clampDouble(1.0 - decay[0] * decay[0], 1e-9, 1.0);
+    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+      const double fed =
+          lateGain[source] * lateGain[source] * static_cast<double>(kFdnLines) / delaySum;
+      lateEnergy += fed / mid * 0.5;
+      lateLowEnergy += fed / low;
+    }
   }
 
   // 無相関で足したときの高さ。中高域はこちらが効く。
+  // 単位は「direct の両耳エネルギー = 1」。early は 2 音源 x 2 耳ぶん足してあるので半分、
+  // late は 1 耳ぶんなので 2 倍して両耳にする。
   const double incoherent =
-      std::sqrt(clampDouble((1.0 + earlyEnergy * 0.5 + targetLate) *
+      std::sqrt(clampDouble((1.0 + earlyEnergy * 0.5 + lateEnergy * 2.0) *
                                 clampDouble(pinnaEnergy, 0.25, 4.0),
                             1e-6, 1e6));
 
-  // 低域で同相に足したときの高さ。**左右そろった低音がいちばん大きくなる**ので、
-  // 両方の音源を足したものを耳ごとに見て、大きい方を取る。
-  // late も同じ向きに積もるので、1 本あたり b*c/(1-g) を足す。
-  double lateLow = 0.0;
-  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
-    const double leakLine =
-        clampDouble(1.0 - static_cast<double>(state.fdnBand[line][0]), 1e-3, 1.0);
-    lateLow += std::fabs(static_cast<double>(state.fdnInput[line][0])) *
-               std::fabs(static_cast<double>(state.fdnOutput[0][line])) / leakLine;
-  }
+  // 低域で同相に足したときの高さ（stop.md の C）。**左右そろった低音がいちばん大きくなる**ので、
+  // 両方の音源を耳ごとに足して、大きい方の耳を取る。
+  //
+  // 前は「全部の像が同じ向きに積もる」として帯域ゲインを単純に足していた。ここでは
+  // 40〜300 Hz の対数で 24 点、実際の遅れと 3 帯域の応答・耳介の FIR から複素数で足す。
+  // late は位相がばらばらなので、低域の減衰で数えたエネルギーを足す。
+  //
+  // **下を 40 Hz で切るのは測って決めた。**像は 0〜23 ms に散っているが、40 Hz より下では
+  // 周期の方が長く、本当にほぼ同相に積もる（stop.md の C の「300 Hz 以下でも同相に
+  // ならない」は 40 Hz より上でしか成り立たない）。既定の部屋（2 次）で、
+  //   20 Hz から測る   rms は入力の -10.4 dB、20〜35 Hz の同相の正弦は +0.1 dB
+  //   40 Hz から測る   rms は入力の  -6.4 dB、40〜120 Hz は +0.2 dB、20〜35 Hz は +4.1 dB
+  //   低域を見ない     rms は入力の  +1.2 dB、40 Hz で +7.7 dB、曲で 0 dBFS 超えが 6 個
+  // 40 Hz より下は既定の部屋のいちばん低い軸モード（41 Hz）より下で、2 次で打ち切った像の和は
+  // 密閉した箱の圧力のように効く。そこまで守ると全体が 4 dB 余計に小さくなる。
+  // **20〜35 Hz を -1 dBFS の同相で入れると +4 dB まで出る**のは承知の上（stop.md）。
   double coherent = 0.0;
-  for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
-    const double sum = lowSum[ear][0] + lowSum[ear][1];
-    if (sum > coherent) {
-      coherent = sum;
+  {
+    constexpr std::uint32_t kProbes = 24u;
+    constexpr double kProbeLowest = 40.0;
+    const double a1 = 1.0 - std::exp(-2.0 * kPi * kBandSplitLow / sampleRate);
+    const double a2 = 1.0 - std::exp(-2.0 * kPi * kBandSplitHigh / sampleRate);
+    for (std::uint32_t probe = 0u; probe < kProbes; ++probe) {
+      const double frequency =
+          kProbeLowest *
+          std::pow(300.0 / kProbeLowest, static_cast<double>(probe) / (kProbes - 1u));
+      const double omega = 2.0 * kPi * frequency / sampleRate;
+      const double zr = std::cos(omega);
+      const double zi = -std::sin(omega);
+      // 1 次ローパス a / (1 - (1-a) z^-1)
+      const auto lowpass = [&](double a, double &re, double &im) {
+        const double dr = 1.0 - (1.0 - a) * zr;
+        const double di = -(1.0 - a) * zi;
+        const double mag = dr * dr + di * di;
+        re = a * dr / mag;
+        im = -a * di / mag;
+      };
+      double l1r = 0.0;
+      double l1i = 0.0;
+      double l2r = 0.0;
+      double l2i = 0.0;
+      lowpass(a1, l1r, l1i);
+      lowpass(a2, l2r, l2i);
+      const double bandRe[kBandCount] = {l1r, l2r - l1r, 1.0 - l2r};
+      const double bandIm[kBandCount] = {l1i, l2i - l1i, -l2i};
+
+      double pinnaRe = 0.0;
+      double pinnaIm = 0.0;
+      for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
+        const double phase = omega * static_cast<double>(state.pinnaDelay[tap]);
+        pinnaRe += static_cast<double>(state.pinnaGain[tap]) * std::cos(phase);
+        pinnaIm -= static_cast<double>(state.pinnaGain[tap]) * std::sin(phase);
+      }
+      const double pinna2 = pinnaRe * pinnaRe + pinnaIm * pinnaIm;
+
+      for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+        double sumRe = 0.0;
+        double sumIm = 0.0;
+        for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+          for (std::uint32_t image = 0u; image < state.imagesPerSource; ++image) {
+            const PathState &path = state.path[pathIndex(ear, source, image)];
+            double re = 0.0;
+            double im = 0.0;
+            for (std::uint32_t band = 0u; band < kBandCount; ++band) {
+              re += static_cast<double>(path.band[band]) * bandRe[band];
+              im += static_cast<double>(path.band[band]) * bandIm[band];
+            }
+            const double phase = omega * static_cast<double>(path.delay);
+            const double c = std::cos(phase);
+            const double sn = -std::sin(phase);
+            sumRe += re * c - im * sn;
+            sumIm += re * sn + im * c;
+          }
+        }
+        coherent = std::max(coherent, (sumRe * sumRe + sumIm * sumIm + lateLowEnergy) * pinna2);
+      }
     }
+    coherent = std::sqrt(coherent);
   }
-  coherent = (coherent + lateLow * 2.0) * std::fabs(pinnaLow);
 
   // **大きい方で割る。**こうすると「バイパスより大きくならない」が成り立つ。
   // 低音が同相で来たときがいちばん厳しく、そこで 0 dBFS を超えていた。
