@@ -8,7 +8,9 @@ it are in the folder named after the EffeTune DSP version,
 [`chain/v0.15.0/`](chain/v0.15.0/index.md): the effect list (`index.md`) and
 one file per category. If the request does not name the versions, ask the
 user; EffectDeck shows them in **Settings → About** (*App version* and
-*EffeTune DSP*). If there is no folder for that EffeTune DSP version, that
+*EffeTune DSP*). If the user has not installed EffectDeck yet, do not ask: use
+the newest folder under `chain/`, and give the App Store link
+(<https://apps.apple.com/app/effectdeck/id6812467517>) with the chain. If there is no folder for that EffeTune DSP version, that
 EffectDeck is too old to import a chain this way: tell the user to update
 EffectDeck, and do not build the chain.
 
@@ -67,7 +69,8 @@ Hard rules, in order of how often they are broken:
 2. **Use only the keys listed for that effect** in its category file, in the
    listed shape: scalar `"vl"`, indexed `"f0"` … `"f4"`, object array
    `"bs":[{…},…]`, or flat array `"dm":[…]`. Never write an indexed parameter
-   as one array (`"f":[…]`).
+   as one array (`"f":[…]`). The one key every effect may also take is
+   `automation` (see *Following the volume*).
 3. **Write only what you change.** Keys you leave out keep the defaults shown
    in the category file.
 4. **Stored values, inside the listed range.** Options as one of the listed
@@ -121,6 +124,43 @@ Start from this shape:
 ```json
 [{"nm":"Hi Pass Filter","fr":30},{"nm":"5Band PEQ","f0":100,"g0":2,"t0":"ls"},{"nm":"Saturation","dr":2,"gn":-3},{"nm":"Volume","vl":-3}]
 ```
+
+## Following the volume (keyframes)
+
+With EffeTune DSP 0.15.0 or later, an effect can change with the device's
+output volume (the volume buttons, 0 to 100 %). Use it only when the user wants
+the sound to depend on the volume, for example more bass at low volume
+(loudness compensation). Older versions ignore it (*Ignored*) and play the
+effect's own keys.
+
+Add `automation` to the stage:
+
+```json
+{"nm":"5Band PEQ","f0":100,"t0":"ls","g0":0,"automation":{"src":"outputVolume","kf":[{"at":20,"p":{"g0":8}},{"at":50,"p":{"g0":3}},{"at":80,"p":{"g0":0}}]}}
+```
+
+- `src` is always `"outputVolume"`.
+- `kf` lists the keyframes, 1 to 64. `at` is the volume in percent, 0 to 100,
+  in steps of 5, each `at` once. `p` holds the effect's keys at that volume, in
+  the same shape and ranges as the effect's own keys. Keys left out of `p` take
+  the effect's own values.
+- **The effect's own keys are the highest keyframe.** The app replaces them
+  with the highest keyframe's values, so write them the same. Older versions
+  play them at every volume.
+- Between two keyframes the app blends: dB and linear values in a straight
+  line, Hz and Q on a log scale, options and switches change halfway. Below the
+  lowest keyframe and above the highest, the nearest one holds.
+  `"hold":true` on a keyframe keeps its values up to the next keyframe and
+  switches there at once.
+- In `5Band PEQ` and `15Band PEQ` the bands are not blended one by one: the app
+  fades from one keyframe's whole EQ to the next. Keep frequencies, Q and types
+  the same in every keyframe and change only gains.
+- Settings that change latency (oversampling, look-ahead) are not blended:
+  every keyframe uses the highest keyframe's value.
+- Not for analyzers, Section, JSFX, effects without keys, and these effects:
+  `Bass Management`, `FIR Crossover`, `Matrix`, `5Band FIR PEQ`,
+  `Group Delay EQ`, `Group Delay PEQ`, `Room EQ`, `SFZ Note Player`,
+  `IR Reverb`, `Crosstalk Cancellation`.
 
 ## When the built-in effects are not enough
 
@@ -198,6 +238,7 @@ says in one line what it changed:
 | Value outside the range | Set to the nearest end of the range (*Limited*) |
 | `ch` the app does not know | Ignored; both sides are processed (*Ignored*) |
 | JSFX the user has not imported | The stage is skipped (*Not found*) |
+| `automation` on an effect that cannot follow the volume, or not in the shape above | Ignored; the effect's own keys stay (*Ignored*) |
 
 These notes come from mistakes in the chain, not from EffectDeck. When the user
 reports one, fix the chain and hand it over again.
@@ -219,6 +260,7 @@ breaks it and you cannot fix it.
 - [ ] strict JSON that parses
 - [ ] the chain ends at or below 0 dB
 - [ ] no Section unless the user asked for groups or the parts really need separate switches
+- [ ] `automation` only if the sound should follow the volume, on an effect that allows it, with the effect's own keys equal to the highest keyframe
 - [ ] every `{"jsfx":…}` names the `desc:` of a script the user has imported
 - [ ] the reply carries the whole chain
 - [ ] the reply says how to import it, right next to the link or code block

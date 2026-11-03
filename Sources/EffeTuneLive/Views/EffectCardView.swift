@@ -1276,11 +1276,11 @@ private struct JSFXFullScreenEditor: View {
 ///
 /// UIKit に「現在の first responder」を直に返す API は無いので、nil 宛ての
 /// sendAction が first responder にだけ届く性質を使う。
-private final class ETFirstResponderProbe {
+final class ETFirstResponderProbe {
     static weak var found: UIResponder?
 }
 
-private extension UIResponder {
+extension UIResponder {
     @objc func et_findFirstResponder(_ sender: Any?) {
         ETFirstResponderProbe.found = self
     }

@@ -295,6 +295,10 @@ struct PipelineView: View {
     /// 背景に回ったら図を汲むのをやめる。前例は GraphCanvas と PitchMeterView。
     @Environment(\.scenePhase) private var scenePhase
 
+    /// 鎖の取り消しを積む先（EffeTuneDSP.undoManager）。ボタンは置かず、
+    /// iOS の振る・3 本指・⌘Z で戻す。
+    @Environment(\.undoManager) private var undoManager
+
     var body: some View {
         // 1 回だけ組む。⋯ の Move Up / Move Down が「画面の何行目か」と
         // 「画面の行数」の両方を要るので、行ごとに組み直すと本数ぶん無駄になる。
@@ -314,6 +318,8 @@ struct PipelineView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { updateWideEnough($0) }
+        // 振って取り消すための first responder（UndoShakeResponder.swift）。
+        .background(ETUndoShakeResponder())
         .sheet(item: presentedSheet, onDismiss: runAfterSheet) { which in
             switch which {
             case .picker:
@@ -350,6 +356,7 @@ struct PipelineView: View {
                 Button("OK", role: .cancel) { clearErrors() }
             } message: { Text(linkError ?? importError ?? pluginError ?? "Unknown error") }
         .onAppear {
+            dsp.undoManager = undoManager
             // **案内の画面は持たない。**
             // 「2 本構成で、他のアプリの音を寄越す」という形が読めないだろう、
             // と思って 1 枚置いていた。いまは鎖の頭の帯（ConnectBanner）が
