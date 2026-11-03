@@ -653,8 +653,11 @@ void VirtualRoomEngine::stepFdn(const float *history, float *lines) noexcept {
   float source[kMaxSources];
   for (std::uint32_t index = 0u; index < lateSources_; ++index) {
     const std::uint32_t base = index * kBandCount * ringSize_;
-    source[index] = history[base + tap] + history[base + ringSize_ + tap] +
-                    history[base + 2u * ringSize_ + tap];
+    // 5.1 の LFE は低域の帯だけ（direct / early の経路と同じ。§65）。Stereo は 2 本なので通らない。
+    source[index] = index == kLfeSource
+                        ? history[base + tap]
+                        : history[base + tap] + history[base + ringSize_ + tap] +
+                              history[base + 2u * ringSize_ + tap];
   }
 
   float out[kFdnLines];

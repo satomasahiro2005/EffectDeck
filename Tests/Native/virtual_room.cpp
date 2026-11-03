@@ -544,7 +544,7 @@ ET_CASE(fold_back_to_same_delays_stays_consistent)
 
 // ---------------------------------------------------------------- 5.1（§64）
 //
-// 入力は L, R, C, LFE, Ls, Rs（Spatial Mapper の "5.1 Upmix" の並び）。両耳を 0 番と 1 番へ書き、
+// 入力は L, R, C, LFE, Ls, Rs（EffeTune の 5.1 の並び。§65）。両耳を 0 番と 1 番へ書き、
 // 2 番から先は 0。Stereo の音が 1 bit も変わらないことは、変える前と後の engine に同じ入力を
 // 通して比べた（stop.md）。ここでは 5.1 の形と、実時間と offline の一致を押さえる。
 
@@ -619,32 +619,43 @@ void runSurround(const Params &params, std::uint32_t block,
 
 }  // namespace
 
-// 面の形。LFE は直接音の低域だけ、late へ入れない。方向を持つ 5 本の late の入口は互いに直交。
+// 面の形。LFE は C と同じ場所の低域だけのスピーカー（像も耳介も C と同じ、中高域の帯は 0。§65）。
+// LFE の late の入口は L / R / C の入口を 1 : 1 : sqrt(2) で混ぜたもの。方向を持つ 5 本は互いに直交。
 ET_CASE(surround_state_shape)
 {
   RenderState state{};
   vr::buildRenderState(surroundDefaults(), kRate, state);
   ET_CHECK(state.sourceCount == kSurround);
   for (std::uint32_t source = 0u; source < kSurround; ++source) {
-    ET_CHECK(state.sourceImages[source] == (source == vr::kLfeSource ? 1u : vr::kMaxImages));
+    ET_CHECK(state.sourceImages[source] == vr::kMaxImages);
   }
   for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
-    const vr::PathState &lfe = state.path[vr::pathIndex(ear, vr::kLfeSource, 0u)];
-    ET_CHECK(lfe.band[0] > 0.0F && lfe.band[1] == 0.0F && lfe.band[2] == 0.0F);
-    for (std::uint32_t image = 1u; image < vr::kMaxImages; ++image) {
-      for (float b : state.path[vr::pathIndex(ear, vr::kLfeSource, image)].band) {
-        ET_CHECK(b == 0.0F);
-      }
+    for (std::uint32_t image = 0u; image < vr::kMaxImages; ++image) {
+      const vr::PathState &lfe = state.path[vr::pathIndex(ear, vr::kLfeSource, image)];
+      const vr::PathState &center = state.path[vr::pathIndex(ear, 2u, image)];
+      ET_CHECK(lfe.band[1] == 0.0F && lfe.band[2] == 0.0F);
+      ET_CHECK(lfe.delay == center.delay && lfe.band[0] == center.band[0]);
+      ET_CHECK(lfe.band[0] > 0.0F);
     }
   }
-  ET_CHECK(state.pinnaTaps[vr::kLfeSource] == 1u);
+  ET_CHECK(state.pinnaTaps[vr::kLfeSource] == state.pinnaTaps[2]);
+  for (std::uint32_t tap = 0u; tap < state.pinnaTaps[2]; ++tap) {
+    ET_CHECK(state.pinnaDelay[vr::kLfeSource][tap] == state.pinnaDelay[2][tap]);
+    ET_CHECK(state.pinnaGain[vr::kLfeSource][tap] == state.pinnaGain[2][tap]);
+  }
+  for (std::uint32_t line = 0u; line < vr::kFdnLines; ++line) {
+    const double mixed = (static_cast<double>(state.fdnInput[line][0]) + state.fdnInput[line][1] +
+                          std::sqrt(2.0) * state.fdnInput[line][2]) /
+                         (2.0 + std::sqrt(2.0));
+    ET_CHECK(std::fabs(state.fdnInput[line][vr::kLfeSource] - mixed) < 1e-6);
+  }
   for (std::uint32_t a = 0u; a < kSurround; ++a) {
     double selfA = 0.0;
     for (std::uint32_t line = 0u; line < vr::kFdnLines; ++line) {
       selfA += static_cast<double>(state.fdnInput[line][a]) * state.fdnInput[line][a];
     }
     if (a == vr::kLfeSource) {
-      ET_CHECK(selfA == 0.0);
+      ET_CHECK(selfA > 0.0);
       continue;
     }
     ET_CHECK(selfA > 0.0);
@@ -722,14 +733,22 @@ ET_CASE(surround_pinna_front_back_differ)
 }
 
 // 2 番から先は 0 で出る（6 本でも 8 本でも）。0 番と 1 番には音がある。
+// 7.1（8 本）・7.1.4（12 本）・16 本で 7 本目から先に音があっても、耳は頭の 6 本だけで
+// 鳴らしたものと 1 bit も違わない（7.1 の並びは頭の 6 本が 5.1 と同じ。§65）。
 ET_CASE(surround_zeroes_extra_channels)
 {
   const std::uint32_t frames = 4096u;
-  std::vector<std::vector<float>> inputs;
+  std::vector<std::vector<float>> six;
   for (std::uint32_t c = 0u; c < kSurround; ++c) {
-    inputs.push_back(noise(frames, 10u + c));
+    six.push_back(noise(frames, 10u + c));
   }
-  for (const std::uint32_t count : {6u, 8u}) {
+  std::vector<std::vector<float>> reference;
+  runSurround(surroundDefaults(), kBlock, six, kSurround, reference);
+  for (const std::uint32_t count : {6u, 8u, 12u, 16u}) {
+    std::vector<std::vector<float>> inputs = six;
+    for (std::uint32_t c = kSurround; c < count; ++c) {
+      inputs.push_back(noise(frames, 40u + c));
+    }
     std::vector<std::vector<float>> outputs;
     runSurround(surroundDefaults(), kBlock, inputs, count, outputs);
     for (std::uint32_t c = 2u; c < count; ++c) {
@@ -738,6 +757,48 @@ ET_CASE(surround_zeroes_extra_channels)
       }
     }
     ET_CHECK(energy(outputs[0]) > 0.0 && energy(outputs[1]) > 0.0);
+    ET_CHECK(outputs[0] == reference[0] && outputs[1] == reference[1]);
+  }
+}
+
+// 上流の鎖で 5.1 を作る形ごとに、同相の低音（-1 dBFS）の峰を見る（§65）。
+//   Spatial Mapper "5.1 Upmix"            L = R = 1、C = sqrt(2)
+//   その後ろに Bass Management             低音を全部 LFE へ（2 + sqrt(2)）。上流の既定の 0 dB で集める
+// Bass Management の後ろでも、LFE が C と同じ部屋で鳴るので高さが揃う。
+// 前は LFE が直接音だけで、集めた低音が 40〜120 Hz で 12.5 dB 小さくなっていた。
+ET_CASE(surround_bass_management_keeps_level)
+{
+  const auto frames = static_cast<std::uint32_t>(kRate * 0.6);
+  const double amplitude = std::pow(10.0, -1.0 / 20.0);
+  const double root2 = std::sqrt(2.0);
+  const auto peakOf = [&](double frequency, const double (&weight)[kSurround]) {
+    std::vector<std::vector<float>> inputs(kSurround, std::vector<float>(frames));
+    for (std::uint32_t i = 0u; i < frames; ++i) {
+      const double x = amplitude * std::sin(2.0 * vr::kPi * frequency * i / kRate);
+      for (std::uint32_t c = 0u; c < kSurround; ++c) {
+        inputs[c][i] = static_cast<float>(weight[c] * x);
+      }
+    }
+    std::vector<std::vector<float>> outputs;
+    runSurround(surroundDefaults(), kBlock, inputs, kSurround, outputs);
+    double peak = 0.0;
+    for (std::uint32_t i = frames / 2u; i < frames; ++i) {
+      peak = std::max({peak, std::fabs(static_cast<double>(outputs[0][i])),
+                       std::fabs(static_cast<double>(outputs[1][i]))});
+    }
+    return db20(peak / amplitude);
+  };
+  const double upmix[kSurround] = {1.0, 1.0, root2, 0.0, 0.0, 0.0};
+  const double managed[kSurround] = {0.0, 0.0, 0.0, 2.0 + root2, 0.0, 0.0};
+  for (const double f : {40.0, 55.0}) {
+    const double a = peakOf(f, upmix);
+    const double b = peakOf(f, managed);
+    ET_CHECK_MSG(std::fabs(a - b) <= 1.0, "%.0f Hz upmix %+.2f dB, LFE %+.2f dB", f, a, b);
+  }
+  for (const double f : {40.0, 55.0, 80.0, 120.0}) {
+    const double a = peakOf(f, upmix);
+    const double b = peakOf(f, managed);
+    ET_CHECK_MSG(a <= 1.0 && b <= 1.0, "%.0f Hz upmix %+.2f dB, LFE %+.2f dB", f, a, b);
   }
 }
 
@@ -779,7 +840,8 @@ ET_CASE(surround_drr_late)
   for (std::uint32_t source = 0u; source < kSurround; ++source) {
     const double lateEnergy = energy(late.h[source][0]) + energy(late.h[source][1]);
     if (source == vr::kLfeSource) {
-      ET_CHECK(lateEnergy == 0.0);
+      // LFE も late を持つ（L / R / C の入口を混ぜたもの）。低域だけなので DRR の的は当てない。
+      ET_CHECK(lateEnergy > 0.0);
       continue;
     }
     const double drr =
@@ -880,6 +942,7 @@ static const et_case cases[] = {
     ET_ENTRY(surround_pinna_front_back_differ),
     ET_ENTRY(surround_zeroes_extra_channels),
     ET_ENTRY(surround_lfe_is_low_only),
+    ET_ENTRY(surround_bass_management_keeps_level),
     ET_ENTRY(surround_drr_late),
     ET_ENTRY(surround_blocks_match_convolution),
     ET_ENTRY(surround_layout_switch_is_clean),

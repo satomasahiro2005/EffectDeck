@@ -44,7 +44,9 @@ public:
   // **Routing の検査は UI だけに任せない**（§52、§64）。並びに合わない本数で来たら素通す。
   //   Stereo  ちょうど 2ch（Stereo か対）。1ch では像が立たない
   //   5.1     6ch 以上（All）。頭の 6 本を L, R, C, LFE, Ls, Rs として読み、
-  //           両耳を 0 番と 1 番へ書いて、2 番から先は 0 にする
+  //           両耳を 0 番と 1 番へ書いて、2 番から先は 0 にする。
+  //           7.1 / 7.1.4（L, R, C, LFE, Ls, Rs, Lb, Rb, ...）も頭の 6 本は同じ並びなので
+  //           そこだけ読み、7 本目から先は耳へ入れずに 0 にする（§65。7.1 の並びは持たない）
   // 5.1 にした直後、host が処理の幅を 6 本へ組み直すまでの間は 2ch で来る。そこも素通し。
   void process(float *audio, std::uint32_t channel_count, std::uint32_t frame_count,
                const ProcessInfo &) noexcept override {

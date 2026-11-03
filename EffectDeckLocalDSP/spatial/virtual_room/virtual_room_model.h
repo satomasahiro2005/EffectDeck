@@ -59,12 +59,13 @@ inline constexpr std::uint32_t kModelVersion = 1u;  // §13
 // ---------------------------------------------------------------- スピーカーの並び（§64）
 //
 // Stereo は仮想スピーカー L / R の 2 本。5.1 は入力の並びそのままの 6 本で、
-// Spatial Mapper の "5.1 Upmix" が書く並び（L, R, C, LFE, Ls, Rs）に合わせてある。
+// EffeTune の 5.1 の並び（L, R, C, LFE, Ls, Rs）に合わせてある。Spatial Mapper の "5.1 Upmix"、
+// Analog Meter の Loudness、Bass Management の説明が同じ並びを使う（docs/virtual-room-design.md §65）。
 // **音源の番号 = 入力のチャンネル番号。**並べ替えない。
 enum class SpeakerLayout : std::uint32_t { Stereo = 0u, Surround51 = 1u };
 inline constexpr std::uint32_t kStereoSources = 2u;
 inline constexpr std::uint32_t kMaxSources = 6u;
-inline constexpr std::uint32_t kLfeSource = 3u;  // 5.1 の LFE。方向を持たない
+inline constexpr std::uint32_t kLfeSource = 3u;  // 5.1 の LFE。C の場所に置く低域だけの音源
 inline constexpr std::uint32_t kMaxPaths = kMaxImages * kMaxSources * kEarCount;
 // 5.1 の耳介は Brown & Duda の 5 個の event。遅れが小数なので 1 個を隣り合う 2 tap へ
 // 線形に割る（論文と同じやり方）。0 番は素通しの 1。
@@ -234,7 +235,7 @@ struct RenderState {
   /// 鳴らす音源の数。Stereo で 2、5.1 で 6。入力のチャンネルを頭からこの数だけ読む。
   std::uint32_t sourceCount;
   std::uint32_t imagesPerSource;  // 7 か 25
-  /// 音源ごとに使う像の数。LFE だけ 1（直接音だけ）。使わない音源は 0。
+  /// 音源ごとに使う像の数。使わない音源は 0。
   std::uint32_t sourceImages[kMaxSources];
   PathState path[kMaxPaths];      // [耳][音源][像]
 
@@ -731,7 +732,10 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   state.sourceCount = sources;
   // 方向を持つ音源の数（LFE を除く）。正規化を「1 本あたり」で数えるのに使う。
   const std::uint32_t directional = surround ? kMaxSources - 1u : kStereoSources;
-  // LFE は低域の直接音だけ（像も late も耳介も持たない）。
+  // LFE は **C と同じ場所に置いた、低域だけのスピーカー**（§65）。像も late も C と同じように
+  // 持つが、中域・高域の帯は 0。上流の Bass Management は L / R / C などの低音を LFE へ移しても
+  // 同じ高さで鳴る作りなので、こちらも LFE の低音を L / R / C と同じ部屋の中で鳴らす。
+  // 前は直接音だけにしていて、Bass Management で LFE へ移した低音が 12.5 dB 小さくなった。
   const auto isLfe = [surround](std::uint32_t source) {
     return surround && source == kLfeSource;
   };
@@ -748,7 +752,7 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
       sanitize(params.earlyOrder, 0.0, static_cast<double>(Range::kEarlyOrderCount - 1u));
   state.imagesPerSource = order < 0.5 ? kFirstOrderImages : kMaxImages;
   for (std::uint32_t source = 0u; source < sources; ++source) {
-    state.sourceImages[source] = isLfe(source) ? 1u : state.imagesPerSource;
+    state.sourceImages[source] = state.imagesPerSource;
   }
 
   const Material &side = kMaterials[materialIndex(params.sideMaterial)];
@@ -793,10 +797,8 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     }
   } else {
     // 5.1: 音源の向きごとに Brown & Duda の event を置く。仰角は向きに入っている。
+    // LFE は C と同じ向きなので C と同じ耳介になる（低域での利得を C と揃える）。
     for (std::uint32_t source = 0u; source < sources; ++source) {
-      if (isLfe(source)) {
-        continue;
-      }
       buildDirectionalPinna(geometry.direction[source], pinnaAmount, sampleRate,
                             state.pinnaTaps[source], state.pinnaDelay[source],
                             state.pinnaGain[source]);
@@ -825,22 +827,6 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
       energy += gain * gain;
     }
     sourceNormalization[source] = 1.0 / std::sqrt(energy > 1e-12 ? energy : 1e-12);
-
-    if (isLfe(source)) {
-      // LFE: 正面の直接音、低域だけ。頭部陰影も耳介も中高域にしか効かないので掛けない。
-      for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
-        PathState &path = state.path[pathIndex(ear, source, 0u)];
-        double squared = 0.0;
-        for (std::uint32_t axis = 0u; axis < 3u; ++axis) {
-          const double delta = geometry.source[source][axis] - geometry.ear[ear][axis];
-          squared += delta * delta;
-        }
-        const double radius = clampDouble(std::sqrt(squared), kMinRadius, 1e6);
-        path.delay = static_cast<float>(radius / kSpeedOfSound * sampleRate);
-        path.band[0] = static_cast<float>(sourceNormalization[source] / radius);
-      }
-      continue;
-    }
 
     for (std::uint32_t image = 0u; image < kMaxImages; ++image) {
       const ImageIndex &index = kImageTable[image];
@@ -901,7 +887,11 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
             static_cast<float>(level * surfaceResponse[1] * std::pow(alpha, shadowAmount * 0.5));
         path.band[2] =
             static_cast<float>(level * surfaceResponse[2] * std::pow(alpha, shadowAmount));
-        if (surround) {
+        if (isLfe(source)) {
+          // LFE は低域だけ。頭部陰影も耳介も後ろの陰も中高域にしか効かないので、残るのは低域の帯。
+          path.band[1] = 0.0F;
+          path.band[2] = 0.0F;
+        } else if (surround) {
           // 両耳軸より後ろから着く割合。真後ろで 1、横と前は 0。
           const double rear = clampDouble(-delta[1] / radius, 0.0, 1.0);
           if (rear > 0.0) {
@@ -912,7 +902,8 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
           }
         }
 
-        if (image != 0u && image < state.imagesPerSource) {
+        // LFE は数えない（中高域の高さを決める数。LFE は低域しか持たない）。
+        if (image != 0u && image < state.imagesPerSource && !isLfe(source)) {
           // 3 帯域の平均で数える。帯域の割り方は足すと素通しへ戻るので、
           // これが**その経路が運ぶエネルギー**の目安になる。
           const double mean = (static_cast<double>(path.band[0]) +
@@ -1019,7 +1010,7 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     buildOrthogonalSigns(rng, 1.0, inputSigns[0], inputSigns[1]);
     buildOrthogonalSigns(rng, unit, outputLeft, outputRight);
   } else {
-    // 5.1: 方向を持つ 5 本を互いに直交させる。LFE（3 番）は late へ入れないので 0 のまま。
+    // 5.1: 方向を持つ 5 本を互いに直交させる。LFE（3 番）は下で L / R / C の入口から作る。
     float rows[kMaxSources - 1u][kFdnLines];
     buildHadamardInputs(rng, kMaxSources - 1u, rows);
     for (std::uint32_t source = 0u, row = 0u; source < kMaxSources; ++source) {
@@ -1093,7 +1084,7 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   double lateGain[kMaxSources]{};
   for (std::uint32_t source = 0u; source < sources; ++source) {
     if (isLfe(source)) {
-      continue;  // LFE は late へ入れない
+      continue;  // LFE の入口は下で L / R / C から作る
     }
     // 5.1 は耳介で重みを付けた Gram で数える（下の pinnaGram の注）。Stereo は前のまま。
     double weighted[kBandCount][kBandCount];
@@ -1139,6 +1130,22 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
           static_cast<float>(static_cast<double>(inputSigns[source][line]) * lateGain[source]);
     }
   }
+  if (surround) {
+    // LFE の late の入口は L / R / C の入口を 1 : 1 : sqrt(2) で混ぜたもの（下の coherentWeight と
+    // 同じ形）。Bass Management が L = R = 1、C = sqrt(2) の低音を LFE へ 2 + sqrt(2) 倍で集めると、
+    // late へ入る音が移す前と同じになる。LFE だけに別の直交した行を与えると、集めた低音の
+    // late が移す前より 4.6 dB 大きくなる（3 本ぶんのエネルギーの和と、振幅の和の 2 乗の差）。
+    // FDN へは LFE の低域の帯だけを入れる（VirtualRoomEngine::stepFdn）。
+    const double weight[3] = {1.0, 1.0, std::sqrt(2.0)};
+    const double total = weight[0] + weight[1] + weight[2];
+    for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+      double mixed = 0.0;
+      for (std::uint32_t source = 0u; source < 3u; ++source) {
+        mixed += weight[source] * static_cast<double>(state.fdnInput[line][source]);
+      }
+      state.fdnInput[line][kLfeSource] = static_cast<float>(mixed / total);
+    }
+  }
 
   // ------------------------------------------------------------ 全体の高さ
   //
@@ -1167,6 +1174,8 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // Stereo は L = R = 1。5.1 は **Spatial Mapper の "5.1 Upmix" に L = R の低音を通した形**:
   // L / R はそのまま、C に 0.7 (L + R) = 1.4（ここでは sqrt(2)）、Ls / Rs は相関のない
   // 成分しか受けないので 0、LFE はあの preset では空なので 0。
+  // Bass Management で L / R / C の低音を LFE へ移した形も、LFE が C と同じ部屋で鳴るので
+  // ほぼ同じ高さになる（§65 で測った）。
   // **6 本ぜんぶ同相・満振幅を上限にすると、普通の曲でかなり小さくなる**ので取らない。
   // LFE に大きな音が来る素材（本物の 5.1）では、同相の低音がバイパスを超えうる。
   double coherentWeight[kMaxSources]{};
