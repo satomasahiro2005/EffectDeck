@@ -296,6 +296,16 @@
       "step": 1,
       "default": 41887,
       "automation": true
+    },
+    {
+      "name": "speakerLayout",
+      "key": "sl",
+      "kind": "enum",
+      "values": [
+        "Stereo",
+        "5.1"
+      ],
+      "default": "Stereo"
     }
   ]
 }

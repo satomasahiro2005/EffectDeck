@@ -78,7 +78,7 @@ RenderState partOf(const RenderState &base, Part part) {
     return s;
   }
   for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < vr::kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < vr::kMaxSources; ++source) {
       for (std::uint32_t image = 0u; image < vr::kMaxImages; ++image) {
         if (part == Part::Late || image != 0u) {
           for (float &b : s.path[vr::pathIndex(ear, source, image)].band) {
@@ -220,7 +220,7 @@ ET_CASE(late_starts_at_first_order_end)
 
   double firstOrderEnd = 0.0;
   for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < vr::kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < vr::kStereoSources; ++source) {
       for (std::uint32_t image = 0u; image < vr::kFirstOrderImages; ++image) {
         firstOrderEnd = std::max(
             firstOrderEnd, static_cast<double>(state.path[vr::pathIndex(ear, source, image)].delay));
@@ -436,6 +436,328 @@ ET_CASE(republish_same_params_is_transparent)
   ET_CHECK_MSG(db20(diff / peak) < -100.0, "diff %+.1f dB", db20(diff / peak));
 }
 
+// ---------------------------------------------------------------- 5.1（§64）
+//
+// 入力は L, R, C, LFE, Ls, Rs（Spatial Mapper の "5.1 Upmix" の並び）。両耳を 0 番と 1 番へ書き、
+// 2 番から先は 0。Stereo の音が 1 bit も変わらないことは、変える前と後の engine に同じ入力を
+// 通して比べた（stop.md）。ここでは 5.1 の形と、実時間と offline の一致を押さえる。
+
+namespace {
+
+constexpr std::uint32_t kSurround = vr::kMaxSources;
+
+Params surroundDefaults() {
+  Params p = defaults();
+  p.speakerLayout = 1.0F;
+  return p;
+}
+
+// [音源][耳]。6 本の音源へ 1 本ずつインパルスを入れて取る。
+struct SurroundBrir {
+  std::vector<float> h[kSurround][2];
+};
+
+SurroundBrir renderSurround(VirtualRoomEngine &engine, const RenderState &state,
+                            std::uint32_t frames, std::uint32_t channelCount = kSurround) {
+  SurroundBrir out;
+  std::vector<std::vector<float>> buffers(channelCount, std::vector<float>(kBlock));
+  std::vector<float *> channels(channelCount);
+  for (std::uint32_t c = 0u; c < channelCount; ++c) {
+    channels[c] = buffers[c].data();
+  }
+  for (std::uint32_t source = 0u; source < kSurround; ++source) {
+    engine.applyState(state);
+    out.h[source][0].assign(frames, 0.0F);
+    out.h[source][1].assign(frames, 0.0F);
+    for (std::uint32_t done = 0u; done < frames;) {
+      const std::uint32_t n = std::min(kBlock, frames - done);
+      for (auto &b : buffers) {
+        std::fill(b.begin(), b.end(), 0.0F);
+      }
+      if (done == 0u) {
+        buffers[source][0] = 1.0F;
+      }
+      engine.process(channels.data(), channelCount, n);
+      std::copy_n(buffers[0].begin(), n, out.h[source][0].begin() + done);
+      std::copy_n(buffers[1].begin(), n, out.h[source][1].begin() + done);
+      done += n;
+    }
+  }
+  return out;
+}
+
+// 実時間の経路（publish → process）。inputs は 6 本、outputs は channelCount 本ぶん返す。
+void runSurround(const Params &params, std::uint32_t block,
+                 const std::vector<std::vector<float>> &inputs, std::uint32_t channelCount,
+                 std::vector<std::vector<float>> &outputs) {
+  VirtualRoomEngine engine;
+  ET_CHECK(engine.prepare(kRate, block));
+  engine.publish(params);
+  const auto frames = static_cast<std::uint32_t>(inputs[0].size());
+  outputs.assign(channelCount, std::vector<float>(frames, 0.0F));
+  for (std::uint32_t c = 0u; c < channelCount; ++c) {
+    if (c < inputs.size()) {
+      outputs[c] = inputs[c];
+    }
+  }
+  std::vector<float *> channels(channelCount);
+  for (std::uint32_t done = 0u; done < frames;) {
+    const std::uint32_t n = std::min(block, frames - done);
+    for (std::uint32_t c = 0u; c < channelCount; ++c) {
+      channels[c] = outputs[c].data() + done;
+    }
+    engine.process(channels.data(), channelCount, n);
+    done += n;
+  }
+}
+
+}  // namespace
+
+// 面の形。LFE は直接音の低域だけ、late へ入れない。方向を持つ 5 本の late の入口は互いに直交。
+ET_CASE(surround_state_shape)
+{
+  RenderState state{};
+  vr::buildRenderState(surroundDefaults(), kRate, state);
+  ET_CHECK(state.sourceCount == kSurround);
+  for (std::uint32_t source = 0u; source < kSurround; ++source) {
+    ET_CHECK(state.sourceImages[source] == (source == vr::kLfeSource ? 1u : vr::kMaxImages));
+  }
+  for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
+    const vr::PathState &lfe = state.path[vr::pathIndex(ear, vr::kLfeSource, 0u)];
+    ET_CHECK(lfe.band[0] > 0.0F && lfe.band[1] == 0.0F && lfe.band[2] == 0.0F);
+    for (std::uint32_t image = 1u; image < vr::kMaxImages; ++image) {
+      for (float b : state.path[vr::pathIndex(ear, vr::kLfeSource, image)].band) {
+        ET_CHECK(b == 0.0F);
+      }
+    }
+  }
+  ET_CHECK(state.pinnaTaps[vr::kLfeSource] == 1u);
+  for (std::uint32_t a = 0u; a < kSurround; ++a) {
+    double selfA = 0.0;
+    for (std::uint32_t line = 0u; line < vr::kFdnLines; ++line) {
+      selfA += static_cast<double>(state.fdnInput[line][a]) * state.fdnInput[line][a];
+    }
+    if (a == vr::kLfeSource) {
+      ET_CHECK(selfA == 0.0);
+      continue;
+    }
+    ET_CHECK(selfA > 0.0);
+    for (std::uint32_t b = a + 1u; b < kSurround; ++b) {
+      if (b == vr::kLfeSource) {
+        continue;
+      }
+      double dot = 0.0;
+      double selfB = 0.0;
+      for (std::uint32_t line = 0u; line < vr::kFdnLines; ++line) {
+        dot += static_cast<double>(state.fdnInput[line][a]) * state.fdnInput[line][b];
+        selfB += static_cast<double>(state.fdnInput[line][b]) * state.fdnInput[line][b];
+      }
+      ET_CHECK_MSG(std::fabs(dot) / std::sqrt(selfA * selfB) < 1e-6, "inputs %u/%u correlate %.3g",
+                   a, b, dot / std::sqrt(selfA * selfB));
+    }
+  }
+
+  // 5.1 の面の上に Stereo を組み直したら、3 本目から先は何も残らない（pool の使い回し）。
+  vr::buildRenderState(defaults(), kRate, state);
+  ET_CHECK(state.sourceCount == vr::kStereoSources);
+  for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
+    for (std::uint32_t source = vr::kStereoSources; source < kSurround; ++source) {
+      for (std::uint32_t image = 0u; image < vr::kMaxImages; ++image) {
+        for (float b : state.path[vr::pathIndex(ear, source, image)].band) {
+          ET_CHECK(b == 0.0F);
+        }
+      }
+      for (const auto &line : state.fdnInput) {
+        ET_CHECK(line[source] == 0.0F);
+      }
+    }
+  }
+}
+
+// 横の角が同じで前と後ろ（70° と 110°）の耳介は、event の遅れが違う。
+// 頭部陰影と ITD は前後で同じ（cone of confusion）なので、ここが前後を分ける。
+ET_CASE(surround_pinna_front_back_differ)
+{
+  const double toRadians = vr::kPi / 180.0;
+  const double front[3] = {std::sin(70.0 * toRadians), std::cos(70.0 * toRadians), 0.0};
+  const double back[3] = {std::sin(110.0 * toRadians), std::cos(110.0 * toRadians), 0.0};
+  std::uint32_t frontTaps = 0u;
+  std::uint32_t backTaps = 0u;
+  std::uint32_t frontDelay[vr::kPinnaSlots]{};
+  std::uint32_t backDelay[vr::kPinnaSlots]{};
+  float frontGain[vr::kPinnaSlots]{};
+  float backGain[vr::kPinnaSlots]{};
+  vr::buildDirectionalPinna(front, 1.0, kRate, frontTaps, frontDelay, frontGain);
+  vr::buildDirectionalPinna(back, 1.0, kRate, backTaps, backDelay, backGain);
+  ET_CHECK(frontTaps == vr::kPinnaSlots && backTaps == vr::kPinnaSlots);
+  // 重みつきの平均の遅れ。後ろの方が event が早く着く（sin(D (90° - phi)) が負になる）。
+  double frontMean = 0.0;
+  double backMean = 0.0;
+  double frontWeight = 0.0;
+  double backWeight = 0.0;
+  for (std::uint32_t tap = 1u; tap < vr::kPinnaSlots; ++tap) {
+    frontMean += std::fabs(frontGain[tap]) * frontDelay[tap];
+    frontWeight += std::fabs(frontGain[tap]);
+    backMean += std::fabs(backGain[tap]) * backDelay[tap];
+    backWeight += std::fabs(backGain[tap]);
+  }
+  frontMean /= frontWeight;
+  backMean /= backWeight;
+  ET_CHECK_MSG(frontMean - backMean > 2.0, "mean delay front %.2f back %.2f", frontMean, backMean);
+  // 左右の耳で同じ（cos(theta / 2) は偶関数）。
+  const double mirrored[3] = {-front[0], front[1], front[2]};
+  std::uint32_t mirroredDelay[vr::kPinnaSlots]{};
+  float mirroredGain[vr::kPinnaSlots]{};
+  std::uint32_t mirroredTaps = 0u;
+  vr::buildDirectionalPinna(mirrored, 1.0, kRate, mirroredTaps, mirroredDelay, mirroredGain);
+  for (std::uint32_t tap = 0u; tap < vr::kPinnaSlots; ++tap) {
+    ET_CHECK(mirroredDelay[tap] == frontDelay[tap] && mirroredGain[tap] == frontGain[tap]);
+  }
+}
+
+// 2 番から先は 0 で出る（6 本でも 8 本でも）。0 番と 1 番には音がある。
+ET_CASE(surround_zeroes_extra_channels)
+{
+  const std::uint32_t frames = 4096u;
+  std::vector<std::vector<float>> inputs;
+  for (std::uint32_t c = 0u; c < kSurround; ++c) {
+    inputs.push_back(noise(frames, 10u + c));
+  }
+  for (const std::uint32_t count : {6u, 8u}) {
+    std::vector<std::vector<float>> outputs;
+    runSurround(surroundDefaults(), kBlock, inputs, count, outputs);
+    for (std::uint32_t c = 2u; c < count; ++c) {
+      for (float v : outputs[c]) {
+        ET_CHECK(v == 0.0F);
+      }
+    }
+    ET_CHECK(energy(outputs[0]) > 0.0 && energy(outputs[1]) > 0.0);
+  }
+}
+
+// LFE は低域だけ（300 Hz の 1 次の低域の帯）。50 Hz に比べて 3 kHz が 18 dB 以上小さい。
+// 中高域の帯を持つ C は、同じ比べ方で 0 dB 近くになる。
+ET_CASE(surround_lfe_is_low_only)
+{
+  VirtualRoomEngine engine;
+  ET_CHECK(engine.prepare(kRate, kBlock));
+  engine.applyImmediate(surroundDefaults());
+  const SurroundBrir brir = renderSurround(engine, engine.activeState(), 8192u);
+  const auto magnitude = [](const std::vector<float> &x, double frequency) {
+    double re = 0.0;
+    double im = 0.0;
+    for (std::size_t i = 0u; i < x.size(); ++i) {
+      const double phase = 2.0 * vr::kPi * frequency * static_cast<double>(i) / kRate;
+      re += x[i] * std::cos(phase);
+      im -= x[i] * std::sin(phase);
+    }
+    return std::sqrt(re * re + im * im);
+  };
+  for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
+    const std::vector<float> &lfe = brir.h[vr::kLfeSource][ear];
+    const double tilt = db20(magnitude(lfe, 3000.0) / magnitude(lfe, 50.0));
+    ET_CHECK_MSG(tilt < -18.0, "ear %u LFE 3 kHz vs 50 Hz %+.1f dB", ear, tilt);
+  }
+}
+
+// DRR_late は方向を持つ 5 本とも Stereo と同じ 8 dB ±1。
+ET_CASE(surround_drr_late)
+{
+  VirtualRoomEngine engine;
+  ET_CHECK(engine.prepare(kRate, kBlock));
+  RenderState state{};
+  vr::buildRenderState(surroundDefaults(), kRate, state);
+  const auto frames = static_cast<std::uint32_t>(kRate * 0.4);
+  const SurroundBrir direct = renderSurround(engine, partOf(state, Part::Direct), frames);
+  const SurroundBrir late = renderSurround(engine, partOf(state, Part::Late), frames);
+  for (std::uint32_t source = 0u; source < kSurround; ++source) {
+    const double lateEnergy = energy(late.h[source][0]) + energy(late.h[source][1]);
+    if (source == vr::kLfeSource) {
+      ET_CHECK(lateEnergy == 0.0);
+      continue;
+    }
+    const double drr =
+        db10((energy(direct.h[source][0]) + energy(direct.h[source][1])) / lateEnergy);
+    ET_CHECK_MSG(std::fabs(drr - 8.0) <= 1.0, "source %u DRR_late %+.2f dB", source, drr);
+  }
+}
+
+// 実時間の経路と、6 x 2 の BRIR で畳んだものが、ブロック長によらず頭から一致する。
+ET_CASE(surround_blocks_match_convolution)
+{
+  const std::uint32_t frames = 4096u;
+  VirtualRoomEngine reference;
+  ET_CHECK(reference.prepare(kRate, kBlock));
+  reference.applyImmediate(surroundDefaults());
+  const SurroundBrir brir = renderSurround(reference, reference.activeState(), frames);
+  std::vector<std::vector<float>> inputs;
+  for (std::uint32_t c = 0u; c < kSurround; ++c) {
+    inputs.push_back(noise(frames, 20u + c));
+  }
+  std::vector<double> ref[2];
+  ref[0].assign(frames, 0.0);
+  ref[1].assign(frames, 0.0);
+  double refPeak = 0.0;
+  for (std::uint32_t n = 0u; n < frames; ++n) {
+    for (std::uint32_t source = 0u; source < kSurround; ++source) {
+      for (std::uint32_t k = 0u; k <= n; ++k) {
+        const double x = inputs[source][n - k];
+        ref[0][n] += x * brir.h[source][0][k];
+        ref[1][n] += x * brir.h[source][1][k];
+      }
+    }
+    refPeak = std::max({refPeak, std::fabs(ref[0][n]), std::fabs(ref[1][n])});
+  }
+  for (const std::uint32_t block : {64u, 480u, 512u}) {
+    std::vector<std::vector<float>> outputs;
+    runSurround(surroundDefaults(), block, inputs, kSurround, outputs);
+    double diff = 0.0;
+    for (std::uint32_t i = 0u; i < frames; ++i) {
+      diff = std::max({diff, std::fabs(outputs[0][i] - ref[0][i]),
+                       std::fabs(outputs[1][i] - ref[1][i])});
+    }
+    ET_CHECK_MSG(db20(diff / refPeak) < -120.0, "block %u diff %+.1f dB", block,
+                 db20(diff / refPeak));
+  }
+}
+
+// Stereo ⇄ 5.1 を鳴らしたまま切り替えても、壊れた値も跳ねも出ない。
+// 渡りが終わったあとは、最初から 5.1 で鳴らしたものと同じ面で鳴る。
+ET_CASE(surround_layout_switch_is_clean)
+{
+  const std::uint32_t frames = 48000u;
+  std::vector<std::vector<float>> buffers;
+  for (std::uint32_t c = 0u; c < kSurround; ++c) {
+    buffers.push_back(noise(frames, 30u + c));
+  }
+  VirtualRoomEngine engine;
+  ET_CHECK(engine.prepare(kRate, kBlock));
+  engine.publish(defaults());
+  double peak = 0.0;
+  std::vector<float *> channels(kSurround);
+  for (std::uint32_t done = 0u; done + kBlock <= frames; done += kBlock) {
+    if (done == 20u * kBlock) {
+      engine.publish(surroundDefaults());
+    }
+    if (done == 60u * kBlock) {
+      engine.publish(defaults());
+    }
+    for (std::uint32_t c = 0u; c < kSurround; ++c) {
+      channels[c] = buffers[c].data() + done;
+    }
+    engine.process(channels.data(), kSurround, kBlock);
+    for (std::uint32_t i = 0u; i < kBlock; ++i) {
+      const float l = channels[0][i];
+      const float r = channels[1][i];
+      ET_CHECK(l == l && r == r);
+      peak = std::max({peak, std::fabs(static_cast<double>(l)), std::fabs(static_cast<double>(r))});
+    }
+  }
+  // 入力の峰は 0.25。渡りで 2 面を cos^2 / sin^2 で混ぜても 0 dBFS には届かない。
+  ET_CHECK_MSG(peak < 1.0, "peak %.3f", peak);
+  ET_CHECK(engine.activeState().sourceCount == vr::kStereoSources);
+}
+
 static const et_case cases[] = {
     ET_ENTRY(drr_late_at_100),
     ET_ENTRY(drr_late_at_200),
@@ -446,6 +768,13 @@ static const et_case cases[] = {
     ET_ENTRY(reprepare_takes_new_state_at_once),
     ET_ENTRY(blocks_match_convolution),
     ET_ENTRY(republish_same_params_is_transparent),
+    ET_ENTRY(surround_state_shape),
+    ET_ENTRY(surround_pinna_front_back_differ),
+    ET_ENTRY(surround_zeroes_extra_channels),
+    ET_ENTRY(surround_lfe_is_low_only),
+    ET_ENTRY(surround_drr_late),
+    ET_ENTRY(surround_blocks_match_convolution),
+    ET_ENTRY(surround_layout_switch_is_clean),
 };
 
 int main(int argc, char **argv) { return et_run(argc, argv, cases, ET_COUNT(cases)); }

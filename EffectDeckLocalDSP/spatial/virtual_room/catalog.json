@@ -30,6 +30,7 @@
     "og": "Output Gain",
     "mv": "Model Version",
     "s0": "Diffusion Seed Low",
-    "s1": "Diffusion Seed High"
+    "s1": "Diffusion Seed High",
+    "sl": "Speaker Layout"
   }
 }

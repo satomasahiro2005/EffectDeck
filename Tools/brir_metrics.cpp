@@ -17,6 +17,7 @@
 //   ./brir_metrics response [js|app] [direct|early|late]  1/3 オクターブの周波数応答
 //   ./brir_metrics response irs ref.irs                   同じものを元の JS の IRS で
 //   ./brir_metrics signal out.wav                  比べるための曲の代わり（決まった乱数）
+//   ./brir_metrics surround sine|file in.wav|cone|realtime|cpu   5.1（§64）
 //
 // js は brir_render / brir_ab と同じ配置（元の JS に寄せた 1 次・天井 Painted Wall）、
 // app は params.json の既定（2 次・天井 Drywall）。
@@ -25,6 +26,7 @@
 #include "virtual_room_engine.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -180,7 +182,7 @@ RenderState partOf(const RenderState &base, Part part) {
   RenderState s = base;
   if (part == Part::Full) return s;
   for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < vr::kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < vr::kMaxSources; ++source) {
       for (std::uint32_t image = 0u; image < vr::kMaxImages; ++image) {
         const bool keep = (part == Part::Direct && image == 0u) ||
                           (part == Part::Early && image != 0u);
@@ -377,7 +379,7 @@ int cmdRoom(const Params &params, bool assertTargets) {
   {
     // 1 次までの像で、いちばん遅く着く経路。
     for (std::uint32_t ear = 0u; ear < vr::kEarCount; ++ear)
-      for (std::uint32_t source = 0u; source < vr::kSourceCount; ++source)
+      for (std::uint32_t source = 0u; source < vr::kStereoSources; ++source)
         for (std::uint32_t image = 0u; image < std::min(state.imagesPerSource, vr::kFirstOrderImages);
              ++image)
           firstOrderEnd = std::max<std::size_t>(
@@ -738,6 +740,236 @@ int cmdSignal(const char *path) {
   return 0;
 }
 
+// ---------------------------------------------------------------- surround（§64）
+//
+// 5.1 の数字。入力は L, R, C, LFE, Ls, Rs。曲は Spatial Mapper の代わりに**固定の行列**で広げる:
+//   L, R はそのまま、C = 0.7 (L + R)（"5.1 Upmix" の direct 行列と同じ）、LFE = 0、
+//   Ls = 0.5 (L - R)、Rs = 0.5 (R - L)（ambience の代わり。本物は相関で切り出すので違う）。
+
+std::vector<std::vector<float>> upmix(const std::vector<float> &left,
+                                      const std::vector<float> &right) {
+  const std::size_t frames = left.size();
+  std::vector<std::vector<float>> out(vr::kMaxSources, std::vector<float>(frames, 0.0F));
+  for (std::size_t i = 0; i < frames; ++i) {
+    const double l = left[i], r = right[i];
+    out[0][i] = float(l);
+    out[1][i] = float(r);
+    out[2][i] = float(0.7 * (l + r));
+    out[4][i] = float(0.5 * (l - r));
+    out[5][i] = float(0.5 * (r - l));
+  }
+  return out;
+}
+
+// 実時間の経路を 6 本で回す。両耳を返す。
+void runSurroundRealtime(const Params &params, const std::vector<std::vector<float>> &in,
+                         std::uint32_t block, std::vector<float> &outLeft,
+                         std::vector<float> &outRight) {
+  VirtualRoomEngine engine;
+  if (!engine.prepare(kRate, block)) std::exit(2);
+  engine.publish(params);
+  std::vector<std::vector<float>> io = in;
+  const std::size_t frames = in[0].size();
+  float *ch[vr::kMaxSources];
+  for (std::size_t done = 0; done < frames;) {
+    const auto n = static_cast<std::uint32_t>(std::min<std::size_t>(block, frames - done));
+    for (std::uint32_t c = 0; c < vr::kMaxSources; ++c) ch[c] = io[c].data() + done;
+    engine.process(ch, vr::kMaxSources, n);
+    done += n;
+  }
+  outLeft = io[0];
+  outRight = io[1];
+}
+
+// [音源][耳] の BRIR を applyImmediate から取る。
+void surroundBrir(const Params &params, std::uint32_t frames,
+                  std::vector<float> (&h)[vr::kMaxSources][2], bool directOnly = false) {
+  VirtualRoomEngine engine;
+  if (!engine.prepare(kRate, kBlock)) std::exit(2);
+  engine.applyImmediate(params);
+  RenderState state = engine.activeState();
+  if (directOnly) state = partOf(state, Part::Direct);
+  std::vector<std::vector<float>> buffers(vr::kMaxSources, std::vector<float>(kBlock));
+  float *ch[vr::kMaxSources];
+  for (std::uint32_t source = 0; source < vr::kMaxSources; ++source) {
+    engine.applyState(state);
+    h[source][0].assign(frames, 0.0F);
+    h[source][1].assign(frames, 0.0F);
+    for (std::uint32_t done = 0; done < frames; done += kBlock) {
+      for (std::uint32_t c = 0; c < vr::kMaxSources; ++c) {
+        std::fill(buffers[c].begin(), buffers[c].end(), 0.0F);
+        ch[c] = buffers[c].data();
+      }
+      if (done == 0) buffers[source][0] = 1.0F;
+      const std::uint32_t n = std::min(kBlock, frames - done);
+      engine.process(ch, vr::kMaxSources, n);
+      std::copy_n(buffers[0].begin(), n, h[source][0].begin() + done);
+      std::copy_n(buffers[1].begin(), n, h[source][1].begin() + done);
+    }
+  }
+}
+
+double bandPower(const std::vector<float> &h, double low, double high) {
+  constexpr int kPoints = 32;
+  double sum = 0.0;
+  for (int k = 0; k < kPoints; ++k) {
+    const double f = low * std::pow(high / low, (k + 0.5) / kPoints);
+    const double omega = 2.0 * vr::kPi * f / kRate;
+    double re = 0.0, im = 0.0;
+    for (std::size_t n = 0; n < h.size(); ++n) {
+      re += h[n] * std::cos(omega * double(n));
+      im -= h[n] * std::sin(omega * double(n));
+    }
+    sum += re * re + im * im;
+  }
+  return sum / kPoints;
+}
+
+int cmdSurround(int argc, char **argv) {
+  Params params = appParams();
+  params.speakerLayout = 1.0F;
+  const std::string what = argc > 2 ? argv[2] : "";
+
+  if (what == "sine") {
+    // L = R の正弦 -1 dBFS を固定の行列で広げる（C = 1.4 倍、Ls / Rs は 0）。
+    const auto frames = static_cast<std::uint32_t>(kRate * 1.5);
+    const double amplitude = std::pow(10.0, -1.0 / 20.0);
+    double worst = -999.0, worstFrequency = 0.0, sub = -999.0;
+    std::printf("  同相の正弦 -1 dBFS を 5.1 へ（峰の dB は入力の峰に対して、0.5 s 以降）:");
+    for (double f = 20.0; f <= 120.0 + 1e-9; f += 5.0) {
+      std::vector<float> s(frames);
+      for (std::uint32_t i = 0; i < frames; ++i)
+        s[i] = float(amplitude * std::sin(2.0 * vr::kPi * f * i / kRate));
+      std::vector<float> ol, orr;
+      runSurroundRealtime(params, upmix(s, s), kBlock, ol, orr);
+      double peak = 0.0;
+      for (std::uint32_t i = static_cast<std::uint32_t>(kRate * 0.5); i < frames; ++i)
+        peak = std::max({peak, std::fabs(double(ol[i])), std::fabs(double(orr[i]))});
+      const double gain = db20(peak / amplitude);
+      std::printf(" %.0f:%+.2f", f, gain);
+      if (f >= 40.0) {
+        if (gain > worst) { worst = gain; worstFrequency = f; }
+      } else {
+        sub = std::max(sub, gain);
+      }
+    }
+    std::printf("\n  40〜120 Hz の峰 %+.2f dB（%.0f Hz）、20〜35 Hz の峰 %+.2f dB\n", worst,
+                worstFrequency, sub);
+    verdict(worst <= 1.0, "40〜120 Hz の同相の峰が入力 +1 dB 以下");
+    return 0;
+  }
+
+  if (what == "file" && argc > 3) {
+    Wave in;
+    if (!readWav(argv[3], in) || in.channel.size() < 2) return 2;
+    std::vector<float> ol, orr, sl, sr;
+    runSurroundRealtime(params, upmix(in.channel[0], in.channel[1]), kBlock, ol, orr);
+    runRealtime(appParams(), in.channel[0], in.channel[1], in.rate, kBlock, sl, sr);
+    const Levels a = measure(in.channel[0], in.channel[1], in.rate);
+    const Levels s = measure(sl, sr, in.rate);
+    const Levels b = measure(ol, orr, in.rate);
+    printLevels("入力", a);
+    printLevels("Stereo", s);
+    printLevels("5.1", b);
+    std::printf("  入力に対して: Stereo rms %+.2f / 5.1 rms %+.2f  低 %+.2f  中 %+.2f  高 %+.2f\n",
+                s.rms - a.rms, b.rms - a.rms, b.band[0] - a.band[0], b.band[1] - a.band[1],
+                b.band[2] - a.band[2]);
+    verdict(b.over == 0u && b.broken == 0u, "0 dBFS を超えたサンプルが 0");
+    return 0;
+  }
+
+  if (what == "cone") {
+    // 前後の取り違え（cone of confusion）。L を 70° に置くと Ls（110°）と横の角が同じになり、
+    // ITD と頭部陰影は同じ。違いは耳介・後ろの陰・部屋の反射だけ。直接音だけで比べる。
+    Params cone = params;
+    cone.speakerAngle = 70.0F;
+    std::vector<float> h[vr::kMaxSources][2];
+    surroundBrir(cone, 4096u, h, true);
+    const double bands[][2] = {{300, 1000}, {1000, 3000}, {3000, 6000},
+                               {6000, 10000}, {10000, 16000}};
+    std::printf("  直接音、Ls（110°）- L（70°）の dB（左耳 = 近い耳 / 右耳 = 遠い耳）:\n");
+    for (const auto &band : bands) {
+      std::printf("    %5.0f〜%5.0f Hz  近 %+6.2f  遠 %+6.2f\n", band[0], band[1],
+                  db10(bandPower(h[4][0], band[0], band[1]) / bandPower(h[0][0], band[0], band[1])),
+                  db10(bandPower(h[4][1], band[0], band[1]) / bandPower(h[0][1], band[0], band[1])));
+    }
+    return 0;
+  }
+
+  if (what == "realtime") {
+    const std::uint32_t frames = 8192u;
+    std::vector<float> h[vr::kMaxSources][2];
+    surroundBrir(params, frames, h);
+    std::vector<std::vector<float>> in(vr::kMaxSources, std::vector<float>(frames));
+    std::uint32_t x = 99u;
+    for (auto &ch : in)
+      for (float &v : ch) {
+        x = x * 1664525u + 1013904223u;
+        v = (float(x >> 8) / 16777216.0F - 0.5F) * 0.5F;
+      }
+    std::vector<double> ref[2] = {std::vector<double>(frames, 0.0), std::vector<double>(frames, 0.0)};
+    double peak = 0.0;
+    for (std::uint32_t n = 0; n < frames; ++n) {
+      for (std::uint32_t s = 0; s < vr::kMaxSources; ++s)
+        for (std::uint32_t k = 0; k <= n; ++k) {
+          ref[0][n] += double(in[s][n - k]) * h[s][0][k];
+          ref[1][n] += double(in[s][n - k]) * h[s][1][k];
+        }
+      peak = std::max({peak, std::fabs(ref[0][n]), std::fabs(ref[1][n])});
+    }
+    double worst = -999.0;
+    for (std::uint32_t block : {64u, 128u, 480u, 512u, 1024u}) {
+      std::vector<float> ol, orr;
+      runSurroundRealtime(params, in, block, ol, orr);
+      double diff = 0.0;
+      for (std::uint32_t i = 0; i < frames; ++i)
+        diff = std::max({diff, std::fabs(ol[i] - ref[0][i]), std::fabs(orr[i] - ref[1][i])});
+      std::printf("  block %4u: 6 x 2 の BRIR で畳んだものとの差 %+.1f dB\n", block, db20(diff / peak));
+      worst = std::max(worst, db20(diff / peak));
+    }
+    verdict(worst < -120.0, "実時間と畳み込みの差が -120 dB 以内");
+    return 0;
+  }
+
+  if (what == "cpu") {
+    // 1 block の処理時間の p99（block の長さに対する %）。この道具を回した機械での値。
+    for (int layout = 0; layout < 2; ++layout) {
+      Params p = appParams();
+      p.speakerLayout = float(layout);
+      VirtualRoomEngine engine;
+      if (!engine.prepare(kRate, kBlock)) return 2;
+      engine.publish(p);
+      std::vector<std::vector<float>> io(vr::kMaxSources, std::vector<float>(kBlock));
+      std::uint32_t x = 7u;
+      float *ch[vr::kMaxSources];
+      std::vector<double> spent;
+      const std::uint32_t channels = layout == 0 ? 2u : vr::kMaxSources;
+      for (int block = 0; block < 2000; ++block) {
+        for (std::uint32_t c = 0; c < vr::kMaxSources; ++c) {
+          for (float &v : io[c]) {
+            x = x * 1664525u + 1013904223u;
+            v = (float(x >> 8) / 16777216.0F - 0.5F) * 0.5F;
+          }
+          ch[c] = io[c].data();
+        }
+        const auto begin = std::chrono::steady_clock::now();
+        engine.process(ch, channels, kBlock);
+        const auto end = std::chrono::steady_clock::now();
+        if (block >= 100) spent.push_back(std::chrono::duration<double>(end - begin).count());
+      }
+      std::sort(spent.begin(), spent.end());
+      const double budget = double(kBlock) / kRate;
+      std::printf("  %s: 中央値 %.1f%%  p99 %.1f%%（48 kHz、block %u）\n",
+                  layout == 0 ? "Stereo" : "5.1   ", 100.0 * spent[spent.size() / 2] / budget,
+                  100.0 * spent[spent.size() * 99 / 100] / budget, kBlock);
+    }
+    return 0;
+  }
+
+  std::fprintf(stderr, "surround sine | file in.wav | cone | realtime | cpu\n");
+  return 2;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -761,6 +993,8 @@ int main(int argc, char **argv) {
     rc = cmdResponse(argc, argv);
   } else if (cmd == "irs" && argc > 2) {
     rc = cmdIrs(argv[2]);
+  } else if (cmd == "surround") {
+    rc = cmdSurround(argc, argv);
   } else if (cmd == "signal" && argc > 2) {
     rc = cmdSignal(argv[2]);
   } else {

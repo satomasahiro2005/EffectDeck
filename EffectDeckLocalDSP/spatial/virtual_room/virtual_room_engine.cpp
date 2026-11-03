@@ -97,7 +97,9 @@ bool VirtualRoomEngine::prepare(double sampleRate, std::uint32_t maxFrames) noex
   fdnSize_ = nextPowerOfTwo(fdnNeeded);
   fdnMask_ = fdnSize_ - 1u;
 
-  if (!history_.allocate(static_cast<std::size_t>(kSourceCount) * kBandCount * ringSize_)) {
+  // 5.1 の 6 本ぶん取る。48 kHz で 2.4 MB、192 kHz で 9.4 MB。並びを途中で変えても
+  // 確保し直さない（音のスレッドで確保しない、§33）。
+  if (!history_.allocate(static_cast<std::size_t>(kMaxSources) * kBandCount * ringSize_)) {
     return false;
   }
   if (!lines_.allocate(static_cast<std::size_t>(kFdnLines) * fdnSize_)) {
@@ -150,7 +152,7 @@ void VirtualRoomEngine::clearBuffers() noexcept {
   fdnWrite_ = 0u;
   fdnPhase_ = 0u;
   pinnaWrite_ = 0u;
-  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+  for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
     splitLow_[source] = 0.0F;
     splitHigh_[source] = 0.0F;
     for (std::uint32_t index = 0u; index < 256u; ++index) {
@@ -241,10 +243,11 @@ void VirtualRoomEngine::takeActiveNow() noexcept {
     for (std::uint32_t band = 0u; band < kBandCount; ++band) {
       fdnBandCurrent_[line][band] = active_->fdnBand[line][band];
     }
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
       fdnInputCurrent_[line][source] = active_->fdnInput[line][source];
     }
   }
+  lateSources_ = std::min(active_->sourceCount, kMaxSources);
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
     for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
       fdnOutput_[ear][line] = active_->fdnOutput[ear][line];
@@ -259,12 +262,13 @@ void VirtualRoomEngine::takeActiveNow() noexcept {
 void VirtualRoomEngine::prepareState(const RenderState &state, PreparedPath *out) const noexcept {
   const auto limit = static_cast<std::uint32_t>(maxDelay_);
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
+      const std::uint32_t used = source < state.sourceCount ? state.sourceImages[source] : 0u;
       for (std::uint32_t image = 0u; image < kMaxImages; ++image) {
         const std::uint32_t index = pathIndex(ear, source, image);
         const PathState &path = state.path[index];
         PreparedPath &prepared = out[index];
-        if (image >= state.imagesPerSource) {
+        if (image >= used) {
           prepared = PreparedPath{};
           prepared.offset = 1u;
           continue;
@@ -294,10 +298,11 @@ void VirtualRoomEngine::takeLateStructure(const RenderState &state) noexcept {
     for (std::uint32_t band = 0u; band < kBandCount; ++band) {
       fdnBandCurrent_[line][band] = state.fdnBand[line][band];
     }
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
       fdnInputCurrent_[line][source] = state.fdnInput[line][source];
     }
   }
+  lateSources_ = std::min(state.sourceCount, kMaxSources);
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
     for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
       fdnOutput_[ear][line] = state.fdnOutput[ear][line];
@@ -367,22 +372,41 @@ double VirtualRoomEngine::mixingTimeSeconds() const noexcept {
 // ---------------------------------------------------------------- 音
 
 void VirtualRoomEngine::process(float *left, float *right, std::uint32_t frames) noexcept {
-  if (!prepared_ || left == nullptr || right == nullptr) {
+  float *const channels[kStereoSources] = {left, right};
+  process(channels, kStereoSources, frames);
+}
+
+void VirtualRoomEngine::process(float *const *channels, std::uint32_t channelCount,
+                                std::uint32_t frames) noexcept {
+  if (!prepared_ || channels == nullptr || channelCount < kStereoSources) {
     return;
+  }
+  for (std::uint32_t channel = 0u; channel < channelCount; ++channel) {
+    if (channels[channel] == nullptr) {
+      return;
+    }
   }
   // 新しい面はブロックの頭でだけ取り込む。渡りの途中では取らない。
   if (transitionRemaining_ == 0u) {
     adoptPublished();
   }
-  renderBlock(left, right, frames);
+  renderBlock(channels, channelCount, frames);
 }
 
-void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t frames) noexcept {
+void VirtualRoomEngine::renderBlock(float *const *channels, std::uint32_t channelCount,
+                                    std::uint32_t frames) noexcept {
   float *const history = history_.data();
   float *const lines = lines_.data();
+  float *const left = channels[0];
+  float *const right = channels[1];
+  const std::uint32_t inputs = std::min(channelCount, kMaxSources);
 
   for (std::uint32_t frame = 0u; frame < frames; ++frame) {
-    const float raw[kSourceCount] = {left[frame], right[frame]};
+    // **先に全部読む。**0 番と 1 番へは同じ frame で書き戻す。
+    float raw[kMaxSources] = {};
+    for (std::uint32_t source = 0u; source < inputs; ++source) {
+      raw[source] = channels[source][frame];
+    }
 
     // 渡りの重み。cos^2 + sin^2 = 1 なので、同じ面どうしなら元と同じ値になる。
     const bool fading = transitionRemaining_ != 0u;
@@ -394,20 +418,24 @@ void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t fra
     // 100 本ぶん走らせることになるうえ、像ごとに違う耳介になってしまう。
     // 渡りの間は**古い面と新しい面の両方で掛けて混ぜる**（5 tap が 2 本で安い）。
     // 差し替えの瞬間に耳介だけ切り替えると、仰角を動かしたときに段差が出る。
+    // 5.1 では音源ごとに違う耳介になる（Brown & Duda の event、VirtualRoomModel.h）。
     pinnaWrite_ = (pinnaWrite_ + 1u) & 255u;
-    float input[kSourceCount];
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    float input[kMaxSources];
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
       pinnaHistory_[source][pinnaWrite_] = raw[source];
       float value = 0.0F;
-      for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
-        const std::uint32_t position = (pinnaWrite_ - active_->pinnaDelay[tap]) & 255u;
-        value += pinnaHistory_[source][position] * active_->pinnaGain[tap];
+      const std::uint32_t taps = std::min(active_->pinnaTaps[source], kPinnaSlots);
+      for (std::uint32_t tap = 0u; tap < taps; ++tap) {
+        const std::uint32_t position = (pinnaWrite_ - active_->pinnaDelay[source][tap]) & 255u;
+        value += pinnaHistory_[source][position] * active_->pinnaGain[source][tap];
       }
       if (fading) {
         float next = 0.0F;
-        for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
-          const std::uint32_t position = (pinnaWrite_ - incoming_->pinnaDelay[tap]) & 255u;
-          next += pinnaHistory_[source][position] * incoming_->pinnaGain[tap];
+        const std::uint32_t nextTaps = std::min(incoming_->pinnaTaps[source], kPinnaSlots);
+        for (std::uint32_t tap = 0u; tap < nextTaps; ++tap) {
+          const std::uint32_t position =
+              (pinnaWrite_ - incoming_->pinnaDelay[source][tap]) & 255u;
+          next += pinnaHistory_[source][position] * incoming_->pinnaGain[source][tap];
         }
         value = value * fadeOut + next * fadeIn;
       }
@@ -416,7 +444,7 @@ void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t fra
 
     // ---- 3 帯域へ割って輪へ書く。足すと入力へ完全に戻る形（§19）。
     origin_ = (origin_ + 1u) & ringMask_;
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
       splitLow_[source] += bandCoefficientLow_ * (input[source] - splitLow_[source]);
       splitHigh_[source] += bandCoefficientHigh_ * (input[source] - splitHigh_[source]);
       const float low = splitLow_[source];
@@ -469,17 +497,23 @@ void VirtualRoomEngine::renderBlock(float *left, float *right, std::uint32_t fra
     left[frame] = (early[0] + late[0]) * gain;
     right[frame] = (early[1] + late[1]) * gain;
   }
+  // 2 番から先は耳へ畳んだので 0 にする。残すと後ろの段（とミキサー）が 5.1 の生の音を
+  // もう一度鳴らす。読み終えてから消す（上で frame ごとに先に全部読んでいる）。
+  for (std::uint32_t channel = kStereoSources; channel < channelCount; ++channel) {
+    std::memset(channels[channel], 0, static_cast<std::size_t>(frames) * sizeof(float));
+  }
 }
 
 // 1 サンプルぶんの direct + early。**path ごとのフィルタ状態は持たない**ので、
 // 面を差し替えても古い状態が混ざらない（§29）。
 void VirtualRoomEngine::accumulatePaths(const RenderState &state, const PreparedPath *prepared,
                                         const float *history, float *ear) const noexcept {
-  const std::uint32_t images = state.imagesPerSource;
+  const std::uint32_t sources = std::min(state.sourceCount, kMaxSources);
   for (std::uint32_t earIndex = 0u; earIndex < kEarCount; ++earIndex) {
     float sum = 0.0F;
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < sources; ++source) {
       const std::uint32_t base = source * kBandCount * ringSize_;
+      const std::uint32_t images = state.sourceImages[source];
       for (std::uint32_t image = 0u; image < images; ++image) {
         const PreparedPath &path = prepared[pathIndex(earIndex, source, image)];
         float band[kBandCount] = {0.0F, 0.0F, 0.0F};
@@ -558,8 +592,8 @@ void VirtualRoomEngine::stepFdn(const float *history, float *lines) noexcept {
     preDelay = ringSize_ - 4u;
   }
   const std::uint32_t tap = (origin_ - preDelay) & ringMask_;
-  float source[kSourceCount];
-  for (std::uint32_t index = 0u; index < kSourceCount; ++index) {
+  float source[kMaxSources];
+  for (std::uint32_t index = 0u; index < lateSources_; ++index) {
     const std::uint32_t base = index * kBandCount * ringSize_;
     source[index] = history[base + tap] + history[base + ringSize_ + tap] +
                     history[base + 2u * ringSize_ + tap];
@@ -586,7 +620,7 @@ void VirtualRoomEngine::stepFdn(const float *history, float *lines) noexcept {
 
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     float value = damped[line];
-    for (std::uint32_t index = 0u; index < kSourceCount; ++index) {
+    for (std::uint32_t index = 0u; index < lateSources_; ++index) {
       value += fdnInputCurrent_[line][index] * source[index];
     }
     // 万一発振しても外へ出さない。**ここで潰れたら係数が間違っている。**

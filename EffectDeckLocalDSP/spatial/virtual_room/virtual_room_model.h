@@ -48,15 +48,29 @@ inline constexpr double kSpeedOfSound = 343.0;  // m/s、20 度
 inline constexpr double kPi = 3.14159265358979323846;
 
 inline constexpr std::uint32_t kBandCount = 3u;    // 低 / 中 / 高（§19）
-inline constexpr std::uint32_t kSourceCount = 2u;  // 仮想スピーカー L / R
 inline constexpr std::uint32_t kEarCount = 2u;
 inline constexpr std::uint32_t kMaxImageOrder = 2u;  // §18。3 次以降は late へ渡す
 inline constexpr std::uint32_t kMaxImages = 25u;     // |mx|+|my|+|mz| <= 2 の数
 inline constexpr std::uint32_t kFirstOrderImages = 7u;
-inline constexpr std::uint32_t kMaxPaths = kMaxImages * kSourceCount * kEarCount;
-inline constexpr std::uint32_t kPinnaTaps = 4u;  // §17
+inline constexpr std::uint32_t kPinnaTaps = 4u;  // §17。Stereo の耳介（元の JS の表）
 inline constexpr std::uint32_t kFdnLines = 16u;  // §20
 inline constexpr std::uint32_t kModelVersion = 1u;  // §13
+
+// ---------------------------------------------------------------- スピーカーの並び（§64）
+//
+// Stereo は仮想スピーカー L / R の 2 本。5.1 は入力の並びそのままの 6 本で、
+// Spatial Mapper の "5.1 Upmix" が書く並び（L, R, C, LFE, Ls, Rs）に合わせてある。
+// **音源の番号 = 入力のチャンネル番号。**並べ替えない。
+enum class SpeakerLayout : std::uint32_t { Stereo = 0u, Surround51 = 1u };
+inline constexpr std::uint32_t kStereoSources = 2u;
+inline constexpr std::uint32_t kMaxSources = 6u;
+inline constexpr std::uint32_t kLfeSource = 3u;  // 5.1 の LFE。方向を持たない
+inline constexpr std::uint32_t kMaxPaths = kMaxImages * kMaxSources * kEarCount;
+// 5.1 の耳介は Brown & Duda の 5 個の event。遅れが小数なので 1 個を隣り合う 2 tap へ
+// 線形に割る（論文と同じやり方）。0 番は素通しの 1。
+inline constexpr std::uint32_t kPinnaEvents = 5u;
+inline constexpr std::uint32_t kPinnaSlots = 1u + 2u * kPinnaEvents;
+static_assert(kPinnaSlots >= kPinnaTaps + 1u);
 
 // 帯域の境目。complementary な 1 次フィルタで割る（low = LP(f1)、
 // mid = LP(f2)-LP(f1)、high = x-LP(f2)）ので足すと入力へ完全に戻り、
@@ -113,6 +127,48 @@ inline constexpr PinnaTap kPinnaModel[kPinnaTaps] = {
 inline constexpr double kPinnaReferenceRate = 48000.0;
 // 仰角 1 度あたり何割引き伸ばすか。
 inline constexpr double kPinnaElevationSensitivity = 0.004;
+
+// 5.1 の耳介。Brown & Duda 1998 の式 (8) と Table I（PB と NH の D_n）。
+// **論文の表から起こした。コードは写していない**（§60.6。citation）。
+//
+//   tau_n(theta, phi) = A_n cos(theta / 2) sin(D_n (90° - phi)) + B_n   [44.1 kHz のサンプル]
+//
+// theta は両耳軸からの横の角（interaural-polar の lateral）、phi は両耳軸まわりの
+// 角（正面 0°、真上 90°、真後ろ 180°）。cos(theta / 2) は偶関数なので**左右の耳で同じ**になり、
+// 今の「音源ごとに入口で 1 度だけ掛ける」形にそのまま乗る。
+//
+// **論文が測ったのは -90° <= phi <= 90°（前の半球）だけ。**後ろ（phi > 90°）は式を
+// そのまま延ばした外挿で、後ろの音源ほど event が早く着く。前と後ろで溝の位置が変わり、
+// cone of confusion の上で ±30° と ±150° を分ける手がかりになる。
+//
+// rho は論文の値に kDirectionalPinnaDepth を掛ける。-1 の event を元の JS の一番強い tap
+// （-0.35）に揃える。論文の強さのままだと 8 kHz より上が大きく抉れ、Stereo の耳介
+// （「色を付けるためで、削るためではない」）と比べて 5.1 だけ別の音色になる。
+struct PinnaEvent {
+  double rho;
+  double a;  // サンプル（44.1 kHz）
+  double b;  // サンプル（44.1 kHz）
+  double d;
+};
+inline constexpr PinnaEvent kPinnaEventModel[kPinnaEvents] = {
+    {0.5, 1.0, 2.0, 1.0},
+    {-1.0, 5.0, 4.0, 0.5},
+    {0.5, 5.0, 7.0, 0.5},
+    {-0.25, 5.0, 11.0, 0.5},
+    {0.25, 5.0, 13.0, 0.5},
+};
+inline constexpr double kPinnaEventRate = 44100.0;
+inline constexpr double kDirectionalPinnaDepth = 0.35;
+
+// 5.1 で後ろから着く経路の中高域を下げる（耳介が後ろの音を陰にする分）。
+// 両耳軸より後ろの割合（真後ろで 1）に比例し、Pinna の量にも比例する。
+// 前後で頭部陰影（左右対称）も ITD も同じになる所を、帯域の傾きでも分ける。
+inline constexpr double kRearMidDecibels = 1.5;
+inline constexpr double kRearHighDecibels = 5.0;
+
+// 5.1 の向き（ITU-R BS.775）。L / R は Speaker Angle（既定 30°）に付いて動き、
+// C と LFE は正面、Ls / Rs は 110°。
+inline constexpr double kSurroundAzimuthDegrees = 110.0;
 
 // ---------------------------------------------------------------- 像の並び
 
@@ -175,12 +231,16 @@ struct PathState {
 
 // 音のスレッドが見る唯一のもの（§27）。POD で、指す先を持たない。
 struct RenderState {
+  /// 鳴らす音源の数。Stereo で 2、5.1 で 6。入力のチャンネルを頭からこの数だけ読む。
+  std::uint32_t sourceCount;
   std::uint32_t imagesPerSource;  // 7 か 25
+  /// 音源ごとに使う像の数。LFE だけ 1（直接音だけ）。使わない音源は 0。
+  std::uint32_t sourceImages[kMaxSources];
   PathState path[kMaxPaths];      // [耳][音源][像]
 
   std::uint32_t fdnDelay[kFdnLines];     // 内部レートのサンプル
   float fdnBand[kFdnLines][kBandCount];  // 帰還ゲイン
-  float fdnInput[kFdnLines][kSourceCount];
+  float fdnInput[kFdnLines][kMaxSources];
   float fdnOutput[kEarCount][kFdnLines];
   /// FDN の入口の遅れ。出力レートのサンプル。late の鳴り始めから
   /// いちばん短い遅延線のぶんを引いたもの（B）。
@@ -192,15 +252,17 @@ struct RenderState {
   float rt60[kBandCount];
   float mixingTime;     // late の鳴り始め（秒）。1 次の像の終わり
 
-  /// 耳介の FIR。全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
+  /// 耳介の FIR。音源の全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
   /// delay は出力レートのサンプル（整数）。gain は 0 番が必ず 1。
-  std::uint32_t pinnaDelay[kPinnaTaps + 1u];
-  float pinnaGain[kPinnaTaps + 1u];
+  /// Stereo は 2 本とも同じ表（元の JS の 4 tap + 素通し）。5.1 は音源の向きごとに違う。
+  std::uint32_t pinnaTaps[kMaxSources];
+  std::uint32_t pinnaDelay[kMaxSources][kPinnaSlots];
+  float pinnaGain[kMaxSources][kPinnaSlots];
 };
 
 constexpr std::uint32_t pathIndex(std::uint32_t ear, std::uint32_t source,
                                   std::uint32_t image) noexcept {
-  return (ear * kSourceCount + source) * kMaxImages + image;
+  return (ear * kMaxSources + source) * kMaxImages + image;
 }
 
 // ---------------------------------------------------------------- 幾何
@@ -222,7 +284,10 @@ struct Geometry {
   double height;
   double listener[3];
   double ear[kEarCount][3];
-  double source[kSourceCount][3];
+  std::uint32_t sourceCount;
+  double source[kMaxSources][3];
+  /// リスナーから見た音源の向き（単位ベクトル）。5.1 の耳介が使う。
+  double direction[kMaxSources][3];
   double headRadius;
   double sourceDistance;  // §53 で詰めたあとの実効距離
 };
@@ -249,8 +314,23 @@ inline std::uint32_t materialIndex(float raw) noexcept {
   return index >= Range::kSideMaterialCount ? Range::kSideMaterialCount - 1u : index;
 }
 
+// 保存値から並びを読む。範囲外と NaN は Stereo（§53 と同じく保存値は書き換えない）。
+inline SpeakerLayout speakerLayout(const Params &params) noexcept {
+  const double value = static_cast<double>(params.speakerLayout);
+  if (!(value == value) || value < 0.5 || value >= 1.5) {
+    return SpeakerLayout::Stereo;
+  }
+  return SpeakerLayout::Surround51;
+}
+
+inline std::uint32_t sourceCountOf(SpeakerLayout layout) noexcept {
+  return layout == SpeakerLayout::Surround51 ? kMaxSources : kStereoSources;
+}
+
 inline Geometry buildGeometry(const Params &params) noexcept {
   Geometry geometry{};
+  const SpeakerLayout layout = speakerLayout(params);
+  geometry.sourceCount = sourceCountOf(layout);
   geometry.width = sanitize(params.roomWidth, Range::kRoomWidthMin, Range::kRoomWidthMax);
   geometry.depth = sanitize(params.roomDepth, Range::kRoomDepthMin, Range::kRoomDepthMax);
   geometry.height = sanitize(params.roomHeight, Range::kRoomHeightMin, Range::kRoomHeightMax);
@@ -292,17 +372,28 @@ inline Geometry buildGeometry(const Params &params) noexcept {
       sanitize(params.speakerDistance, Range::kSpeakerDistanceMin, Range::kSpeakerDistanceMax);
 
   // §53。部屋を狭めるとスピーカーが壁の外へ出るので、実効距離だけ詰める。
-  double direction[kSourceCount][3];
-  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
-    const double side = source == 0u ? -1.0 : 1.0;  // 0 = 左スピーカー
-    direction[source][0] = side * std::cos(elevation) * std::sin(azimuth);
-    direction[source][1] = std::cos(elevation) * std::cos(azimuth);
+  // 5.1 は全部のスピーカーで同じ距離（同じ円の上）に詰める。
+  // **Stereo の 2 本は前と同じ式・同じ順で計算する**（Stereo の音を 1 bit も変えない）。
+  const double surround = kSurroundAzimuthDegrees * kPi / 180.0;
+  auto &direction = geometry.direction;
+  for (std::uint32_t source = 0u; source < geometry.sourceCount; ++source) {
+    // 0 = 左スピーカー。5.1 は L, R, C, LFE, Ls, Rs。
+    double side = source == 0u ? -1.0 : 1.0;
+    double angle = azimuth;
+    if (source == 2u || source == kLfeSource) {
+      angle = 0.0;
+    } else if (source == 4u || source == 5u) {
+      side = source == 4u ? -1.0 : 1.0;
+      angle = surround;
+    }
+    direction[source][0] = side * std::cos(elevation) * std::sin(angle);
+    direction[source][1] = std::cos(elevation) * std::cos(angle);
     direction[source][2] = std::sin(elevation);
   }
   const double bounds[3] = {geometry.width, geometry.depth, geometry.height};
   const double margins[3] = {marginX, marginY, marginZ};
   double allowed = requested;
-  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+  for (std::uint32_t source = 0u; source < geometry.sourceCount; ++source) {
     for (std::uint32_t axis = 0u; axis < 3u; ++axis) {
       const double step = direction[source][axis];
       if (step > 1e-9) {
@@ -316,7 +407,7 @@ inline Geometry buildGeometry(const Params &params) noexcept {
   }
   geometry.sourceDistance = clampDouble(allowed, kMinRadius, requested);
 
-  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+  for (std::uint32_t source = 0u; source < geometry.sourceCount; ++source) {
     for (std::uint32_t axis = 0u; axis < 3u; ++axis) {
       geometry.source[source][axis] =
           geometry.listener[axis] + direction[source][axis] * geometry.sourceDistance;
@@ -462,7 +553,155 @@ inline void buildOrthogonalSigns(effetune::dsp::XorShiftRng &rng, double magnitu
   }
 }
 
+// 5.1 の入口。**3 本以上を互いに直交させる。**上の buildOrthogonalSigns は 2 本しか作れない
+// （3 本目を同じやり方で作ると、1 本目か 2 本目と相関が残る）。
+//
+// 16 x 16 の Hadamard の行は互いに直交する。重ならない行を seed で count 本選び、
+// 全部に同じ乱数の符号（対角）を掛ける。D H の行どうしも直交のまま（D^2 = I）で、
+// 行の並びが規則的なのは符号で崩れる。count は 16 以下。
+inline void buildHadamardInputs(effetune::dsp::XorShiftRng &rng, std::uint32_t count,
+                                float (*out)[kFdnLines]) noexcept {
+  std::uint32_t rows[kFdnLines];
+  for (std::uint32_t row = 0u; row < kFdnLines; ++row) {
+    rows[row] = row;
+  }
+  for (std::uint32_t row = kFdnLines; row > 1u; --row) {
+    const std::uint32_t pick = static_cast<std::uint32_t>(rng.nextU64() % row);
+    const std::uint32_t swap = rows[row - 1u];
+    rows[row - 1u] = rows[pick];
+    rows[pick] = swap;
+  }
+  float sign[kFdnLines];
+  for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+    sign[line] = (rng.nextU64() & 1u) != 0u ? 1.0F : -1.0F;
+  }
+  for (std::uint32_t index = 0u; index < count && index < kFdnLines; ++index) {
+    for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
+      // H[r][j] = (-1)^popcount(r & j)
+      std::uint32_t bits = rows[index] & line;
+      std::uint32_t parity = 0u;
+      while (bits != 0u) {
+        parity ^= bits & 1u;
+        bits >>= 1u;
+      }
+      out[index][line] = parity != 0u ? -sign[line] : sign[line];
+    }
+  }
+}
+
+// 5.1 の耳介（上の kPinnaEventModel）を 1 本の音源ぶん組む。
+// direction はリスナーから見た音源の向き（x 右、y 前、z 上）。
+// 小数の遅れは隣り合う 2 tap へ線形に割る（論文の実装と同じ）。0 番は素通しの 1。
+inline void buildDirectionalPinna(const double *direction, double pinnaAmount, double sampleRate,
+                                  std::uint32_t &taps, std::uint32_t *delay,
+                                  float *gain) noexcept {
+  const double lateral =
+      std::asin(clampDouble(std::fabs(direction[0]), 0.0, 1.0)) * 180.0 / kPi;
+  // 両耳軸まわりの角。正面 0°、真上 90°、真後ろ 180°。-90° より下は 270° 側へ回す。
+  double polar = std::atan2(direction[2], direction[1]) * 180.0 / kPi;
+  if (polar < -90.0) {
+    polar += 360.0;
+  }
+  const double scale = sampleRate / kPinnaEventRate;
+  taps = 0u;
+  delay[taps] = 0u;
+  gain[taps] = 1.0F;
+  ++taps;
+  for (std::uint32_t event = 0u; event < kPinnaEvents; ++event) {
+    const PinnaEvent &model = kPinnaEventModel[event];
+    const double tau =
+        model.a * std::cos(lateral * 0.5 * kPi / 180.0) *
+            std::sin(model.d * (90.0 - polar) * kPi / 180.0) +
+        model.b;
+    const double at = clampDouble(tau * scale, 0.0, 254.0);
+    const double whole = std::floor(at);
+    const double fraction = at - whole;
+    const double rho = model.rho * kDirectionalPinnaDepth * pinnaAmount;
+    delay[taps] = static_cast<std::uint32_t>(whole);
+    gain[taps] = static_cast<float>(rho * (1.0 - fraction));
+    ++taps;
+    delay[taps] = static_cast<std::uint32_t>(whole) + 1u;
+    gain[taps] = static_cast<float>(rho * fraction);
+    ++taps;
+  }
+}
+
 // ---------------------------------------------------------------- 本体
+
+// 耳介で重みを付けた 3 帯域の Gram 行列。白い音を耳介 P に通してから帯域 i と j に割ったときの
+// 出力の内積 (1/pi) ∫ |P|^2 Re(B_i conj(B_j)) dω を、0〜Nyquist の 256 点の中点で足す。
+// P = 1 なら buildRenderState の閉じた形の gram と同じもの（全部足すと 1）。
+//
+// **5.1 の DRR を合わせるのに要る。**direct は頭部陰影で高域が持ち上がった形、late は平らな形を
+// している。そこへ同じ耳介を掛けても、溝が高域にあると direct の方が多く削れる。
+// 耳介を数えないと、正面の L / R で DRR が 8 dB から 2 dB 下がった（Brown & Duda の event は
+// 正面ほど遅く、溝が 3〜8 kHz に来る）。Stereo の耳介でも 0.5 dB ほど同じ向きにずれているが、
+// Stereo の音を変えないために Stereo では使わない。
+//
+// fraction を 0 以上で渡すと、engine が direct の経路で読む 4 点 Lagrange（小数の遅れ）の
+// 応答も掛ける。小数部が 0.5 に近いと 10 kHz より上が大きく落ち、白で測るエネルギーでは
+// 高域の帯が重いので効く（正面の L / R で 1.8 dB）。Stereo では いちばん早い経路が
+// ちょうど整数の遅れに来るので目立たなかったが、5.1 では Ls / Rs の近い耳が先に着く。
+inline void pinnaGram(std::uint32_t taps, const std::uint32_t *delay, const float *gain,
+                      double sampleRate, double (*out)[kBandCount],
+                      double fraction = -1.0) noexcept {
+  double lagrange[4] = {1.0, 0.0, 0.0, 0.0};
+  if (fraction >= 0.0) {
+    const double f = fraction;
+    lagrange[0] = -f * (f - 1.0) * (f - 2.0) / 6.0;
+    lagrange[1] = (f + 1.0) * (f - 1.0) * (f - 2.0) / 2.0;
+    lagrange[2] = -(f + 1.0) * f * (f - 2.0) / 2.0;
+    lagrange[3] = (f + 1.0) * f * (f - 1.0) / 6.0;
+  }
+  constexpr std::uint32_t kPoints = 256u;
+  const double a1 = 1.0 - std::exp(-2.0 * kPi * kBandSplitLow / sampleRate);
+  const double a2 = 1.0 - std::exp(-2.0 * kPi * kBandSplitHigh / sampleRate);
+  for (std::uint32_t i = 0u; i < kBandCount; ++i) {
+    for (std::uint32_t j = 0u; j < kBandCount; ++j) {
+      out[i][j] = 0.0;
+    }
+  }
+  for (std::uint32_t point = 0u; point < kPoints; ++point) {
+    const double omega = kPi * (static_cast<double>(point) + 0.5) / static_cast<double>(kPoints);
+    const double zr = std::cos(omega);
+    const double zi = -std::sin(omega);
+    const auto lowpass = [&](double a, double &re, double &im) {
+      const double dr = 1.0 - (1.0 - a) * zr;
+      const double di = -(1.0 - a) * zi;
+      const double mag = dr * dr + di * di;
+      re = a * dr / mag;
+      im = -a * di / mag;
+    };
+    double l1r = 0.0;
+    double l1i = 0.0;
+    double l2r = 0.0;
+    double l2i = 0.0;
+    lowpass(a1, l1r, l1i);
+    lowpass(a2, l2r, l2i);
+    const double bandRe[kBandCount] = {l1r, l2r - l1r, 1.0 - l2r};
+    const double bandIm[kBandCount] = {l1i, l2i - l1i, -l2i};
+    double pr = 0.0;
+    double pi = 0.0;
+    for (std::uint32_t tap = 0u; tap < taps; ++tap) {
+      const double phase = omega * static_cast<double>(delay[tap]);
+      pr += static_cast<double>(gain[tap]) * std::cos(phase);
+      pi -= static_cast<double>(gain[tap]) * std::sin(phase);
+    }
+    double lr = 0.0;
+    double li = 0.0;
+    for (std::uint32_t tap = 0u; tap < 4u; ++tap) {
+      lr += lagrange[tap] * std::cos(omega * static_cast<double>(tap));
+      li -= lagrange[tap] * std::sin(omega * static_cast<double>(tap));
+    }
+    const double power =
+        (pr * pr + pi * pi) * (lr * lr + li * li) / static_cast<double>(kPoints);
+    for (std::uint32_t i = 0u; i < kBandCount; ++i) {
+      for (std::uint32_t j = 0u; j < kBandCount; ++j) {
+        out[i][j] += power * (bandRe[i] * bandRe[j] + bandIm[i] * bandIm[j]);
+      }
+    }
+  }
+}
 
 inline std::uint32_t lateRateDivider(double sampleRate) noexcept {
   if (sampleRate <= 50000.0) {
@@ -481,8 +720,21 @@ inline std::uint32_t packedSeed(const Params &params) noexcept {
 // パラメータ一式から、音のスレッドがそのまま使える形を組む。
 // 呼ぶのは制御スレッドか offline の export。確保も lock もしない。
 inline void buildRenderState(const Params &params, double sampleRate, RenderState &state) noexcept {
+  // **面は使い回される**（publish の pool）。5.1 の面の上に Stereo を組むと、
+  // 3 本目から先の経路・耳介・late の入口が前の値のまま残る。先に全部 0 にする。
+  state = RenderState{};
+  const SpeakerLayout layout = speakerLayout(params);
+  const bool surround = layout == SpeakerLayout::Surround51;
   const Geometry geometry = buildGeometry(params);
   const Acoustics acoustics = buildAcoustics(geometry, params);
+  const std::uint32_t sources = geometry.sourceCount;
+  state.sourceCount = sources;
+  // 方向を持つ音源の数（LFE を除く）。正規化を「1 本あたり」で数えるのに使う。
+  const std::uint32_t directional = surround ? kMaxSources - 1u : kStereoSources;
+  // LFE は低域の直接音だけ（像も late も耳介も持たない）。
+  const auto isLfe = [surround](std::uint32_t source) {
+    return surround && source == kLfeSource;
+  };
 
   const double roomAmount =
       sanitize(params.roomAmount, Range::kRoomAmountMin, Range::kRoomAmountMax) * 0.01;
@@ -495,6 +747,9 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   const double order =
       sanitize(params.earlyOrder, 0.0, static_cast<double>(Range::kEarlyOrderCount - 1u));
   state.imagesPerSource = order < 0.5 ? kFirstOrderImages : kMaxImages;
+  for (std::uint32_t source = 0u; source < sources; ++source) {
+    state.sourceImages[source] = isLfe(source) ? 1u : state.imagesPerSource;
+  }
 
   const Material &side = kMaterials[materialIndex(params.sideMaterial)];
   const Material &front = kMaterials[materialIndex(params.frontMaterial)];
@@ -512,31 +767,52 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
     reflect[4][band] = std::sqrt(clampDouble(1.0 - ceiling.alpha[band], 0.0, 1.0));
   }
 
-  // 耳介の FIR。全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
-  // 仰角で少し伸びる。Pinna 0% で素通し（0 番だけが残る）。
-  {
+  // 耳介の FIR。音源の全部の経路へ同じものが掛かるので入力段で 1 度だけ適用する。
+  // Pinna 0% で素通し（0 番だけが残る）。使わない音源も素通しの 1 tap にしておく。
+  for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
+    state.pinnaTaps[source] = 1u;
+    state.pinnaDelay[source][0] = 0u;
+    state.pinnaGain[source][0] = 1.0F;
+  }
+  if (!surround) {
+    // Stereo: 元の JS の表。2 本とも同じで、仰角で少し伸びる。
     const double elevation =
         sanitize(params.speakerElevation, Range::kSpeakerElevationMin,
                  Range::kSpeakerElevationMax);
     const double stretch =
         (1.0 + kPinnaElevationSensitivity * elevation) * sampleRate / kPinnaReferenceRate;
-    state.pinnaDelay[0] = 0u;
-    state.pinnaGain[0] = 1.0F;
-    for (std::uint32_t tap = 0u; tap < kPinnaTaps; ++tap) {
-      const double delay = kPinnaModel[tap].delay * stretch;
-      state.pinnaDelay[tap + 1u] =
-          static_cast<std::uint32_t>(clampDouble(delay + 0.5, 1.0, 255.0));
-      state.pinnaGain[tap + 1u] = static_cast<float>(kPinnaModel[tap].gain * pinnaAmount);
+    for (std::uint32_t source = 0u; source < kStereoSources; ++source) {
+      state.pinnaTaps[source] = kPinnaTaps + 1u;
+      for (std::uint32_t tap = 0u; tap < kPinnaTaps; ++tap) {
+        const double delay = kPinnaModel[tap].delay * stretch;
+        state.pinnaDelay[source][tap + 1u] =
+            static_cast<std::uint32_t>(clampDouble(delay + 0.5, 1.0, 255.0));
+        state.pinnaGain[source][tap + 1u] =
+            static_cast<float>(kPinnaModel[tap].gain * pinnaAmount);
+      }
+    }
+  } else {
+    // 5.1: 音源の向きごとに Brown & Duda の event を置く。仰角は向きに入っている。
+    for (std::uint32_t source = 0u; source < sources; ++source) {
+      if (isLfe(source)) {
+        continue;
+      }
+      buildDirectionalPinna(geometry.direction[source], pinnaAmount, sampleRate,
+                            state.pinnaTaps[source], state.pinnaDelay[source],
+                            state.pinnaGain[source]);
     }
   }
+  // 後ろから着く経路の中高域（5.1 だけ）。kRear* の注。
+  const double rearMid = -kRearMidDecibels * pinnaAmount / 20.0;
+  const double rearHigh = -kRearHighDecibels * pinnaAmount / 20.0;
 
   // 最後の正規化に使う。earlyEnergy は無相関で足したときのエネルギー
   // （中高域はこちらに近い）。低域で同相に足したときの高さは、遅れが全部
   // 決まってから複素数で足す（下の「全体の高さ」）。
   double earlyEnergy = 0.0;
-  double sourceNormalization[kSourceCount];
+  double sourceNormalization[kMaxSources]{};
 
-  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+  for (std::uint32_t source = 0u; source < sources; ++source) {
     // §16。直接音の両耳エネルギーを 1 に揃える。ILD はそのまま残る。
     double energy = 0.0;
     for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
@@ -549,6 +825,22 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
       energy += gain * gain;
     }
     sourceNormalization[source] = 1.0 / std::sqrt(energy > 1e-12 ? energy : 1e-12);
+
+    if (isLfe(source)) {
+      // LFE: 正面の直接音、低域だけ。頭部陰影も耳介も中高域にしか効かないので掛けない。
+      for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
+        PathState &path = state.path[pathIndex(ear, source, 0u)];
+        double squared = 0.0;
+        for (std::uint32_t axis = 0u; axis < 3u; ++axis) {
+          const double delta = geometry.source[source][axis] - geometry.ear[ear][axis];
+          squared += delta * delta;
+        }
+        const double radius = clampDouble(std::sqrt(squared), kMinRadius, 1e6);
+        path.delay = static_cast<float>(radius / kSpeedOfSound * sampleRate);
+        path.band[0] = static_cast<float>(sourceNormalization[source] / radius);
+      }
+      continue;
+    }
 
     for (std::uint32_t image = 0u; image < kMaxImages; ++image) {
       const ImageIndex &index = kImageTable[image];
@@ -609,6 +901,16 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
             static_cast<float>(level * surfaceResponse[1] * std::pow(alpha, shadowAmount * 0.5));
         path.band[2] =
             static_cast<float>(level * surfaceResponse[2] * std::pow(alpha, shadowAmount));
+        if (surround) {
+          // 両耳軸より後ろから着く割合。真後ろで 1、横と前は 0。
+          const double rear = clampDouble(-delta[1] / radius, 0.0, 1.0);
+          if (rear > 0.0) {
+            path.band[1] = static_cast<float>(static_cast<double>(path.band[1]) *
+                                              std::pow(10.0, rearMid * rear));
+            path.band[2] = static_cast<float>(static_cast<double>(path.band[2]) *
+                                              std::pow(10.0, rearHigh * rear));
+          }
+        }
 
         if (image != 0u && image < state.imagesPerSource) {
           // 3 帯域の平均で数える。帯域の割り方は足すと素通しへ戻るので、
@@ -632,7 +934,7 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // 元の JS も同じことをしている（dref）。
   double earliest = 1e9;
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < sources; ++source) {
       const double d = static_cast<double>(state.path[pathIndex(ear, source, 0u)].delay);
       if (d < earliest) {
         earliest = d;
@@ -650,8 +952,9 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // 使わない像は 0 にしておく。同じ seed / params なら同じ形になることを
   // 数で確かめられるようにする（§56）。
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
-      for (std::uint32_t image = state.imagesPerSource; image < kMaxImages; ++image) {
+    for (std::uint32_t source = 0u; source < kMaxSources; ++source) {
+      const std::uint32_t used = source < sources ? state.sourceImages[source] : 0u;
+      for (std::uint32_t image = used; image < kMaxImages; ++image) {
         state.path[pathIndex(ear, source, image)] = PathState{};
       }
     }
@@ -667,7 +970,7 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // 元の JS の固定 6 ms は使わない。
   double firstOrderEnd = 0.0;
   for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < sources; ++source) {
       for (std::uint32_t image = 0u; image < kFirstOrderImages; ++image) {
         firstOrderEnd = std::max(
             firstOrderEnd, static_cast<double>(state.path[pathIndex(ear, source, image)].delay));
@@ -708,11 +1011,26 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
 
   effetune::dsp::XorShiftRng rng(seed ^ 0x5BF03635u, seed + 0x85EBCA6Bu);
   const double unit = 1.0 / std::sqrt(static_cast<double>(kFdnLines));
-  float inputSigns[kSourceCount][kFdnLines];
-  buildOrthogonalSigns(rng, 1.0, inputSigns[0], inputSigns[1]);
+  float inputSigns[kMaxSources][kFdnLines]{};
   float outputLeft[kFdnLines];
   float outputRight[kFdnLines];
-  buildOrthogonalSigns(rng, unit, outputLeft, outputRight);
+  if (!surround) {
+    // **Stereo は前と同じ乱数の引き方・同じ順。**
+    buildOrthogonalSigns(rng, 1.0, inputSigns[0], inputSigns[1]);
+    buildOrthogonalSigns(rng, unit, outputLeft, outputRight);
+  } else {
+    // 5.1: 方向を持つ 5 本を互いに直交させる。LFE（3 番）は late へ入れないので 0 のまま。
+    float rows[kMaxSources - 1u][kFdnLines];
+    buildHadamardInputs(rng, kMaxSources - 1u, rows);
+    for (std::uint32_t source = 0u, row = 0u; source < kMaxSources; ++source) {
+      if (source == kLfeSource) {
+        continue;
+      }
+      std::copy(std::begin(rows[row]), std::end(rows[row]), std::begin(inputSigns[source]));
+      ++row;
+    }
+    buildOrthogonalSigns(rng, unit, outputLeft, outputRight);
+  }
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
     state.fdnOutput[0][line] = outputLeft[line];
     state.fdnOutput[1][line] = outputRight[line];
@@ -772,23 +1090,51 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   }
   latePerUnit *= static_cast<double>(kFdnLines) / delaySum;
 
-  double lateGain[kSourceCount];
-  for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+  double lateGain[kMaxSources]{};
+  for (std::uint32_t source = 0u; source < sources; ++source) {
+    if (isLfe(source)) {
+      continue;  // LFE は late へ入れない
+    }
+    // 5.1 は耳介で重みを付けた Gram で数える（下の pinnaGram の注）。Stereo は前のまま。
+    double weighted[kBandCount][kBandCount];
+    const double(*g)[kBandCount] = gram;
+    double perUnit = latePerUnit;
+    if (surround) {
+      pinnaGram(state.pinnaTaps[source], state.pinnaDelay[source], state.pinnaGain[source],
+                sampleRate, weighted);
+      g = weighted;
+      perUnit = 0.0;
+      for (std::uint32_t i = 0u; i < kBandCount; ++i) {
+        for (std::uint32_t j = 0u; j < kBandCount; ++j) {
+          perUnit += weighted[i][j] / clampDouble(1.0 - decay[i] * decay[j], 1e-9, 1.0);
+        }
+      }
+      perUnit *= static_cast<double>(kFdnLines) / delaySum;
+    }
     double direct = 0.0;
     for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
       const PathState &path = state.path[pathIndex(ear, source, 0u)];
+      double earGram[kBandCount][kBandCount];
+      const double(*e)[kBandCount] = g;
+      if (surround) {
+        // 経路の遅れの小数部（engine の lagrange と同じ割り方）。
+        const double d = static_cast<double>(path.delay);
+        pinnaGram(state.pinnaTaps[source], state.pinnaDelay[source], state.pinnaGain[source],
+                  sampleRate, earGram, d - std::floor(d));
+        e = earGram;
+      }
       for (std::uint32_t i = 0u; i < kBandCount; ++i) {
         for (std::uint32_t j = 0u; j < kBandCount; ++j) {
-          direct += static_cast<double>(path.band[i]) * gram[i][j] *
+          direct += static_cast<double>(path.band[i]) * e[i][j] *
                     static_cast<double>(path.band[j]);
         }
       }
     }
     // 両耳で direct * lateRatio、1 耳ではその半分。
-    lateGain[source] = std::sqrt(direct * lateRatio * 0.5 / latePerUnit);
+    lateGain[source] = std::sqrt(direct * lateRatio * 0.5 / perUnit);
   }
   for (std::uint32_t line = 0u; line < kFdnLines; ++line) {
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < sources; ++source) {
       state.fdnInput[line][source] =
           static_cast<float>(static_cast<double>(inputSigns[source][line]) * lateGain[source]);
     }
@@ -802,10 +1148,36 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   // こちらは実時間なので peak では測れない。エネルギーの和で割る。
   //
   // 耳介の FIR も全帯域に掛かるぶんだけ足し引きするので、その利得も入れる。
+  // 5.1 は向きごとに違うので、方向を持つ音源の平均で数える。
   double pinnaEnergy = 0.0;
-  for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
-    const double g = static_cast<double>(state.pinnaGain[tap]);
-    pinnaEnergy += g * g;
+  for (std::uint32_t source = 0u; source < (surround ? sources : 1u); ++source) {
+    if (isLfe(source)) {
+      continue;
+    }
+    for (std::uint32_t tap = 0u; tap < state.pinnaTaps[source]; ++tap) {
+      const double g = static_cast<double>(state.pinnaGain[source][tap]);
+      pinnaEnergy += g * g;
+    }
+  }
+  if (surround) {
+    pinnaEnergy /= static_cast<double>(directional);
+  }
+
+  // 同相の低音の上限で、音源ごとに何倍の振幅が乗ると見込むか（§64）。
+  // Stereo は L = R = 1。5.1 は **Spatial Mapper の "5.1 Upmix" に L = R の低音を通した形**:
+  // L / R はそのまま、C に 0.7 (L + R) = 1.4（ここでは sqrt(2)）、Ls / Rs は相関のない
+  // 成分しか受けないので 0、LFE はあの preset では空なので 0。
+  // **6 本ぜんぶ同相・満振幅を上限にすると、普通の曲でかなり小さくなる**ので取らない。
+  // LFE に大きな音が来る素材（本物の 5.1）では、同相の低音がバイパスを超えうる。
+  double coherentWeight[kMaxSources]{};
+  for (std::uint32_t source = 0u; source < sources; ++source) {
+    coherentWeight[source] = 1.0;
+  }
+  if (surround) {
+    coherentWeight[2] = std::sqrt(2.0);
+    coherentWeight[kLfeSource] = 0.0;
+    coherentWeight[4] = 0.0;
+    coherentWeight[5] = 0.0;
   }
 
   // 1 耳・1 音源あたりの late エネルギー（中域の減衰で数える。early の数え方に揃える）と、
@@ -815,7 +1187,7 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   {
     const double mid = clampDouble(1.0 - decay[1] * decay[1], 1e-9, 1.0);
     const double low = clampDouble(1.0 - decay[0] * decay[0], 1e-9, 1.0);
-    for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
+    for (std::uint32_t source = 0u; source < sources; ++source) {
       const double fed =
           lateGain[source] * lateGain[source] * static_cast<double>(kFdnLines) / delaySum;
       lateEnergy += fed / mid * 0.5;
@@ -824,10 +1196,12 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
   }
 
   // 無相関で足したときの高さ。中高域はこちらが効く。
-  // 単位は「direct の両耳エネルギー = 1」。early は 2 音源 x 2 耳ぶん足してあるので半分、
-  // late は 1 耳ぶんなので 2 倍して両耳にする。
+  // 単位は「direct の両耳エネルギー = 1」。early は 音源の数 x 2 耳ぶん足してあるので
+  // 音源の数で割り、late は 1 耳ぶんなので 2 倍して両耳にして音源の数で割る
+  // （Stereo では 0.5 と 2.0。2 の冪なので前と同じ数になる）。
+  const double perSource = 1.0 / static_cast<double>(directional);
   const double incoherent =
-      std::sqrt(clampDouble((1.0 + earlyEnergy * 0.5 + lateEnergy * 2.0) *
+      std::sqrt(clampDouble((1.0 + earlyEnergy * perSource + lateEnergy * (4.0 * perSource)) *
                                 clampDouble(pinnaEnergy, 0.25, 4.0),
                             1e-6, 1e6));
 
@@ -877,20 +1251,36 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
       const double bandRe[kBandCount] = {l1r, l2r - l1r, 1.0 - l2r};
       const double bandIm[kBandCount] = {l1i, l2i - l1i, -l2i};
 
-      double pinnaRe = 0.0;
-      double pinnaIm = 0.0;
-      for (std::uint32_t tap = 0u; tap <= kPinnaTaps; ++tap) {
-        const double phase = omega * static_cast<double>(state.pinnaDelay[tap]);
-        pinnaRe += static_cast<double>(state.pinnaGain[tap]) * std::cos(phase);
-        pinnaIm -= static_cast<double>(state.pinnaGain[tap]) * std::sin(phase);
+      // 音源ごとの耳介の応答。Stereo は 2 本とも同じなので 0 番だけ使う（前と同じ式）。
+      double pinnaRe[kMaxSources]{};
+      double pinnaIm[kMaxSources]{};
+      for (std::uint32_t source = 0u; source < (surround ? sources : 1u); ++source) {
+        for (std::uint32_t tap = 0u; tap < state.pinnaTaps[source]; ++tap) {
+          const double phase = omega * static_cast<double>(state.pinnaDelay[source][tap]);
+          pinnaRe[source] += static_cast<double>(state.pinnaGain[source][tap]) * std::cos(phase);
+          pinnaIm[source] -= static_cast<double>(state.pinnaGain[source][tap]) * std::sin(phase);
+        }
       }
-      const double pinna2 = pinnaRe * pinnaRe + pinnaIm * pinnaIm;
+      const double pinna2 = pinnaRe[0] * pinnaRe[0] + pinnaIm[0] * pinnaIm[0];
+      // 5.1 の late: 音源ごとの耳介を通ってから FDN へ入る。位相はばらばらなのでエネルギーで足す。
+      double surroundLateLow = 0.0;
+      if (surround) {
+        const double low = clampDouble(1.0 - decay[0] * decay[0], 1e-9, 1.0);
+        for (std::uint32_t source = 0u; source < sources; ++source) {
+          const double fed =
+              lateGain[source] * lateGain[source] * static_cast<double>(kFdnLines) / delaySum;
+          surroundLateLow += fed / low * coherentWeight[source] * coherentWeight[source] *
+                             (pinnaRe[source] * pinnaRe[source] + pinnaIm[source] * pinnaIm[source]);
+        }
+      }
 
       for (std::uint32_t ear = 0u; ear < kEarCount; ++ear) {
         double sumRe = 0.0;
         double sumIm = 0.0;
-        for (std::uint32_t source = 0u; source < kSourceCount; ++source) {
-          for (std::uint32_t image = 0u; image < state.imagesPerSource; ++image) {
+        for (std::uint32_t source = 0u; source < sources; ++source) {
+          double sourceRe = 0.0;
+          double sourceIm = 0.0;
+          for (std::uint32_t image = 0u; image < state.sourceImages[source]; ++image) {
             const PathState &path = state.path[pathIndex(ear, source, image)];
             double re = 0.0;
             double im = 0.0;
@@ -901,11 +1291,26 @@ inline void buildRenderState(const Params &params, double sampleRate, RenderStat
             const double phase = omega * static_cast<double>(path.delay);
             const double c = std::cos(phase);
             const double sn = -std::sin(phase);
-            sumRe += re * c - im * sn;
-            sumIm += re * sn + im * c;
+            if (!surround) {
+              sumRe += re * c - im * sn;
+              sumIm += re * sn + im * c;
+            } else {
+              sourceRe += re * c - im * sn;
+              sourceIm += re * sn + im * c;
+            }
+          }
+          if (surround) {
+            // 耳介と重みを掛けてから足す（音源ごとに耳介が違う）。
+            const double w = coherentWeight[source];
+            sumRe += w * (sourceRe * pinnaRe[source] - sourceIm * pinnaIm[source]);
+            sumIm += w * (sourceRe * pinnaIm[source] + sourceIm * pinnaRe[source]);
           }
         }
-        coherent = std::max(coherent, (sumRe * sumRe + sumIm * sumIm + lateLowEnergy) * pinna2);
+        if (!surround) {
+          coherent = std::max(coherent, (sumRe * sumRe + sumIm * sumIm + lateLowEnergy) * pinna2);
+        } else {
+          coherent = std::max(coherent, sumRe * sumRe + sumIm * sumIm + surroundLateLow);
+        }
       }
     }
     coherent = std::sqrt(coherent);

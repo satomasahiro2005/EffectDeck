@@ -8,6 +8,7 @@
 
 #include "effetune/kernel.h"
 
+#include <cstddef>
 #include <cstring>
 #include <new>
 
@@ -40,8 +41,11 @@ public:
     published_ = false;
   }
 
-  // **Routing の検査は UI だけに任せない**（§52）。2ch 以外で来たら素通す。
-  // 部屋も頭も左右 2 本を前提にしていて、1ch では像が立たない。
+  // **Routing の検査は UI だけに任せない**（§52、§64）。並びに合わない本数で来たら素通す。
+  //   Stereo  ちょうど 2ch（Stereo か対）。1ch では像が立たない
+  //   5.1     6ch 以上（All）。頭の 6 本を L, R, C, LFE, Ls, Rs として読み、
+  //           両耳を 0 番と 1 番へ書いて、2 番から先は 0 にする
+  // 5.1 にした直後、host が処理の幅を 6 本へ組み直すまでの間は 2ch で来る。そこも素通し。
   void process(float *audio, std::uint32_t channel_count, std::uint32_t frame_count,
                const ProcessInfo &) noexcept override {
     if (!ready_ || engine_ == nullptr) {
@@ -53,16 +57,28 @@ public:
       engine_->publish(params_);
       published_ = true;
     }
-    if (channel_count != 2u || frame_count == 0u || audio == nullptr) {
+    if (frame_count == 0u || audio == nullptr) {
+      return;
+    }
+    const bool surround = speakerLayout(params_) == SpeakerLayout::Surround51;
+    const bool fits = surround ? (channel_count >= kMaxSources && channel_count <= kMaxChannels)
+                               : channel_count == kStereoSources;
+    if (!fits) {
       return;
     }
     // planar。channel c は audio + c * frame_count から（abi.h）。
-    engine_->process(audio, audio + frame_count, frame_count);
+    float *channels[kMaxChannels];
+    for (std::uint32_t channel = 0u; channel < channel_count; ++channel) {
+      channels[channel] = audio + static_cast<std::size_t>(channel) * frame_count;
+    }
+    engine_->process(channels, channel_count, frame_count);
   }
 
   [[nodiscard]] std::uint32_t latencySamples() const noexcept override { return 0u; }
 
 private:
+  // engine の上限（ETAudioSessionRules.maxChannels と同じ 16）。器を音のスレッドの stack に置く。
+  static constexpr std::uint32_t kMaxChannels = 16u;
   VirtualRoomEngine *engine_ = nullptr;
   bool ready_ = false;
   bool published_ = false;

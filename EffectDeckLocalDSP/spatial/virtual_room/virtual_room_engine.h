@@ -52,7 +52,12 @@ public:
   // いま鳴っている面。道具と試験が applyImmediate で組んだ面を読み、部分を 0 にして戻す。
   [[nodiscard]] const RenderState &activeState() const noexcept { return *active_; }
 
-  // 音のスレッド。planar な 2ch。入力を置き換える。
+  // 音のスレッド。planar。入力を置き換える。
+  // channels の頭から面の sourceCount 本を音源として読み（足りない分は無音）、
+  // 両耳を 0 番と 1 番へ書き、**2 番から先は 0 にする**（5.1 を 2ch のヘッドホンへ畳む）。
+  void process(float *const *channels, std::uint32_t channelCount,
+               std::uint32_t frames) noexcept;
+  // Stereo の口（道具と試験）。上と同じものを 2 本で呼ぶ。
   void process(float *left, float *right, std::uint32_t frames) noexcept;
 
   // §45 で export の長さを決めるのに使う。
@@ -70,7 +75,8 @@ private:
   void takeLateStructure(const RenderState &state) noexcept;
   void clearBuffers() noexcept;
   [[nodiscard]] const RenderState &newestState() const noexcept;
-  void renderBlock(float *left, float *right, std::uint32_t frames) noexcept;
+  void renderBlock(float *const *channels, std::uint32_t channelCount,
+                   std::uint32_t frames) noexcept;
   void accumulatePaths(const RenderState &state, const PreparedPath *prepared,
                        const float *history, float *ear) const noexcept;
   void advanceSeedFade() noexcept;
@@ -124,10 +130,12 @@ private:
 
   std::uint32_t origin_ = 0u;
   /// 耳介の FIR を入れる前の生の入力。全経路へ同じものが掛かるので入口で 1 度だけ。
-  float pinnaHistory_[kSourceCount][256]{};
+  /// **6 本とも毎サンプル回す。**Stereo の間も 3 本目から先へ 0 を書き続けるので、
+  /// 5.1 へ渡るときに何分も前の 5.1 の音が輪から読まれない。
+  float pinnaHistory_[kMaxSources][256]{};
   std::uint32_t pinnaWrite_ = 0u;
-  float splitLow_[kSourceCount]{};
-  float splitHigh_[kSourceCount]{};
+  float splitLow_[kMaxSources]{};
+  float splitHigh_[kMaxSources]{};
   float bandCoefficientLow_ = 0.0F;
   float bandCoefficientHigh_ = 0.0F;
 
@@ -141,7 +149,9 @@ private:
   std::uint32_t fdnDelayCurrent_[kFdnLines]{};
   std::uint32_t fdnDelayTarget_[kFdnLines]{};
   float fdnBandCurrent_[kFdnLines][kBandCount]{};
-  float fdnInputCurrent_[kFdnLines][kSourceCount]{};
+  float fdnInputCurrent_[kFdnLines][kMaxSources]{};
+  /// late へ入れる音源の数（いま取り込んでいる面の sourceCount）。
+  std::uint32_t lateSources_ = kStereoSources;
   float fdnOutput_[kEarCount][kFdnLines]{};
   float lateSmoothing_ = 0.0F;
   float lateHold_[kEarCount]{};

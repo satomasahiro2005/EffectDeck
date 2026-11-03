@@ -32,10 +32,11 @@ struct VirtualRoomPluginParams {
   float modelVersion;
   float seedLow;
   float seedHigh;
-  static constexpr std::uint32_t kHash = 0x64db6513u;
-  static constexpr std::uint32_t kFloatCount = 24u;
+  float speakerLayout;
+  static constexpr std::uint32_t kHash = 0x912e76edu;
+  static constexpr std::uint32_t kFloatCount = 25u;
 };
-static_assert(sizeof(VirtualRoomPluginParams) == sizeof(float) * 24u);
+static_assert(sizeof(VirtualRoomPluginParams) == sizeof(float) * 25u);
 
 // effect.json の範囲。kernel が clamp と buffer の確保に使う。
 struct VirtualRoomPluginRange {
@@ -81,6 +82,7 @@ struct VirtualRoomPluginRange {
   static constexpr float kSeedLowMax = 65535.0F;
   static constexpr float kSeedHighMin = 0.0F;
   static constexpr float kSeedHighMax = 65535.0F;
+  static constexpr std::uint32_t kSpeakerLayoutCount = 2u;
 };
 
 } // namespace effetune::generated

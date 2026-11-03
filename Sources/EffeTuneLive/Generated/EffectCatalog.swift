@@ -1862,9 +1862,9 @@ let ETCatalog: [ETEffect] = [
       name: "Virtual Room",
       about: "Binaural virtual loudspeakers and room simulation with realtime geometry",
       category: "spatial",
-      paramsHash: 0x64db6513,
-      floatCount: 24,
-      defaults: [4.2, 3.6, 2.6, 50.0, 36.0, 1.2, 30.0, 1.8, 0.0, 100.0, 1.0, 2.0, 2.0, 2.0, 6.0, 2.0, 1.0, 8.75, 100.0, 100.0, 0.0, 1.0, 31777.0, 41887.0],
+      paramsHash: 0x912e76ed,
+      floatCount: 25,
+      defaults: [4.2, 3.6, 2.6, 50.0, 36.0, 1.2, 30.0, 1.8, 0.0, 100.0, 1.0, 2.0, 2.0, 2.0, 6.0, 2.0, 1.0, 8.75, 100.0, 100.0, 0.0, 1.0, 31777.0, 41887.0, 0.0],
       params: [
         ETParam(name: "roomWidth", key: "rw", label: "Width", kind: .number(min: 2.0, max: 20.0, step: 0.1, unit: "m", isInteger: false), defaultValue: 4.2, offset: 0, count: 1),
         ETParam(name: "roomDepth", key: "rd", label: "Depth", kind: .number(min: 2.0, max: 30.0, step: 0.1, unit: "m", isInteger: false), defaultValue: 3.6, offset: 1, count: 1),
@@ -1889,6 +1889,7 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -24.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 20, count: 1),
         ETParam(name: "modelVersion", key: "mv", label: "Model Version", kind: .number(min: 1.0, max: 16.0, step: 1.0, unit: "", isInteger: true), defaultValue: 1.0, offset: 21, count: 1),
         ETParam(name: "seedLow", key: "s0", label: "Diffusion Seed Low", kind: .number(min: 0.0, max: 65535.0, step: 1.0, unit: "", isInteger: true), defaultValue: 31777.0, offset: 22, count: 1),
-        ETParam(name: "seedHigh", key: "s1", label: "Diffusion Seed High", kind: .number(min: 0.0, max: 65535.0, step: 1.0, unit: "", isInteger: true), defaultValue: 41887.0, offset: 23, count: 1)
+        ETParam(name: "seedHigh", key: "s1", label: "Diffusion Seed High", kind: .number(min: 0.0, max: 65535.0, step: 1.0, unit: "", isInteger: true), defaultValue: 41887.0, offset: 23, count: 1),
+        ETParam(name: "speakerLayout", key: "sl", label: "Speaker Layout", kind: .enumeration(["Stereo", "5.1"]), defaultValue: 0.0, offset: 24, count: 1)
       ]),
 ]
