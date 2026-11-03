@@ -2486,7 +2486,8 @@ engine は `channel_count <= max_channels` を受けるので、ほかの段は�
 
 - Stereo: Stereo か対だけ（前と同じ）
 - 5.1: All だけ。kernel は 6 本以上で来たときだけ鳴らし、頭の 6 本を L, R, C, LFE, Ls, Rs
-  として読む。合わない本数は素通し（5.1 にした直後、host が組み直すまでの 2ch も素通し）
+  として読む（EffeTune の 5.1 の並び。§65）。合わない本数は素通し（5.1 にした直後、host が
+  組み直すまでの 2ch も素通し）
 - Speaker Layout を変えたら Ch を移す（5.1 → All、Stereo へ戻したら All → Stereo）。
   `ETRoutingConstraint.channelSpecAfterLayoutChange`。どちらも取り消せる
 
@@ -2498,8 +2499,8 @@ engine は `channel_count <= max_channels` を受けるので、ほかの段は�
 | 距離 | §53 | 5 本とも同じ距離。どれか 1 本が壁に当たれば全部を同じだけ詰める |
 | 耳介 | 元の JS の 4 tap（2 本とも同じ） | Brown & Duda 1998 の式 (8)・Table I（PB / NH の D_n）。向きごと |
 | 後ろの陰 | なし | 両耳軸より後ろから着く経路の中域 -1.5 dB・高域 -5 dB × 後ろの割合 × Pinna |
-| LFE | — | 正面の直接音の低域だけ。像・late・耳介なし |
-| late の入口 | 2 本の直交した符号（前のまま） | 16 x 16 Hadamard の行を 5 本 + 共通の乱数の符号。LFE は 0 |
+| LFE | — | C と同じ場所の低域だけのスピーカー（像・耳介は C と同じ、中高域の帯は 0。§65 で変えた。前は正面の直接音の低域だけ） |
+| late の入口 | 2 本の直交した符号（前のまま） | 16 x 16 Hadamard の行を 5 本 + 共通の乱数の符号。LFE は L / R / C の行を 1 : 1 : sqrt(2) で混ぜたもの（§65） |
 | DRR | 白で数える（前のまま） | 耳介と、直接音の 4 点 Lagrange の応答まで入れて数える |
 | 同相の低音の上限 | L = R = 1 | L = R = 1、C = sqrt(2)、Ls / Rs / LFE は 0 |
 
@@ -2553,3 +2554,114 @@ LFE = 0、Ls = 0.5 (L - R)、Rs = 0.5 (R - L)）で広げた。
 - 正面の L / R の耳介が Stereo（元の JS の表）と違う。5 本を同じ模型で揃えるためにそうした
 - Ls / Rs の角は 110° 固定。Speaker Angle は L / R だけに効く
 - 88.2 / 96 kHz の DRR の差（§63）は 5.1 でも同じ
+
+## 65. 上流の多チャンネルの決まりと照らし直した（2026-11-03）
+
+§64 は 5.1 の出どころを Spatial Mapper の "5.1 Upmix" だけで考えていた。上流の説明
+（Vendor/effetune/docs、3769b9ae）を読み直して、ほかの段で 5.1 を作ったときも合っているかを見た。
+
+### 上流の決まり（読んだ所）
+
+| 決まり | 上流の説明 |
+|---|---|
+| 5.1 の並びは L, R, C, LFE, Ls, Rs | Spatial Mapper の "5.1 Upmix"（Vendor/effetune/docs/dsp/effects/spatial-mapper/index.md）、Analog Meter の Loudness の重み（Vendor/effetune/docs/plugins/analyzer.md）、測定で「Ch 3 が center、Ch 4 が subwoofer」（Vendor/effetune/docs/measurement.md） |
+| 7.1.4 は L, R, C, LFE, Ls, Rs, Lb, Rb, Ltf, Rtf, Ltb, Rtb。7.1 は 8 本 | Vendor/effetune/docs/dsp/effects/spatial-mapper/index.md、Vendor/effetune/docs/faq.md の 2.5、Vendor/effetune/docs/measurement.md。**頭の 6 本は 5.1 と同じ** |
+| 入力は 2 本。5.1 は鎖の中で作る | Vendor/effetune/docs/faq.md の 4（"The Web Audio API limits input to 2 channels"）。EffectDeck の入力もステレオ |
+| バスの幅は出力の本数。段は幅を増やさない | Matrix は "does not create extra output channels by itself"、index n は本数が n より多いときだけ通る（Vendor/effetune/docs/dsp/effects/matrix/index.md）。Spatial Mapper と Bass Management は "preserves the bus width"（各ページ）。出力は番号の順、Output Channels を機器に合わせる（Vendor/effetune/docs/faq.md の 2.5） |
+| 本数を変える段は Channel = All | Vendor/effetune/docs/faq.md の 6（Matrix で 2→4ch など）、Bass Management・Channel Divider・FIR Crossover の各ページ |
+| バスは Main と Bus 1〜4。初めて使うバスは無音から、入出力が同じなら上書き、違えば足す、鳴るのは Main | Vendor/effetune/docs/bus-function.md。幅はどのバスも同じ（Vendor/effetune/dsp/core/engine.cpp の processPipeline が全部のバスを同じ channel_count で回す） |
+| LFE | Spatial Mapper の upmix は LFE を空のままにし、要れば Bass Management を足す。Bass Management は Managed の低音と LFE 入力を Sub へ送り、LFE Gain の既定は 0 dB で映画館式の +10 dB は掛けない、LFE Low-pass は既定で切（Vendor/effetune/docs/dsp/effects/bass-management/index.md） |
+| 和の大きさは使う人が見る | Matrix は「足すと大きくなるので下げる」、Bass Management は Headroom、最後に Level Meter と Brickwall Limiter（Vendor/effetune/docs/faq.md の 2.1） |
+| 時間合わせ | MultiChannel Panel / Time Alignment で 1 本ずつ遅らせる（Vendor/effetune/docs/faq.md の 3.3、Vendor/effetune/docs/dsp/effects/multi-channel-panel/index.md） |
+
+### 照らした結果
+
+| 項目 | 結果 |
+|---|---|
+| 並び | 合っていた。注だけ「Spatial Mapper の並び」から「EffeTune の 5.1 の並び」に直した |
+| 5.1 を作る段 | Matrix・Spatial Mapper・Bass Management・MultiChannel Panel（All）。幅の決まりは 5.1 の Virtual Room を数えて **engine 全体**を 6 本にするので、前に置いた All の段は全部 6 本を受ける。Stereo（既定）に置いた Matrix は 2 本だけ（上流と同じ。All にする）。`VirtualRoomTests.testUpstreamProducersSeeTheWidthTheVirtualRoomAsks` |
+| Virtual Room が無いとき | 広げない。2ch の機器で上流も 2 本なので同じ |
+| Virtual Room の入切で幅が変わる | **§64 のまま。**上流は段の入切で幅が変わらないが、切ったまま 6 本にすると、"5.1 Upmix" の C（声）と Bass Management が LFE へ移した低音が writeOutput で捨てられ、「Virtual Room を切った音」が上流の 2ch の機器で鳴る音と違ってしまう。入切で組み直して一瞬切れるのは残る |
+| バス | どのバスに置いても幅を求める（テストで Bus 1 → Main、Bus 1 → Bus 1、Main → Bus 2）。入出力のバスが違えば上流と同じく足し込みで、Main の 3 本目から先は残る（2ch では捨てられる） |
+| **LFE** | **合っていなかった。直した（下）** |
+| 7.1 / 7.1.4 | 7.1 の並びは持たないと決めた（下） |
+| Channel Divider / FIR Crossover の 3 帯域（6 本） | 帯域ごとのステレオの対で、5.1 の並びではない。前に置くと C / LFE / Ls / Rs として読まれる。上流でも多アンプ用なので直さない |
+| 同相の低音の上限 | §64 の見込みは "5.1 Upmix" の形だけ。Matrix の和では超える（下の表）。上流の決まりどおり使う人が下げるものとして、上限は広げない（広げると 5.1 全体が小さくなる。§64） |
+
+### LFE を C の場所の低域だけのスピーカーにした
+
+上流の Bass Management は L / R / C などの低音を LFE（Sub）へ移しても、同じ電気の高さで鳴る作り
+（Bass Gain・LFE Gain とも 0 dB）。§64 の LFE は「正面の直接音の低域だけ」で、L / R / C が持つ
+像と late の低音（部屋の利得）が無い。"5.1 Upmix" → Bass Management（低音を全部 LFE へ）
+→ Virtual Room で、**低音が 40〜120 Hz で 12.5〜13.1 dB 小さくなっていた。**
+
+- LFE は C と同じ場所・同じ像・同じ耳介で、中域・高域の帯は 0（`virtual_room_model.h` の isLfe）
+- late の入口は L / R / C の行を 1 : 1 : sqrt(2) で混ぜたもの。Bass Management が L = R = 1、
+  C = sqrt(2) の低音を 2 + sqrt(2) 倍で LFE へ集めると、late へ入る音が移す前と同じになる。
+  LFE だけに別の直交した行を与えると、集めた低音の late が 4.6 dB 大きくなる
+- FDN へは LFE の低域の帯だけを入れる（`VirtualRoomEngine::stepFdn`）
+- 全体の正規化（上限の見込み・early / late のエネルギー）に LFE は入れない。**LFE が 0 の入力では
+  前と 1 bit も変わらない**（下）
+- LFE の高さは Bass Management と同じく 0 dB。映画館式の +10 dB は掛けない
+
+### 7.1 / 7.1.4
+
+- kernel は 6 本以上を受け、頭の 6 本（7.1 / 7.1.4 でも L, R, C, LFE, Ls, Rs）だけ読む。
+  7 本目から先は耳へ入れず 0 にする（多チャンネルの IF でスピーカーへ漏らさない）
+- 2ch のヘッドホンでは幅が 6 本なので、Spatial Mapper の "7.1.4 Upmix" は 6 本目までしか書けない
+  （上流の決まり）。Spatial Mapper のエネルギーの正規化は書ける行だけで数える
+  （Vendor/effetune/dsp/plugins/spatial/spatial_mapper/kernel.cpp の job_channels_）ので、Diffuse は
+  Ls / Rs に全部集まり、5.1 として欠けずに鳴る
+- 8 本以上の IF では Lb / Rb から先にも Diffuse が分かれ、それは耳へ入らない。"7.1.4 Upmix" の
+  行列から計算すると Ls / Rs の Diffuse は 8 本で -1.7 dB、12 本で -3.0 dB（測っていない）
+- 7.1 の並び（8 本・Lb / Rb を ±135〜150°）を足すなら、`sl` に 7.1 を足し、音源を 8 本にして
+  host の幅を 8 にする。2ch のヘッドホンでも 8 本で回るので重くなる。今回はしない
+
+### 測った数字
+
+`Tools/brir_metrics surround shapes`（WSL g++ -O2、48 kHz、block 512、params.json の既定）。
+同相の正弦 -1 dBFS の峰、入力の峰に対する dB。各チャンネルの倍率は L = R の低音を通した形。
+
+| 鎖 | L, R, C, LFE, Ls, Rs | 40 Hz | 55 Hz | 80 Hz | 120 Hz |
+|---|---|---|---|---|---|
+| Spatial Mapper "5.1 Upmix" | 1, 1, 1.41, 0, 0, 0 | +0.11 | -3.43 | -8.57 | -9.81 |
+| + Bass Management（低音を全部 LFE へ）前 | 0, 0, 0, 3.41, 0, 0 | -12.54 | -12.60 | -12.76 | -13.11 |
+| + Bass Management（低音を全部 LFE へ）後 | 0, 0, 0, 3.41, 0, 0 | +0.02 | -3.48 | -5.95 | -4.71 |
+| Matrix L+R→C、L→Ls、R→Rs | 1, 1, 2, 0, 1, 1 | +4.03 | -1.42 | -13.11 | -4.54 |
+| Matrix L→Ls、R→Rs | 1, 1, 0, 0, 1, 1 | -0.01 | -5.77 | -10.90 | -8.16 |
+| Matrix L+R→C | 1, 1, 2, 0, 0, 0 | +1.49 | -2.12 | -6.75 | -7.33 |
+| Matrix L+R→LFE 前 / 後 | 1, 1, 0, 2, 0, 0 | -4.54 / +1.40 | -9.52 / -1.99 | -14.89 / -6.93 | -16.26 / -7.75 |
+| 6 本とも同相 前 / 後 | 1, 1, 1, 1, 1, 1 | +2.25 / +3.97 | -3.69 / -1.46 | -11.11 / -11.32 | -7.07 / -4.21 |
+
+前・後の書いていない行は LFE が 0 なので変わらない。
+
+- 80 / 120 Hz で Bass Management の後が前の "5.1 Upmix" より大きいのは、L / R / C の 3 か所では
+  打ち消し合う所が、C の 1 か所に集めると打ち消さないため。峰はどれも入力より小さい
+- Matrix で C へ L + R をそのまま足すと 40 Hz で +4.0 dB 出る。上流の決まりどおり、Volume か
+  MultiChannel Panel で C を -6 dB にするか、最後に Brickwall Limiter
+- Stereo と、LFE が 0 の 5.1 は変える前と 1 bit も同じ（44.1 / 48 / 96 / 192 kHz × 配置 4 通り、
+  28800 フレームの途中で別の配置を publish、7.4 MB を cmp）
+- 実時間と 6 x 2 の BRIR の畳み込みの差は -125.0 dB（block 64〜1024、WSL）
+- 処理時間（`surround cpu`、WSL、2 回）: 5.1 の中央値 8.6〜9.1% → 10.1〜10.2%、p99 13.1〜13.3% →
+  15.1〜15.5%（LFE も像を 25 個持つため）。Stereo は変わらない。Mac と iPhone では測っていない
+
+### 試験
+
+- `surround_bass_management_keeps_level`: "5.1 Upmix" の形と、その低音を全部 LFE へ集めた形の峰が
+  40 / 55 Hz で 1 dB 以内、40〜120 Hz でどちらも入力 +1 dB 以下（前の engine では -12.5 dB で落ちる）
+- `surround_zeroes_extra_channels`: 8 / 12 / 16 本で 7 本目から先に音があっても、耳は 6 本で
+  鳴らしたものと 1 bit も同じ。2 本目から先は 0
+- `surround_state_shape`: LFE の経路・耳介が C と同じで中高域が 0、late の入口が L / R / C の混ぜたもの
+- `VirtualRoomTests.testUpstreamProducersSeeTheWidthTheVirtualRoomAsks`: 上の「5.1 を作る段」と「バス」
+
+### 実機で試す鎖（耳ではまだ聴いていない）
+
+1. Spatial Mapper（All、"5.1 Upmix"）→ Virtual Room（5.1）
+2. Matrix（All。L→Ch1、R→Ch2、L と R→Ch3、L→Ch5、R→Ch6）→ MultiChannel Panel（All、Ch3 を -6 dB）→
+   Virtual Room（5.1）。Matrix を Stereo のままにすると Ch3〜6 は空（上流と同じ）
+3. Spatial Mapper（All、"5.1 Upmix"）→ Bass Management（All、Ch1・2・3・5・6 を Managed、Sub Outputs に
+   Ch4）→ Virtual Room（5.1）。低音の高さが 1 と同じくらいか
+4. Spatial Mapper（All、"7.1.4 Upmix"）→ Virtual Room（5.1）。2ch では 1 とほぼ同じ形で鳴るか
+5. Matrix（Main → Bus 1、All）→ Virtual Room（Bus 1 → Main、5.1）。Main の元のステレオに耳の 2 本が
+   足されて鳴る（上流のバスの決まり）
+6. 1 で Virtual Room を入切する。切った間は 2 本で回り（Spatial Mapper は L / R の行だけ書く）、入れ直すと一瞬切れて 6 本へ戻る
