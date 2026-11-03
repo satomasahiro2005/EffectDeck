@@ -272,6 +272,19 @@ final class ChainTextTests: XCTestCase {
         XCTAssertTrue(result.report.isEmpty, result.report.message)
     }
 
+    /// 2.16.0が全ての保存と共有の鎖に書く画面だけの鍵（`_uiCollapsed` `_uiLocked`）は言わない。
+    /// ショート形式・ロング形式（`parameters`の中）・Sectionのどれでも。
+    func testUiOnlyKeysFromUpstream216AreQuiet() throws {
+        let (list, report) = try prepared(
+            #"[{"nm":"Volume","vl":-3,"_uiCollapsed":true,"_uiLocked":true},{"nm":"Section","cm":"a","_uiCollapsed":true},{"nm":"Brickwall Limiter","_uiLocked":true}]"#)
+        XCTAssertEqual(names(list), ["Volume", "Section", "Brickwall Limiter"])
+        XCTAssertTrue(report.isEmpty, report.message)
+
+        let long = #"{"pipeline":[{"name":"Volume","enabled":true,"parameters":{"vl":-3,"_uiCollapsed":true,"_uiLocked":true}},{"name":"Section","parameters":{"cm":"a","_uiCollapsed":true,"_uiLocked":true}}]}"#
+        let result = ETChainText.prepare(try XCTUnwrap(ETChainText.json(from: long)), catalog: ETCatalog)
+        XCTAssertTrue(result.report.isEmpty, result.report.message)
+    }
+
     /// チャンネルは左右と全部の綴りを直し（"left" → "L"）、知らない綴りは外して言う。
     /// PipelineStore.parseは知らない綴りを黙ってStereoに落とす。
     func testChannelSpellingsAreCheckedAndFixed() throws {

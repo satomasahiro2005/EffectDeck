@@ -35,6 +35,8 @@ enum ETFrameType: UInt16 {
     case tonalBalance       = 29
     /// SFZ Note Player の鳴っている声（2.14.0、版 1・1028 バイト）。SFZVoiceGraph.swift。
     case sfzVoices          = 30
+    /// Note Spectrogram の和音と調（2.16.0、版 1・32 バイト）。NoteSpectrogramFrame.swift。
+    case noteChordKey       = 32
 }
 
 struct ETFrame {

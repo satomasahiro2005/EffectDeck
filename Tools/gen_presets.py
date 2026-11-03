@@ -27,6 +27,7 @@ LABEL = {
     "4ch": "4 Channel",
     "amp_sim": "Amp Simulation",
     "lofi": "Lo-Fi",
+    "mastering": "Mastering",
     "others": "Others",
     "processor": "Processor",
     "spatial": "Spatial",
@@ -36,7 +37,20 @@ LABEL = {
 }
 
 
-def title(stem: str) -> str:
+# 2.16.0 で増えた mastering は、上流の表示名（presets/presets.txt）で出す。
+# 既存のプリセットは今の名前のまま（ScreenshotSeed の id と drop の payload が名前に依る）。
+TITLE_OVERRIDE = {
+    "mastering/edm": "EDM",
+    "mastering/hip_hop": "Hip-Hop",
+    "mastering/jpop_dense": "J-Pop Dense",
+    "mastering/rnb_soul": "R&B and Soul",
+}
+
+
+def title(stem: str, category: str = "") -> str:
+    override = TITLE_OVERRIDE.get(category + "/" + stem)
+    if override:
+        return override
     return " ".join(w.capitalize() if w.islower() else w for w in stem.split("_"))
 
 
@@ -78,7 +92,7 @@ def main() -> int:
             continue
         # 余分な空白を落として埋める。往復はしないので整形は不要。
         compact = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        items.append((LABEL.get(category, category), title(path.stem), compact,
+        items.append((LABEL.get(category, category), title(path.stem, category), compact,
                       len(data["pipeline"])))
 
     for b in broken:

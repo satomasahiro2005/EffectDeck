@@ -52,10 +52,11 @@ let ETCatalog: [ETEffect] = [
       name: "Note Spectrogram",
       about: "Multi-pitch piano roll",
       category: "analyzer",
-      paramsHash: 0xafc5ff07,
-      floatCount: 3,
-      defaults: [28.0, 91.0, 0.0],
+      paramsHash: 0xb8518943,
+      floatCount: 4,
+      defaults: [28.0, 91.0, 0.0, 0.0],
       params: [
+        ETParam(name: "chordKeyEnabled", key: "ck", label: "Chords & Key", kind: .toggle, defaultValue: 0.0, offset: 3, count: 1),
         ETParam(name: "minimumMidi", key: "mn", label: "Lowest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 28.0, offset: 0, count: 1),
         ETParam(name: "maximumMidi", key: "mx", label: "Highest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 91.0, offset: 1, count: 1),
         ETParam(name: "timbreEnabled", key: "te", label: "Timbre Enabled", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1, runtimeOnly: true)
@@ -95,13 +96,14 @@ let ETCatalog: [ETEffect] = [
       name: "Rhythm Analyzer",
       about: "Shows tempo, beat grid and groove timing",
       category: "analyzer",
-      paramsHash: 0xbae05865,
-      floatCount: 3,
-      defaults: [40.0, 240.0, 0.0],
+      paramsHash: 0xf854c585,
+      floatCount: 4,
+      defaults: [40.0, 240.0, 0.0, 0.0],
       params: [
         ETParam(name: "minimumBpm", key: "mn", label: "Min BPM", kind: .number(min: 40.0, max: 192.0, step: 1.0, unit: "BPM", isInteger: true), defaultValue: 40.0, offset: 0, count: 1),
         ETParam(name: "maximumBpm", key: "mx", label: "Max BPM", kind: .number(min: 50.0, max: 240.0, step: 1.0, unit: "BPM", isInteger: true), defaultValue: 240.0, offset: 1, count: 1),
-        ETParam(name: "metronomeClick", key: "ck", label: "Metronome Click", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1)
+        ETParam(name: "metronomeClick", key: "ck", label: "Metronome Click", kind: .toggle, defaultValue: 0.0, offset: 2, count: 1),
+        ETParam(name: "displayMode", key: "dm", label: "Display", kind: .enumeration(["band", "drums"]), defaultValue: 0.0, offset: 3, count: 1)
       ]),
     ETEffect(
       type: "SpectrogramPlugin",

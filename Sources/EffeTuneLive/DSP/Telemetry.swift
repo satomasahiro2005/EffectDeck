@@ -55,8 +55,10 @@ final class Telemetry: ObservableObject {
     private var frameQueue: [UInt64: [ETFrame]] = [:]
     /// 溜める種類。Note Spectrogram（24）と Rhythm Analyzer（28）の枠（ETFrameType.noteSpectrogram / .rhythmAnalyzer）。
     // 31 は Note Spectrogram の音色の知らせ（2.14.0）。1 音ずつの出来事なので落とせない。
+    // 32 は和音と調（2.16.0）。型 24 と同じ 50 fps で来るので、30Hz の読みだと 4 割落ちる。
     static let queuedTypes: Set<UInt16> = [ETFrameType.noteSpectrogram.rawValue,
-                                           ETFrameType.rhythmAnalyzer.rawValue, 31]
+                                           ETFrameType.rhythmAnalyzer.rawValue, 31,
+                                           ETFrameType.noteChordKey.rawValue]
     /// tap と種類ごとの上限。30Hz なら 8 秒ぶん（Note Spectrogram は 50 fps なので 5 秒）。
     /// 描く側が止まっていた間に溜め続けない。
     static let queueLimit = 256

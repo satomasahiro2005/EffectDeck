@@ -22,6 +22,11 @@
 //    - 既定は Tempogram と Echo rows を隠す（vt / ve が false）。
 //    - 枠が止まっても（無音で休んでも）、タイミングの行は最後の周期で流し続ける。
 //
+//  2.16.0 の Display（dm）。band は Low / Mid / High の 3 行、drums は Cymbals / Hi-hat / Snare / Kick の 4 行
+//  （ETRhythmDisplayMode）。色は増やさず、点は今までと同じ 1 色。drums では点の濃さを確からしさでなく 1 にする
+//  （ETRhythmState.onsetOpacity）。行の高さ・区切り・ずれの目安・反響の行・レンズの升目は行数で割る。
+//  切り替えても解析はやり直さない。onset だけ捨てる。
+//
 //  上流との違い:
 //    - 字の縁取りは無い（SwiftUI の Canvas は字を縁取れない）。重なって読めない字は、上流と同じく
 //      先に書いた字を優先して外す。
@@ -61,16 +66,22 @@ final class RhythmTracker: ObservableObject {
     /// Tempogram の濃淡の板。state.tempogramDirty のときだけ作り直す。
     private(set) var tempogramMask: CGImage?
 
-    /// 溜まっている枠を全部入れる。
-    func pump(tap: UInt32) {
+    /// 溜まっている枠を全部入れる。**表示（Display）を先に合わせる。**プリセット・PC・カードを畳んでいる間の
+    /// 変更でも、枠より前に onset を捨てて、新しい表示の枠だけを受ける。
+    func pump(tap: UInt32, displayMode: ETRhythmDisplayMode) {
         let telemetry = Telemetry.shared
         if clearCount != telemetry.clearCount {
             // エンジンを作り直した。世代の数え直しを新しい世代と取り違えない。
             clearCount = telemetry.clearCount
             state.resetSource()
         }
+        let modeChanged = state.displayMode != displayMode
+        state.setDisplayMode(displayMode)
         let frames = telemetry.drainRhythmFrames(tap: tap)
-        guard !frames.isEmpty else { return }
+        guard !frames.isEmpty else {
+            if modeChanged { objectWillChange.send() }
+            return
+        }
         let now = ProcessInfo.processInfo.systemUptime
         for frame in frames { state.ingest(frame, now: now) }
         objectWillChange.send()
@@ -143,7 +154,8 @@ struct RhythmAnalyzerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             RhythmFigure(index: index, tapId: node.tapId, dsp: dsp, tracker: tracker,
-                         span: spanValue, showTempogram: showTempogram, showLanes: showLanes,
+                         span: spanValue, displayMode: displayMode,
+                         showTempogram: showTempogram, showLanes: showLanes,
                          showEcho: showEcho, showLens: showLens)
             if !graphOnly { rows }
         }
@@ -169,10 +181,15 @@ struct RhythmAnalyzerView: View {
 
     private var clickOn: Bool { current("ck", fallback: 0) >= 0.5 }
 
+    /// Display（dm）。カーネルの `params_.displayMode > .5f` と同じ。
+    private var displayMode: ETRhythmDisplayMode {
+        ETRhythmDisplayMode.from(value: Float(current("dm", fallback: 0)))
+    }
+
     /// 4/6/8/12/16 の最寄り（setParameters、rhythm_analyzer.js:179-187）。
     private var spanValue: Int { ETRhythm.nearestSpan(span) }
 
-    // MARK: 行（上流の並び: Min BPM → Max BPM → Metronome Click → Span → 4 つの入切）
+    // MARK: 行（上流の並び: Min BPM → Max BPM → Metronome Click → Display → Span → 4 つの入切）
 
     @ViewBuilder private var rows: some View {
         ETDisplayNumberRow(title: "Min BPM", unit: "BPM", value: bpmBinding(isMinimum: true),
@@ -181,6 +198,16 @@ struct RhythmAnalyzerView: View {
                            range: ETRhythmBPMRange.maximumRange, step: 1, isInteger: true)
         if let click = node.spec.params.first(where: { $0.key == "ck" }) {
             ParameterRow(param: click, nodeIndex: index, values: node.values, dsp: dsp)
+        }
+        // 2.16.0。値は PC の鎖が持つ DSP の値なので etLocalAudioOnly は付けない。ParameterRow だと
+        // band / drums の生の字が出るので、SFZ の Detection・Span と同じ ETDisplayChoiceRow で選ばせる。
+        // 解析はやり直さない（tracker.restart も resetState も呼ばない。上流も onset を捨てるだけ）。
+        if let dm = node.spec.params.first(where: { $0.key == "dm" }) {
+            ETDisplayChoiceRow(title: "Display",
+                               options: [(value: ETRhythmDisplayMode.band, label: "Frequency bands"),
+                                         (value: ETRhythmDisplayMode.drums, label: "Drums")],
+                               selection: Binding(get: { displayMode },
+                                                  set: { dsp.setValue($0 == .drums ? 1 : 0, at: index, offset: dm.offset) }))
         }
         ETDisplayChoiceRow(title: "Span (beats)",
                            options: ETRhythm.spans.map { (value: $0, label: String($0)) },
@@ -234,6 +261,7 @@ private struct RhythmFigure: View {
     @ObservedObject var dsp: EffeTuneDSP
     @ObservedObject var tracker: RhythmTracker
     let span: Int
+    let displayMode: ETRhythmDisplayMode
     let showTempogram: Bool
     let showLanes: Bool
     let showEcho: Bool
@@ -305,10 +333,11 @@ private struct RhythmFigure: View {
                 }
             }
         }
-        .onChange(of: sequence) { _, _ in tracker.pump(tap: tapId) }
+        .onChange(of: sequence) { _, _ in tracker.pump(tap: tapId, displayMode: displayMode) }
+        .onChange(of: displayMode) { _, _ in tracker.pump(tap: tapId, displayMode: displayMode) }
         .onAppear {
             visible = true
-            tracker.pump(tap: tapId)
+            tracker.pump(tap: tapId, displayMode: displayMode)
         }
         .onDisappear { visible = false }
     }
@@ -450,6 +479,8 @@ private struct RhythmPainter {
             left + nameX + 0.25 * axisFont + pad
                 + (labels.map { measure(context, $0, size: fontSize) }.max() ?? 0)
         }
+        let lanes = state.lanes
+        let laneCount = lanes.laneCount
         func separate(_ r: CGRect, rows: Int, _ context: inout GraphicsContext) {
             var path = Path()
             if rows > 1 {
@@ -462,8 +493,8 @@ private struct RhythmPainter {
             context.stroke(path, with: .color(label), lineWidth: 1)
         }
         func bandLabels(_ left: CGFloat, _ yOf: (Int) -> CGFloat, _ context: inout GraphicsContext) {
-            for (row, band) in ETRhythm.bandOrder.enumerated() {
-                write(ETRhythm.bandNames[band], left + pad, yOf(row), label, &context)
+            for (row, band) in lanes.order.enumerated() {
+                write(lanes.names[band], left + pad, yOf(row), label, &context)
             }
         }
 
@@ -490,7 +521,7 @@ private struct RhythmPainter {
 
         let captionRow = 1.3 * fontSize
         // 帯域の名前が行の印の上に収まる、レンズの高さ（3 行ぶん）。狭い配置ではこれがレンズの最小の高さ。
-        let lensLabelHeight = 3 * CGFloat(ETRhythm.lensLabelRow) * fontSize
+        let lensLabelHeight = CGFloat(laneCount) * CGFloat(ETRhythm.lensLabelRow) * fontSize
         let stacked = width < height
         let besideLens = !stacked && showLens && (showLanes || showEcho)
         let laneRight = besideLens ? 0.72 * width : width
@@ -587,9 +618,9 @@ private struct RhythmPainter {
             drawLane(&context, view, signalColor: signalColor,
                      write: { v, x, y, color, align, ctx in write(v, x, y, color, align: align, &ctx) })
         }
-        if let main { separate(main, rows: 3, &context) }
+        if let main { separate(main, rows: laneCount, &context) }
         if let echo { separate(echo, rows: echoRows, &context) }
-        if let lensRect { separate(lensRect, rows: 3, &context) }
+        if let lensRect { separate(lensRect, rows: laneCount, &context) }
         // 横長でレンズがタイミングの行の隣にあって Echo rows が無いときは、行が続いているので、
         // 帯域の名前は左の行が持つ。
         if let lensRect {
@@ -609,19 +640,20 @@ private struct RhythmPainter {
             axisName("Beats", main.midX, main.maxY - 8, room: main.width, &context)
             // 帯域の名前と、右にずれの目盛り（上 = 遅れ）。+20/−20 の組は、レーンが低くて 2 つが
             // 離れないとき・別の字に触れるときは、組ごと出さない。
-            let lane = main.height / 3
+            let lane = main.height / CGFloat(laneCount)
             let guide = CGFloat(ETRhythm.guideMS / ETRhythm.deviationMS * 0.45) * lane
             let late = ETRhythm.signed(ETRhythm.guideMS, digits: 0)
             let early = ETRhythm.signed(-ETRhythm.guideMS, digits: 0)
-            let nameRight = tickRight(main.minX, ETRhythm.bandNames, context)
+            let nameRight = tickRight(main.minX, lanes.names, context)
             let valueRight = nameRight + pad + max(measure(context, late, size: fontSize),
                                                   measure(context, early, size: fontSize))
-            for (row, band) in ETRhythm.bandOrder.enumerated() {
-                write(ETRhythm.bandNames[band], nameRight, main.minY + (CGFloat(row) + 0.5) * lane, label,
+            for (row, band) in lanes.order.enumerated() {
+                write(lanes.names[band], nameRight, main.minY + (CGFloat(row) + 0.5) * lane, label,
                       align: .trailing, &context)
             }
             if !(2 * guide < labelGap) {
-                for row in [0, 2, 1] {
+                // 上流の順: 先頭、末尾、その間（3 行なら 0・2・1、4 行なら 0・3・1・2）。
+                for row in [0, laneCount - 1] + Array(1..<(laneCount - 1)) {
                     let center = main.minY + (CGFloat(row) + 0.5) * lane
                     writeAll([TextItem(value: late, x: valueRight, y: center - guide, color: label, align: .trailing, size: fontSize),
                               TextItem(value: early, x: valueRight, y: center + guide, color: label, align: .trailing, size: fontSize)],
@@ -642,7 +674,7 @@ private struct RhythmPainter {
             }
             // 行が無いとき、最新の行が帯域の名前を持つ。
             if main == nil, let newest = echoViews.first {
-                bandLabels(x, { row in newest.top + (0.5 + CGFloat(row - 1) * 0.28) * newest.height }, &context)
+                bandLabels(x, { row in newest.top + CGFloat(state.echoRowFraction(row: row)) * newest.height }, &context)
             }
         }
         if let lensRect {
@@ -757,7 +789,9 @@ private struct RhythmPainter {
 
     private func drawLane(_ context: inout GraphicsContext, _ view: ETRhythmState.LaneView, signalColor: Color,
                           write: (String, CGFloat, CGFloat, Color, TextAlignment, inout GraphicsContext) -> Void) {
-        let confidence = state.snapshot?.confidence ?? 0
+        // onset の濃さ。band は確からしさ、drums は 1（上流 onsetOpacity）。
+        let confidence = state.onsetOpacity
+        let laneCount = state.lanes.laneCount
         let left = CGFloat(view.left), top = CGFloat(view.top)
         let width = CGFloat(view.width), height = CGFloat(view.height)
         let spanBeats = Double(view.span)
@@ -828,11 +862,11 @@ private struct RhythmPainter {
             }
         }
         // 各レーンの中心線（0 ms）の ±20 ms に点線。
-        let lane = height / 3
+        let lane = height / CGFloat(laneCount)
         if !view.echo {
             let guide = CGFloat(ETRhythm.guideMS / ETRhythm.deviationMS * 0.45) * lane
             var path = Path()
-            for row in 0..<3 {
+            for row in 0..<laneCount {
                 let center = top + (CGFloat(row) + 0.5) * lane
                 for y in [center - guide, center + guide] {
                     path.move(to: CGPoint(x: left, y: y))
@@ -860,7 +894,7 @@ private struct RhythmPainter {
             if !view.echo {
                 // レーンの中心（0 ms）からの棒で、ずれが一目で読める。
                 var stem = Path()
-                stem.move(to: CGPoint(x: px, y: top + (CGFloat(ETRhythm.bandRows[point.band]) + 0.5) * lane))
+                stem.move(to: CGPoint(x: px, y: top + (CGFloat(state.lanes.rows[point.band]) + 0.5) * lane))
                 stem.addLine(to: CGPoint(x: px, y: py))
                 var faint = layer
                 faint.opacity = 0.6 * confidence
@@ -986,10 +1020,11 @@ private struct RhythmPainter {
                           write: (String, CGFloat, CGFloat, Color, TextAlignment, CGFloat?, inout GraphicsContext) -> Void,
                           showsBandLabels: Bool,
                           bandLabels: (CGFloat, (Int) -> CGFloat, inout GraphicsContext) -> Void) {
-        let confidence = state.snapshot?.confidence ?? 0
+        // 印の濃さ。band は確からしさ、drums は 1（上流 onsetOpacity）。
+        let confidence = state.onsetOpacity
         let columns = ETRhythm.slotLabels.count
         let columnWidth = rect.width / CGFloat(columns)
-        let rowHeight = rect.height / 3
+        let rowHeight = rect.height / CGFloat(state.lanes.laneCount)
         guard rowHeight > 0 else { return }
         func centerX(_ slot: Int) -> CGFloat { rect.minX + (CGFloat(slot) + 0.5) * columnWidth }
         let msScale = 0.42 * columnWidth / CGFloat(ETRhythm.deviationMS)
@@ -1042,7 +1077,7 @@ private struct RhythmPainter {
         var layer = context
         layer.clip(to: Path(rect))
         for row in lens.rows {
-            let y = rowY(ETRhythm.bandRows[row.band])
+            let y = rowY(state.lanes.rows[row.band])
             let offset = min(max(row.offset, -limit), limit)
             let x = centerX(row.slot) + CGFloat(offset) * msScale
             let alpha = (0.35 + 0.65 * Double(row.count) / Double(maxCount)) * confidence
@@ -1059,7 +1094,7 @@ private struct RhythmPainter {
             tick.stroke(line, with: .color(signalColor), lineWidth: 2)
         }
         for row in lens.rows {
-            let y = rowY(ETRhythm.bandRows[row.band])
+            let y = rowY(state.lanes.rows[row.band])
             let offset = min(max(row.offset, -limit), limit)
             let x = centerX(row.slot) + CGFloat(offset) * msScale
             if valueClearsMark && abs(row.offset) >= ETRhythm.labelMinimumMS {

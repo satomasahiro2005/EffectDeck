@@ -37,9 +37,10 @@ final class Upstream212Tests: XCTestCase {
 
         let rhythm = try spec("RhythmAnalyzerPlugin")
         XCTAssertEqual(rhythm.name, "Rhythm Analyzer")
-        XCTAssertEqual(rhythm.floatCount, 3)
-        XCTAssertEqual(rhythm.params.map(\.key), ["mn", "mx", "ck"])
-        XCTAssertEqual(rhythm.defaults, [40, 240, 0])
+        // 2.16.0 で表示の dm（band / drums）が末尾に増えた（Upstream216Tests）。
+        XCTAssertEqual(rhythm.floatCount, 4)
+        XCTAssertEqual(rhythm.params.map(\.key), ["mn", "mx", "ck", "dm"])
+        XCTAssertEqual(rhythm.defaults, [40, 240, 0, 0])
         // createUI の ...定数 の spread を解いた刻みと単位（Tools/gen_catalog.py）。
         if case .number(let lo, let hi, let step, let unit, let isInteger) = try param(rhythm, "mn").kind {
             XCTAssertEqual([lo, hi, step], [40, 192, 1])
