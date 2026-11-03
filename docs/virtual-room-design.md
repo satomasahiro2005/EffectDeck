@@ -600,8 +600,10 @@ EffectDeck pipelineのfloat headroomを維持する。
 | 21 | `mv` | Model Version |
 | 22 | `s0` | Seed low 16 bit |
 | 23 | `s1` | Seed high 16 bit |
+| 24 | `sl` | Speaker Layout（Stereo / 5.1。§64） |
 
-`floatCount = 24`。
+`floatCount = 25`（2026-11-03 に `sl` を末尾へ足した。前の保存値は鍵で読むので、
+無い `sl` は既定の Stereo になる）。
 
 SeedをFloat一個でUInt32として保存しない。
 
@@ -1330,6 +1332,9 @@ Virtual Room requires a stereo channel pair.
 を表示する。
 
 silent failureにはしない。
+
+**2026-11-03 追記:** Speaker Layout が 5.1 のときは All だけを受ける（6 本以上で読み、
+両耳を 0 番と 1 番へ書いて残りを 0 にする）。§64。
 
 ---
 
@@ -2442,3 +2447,109 @@ stop.md の A〜D と、遅延線の積み重なり（E）を直した。数字�
 入口・無音の窓・最初の block）は目標に乗った。全体の高さと低域の傾きは届いていない**
 （40 Hz より下で像が同相に積もるのはモデルの性質で、出力の 1 本のスカラーでは
 「入力と同じ高さ」と「同相の低音でバイパスを超えない」を両立できない）。
+
+---
+
+## 64. 5.1 の仮想スピーカー（2026-11-03）
+
+ステレオの曲を Spatial Mapper（プリセット "5.1 Upmix"）で 5.1 へ広げ、Virtual Room で
+2ch のヘッドホンへ畳む。Speaker Layout（`sl`、§12 の 24 番）で Stereo / 5.1 を選ぶ。
+
+```text
+Spatial Mapper (All, 5.1 Upmix) → Virtual Room (All, 5.1) → 普通のステレオの段 → 2ch
+```
+
+### 塞いでいたもの: 処理の幅 = ハードウェアの幅
+
+AudioIO.start は `processingChannels(forOutputChannels:)`（2〜16）1 本で、RenderState・
+`EffeTuneDSP.prepare(maxChannels:)`・AU / JSFX の host・AVAudioSourceNode・プレーナの置き場・
+メーターの本数を全部決めていた。ヘッドホンでは 2 で、engine のバスは全部 2 本幅なので、
+Spatial Mapper は 2 本しか書けない（上流の説明にも「処理のバスが出力の幅を決める」とある）。
+
+鎖の形（バス・channelSpec）は変えていない。host が組む幅だけを変えた。
+
+- `processingChannels(forOutputChannels:requiredByChain:)` = min(16, max(2, 実際, 鎖))
+- 鎖の幅は `EffeTuneDSP.requiredChannels`（`ETChainEditing.requiredChannels`）。入れていて、
+  Section で止まっておらず、All に居る 5.1 の Virtual Room があれば 6、ほかは 2。publish のたびに引き直す
+- 食い違ったら AudioIO が組み直す（`followChainWidth`。publish の中からは直に組み直さず次の周回へ）。
+  **組み直しは 5.1 の Virtual Room が現れた・消えたときだけ**で、一瞬切れる
+- **ミキサーへ渡す本数はハードウェアのまま**（`outputChannels(forOutputChannels:)`）。6 本を渡すと
+  ミキサーが勝手にダウンミックスする。余った行は `ETAudioBufferOps.writeOutput` が書かずに捨てる。
+  メーター（Mini Meters）も出力の口の本数
+- **本数の見張り（tick）も同じ式で比べる。**片方だけ鎖を見ると 6 と 2 で食い違い続け、組み直しが止まらない
+- 6ch 以上の IF では W = O = 実際の本数のまま（Virtual Room が 2 番から先を 0 にする）
+
+engine は `channel_count <= max_channels` を受けるので、ほかの段は何も変わらない。
+5.1 の間は All の段が 6 本ぶん回る（そのぶん重い）。
+
+### Routing
+
+- Stereo: Stereo か対だけ（前と同じ）
+- 5.1: All だけ。kernel は 6 本以上で来たときだけ鳴らし、頭の 6 本を L, R, C, LFE, Ls, Rs
+  として読む。合わない本数は素通し（5.1 にした直後、host が組み直すまでの 2ch も素通し）
+- Speaker Layout を変えたら Ch を移す（5.1 → All、Stereo へ戻したら All → Stereo）。
+  `ETRoutingConstraint.channelSpecAfterLayoutChange`。どちらも取り消せる
+
+### DSP
+
+| | Stereo | 5.1 |
+|---|---|---|
+| 音源 | L / R（±Speaker Angle） | L / R（±Speaker Angle）、C（0°）、LFE、Ls / Rs（±110°、ITU-R BS.775） |
+| 距離 | §53 | 5 本とも同じ距離。どれか 1 本が壁に当たれば全部を同じだけ詰める |
+| 耳介 | 元の JS の 4 tap（2 本とも同じ） | Brown & Duda 1998 の式 (8)・Table I（PB / NH の D_n）。向きごと |
+| 後ろの陰 | なし | 両耳軸より後ろから着く経路の中域 -1.5 dB・高域 -5 dB × 後ろの割合 × Pinna |
+| LFE | — | 正面の直接音の低域だけ。像・late・耳介なし |
+| late の入口 | 2 本の直交した符号（前のまま） | 16 x 16 Hadamard の行を 5 本 + 共通の乱数の符号。LFE は 0 |
+| DRR | 白で数える（前のまま） | 耳介と、直接音の 4 点 Lagrange の応答まで入れて数える |
+| 同相の低音の上限 | L = R = 1 | L = R = 1、C = sqrt(2)、Ls / Rs / LFE は 0 |
+
+- **耳介の表は論文から起こした**（コードは写していない。§60.6）。論文が測ったのは前の半球
+  （-90° <= phi <= 90°）だけで、**後ろは式をそのまま延ばした外挿**。強さは論文の rho に 0.35 を掛け、
+  -1 の event を元の JS の一番強い tap に揃えた。cos(theta / 2) は偶関数なので左右の耳で同じになり、
+  「音源ごとに入口で 1 度」の形にそのまま乗る
+- **DRR に Lagrange を入れた理由:** 5.1 では Ls / Rs の近い耳がいちばん早く着き、そこが整数の遅れに
+  なる。正面の L / R は小数部 0.58 になり、4 点 Lagrange が 10 kHz より上を削る。白で測るエネルギーは
+  高域の帯が重いので、数えないと正面の DRR が 5.6 dB まで下がった（目標 8）。Stereo でも同じ向きに
+  0.5 dB ずれているが、Stereo の音を変えないために Stereo では使わない
+- **同相の低音の上限の見込み:** "5.1 Upmix" は direct 行列で C に 0.7 (L + R) を入れ、Ls / Rs には
+  相関のない成分しか入れず、LFE は空。L = R の低音ではこの形になる。6 本ぜんぶ同相・満振幅を上限に
+  すると普通の曲でかなり小さくなるので取らなかった。**LFE に大きな音が来る素材（本物の 5.1）では、
+  同相の低音がバイパスを超えうる**
+- **Stereo は 1 bit も変わらない。**変える前と後の engine に同じ入力を通して比べた
+  （44.1 / 48 / 96 / 192 kHz × 配置 4 通り、applyImmediate のインパルス応答 0.5 秒と、途中で別の配置を
+  publish する実時間 28800 フレーム。15.9 MB が一致）
+- 確保は 6 本ぶん（history_ が 48 kHz で 2.4 MB、192 kHz で 9.4 MB）。並びを変えても確保し直さない。
+  入口の耳介と帯域の割り方は Stereo の間も 6 本とも回す（3 本目から先に 0 を書き続けないと、
+  5.1 へ渡るときに前の 5.1 の音が輪から読まれる）
+
+### 画面
+
+- Speakers の節に Speaker Layout（汎用の行）
+- 5.1 では図に C と Ls / Rs も描く。掴めるのは L / R と listener だけ
+- 5.1 では BRIR の書き出しを出さない（6 本を 2 耳へ畳むので 4ch の LL / LR / RL / RR で表せない）
+
+### 測った数字
+
+48 kHz、block 512、params.json の既定（2 次・天井 Drywall）。`Tools/brir_metrics surround`。
+曲は `brir_metrics signal` の代わりの曲を、**Spatial Mapper ではなく固定の行列**（L, R, C = 0.7 (L + R)、
+LFE = 0、Ls = 0.5 (L - R)、Rs = 0.5 (R - L)）で広げた。
+
+| 項目 | 値 |
+|---|---|
+| 実時間と 6 x 2 の BRIR の畳み込みの差（block 64 / 128 / 480 / 512 / 1024） | -126.1 dB（WSL g++）、-126.9 dB（Mac clang++） |
+| DRR_late（L / R / C / Ls / Rs、既定の seed） | 7.32 / 7.13 / 7.38 / 7.56 / 7.57 dB（seed を 12 通り振って 6.95〜7.96） |
+| 同相の正弦 -1 dBFS（C = 1.4 倍）の峰、40〜120 Hz | +0.07 dB（40 Hz）。20〜35 Hz は +4.07 dB |
+| 曲の rms（入力に対して） | 5.1 -6.64 dB（Stereo -6.38 dB） |
+| 3 帯域（入力に対して） | 低 -5.35 / 中 -10.04 / 高 -12.39 dB（Stereo は -5.53 / -9.42 / -7.77） |
+| 0 dBFS を超えたサンプル | 0 |
+| L を 70° に置いたときの Ls（110°）との差（直接音、近い耳） | 1〜3 kHz -2.9、3〜6 kHz -5.4、6〜10 kHz -0.8、10〜16 kHz -1.3 dB |
+| 1 block の処理時間（p99 / block の長さ） | Mac: Stereo 3.0%、5.1 5.1%。WSL: Stereo 6.1%、5.1 12.0% |
+
+### 届いていないこと・確かめていないこと
+
+- **耳ではまだ聴いていない。実機（iPhone）でも鳴らしていない。**処理時間も iPhone では測っていない
+- **Spatial Mapper の実物を通した数字ではない。**上の曲は固定の行列で広げた
+- 5.1 は高域が Stereo より 4.6 dB 少ない（同相の低音の上限で全体を下げ、C に 1.4 倍が載るため）
+- 正面の L / R の耳介が Stereo（元の JS の表）と違う。5 本を同じ模型で揃えるためにそうした
+- Ls / Rs の角は 110° 固定。Speaker Angle は L / R だけに効く
+- 88.2 / 96 kHz の DRR の差（§63）は 5.1 でも同じ
