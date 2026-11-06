@@ -30,7 +30,7 @@ final class Upstream213Tests: XCTestCase {
     // 版は Upstream215Tests が見る。
 
     func testNewEffectsAreInTheCatalog() throws {
-        XCTAssertEqual(ETCatalog.count, 112)
+        // 2.13.0 で 112 種。いまの数は Upstream217Tests が見る。
 
         let ape = try spec("AdaptivePredictionEffectPlugin")
         XCTAssertEqual(ape.name, "Adaptive Prediction")
@@ -53,16 +53,18 @@ final class Upstream213Tests: XCTestCase {
         } else { XCTFail("weightDecay は数") }
 
         let sfz = try spec("SFZNotePlayerPlugin")
-        XCTAssertEqual(sfz.name, "SFZ Note Player")
+        // 2.17.0 で SoundFont Note Player に改名された（型の名前は同じ。Upstream217Tests）。
+        XCTAssertEqual(sfz.name, "SoundFont Note Player")
         XCTAssertEqual(sfz.category, "others")
         // 2.14.0 で ss（Sample Shift）と試し弾きの pm / pv が増えた（Upstream214Tests）。
         // 並びと名前は createUI の表。保存しない pm / pv を除くと 2.13.0 の並びに ss が入っただけ。
         // 2.15.0 で先頭に dt（Detection）が増えた（Upstream215Tests）。
+        // 2.17.0 で dt の次に sp0（Preset）が増えた（Upstream217Tests）。
         XCTAssertEqual(sfz.params.filter { !$0.runtimeOnly }.map(\.key),
-                       ["dt", "hi", "md", "lo", "th", "rd", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm",
+                       ["dt", "sp0", "hi", "md", "lo", "th", "rd", "nh", "vf", "vc", "pl", "dm", "wm", "os", "ss", "og", "tm",
                         "mn", "mx"])
         XCTAssertEqual(sfz.params.filter { !$0.runtimeOnly }.map(\.label),
-                       ["Detection", "Highest", "Middle", "Lowest", "Threshold", "Retrigger Drop", "Note Hold",
+                       ["Detection", "Preset", "Highest", "Middle", "Lowest", "Threshold", "Retrigger Drop", "Note Hold",
                         "Velocity 1 Level", "Velocity 127 Level", "Max Voices", "Dry", "Wet", "Octave",
                         "Sample Shift", "Output Gain", "Timing", "Lowest Note", "Highest Note"])
         if case .number(let lo, let hi, let step, let unit, _) = try param(sfz, "rd").kind {

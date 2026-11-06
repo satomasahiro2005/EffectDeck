@@ -19,11 +19,7 @@ final class Upstream216Tests: XCTestCase {
 
     // MARK: 版と目録
 
-    func testUpstreamVersionIs0_16_0() {
-        XCTAssertEqual(ETUpstreamVersion, "0.16.0")
-        XCTAssertEqual(ETUpstreamAppVersion, "2.16.0", "package.json の版。公式の PC との食い違いの表示に使う")
-        XCTAssertEqual(ETCatalog.count, 112)
-    }
+    // 版と目録の数の見張りは Upstream217Tests（2.16.0 も効果を足していない。112 のままだった）。
 
     func testNoteSpectrogramChordKeyParameter() throws {
         let s = try spec("NoteSpectrogramPlugin")

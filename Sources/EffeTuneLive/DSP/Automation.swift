@@ -499,7 +499,7 @@ struct ETAutomation: Equatable {
     static let excludedTypes: Set<String> = [
         "IRReverbPlugin", "FiveBandFIRPEQPlugin", "RoomEqPlugin", "GroupDelayEqPlugin",
         "GroupDelayPEQPlugin", "CrosstalkCancellationPlugin", "BassManagementPlugin",
-        "SFZNotePlayerPlugin", "MatrixPlugin", "FIRCrossoverPlugin",
+        "SFZNotePlayerPlugin", "SoundFontPlayerPlugin", "MatrixPlugin", "FIRCrossoverPlugin",
     ]
 
     /// Section・外部（AUv3 / JSFX）は floatCount が0なので入らない。

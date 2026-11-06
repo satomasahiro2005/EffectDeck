@@ -172,7 +172,16 @@ CHAIN_UNSUPPORTED = {
     "RoomEqPlugin": "it needs a room measurement made in the app",
     "CrosstalkCancellationPlugin": "it needs a measurement made in the app",
     "FIRCrossoverPlugin": "its crossover is designed in the app, not from the keys listed here",
-    "SFZNotePlayerPlugin": "it needs an SFZ instrument that the user imports",
+    "SFZNotePlayerPlugin": "it needs a SoundFont or SFZ instrument that the user imports",
+    "SoundFontPlayerPlugin": "it plays MIDI songs, which a chain cannot carry",
+}
+
+# params.json の default と上流の JS の既定値が違うもの。(type, メンバ名) -> 既定値。
+# SoundFont Player（2.17.0）の sampleQuality は params.json が 0（Linear）のままだが、
+# 上流の soundfont_player.js:14 は this.sq = 1（FIR32）で始め、sf2-player-plugin.test.mjs:73 も
+# 既定と「既定に戻す」が 1 になることを確かめている。画面の既定が正なのでここで直す。
+DEFAULT_OVERRIDES = {
+    ("SoundFontPlayerPlugin", "sampleQuality"): 1,
 }
 
 # 保存している値が見た目の数と違うもの。(type, メンバ名) -> (印, 説明)。
@@ -1028,7 +1037,7 @@ def main():
         for mname, mcount in members:
             f = by_name.get(mname, {})
             kind = f.get("kind", "float")
-            dv = f.get("default", 0)
+            dv = DEFAULT_OVERRIDES.get((type_name, mname), f.get("default", 0))
 
             u = ui.get(f.get("key")) or ui.get(f.get("name")) or ui.get(mname) or {}
 

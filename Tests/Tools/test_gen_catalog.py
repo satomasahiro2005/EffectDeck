@@ -379,7 +379,36 @@ class MainTests(unittest.TestCase):
         self.assertIn(("AdaptivePredictionEffectPlugin", "resetToken"), self.gc.RUNTIME_ONLY)
         self.assertIn(("TonalBalanceEQPlugin", "measurementPaused"), self.gc.RUNTIME_ONLY)
         self.assertEqual(self.gc.CHAIN_UNSUPPORTED["SFZNotePlayerPlugin"],
-                         "it needs an SFZ instrument that the user imports")
+                         "it needs a SoundFont or SFZ instrument that the user imports")
+
+    def test_real_tables_for_2_17_0(self):
+        # SoundFont Player（2.17.0）は MIDI の曲を鳴らす型で、鎖には曲を載せられない。
+        # Interpolation の既定は params.json が 0 のまま、上流の JS は 1（FIR32）で始める。
+        self.assertEqual(self.gc.CHAIN_UNSUPPORTED["SoundFontPlayerPlugin"],
+                         "it plays MIDI songs, which a chain cannot carry")
+        self.assertEqual(self.gc.DEFAULT_OVERRIDES, {("SoundFontPlayerPlugin", "sampleQuality"): 1})
+
+    def test_default_override_wins_over_params_json(self):
+        # 上書きは (型, メンバ名)。Swift の defaults・ETParam.defaultValue・鎖の語彙の default が揃って変わる。
+        with TempDir() as tmp:
+            mv = MiniVendor(tmp)
+            fields = [
+                {"name": "gain", "key": "og", "kind": "float", "min": -60, "max": 12, "step": 0.1, "default": 0},
+                {"name": "sampleQuality", "key": "sq", "kind": "float", "min": 0, "max": 2, "step": 1, "default": 0},
+            ]
+            mv.plugin("others", "sf", "SfPlugin", fields, [("gain", 1), ("sampleQuality", 1)])
+            gc = mv.bind(self.gc)
+            gc.DEFAULT_OVERRIDES = {("SfPlugin", "sampleQuality"): 1}
+            code, out, err = self.run_gen(mv)
+            self.assertEqual(code, 0, err)
+            swift = (tmp / "Sources/EffeTuneLive/Generated/EffectCatalog.swift").read_text("utf-8")
+            data = json.loads((tmp / "chain/v9.9.9/effects.json").read_text("utf-8"))
+        self.assertIn("defaults: [0.0, 1.0]", swift)
+        self.assertIn('key: "sq"', swift)
+        self.assertIn("defaultValue: 1.0, offset: 1", swift)
+        params = {p["key"]: p for p in data["effects"][0]["params"]}
+        self.assertEqual(params["sq"]["default"], 1)
+        self.assertEqual(params["og"]["default"], 0)
 
     def test_ui_after_moves_a_helper_row_behind_its_neighbour(self):
         # Averaging Time の行を作る関数は createUI より前にあり、ラベルの行が先頭に化ける。

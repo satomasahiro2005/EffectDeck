@@ -141,8 +141,9 @@ struct EffectPickerView: View {
 
     /// カーネルは居るが、まだ選ばせない型。**カタログからは消さない**（プリセット・共有リンク・
     /// PC から届いた鎖が名指すと読めなくなる）。ここで一覧に出さないだけ。
-    /// いまは空（SFZ Note Player は 2.13.0 の取り込みを入れたので出す）。出せない型ができたらここへ足す。
-    static let hiddenTypes: Set<String> = []
+    /// SoundFont Player（2.17.0）は MIDI の曲を鳴らす型で、曲を渡す入口がまだ無いので出さない。
+    /// SoundFont Note Player（SFZNotePlayerPlugin）は 2.13.0 の取り込みを入れたので出す。
+    static let hiddenTypes: Set<String> = ["SoundFontPlayerPlugin"]
 
     /// 効果のカテゴリ。**Section の居る control も上流と同じく「Control」で並べる。**
     /// 一度「Grouping」と呼び替えて末尾に分けたが、EffeTune に慣れた人は Control の中を探す。

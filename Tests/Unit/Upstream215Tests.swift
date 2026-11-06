@@ -15,16 +15,14 @@ final class Upstream215Tests: XCTestCase {
 
     // MARK: 版と目録
 
-    /// 版の見張りは Upstream216Tests へ移った（2.16.0 も効果を足していない。112 のまま）。
-    func testCatalogStillHas112Effects() {
-        XCTAssertEqual(ETCatalog.count, 112)
-    }
+    // 版と目録の数の見張りは Upstream217Tests（2.15.0 も効果を足していない。112 のままだった）。
 
     func testSFZDetectionParameter() throws {
         let sfz = try spec("SFZNotePlayerPlugin")
-        XCTAssertEqual(sfz.paramsHash, 0xdfb4bbc5, "カーネルの hash と食い違うと set_params が断られる")
-        XCTAssertEqual(sfz.floatCount, 20)
-        XCTAssertEqual(sfz.defaults.count, 20)
+        // 2.17.0 で sp0（Preset）が末尾（20）に増え、hash は 0x3785c6ed・float は 21（Upstream217Tests）。
+        XCTAssertEqual(sfz.paramsHash, 0x3785c6ed, "カーネルの hash と食い違うと set_params が断られる")
+        XCTAssertEqual(sfz.floatCount, 21)
+        XCTAssertEqual(sfz.defaults.count, 21)
         let dt = try XCTUnwrap(sfz.params.first { $0.key == "dt" })
         XCTAssertEqual(dt.name, "detection")
         XCTAssertEqual(dt.label, "Detection")
@@ -43,7 +41,7 @@ final class Upstream215Tests: XCTestCase {
 
     func testChainWithoutDetectionLoadsAsClassic() throws {
         let sfz = try spec("SFZNotePlayerPlugin")
-        let loaded = PipelineStore.parse([["nm": "SFZ Note Player", "hi": true]], catalog: ETCatalog)
+        let loaded = PipelineStore.parse([["nm": "SoundFont Note Player", "hi": true]], catalog: ETCatalog)
         let dt = try XCTUnwrap(sfz.params.first { $0.key == "dt" })
         XCTAssertEqual(loaded.count, 1)
         XCTAssertEqual(loaded[0].values[dt.offset], 0)
@@ -54,7 +52,7 @@ final class Upstream215Tests: XCTestCase {
     func testEventRoundTrips() throws {
         let sfz = try spec("SFZNotePlayerPlugin")
         let dt = try XCTUnwrap(sfz.params.first { $0.key == "dt" })
-        let loaded = PipelineStore.parse([["nm": "SFZ Note Player", "dt": "Event"]], catalog: ETCatalog)
+        let loaded = PipelineStore.parse([["nm": "SoundFont Note Player", "dt": "Event"]], catalog: ETCatalog)
         XCTAssertEqual(loaded[0].values[dt.offset], 1)
         let written = PipelineStore.shortForm(loaded)[0]
         XCTAssertEqual(written["dt"] as? String, "Event")

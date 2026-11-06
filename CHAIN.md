@@ -159,8 +159,8 @@ Add `automation` to the stage:
   every keyframe uses the highest keyframe's value.
 - Not for analyzers, Section, JSFX, effects without keys, and these effects:
   `Bass Management`, `FIR Crossover`, `Matrix`, `5Band FIR PEQ`,
-  `Group Delay EQ`, `Group Delay PEQ`, `Room EQ`, `SFZ Note Player`,
-  `IR Reverb`, `Crosstalk Cancellation`.
+  `Group Delay EQ`, `Group Delay PEQ`, `Room EQ`, `SoundFont Note Player`,
+  `SoundFont Player`, `IR Reverb`, `Crosstalk Cancellation`.
 
 ## When the built-in effects are not enough
 

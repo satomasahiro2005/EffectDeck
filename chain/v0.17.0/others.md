@@ -29,15 +29,10 @@ Audio signal generator with multiple waveforms.
 
 Plays detected notes with SF2 SoundFonts and SFZ instruments.
 
-**Not for chains:** it needs an SFZ instrument that the user imports.
+**Not for chains:** it needs a SoundFont or SFZ instrument that the user imports.
 
 ## SoundFont Player
 
 Plays MIDI songs through SoundFont and SFZ instruments.
 
-| Key | Label | Shape | Values | Default |
-|---|---|---|---|---|
-| `mc` | MIDI Channel | scalar | `0` to `16` | `0` |
-| `pl` | Max Voices | scalar | `1` to `1024` | `64` |
-| `og` | Output Gain | scalar | `-60` to `12`, step 0.1 | `0` |
-| `sq` | Interpolation | scalar | `0` to `2` | `0` |
+**Not for chains:** it plays MIDI songs, which a chain cannot carry.

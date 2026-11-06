@@ -268,11 +268,12 @@ final class RemoteProtocolTests: XCTestCase {
 
     func testOfficial213HasNoMismatchAgainstTheLocalCatalog() {
         // 公式 2.13.0 の効果の一覧は 113 個（カタログの 112 と Section）。2.14.0・2.15.0・2.16.0 も同じ 112 種。
-        XCTAssertEqual(ETRemoteHostInfo.localEffectNames.count, 113)
+        // 2.17.0 で SoundFont Player が増えたので、いまの手元は 114（113 種と Section）。
+        XCTAssertEqual(ETRemoteHostInfo.localEffectNames.count, 114)
         XCTAssertNil(official().mismatch(localDSP: ETUpstreamVersion,
                                          localEffects: ETRemoteHostInfo.localEffectNames,
                                          localApp: "2.13.0"))
-        XCTAssertEqual(ETUpstreamAppVersion, "2.16.0", "Vendor/effetune/package.json の版")
+        XCTAssertEqual(ETUpstreamAppVersion, "2.17.0", "Vendor/effetune/package.json の版")
     }
 
     func testOfficialHostOfAnotherAppVersionSaysSo() throws {
@@ -283,12 +284,12 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertFalse(m.dspDiffers)
         XCTAssertTrue(m.missingOnHost.isEmpty)
         // 古い公式（2.12.0）は新しい 2 つの効果を持たない。版を先に言い、効果の差は下の行に出る。
-        let added: Set<String> = ["Adaptive Prediction", "SFZ Note Player"]
+        let added: Set<String> = ["Adaptive Prediction", "SoundFont Note Player"]
         let old = official(app: "2.12.0", effects: ETRemoteHostInfo.localEffectNames.filter { !added.contains($0) })
         let m2 = try XCTUnwrap(old.mismatch(localDSP: "0.13.0", localEffects: ETRemoteHostInfo.localEffectNames,
                                             localApp: "2.13.0"))
         XCTAssertEqual(m2.headline, "EffeTune 2.12.0 on the PC, 2.13.0 here")
-        XCTAssertEqual(m2.missingOnHost, ["Adaptive Prediction", "SFZ Note Player"])
+        XCTAssertEqual(m2.missingOnHost, ["Adaptive Prediction", "SoundFont Note Player"])
     }
 
     func testSameAppWithDifferentEffectsSaysEffectsDiffer() throws {

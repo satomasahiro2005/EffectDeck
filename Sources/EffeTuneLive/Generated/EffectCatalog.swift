@@ -1369,12 +1369,12 @@ let ETCatalog: [ETEffect] = [
       category: "others",
       paramsHash: 0x844a0998,
       floatCount: 4,
-      defaults: [0.0, 64.0, 0.0, 0.0],
+      defaults: [0.0, 64.0, 0.0, 1.0],
       params: [
         ETParam(name: "midiChannel", key: "mc", label: "MIDI Channel", kind: .number(min: 0.0, max: 16.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 0, count: 1),
         ETParam(name: "maxVoices", key: "pl", label: "Max Voices", kind: .number(min: 1.0, max: 1024.0, step: 0.0, unit: "", isInteger: true), defaultValue: 64.0, offset: 1, count: 1),
         ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -60.0, max: 12.0, step: 0.1, unit: "", isInteger: false), defaultValue: 0.0, offset: 2, count: 1),
-        ETParam(name: "sampleQuality", key: "sq", label: "Interpolation", kind: .number(min: 0.0, max: 2.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 3, count: 1)
+        ETParam(name: "sampleQuality", key: "sq", label: "Interpolation", kind: .number(min: 0.0, max: 2.0, step: 0.0, unit: "", isInteger: true), defaultValue: 1.0, offset: 3, count: 1)
       ]),
     ETEffect(
       type: "AdaptivePredictionEffectPlugin",

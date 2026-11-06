@@ -17,10 +17,7 @@ final class Upstream214Tests: XCTestCase {
 
     // MARK: 版と目録
 
-    /// 版の見張りは Upstream215Tests へ移った（2.15.0 は効果を足していない。112 のまま）。
-    func testCatalogStillHas112Effects() {
-        XCTAssertEqual(ETCatalog.count, 112)
-    }
+    // 版と目録の数の見張りは Upstream217Tests（2.14.0 は効果を足していない。112 のままだった）。
 
     func testNewParametersAreInTheCatalog() throws {
         let analog = try spec("AnalogMeterPlugin")
@@ -45,7 +42,7 @@ final class Upstream214Tests: XCTestCase {
     }
 
     func testRuntimeOnlyKeysAreNotSaved() throws {
-        let loaded = PipelineStore.parse([["nm": "SFZ Note Player", "pm": 60, "pv": 90, "ss": 2]], catalog: ETCatalog)
+        let loaded = PipelineStore.parse([["nm": "SoundFont Note Player", "pm": 60, "pv": 90, "ss": 2]], catalog: ETCatalog)
         let written = PipelineStore.shortForm(loaded)[0]
         XCTAssertNil(written["pm"])
         XCTAssertNil(written["pv"])

@@ -114,8 +114,8 @@ up to the next Section (see CHAIN.md).
 ## others ([others.md](others.md))
 
 - `Oscillator` — Audio signal generator with multiple waveforms
-- `SoundFont Note Player` — Plays detected notes with SF2 SoundFonts and SFZ instruments. **Not for chains:** it needs an SFZ instrument that the user imports.
-- `SoundFont Player` — Plays MIDI songs through SoundFont and SFZ instruments
+- `SoundFont Note Player` — Plays detected notes with SF2 SoundFonts and SFZ instruments. **Not for chains:** it needs a SoundFont or SFZ instrument that the user imports.
+- `SoundFont Player` — Plays MIDI songs through SoundFont and SFZ instruments. **Not for chains:** it plays MIDI songs, which a chain cannot carry.
 
 ## resonator ([resonator.md](resonator.md))
 
