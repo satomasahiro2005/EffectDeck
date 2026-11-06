@@ -93,7 +93,15 @@ final class ETJSContext {
     private var closed = false
 
     init() throws {
-        guard let created = JSGlobalContextCreate(nil) else {
+        // JSGlobalContextCreate は、本体の実行ファイルが JavaScriptCore をリンクしていないと
+        // （xctest・Debug の stub 実行ファイル）古いアプリ向けに**共有の VM** に建てる。
+        // 共有の VM は閉じても壊れないので、型付き配列の持ち物が GC まで残る。
+        // 自前の群に建てれば、文脈を閉じたときに VM ごと消えて持ち物もその場で手放す。
+        guard let group = JSContextGroupCreate() else {
+            throw ETJSError(message: "JavaScriptCore could not create a context.")
+        }
+        defer { JSContextGroupRelease(group) }
+        guard let created = JSGlobalContextCreateInGroup(group, nil) else {
             throw ETJSError(message: "JavaScriptCore could not create a context.")
         }
         ref = created
