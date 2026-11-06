@@ -203,6 +203,17 @@ the working tree of `Vendor/effetune`, which `setup.sh` has patched. The generat
 sorted, deterministic JSON, so running them again on the same pin changes nothing. The
 `generated` job in CI does exactly this and fails on any difference.
 
+The SFZ and SoundFont goldens do more than the others. `sfz_golden.mjs` and `sf2_golden.mjs`
+feed the inputs in `sfz_cases.mjs` to upstream's `js/sfz` and `js/sf2`, write
+`Tests/Fixtures/SFZ/sfz-golden.json`, `sf2-golden.json` and the payloads under
+`Tests/Fixtures/SFZ/payloads/`, and hand every v6/v7/FX payload to upstream's prebuilt
+`plugins/dsp/effetune-dsp.wasm` (both variants). A payload the kernel does not take to
+ACTIVE fails the run. Only the final state is recorded, never kernel footprints. The same
+cases are replayed against the committed bundle by `node --test Tools/sfzjs/bundle.test.mjs`
+(no upstream tree and no esbuild needed). `legacy-banks.json` and `legacy-v2-payload.bin`
+are fixed inputs from the 0.16 era (saved `.sfzbank` containers and a v2 payload); they are
+not regenerated.
+
 ### UI tests (Mac)
 
 ```bash

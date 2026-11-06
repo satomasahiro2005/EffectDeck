@@ -3,7 +3,7 @@
 #   site         公式サイト（site/）の npm test。submodule 不要
 #   checks       Python と shell の構文、shellcheck、ワークフロー自体の actionlint、.github/scripts の試験、
 #                Tests/Scripts（Mac の台本を偽物の xcrun で）、Tools/check_repo.py・Tests/Tools・
-#                Tools/*.test.mjs（ファイルがあれば）
+#                Tools/**/*.test.mjs（Tools/sfzjs の束ねの試験を含む。ファイルがあれば）
 #   native       Tests/Native（C）。gcc と clang × ASan+UBSan / TSan（TSan は ctest -L tsan だけ）
 #   linux-swift  Logic バンドルのうち Foundation だけのもの（Tests/Linux/run.sh）。素と ASan
 #   fuzz         外から来る字を読むコードの libFuzzer（Tests/Fuzz/run.sh）。的ごとに 20 秒だけ
@@ -122,7 +122,8 @@ jobs:
       - name: 生成スクリプトの単体テスト（Tests/Tools）
         if: hashFiles('Tests/Tools/test_*.py') != ''
         run: python3 -m unittest discover -s Tests/Tools -v
-      - name: node の単体テスト（Tools/*.test.mjs）
+      # git の pathspec の * は / も越えるので、Tools/sfzjs/*.test.mjs（プレリュード・束ね・見本の全件）も入る
+      - name: node の単体テスト（Tools/**/*.test.mjs）
         if: hashFiles('Tools/**/*.test.mjs') != ''
         run: git ls-files -z 'Tools/*.test.mjs' | xargs -0 node --test
       # ---- 統合で足す枠（P-ReleaseCheck）: submodule の要らない照合はここへ段を足す ----

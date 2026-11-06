@@ -1,6 +1,7 @@
 //  SFZTests.swift
 //  SFZ Note Player の取り込み（DSP/SFZParser・SFZBank・SFZAsset・SFZLibraryFiles）。
-//  **見本は上流の js/sfz/*.js が作ったもの**（Tools/golden/sfz_golden.mjs → Tests/Fixtures/SFZ/sfz-golden.json）。
+//  **見本は上流の js/sfz/*.js が作ったもの**（0.16 のころの Tools/golden/sfz_golden.mjs → Tests/Fixtures/SFZ/sfz-golden-legacy.json の写し）。
+//  0.17 の見本（sfz-golden.json）は束ね（JavaScriptCore）の試験が読む。この Swift 版は B8 で退役する。
 //  パーサの答え、バンクの入れ物と鍵（PC の EffeTune と同じ鍵になること）、資産のバイト列、予算への収め方、
 //  フォルダの取り込み全体（鍵・バンク・資産）を、上流とバイトまで照合する。実機もエンジンも要らない。
 
@@ -14,7 +15,7 @@ final class SFZTests: XCTestCase {
 
     private func golden() throws -> [String: Any] {
         if let cached = Self.cached { return cached }
-        let url = try XCTUnwrap(TestResource.url("sfz-golden", "json"))
+        let url = try XCTUnwrap(TestResource.url("sfz-golden-legacy", "json"))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         Self.cached = object
         return object

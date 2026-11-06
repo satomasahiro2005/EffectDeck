@@ -369,6 +369,9 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SFZLibraryFiles.swift
       - path: Tests/Fixtures/SFZ/sfz-golden.json
         buildPhase: resources
+      # 0.16 時代の見本を凍結したもの（SFZTests）。
+      - path: Tests/Fixtures/SFZ/sfz-golden-legacy.json
+        buildPhase: resources
       - path: Sources/EffeTuneLive/DSP/ETChannel.swift
       - path: Sources/EffeTuneLive/Generated/SystemPresets.swift
       - path: Sources/EffeTuneLive/Generated/UpstreamVersion.swift
