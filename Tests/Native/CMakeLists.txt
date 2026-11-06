@@ -92,7 +92,7 @@ if(NOT MSVC)
   set(THREADS_PREFER_PTHREAD_FLAG ON)
   find_package(Threads REQUIRED)
   set(ET_PIPELINE_SOURCES fake_engine.c "${ET_SHARED}/ETPipeline.c"
-      "${ET_SHARED}/ETExternalProcessor.c")
+      "${ET_SHARED}/ETSampleStream.c" "${ET_SHARED}/ETExternalProcessor.c")
 
   # パッチの当たった engine（外部ノードを descriptor の位置で呼ぶ）。
   et_native_test(pipeline_cb SOURCES pipeline.c ${ET_PIPELINE_SOURCES}
@@ -108,7 +108,22 @@ if(NOT MSVC)
   # UI と音のスレッドのすれ違い。tsan プリセットはこのラベルだけ走らせる。
   et_native_test(pipeline_threads SOURCES pipeline_threads.c ${ET_PIPELINE_SOURCES}
     DEFINES ET_FAKE_EXTERNAL_CALLBACK=1 LIBS Threads::Threads LABELS tsan)
-  foreach(t pipeline_cb pipeline_legacy pipeline_threads)
+  # 流し込みの標本の口（ETSampleStream.c）。fake_* は作り物の engine で手順と順序と確保 0 を、
+  # thread_* は音・control・供給の 3 スレッドを（TSan。ラベル tsan）。本物の engine での試験は下の engine_*。
+  # 確保の数え方は上流の WRAP_MALLOC の試験と同じ（-Wl,--wrap=malloc）。GNU ld だけなので Linux に限る。
+  set(ET_STREAM_DEFINES ET_FAKE_EXTERNAL_CALLBACK=1)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND ET_STREAM_DEFINES ET_SS_WRAP_MALLOC=1)
+  endif()
+  et_native_test(sample_stream_fake SOURCES sample_stream.c ${ET_PIPELINE_SOURCES}
+    DEFINES ${ET_STREAM_DEFINES} LIBS Threads::Threads LABELS tsan EXCLUDE_PREFIXES engine_ thread_)
+  et_native_test(sample_stream_threads SOURCES sample_stream.c ${ET_PIPELINE_SOURCES}
+    DEFINES ET_FAKE_EXTERNAL_CALLBACK=1 LIBS Threads::Threads LABELS tsan EXCLUDE_PREFIXES engine_ fake_)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(sample_stream_fake PRIVATE
+      "LINKER:--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=aligned_alloc,--wrap=posix_memalign")
+  endif()
+  foreach(t pipeline_cb pipeline_legacy pipeline_threads sample_stream_fake sample_stream_threads)
     target_include_directories(${t} PRIVATE "${ET_NATIVE_ABI_INCLUDE}")
   endforeach()
 endif()
@@ -180,9 +195,22 @@ if(ET_NATIVE_WITH_ENGINE)
   # 本物の abi.h（パッチ済み）は effetune_dsp_core の PUBLIC include から来る。
   # Debug では上流の -Wl,--wrap=malloc（音のスレッドで確保したら止める）も付いてくる。
   et_native_test(pipeline_engine
-    SOURCES pipeline_engine.c "${ET_SHARED}/ETPipeline.c" "${ET_SHARED}/ETExternalProcessor.c"
+    SOURCES pipeline_engine.c "${ET_SHARED}/ETPipeline.c" "${ET_SHARED}/ETSampleStream.c"
+            "${ET_SHARED}/ETExternalProcessor.c"
     LIBS effetune_dsp_core LABELS engine)
   set_target_properties(pipeline_engine PROPERTIES LINKER_LANGUAGE CXX)
+
+  # 流し込みの標本を、本物の engine と SoundFont の見本（上流 kSf2HostFixture。ヘッダから数字を読む）で通す。
+  # ページを渡せば鳴る・渡さなければ音が落ちるだけで ERROR にならない・先読みが完了する・
+  # 上流の allocation guard の下で steady state の確保が 0。
+  et_native_test(sample_stream_engine
+    SOURCES sample_stream.c "${ET_SHARED}/ETPipeline.c" "${ET_SHARED}/ETSampleStream.c"
+            "${ET_SHARED}/ETExternalProcessor.c"
+    DEFINES ET_SS_ENGINE=1
+    LIBS effetune_dsp_core LABELS engine EXCLUDE_PREFIXES fake_ thread_)
+  set_target_properties(sample_stream_engine PROPERTIES LINKER_LANGUAGE CXX)
+  target_compile_definitions(sample_stream_engine PRIVATE
+    ET_SF2_FIXTURE_HEADER="${patched}/dsp/plugins/others/soundfont_player/sf2_fixture.h")
 
   # SFZ / SoundFont の資産が、上流の見積り（et_sample_player_preparation_bytes）どおりの footprint で
   # カーネルに受け入れられるか。見本は Tests/Fixtures/SFZ（Tools/golden/sfz_golden.mjs が上流の JS で作ったもの）。

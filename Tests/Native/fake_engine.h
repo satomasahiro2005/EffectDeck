@@ -51,6 +51,50 @@ extern fake_external_fn fake_cb;
 extern fake_latency_fn fake_lcb;
 extern void *fake_ctx;
 
+
+// ---- 流し込み（ETSampleStream.c の相手）。et_instance_stream_* と midi の読み 3 本を台本どおりに返す。 ----
+// 音のスレッドだけが書く（control が読むのは止めてから）。世代と台本の入口だけ atomic。
+#define FAKE_STREAM_LOG 1024
+typedef struct {
+    uint32_t instance;
+    uint64_t generation;
+    uint32_t sample;
+    uint64_t page;
+    uint32_t frames, channels, flags;
+    int inProcess;       ///< publish が et_pipeline_process の最中に呼ばれた（描画の合間でなければ 1）
+    et_status status;
+    float first;         ///< pcm[0]
+    int processCalls;    ///< そのときまでの et_pipeline_process の回数
+} fake_publish_record;
+typedef struct {
+    uint32_t generation, window, flags, count;
+    int inProcess;
+    et_status status;
+} fake_prefetch_record;
+
+extern fake_publish_record fake_publishes[FAKE_STREAM_LOG];
+extern _Atomic int fake_publish_count;
+extern fake_prefetch_record fake_prefetches[FAKE_STREAM_LOG];
+extern _Atomic int fake_prefetch_count;
+/// configure が受け取った世代（0 = まだ）。publish はこれと違う世代を ET_ERR_STATE で断る。
+extern _Atomic uint64_t fake_stream_generation;
+extern et_status fake_stream_configure_status;
+extern _Atomic int fake_stream_configure_calls;
+/// take_requests が渡す要求（先頭から順に。使い切ると 0 件）。
+extern et_sfz_sample_request fake_requests[4096];
+extern _Atomic uint32_t fake_request_count;
+extern uint32_t fake_request_cursor;
+extern et_status fake_take_status;
+extern _Atomic int fake_take_calls;
+/// prefetch の戻りの台本。尽きたら ET_OK。
+extern et_status fake_prefetch_script[64];
+extern int fake_prefetch_script_count, fake_prefetch_script_cursor;
+extern et_stream_readiness fake_readiness;
+extern et_status fake_readiness_status;
+extern _Atomic uint32_t fake_midi_generation, fake_midi_state, fake_asset_state;
+/// stream 関数が process の最中に呼ばれた回数（描画の合間の約束が破れた印）。
+extern _Atomic int fake_stream_in_process;
+
 /// 数と止めを戻す（descriptor と外部コールバックはそのまま）。
 void fake_reset(void);
 void fake_sleep_us(unsigned us);

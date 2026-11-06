@@ -7,6 +7,7 @@
 #endif
 
 #include "ETPipeline.h"
+#include "ETSampleStream.h"
 #include "effetune/abi.h"
 
 #include <string.h>
@@ -192,6 +193,8 @@ void ETPipeline_SetEngine(uint32_t engine)
     // 残すと次のブロックで ET_ERR_DESC になる（engine.cpp:674 slot == nullptr）。
     // 面の番号は残して印だけ落とす（面の持ち主は変えない）。
     atomic_fetch_and_explicit(&gShared, ET_PIPE_SLOT_MASK, memory_order_acq_rel);
+    // 流し込みの slot も前の engine の instance を指している。畳む（音のスレッドは待たずに入口で止まる）。
+    ETSampleStream_DetachAll();
     atomic_store_explicit(&gNativeExternalCallback,
                           et_pipeline_set_external_callback != NULL ? 1 : 0,
                           memory_order_release);
@@ -318,8 +321,13 @@ void ETPipeline_Publish(const ETPipeNode *nodes, uint32_t count)
         // rec[11] は詰め物。
     }
     d->length = ET_PIPE_HEADER + count * ET_PIPE_NODE;
+    const uint32_t streamEngine = atomic_load_explicit(&gEngine, memory_order_relaxed);
     for (uint32_t i = 0; i < count; i++) {
         if (nodes[i].enabled == 1 && nodes[i].sectionGate) d->active++;
+        // 無効な node の流しは先読みを止める（ETSampleStream.h。slot が無い instance には何もしない）。
+        if (streamEngine != 0 && nodes[i].kind != ET_PIPE_NODE_EXTERNAL && nodes[i].instance != 0) {
+            ETSampleStream_SetEnabled(streamEngine, nodes[i].instance, nodes[i].enabled == 1 && nodes[i].sectionGate);
+        }
     }
 
     // 書いた面を間に置き、代わりに間にあった面をもらう。release で中身を渡し、
@@ -453,6 +461,8 @@ int ETPipeline_DestroyInstances(uint32_t engine, const uint32_t *instances, uint
     int destroyed = 0;
     for (uint32_t i = 0; i < count; ++i) {
         if (instances[i] != 0) {
+            // 流し込みの slot は instance より先に畳む（壊れた instance へ publish しない）。
+            ETSampleStream_Detach(engine, instances[i]);
             et_instance_destroy(engine, instances[i]);
             destroyed = 1;
         }
@@ -547,8 +557,13 @@ int32_t ETPipeline_Process(uint32_t channels, uint32_t frames, double timeSecond
     float *bus = et_arena_combined_ptr(engine);
     const double sampleRate = bitsDouble(atomic_load_explicit(&gExternalRateBits,
                                                                memory_order_relaxed));
+    // **流し込みの標本は描画の前後で渡す**（上流の AudioWorklet が描画の合間にしているのと同じ。
+    // ETSampleStream.h）。bypass のあいだは engine の instance に触らない
+    // （AssetUpload.holdOffAudioThread が bypass を「control だけが触れる」の印に使っている）。
+    if (!bypass) ETSampleStream_BeforeProcess();
     const int32_t status = (int32_t)et_pipeline_process(engine, channels, frames,
                                                          timeSeconds, bypass);
+    if (!bypass) ETSampleStream_AfterProcess(frames);
     leaveEngine();
     if (status != ET_OK) return status;
     if (atomic_load_explicit(&gExternalEnabled, memory_order_acquire) &&

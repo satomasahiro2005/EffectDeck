@@ -77,6 +77,10 @@ float *ETPipeline_MainBus(void);
 
 /// 1 ブロック処理する。リアルタイムスレッドから呼ぶ。
 ///
+/// **前後で流し込みの標本を渡す**（ETSampleStream.h）。処理の前に用意できたページを publish し、
+/// 処理の後に engine の要求を受け取って輪へ積む（Note Player は先読みも進める）。
+/// bypass のあいだ（AssetUpload.holdOffAudioThread）は engine の instance に触らない。
+///
 /// 戻り値は et_status。ET_OK(0) なら 1 ブロック通した。
 /// 以前はノード数を返していたが、上流の et_pipeline_process は件数を返さないので
 /// 自前で数えた値を混ぜていた。その結果「素通し」「まだ組めていない」「引数が悪い」
