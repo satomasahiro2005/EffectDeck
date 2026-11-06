@@ -119,7 +119,9 @@ SOURCE_ROLES = [
 # setup.sh が用意するもの。無ければ読めなかったと書く（黙って通さない）。
 FETCHED_HEADS = ("Vendor/", "Generated/")
 # 拡張は DSP コアを積まない（project.yml の EffeTuneLiveExtension の excludes）。
-DEVICE_SHARED_EXCLUDES = re.compile(r"^(ETPipeline|ETSampleStream|ETResample|ETPreviewTone|ETMeterTap|ETJSFXHost|ETLICEFont)\.")
+# ETVorbis（SoundFont 3 の復号）と ThirdParty/（stb_vorbis）も本体だけ。
+DEVICE_SHARED_EXCLUDES = re.compile(r"^(ETPipeline|ETSampleStream|ETResample|ETPreviewTone|ETMeterTap|ETJSFXHost|ETLICEFont|ETVorbis)\.")
+DEVICE_SHARED_EXCLUDE_DIRS = ("ThirdParty",)
 SHARE_EXTRA_SOURCES = ("Sources/EffeTuneLive/DSP/ETRemoteFile.swift",
                        "Sources/EffeTuneLive/DSP/ETShareInbox.swift")
 SOURCE_SUFFIXES = (".swift", ".m", ".mm", ".c", ".cc", ".cpp", ".h", ".hpp")
@@ -861,7 +863,8 @@ def source_files(repo):
             if exclude and re.search(exclude, sub):
                 continue
             r = set(roles)
-            if head == "Sources/Shared/" and DEVICE_SHARED_EXCLUDES.match(p.name):
+            if head == "Sources/Shared/" and (DEVICE_SHARED_EXCLUDES.match(p.name)
+                                              or sub.split("/", 1)[0] in DEVICE_SHARED_EXCLUDE_DIRS):
                 r.discard("device")
             out.setdefault(p.relative_to(repo).as_posix(), set()).update(r)
     for rel in SHARE_EXTRA_SOURCES:

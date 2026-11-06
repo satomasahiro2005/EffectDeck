@@ -978,6 +978,9 @@ class ProjectYmlTests(unittest.TestCase):
                     return (not inc or re.search(inc, sub)) and not (exc and re.search(exc, sub))
                 for key, want in (("includes", True), ("excludes", False)):
                     for pattern in e.get(key) or []:
+                        # 拡張だけが外すもの（DEVICE_SHARED_EXCLUDE_DIRS）は役ごとの話で、下のテストが見る。
+                        if pattern.rstrip("/*") in CRB.DEVICE_SHARED_EXCLUDE_DIRS:
+                            continue
                         if pattern.endswith("/**") and "*" not in pattern[:-3]:
                             sample = pattern[:-3] + "/x.cpp"
                         elif "*" not in pattern:
@@ -994,7 +997,9 @@ class ProjectYmlTests(unittest.TestCase):
     def test_device_shared_excludes_match(self):
         entries = [e for e in self.targets["EffeTuneLiveExtension"] if e["path"] == "Sources/Shared"]
         self.assertEqual(len(entries), 1)
-        listed = {p.split(".", 1)[0] for p in entries[0]["excludes"]}
+        dirs = {d + "/**" for d in CRB.DEVICE_SHARED_EXCLUDE_DIRS}
+        listed = {p.split(".", 1)[0] for p in entries[0]["excludes"] if p not in dirs}
+        self.assertEqual({p for p in entries[0]["excludes"] if p in dirs}, dirs)
         mine = set(re.search(r"\^\(([^)]*)\)", CRB.DEVICE_SHARED_EXCLUDES.pattern).group(1).split("|"))
         self.assertEqual(listed, mine)
 
