@@ -1,2 +1,6 @@
 *.sh text eol=lf
 *.py text eol=lf
+# SFZ の束ね（Tools/sfzjs/build.mjs の出力と入力）。Windows の autocrlf で版の印（sha256）が変わらないよう LF に固定する。
+Tools/sfzjs/* text eol=lf
+Patches/effetune-js-*.diff text eol=lf
+Sources/EffeTuneLive/Resources/SFZ/*.js text eol=lf

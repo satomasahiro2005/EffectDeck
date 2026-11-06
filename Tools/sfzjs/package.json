@@ -1,0 +1,12 @@
+{
+  "name": "effectdeck-sfzjs",
+  "private": true,
+  "version": "0.0.0",
+  "description": "EffectDeck が上流 js/sfz・js/sf2 を JavaScriptCore で動かすための束ね（build.mjs）。esbuild はビルド時だけで、アプリには入らない。",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

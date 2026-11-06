@@ -1,0 +1,18 @@
+diff --git a/js/sfz/asset.js b/js/sfz/asset.js
+index 0469012..f5b220f 100644
+--- a/js/sfz/asset.js
++++ b/js/sfz/asset.js
+@@ -344,6 +344,13 @@ export function packSfzAsset(regions, samples, { maxBytes = SFZ_DEFAULT_MAX_BYTE
+       continue;
+     }
+     let cursor = poolOffset + info.sampleOffset;
++    // EffectDeck: when the host writes PCM into staging itself, skip the per-float copy.
++    // The planes are passed as well, because generator and embedded samples exist only in JS.
++    const poolWriter = globalThis.__effectdeckSfzPoolWriter;
++    if (typeof poolWriter === 'function') {
++      poolWriter(path, cursor, info.sampleFrames, pcm.channels.length, pcm.channels);
++      continue;
++    }
+     for (let frame = 0; frame < info.sampleFrames; frame++) {
+       for (const channel of pcm.channels) {
+         const value = channel[frame];

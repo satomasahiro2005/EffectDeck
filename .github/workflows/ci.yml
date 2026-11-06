@@ -7,7 +7,7 @@
 #   native       Tests/Native（C）。gcc と clang × ASan+UBSan / TSan（TSan は ctest -L tsan だけ）
 #   linux-swift  Logic バンドルのうち Foundation だけのもの（Tests/Linux/run.sh）。素と ASan
 #   fuzz         外から来る字を読むコードの libFuzzer（Tests/Fuzz/run.sh）。的ごとに 20 秒だけ
-#   generated    setup.sh と Tools/golden を回し直して、追跡している生成物が 1 バイトも変わらないこと
+#   generated    setup.sh・Tools/golden・Tools/sfzjs（SFZ の束ね）を回し直して、追跡している生成物が 1 バイトも変わらないこと
 #   macos        iOS 27 のシミュレータで Logic の単体テスト（logic）と、拡張を外したアプリの build（sim-build）。
 #                logic は予定外の XCTSkip（.github/scripts/allowed_skips.txt に無いもの）でも落とす
 #                a11y は同じシミュレータで performAccessibilityAudit（名前の無い要素だけ落とす）と、
@@ -258,6 +258,12 @@ jobs:
             EFFETUNE_ROOT="$root" node "$f"
             echo "::endgroup::"
           done
+      # 上流の js/sfz・js/sf2 を JavaScriptCore で動かす束ね。esbuild は Tools/sfzjs/package-lock.json の 0.28.2 に固定。
+      # 上流は golden と同じく指している版を git archive で展開して読む（作業ツリーは読まない）。
+      - name: SFZ の束ねを作り直す（Tools/sfzjs）
+        run: |
+          npm ci --prefix Tools/sfzjs
+          node Tools/sfzjs/build.mjs
       - name: 追跡している生成物が変わっていないこと
         run: |
           drift=$(git status --porcelain --ignore-submodules=dirty)
