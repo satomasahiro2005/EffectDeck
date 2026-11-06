@@ -137,6 +137,7 @@ final class SFZLibrary: ObservableObject {
     /// 取り込んだバンクを全部消す（ETFactoryReset）。
     func eraseAll() {
         try? FileManager.default.removeItem(at: backend.root)
+        ETSFZStreamStaging.standard.removeAll()
         Self.prepareFolder(backend.root)
         reload()
         invalidateScript()
@@ -155,6 +156,7 @@ final class SFZLibrary: ObservableObject {
         } catch {
             throw ETSFZScriptBackendAdapter.map(error)
         }
+        ETSFZStreamStaging.standard.remove(bank: id)
         reload()
         invalidateScript()
     }
@@ -403,7 +405,10 @@ final class SFZLoader: ObservableObject {
         try ETSFZPreparedCheck.requireComplete(unsupportedOpcodes: prepared.unsupportedOpcodes,
                                                unsupportedRuntime: prepared.unsupportedRuntime,
                                                incomplete: prepared.incomplete)
-        try ETSFZPreparedCheck.requireStreamSources(tableVersion: prepared.tableVersion, hasSources: prepared.soundFont != nil)
+        try ETSFZPreparedCheck.requireStreamSources(tableVersion: prepared.tableVersion,
+                                                    hasSources: prepared.soundFont != nil || !prepared.streamSources.isEmpty)
+        try ETSFZStreamTable.requireConsistent(tableVersion: prepared.tableVersion, hasSoundFont: prepared.soundFont != nil,
+                                               hasStreamSources: !prepared.streamSources.isEmpty)
         let geometry = try Self.geometry(of: node, dsp: dsp)
         let control = [UInt8](prepared.control)
         let formatTag = UInt32(clamping: prepared.formatTag)
@@ -430,6 +435,24 @@ final class SFZLoader: ObservableObject {
                 let slot = try ETSFZStream.attach(engine: engine, instance: instance, generation: generation,
                                                   sampleRate: rate, forecast: forecast)
                 attached = (generation, slot)
+            }
+        } else if !prepared.streamSources.isEmpty {
+            // 流し込みの SFZ（load_*・予算超え）。標本の読み口は prepare が組んである。resident のページ（load_start・load_end・
+            // 効果の IR・オシレーターの周期）は、engine がそれを持たないと音を出さないので、ACTIVE の前に渡す。
+            sources = prepared.streamSources
+            let resident = try ETSFZStreamTable.residentPages(payload: prepared.control)
+            let generation = ETSFZStream.nextGeneration()
+            let engine = dsp.engine, instance = node.instance, rate = dsp.sampleRate
+            let forecast = geometry.playerKind == .note
+            let preloaded = sources
+            connect = {
+                let slot = try ETSFZStream.attach(engine: engine, instance: instance, generation: generation,
+                                                  sampleRate: rate, forecast: forecast)
+                attached = (generation, slot)
+                if !resident.isEmpty {
+                    try ETSFZStream.preload(engine: engine, instance: instance, generation: generation, samples: preloaded,
+                                            pages: resident)
+                }
             }
         } else {
             // 流しを持たない資産（SFZ）に替わるときは、前の流しの畳みも commit の直後（締め出している間）に済ませる。

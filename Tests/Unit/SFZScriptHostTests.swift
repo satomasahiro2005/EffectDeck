@@ -648,9 +648,11 @@ final class ETSFZScriptServiceTests: XCTestCase {
     private func makeService(backend: MemoryBackend = MemoryBackend(), maxBytes: Int = 256 * 1024 * 1024, poolMode: ETSFZPoolMode,
                              estimate: ETSFZScriptEstimate? = nil, idleSeconds: TimeInterval = 30,
                              decode: ETSFZScriptDecode? = nil) throws -> ETSFZScriptService {
+        // 見本（sfz-golden.json の imports）は流し込みの置き場を持たない道の答え。MemoryBackend も流し込みを持たないので、ここは false。
+        // 流し込みを受ける道は ETSFZStreamedServiceTests が、ファイルの置き場で見る
         ETSFZScriptService(backend: backend, decode: decode ?? Self.decodeWAV, estimate: estimate,
                            sources: try SFZScriptTestResources.sources(), maxBytes: maxBytes, poolMode: poolMode,
-                           idleSeconds: idleSeconds, log: { _, _ in })
+                           streaming: false, idleSeconds: idleSeconds, log: { _, _ in })
     }
 
     private func b64(_ data: Data) -> String { data.base64EncodedString() }
@@ -1084,6 +1086,237 @@ final class ETSFZScriptServiceTests: XCTestCase {
         let prepared = try await service.prepare(id: entry.id)
         XCTAssertNotNil(prepared)
         XCTAssertEqual(prepared?.regionCount, 1)
+    }
+}
+
+
+// MARK: - 流し込みの SFZ（load_*・予算超え）
+
+/// 流し込みを受ける道を、ファイルの置き場（本番と同じ ETSFZLibraryBackend）で見る。
+/// JavaScriptCore に Worker は無いので、上流の sample-stream-worker は同じ文脈の中の組で動く（glue の inProcessWorker）。
+/// 標本の置き場所・resident のページ・写し出しは Foundation の部品（SFZStreamTableTests）が見ているので、ここは
+/// 本物の JavaScriptCore を通って、置き場の入れ物から表が出てくること。
+final class ETSFZStreamedServiceTests: XCTestCase {
+
+    private var roots: [URL] = []
+
+    override func tearDown() {
+        for url in roots { try? FileManager.default.removeItem(at: url) }
+        roots = []
+        super.tearDown()
+    }
+
+    private let geometry = ETSFZGeometry(sampleRate: 48000, processingChannels: 2, maxFrames: 4096, minimumPhysicalBpm: 0, playerKind: 0)
+
+    private func temporaryRoot() -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("sfzstreamed-\(UUID().uuidString)", isDirectory: true)
+        roots.append(url)
+        return url
+    }
+
+    private func golden() throws -> [String: Any] {
+        let url = try SFZScriptTestResources.url("sfz-golden", "json", fallback: "Tests/Fixtures/SFZ/sfz-golden.json")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    }
+
+    private func streamedItem(_ name: String) throws -> [String: Any] {
+        let list = try XCTUnwrap(try golden()["streamedImports"] as? [[String: Any]])
+        return try XCTUnwrap(list.first { ($0["name"] as? String) == name })
+    }
+
+    private func importItem(_ name: String) throws -> (folder: [String: Any], selected: String) {
+        let list = try XCTUnwrap(try golden()["imports"] as? [[String: Any]])
+        let item = try XCTUnwrap(list.first { ($0["name"] as? String) == name })
+        return (try XCTUnwrap(item["folder"] as? [String: Any]), try XCTUnwrap(item["selected"] as? String))
+    }
+
+    /// 見本の folder（{ path: { text } | { b64 } }）をディスクへ書き、ETSFZScriptFile の並びにする。
+    private func writeFolder(_ folder: [String: Any]) throws -> [ETSFZScriptFile] {
+        let root = temporaryRoot()
+        var files: [ETSFZScriptFile] = []
+        for path in folder.keys.sorted() {
+            let body = try XCTUnwrap(folder[path] as? [String: Any])
+            let data: Data
+            if let text = body["text"] as? String { data = Data(text.utf8) }
+            else { data = try XCTUnwrap((body["b64"] as? String).flatMap { Data(base64Encoded: $0) }, path) }
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+            files.append(ETSFZScriptFile(path: path, url: url, size: data.count, lastModified: 0))
+        }
+        return files
+    }
+
+    /// 16 bit PCM の WAV を / 32768（見本の decode と同じ読み）。
+    private static let decodeWAV: ETSFZScriptDecode = { data in
+        let b = [UInt8](data)
+        func u16(_ o: Int) -> Int { Int(b[o]) | Int(b[o + 1]) << 8 }
+        func u32(_ o: Int) -> Int { u16(o) | u16(o + 2) << 16 }
+        guard b.count >= 44 else { throw ETSFZError(code: .prepare, message: "not a WAV") }
+        let channels = u16(22), rate = u32(24)
+        let frames = u32(40) / (channels * 2)
+        var planes: [ETSFZPlane] = []
+        for c in 0..<channels {
+            let plane = ETSFZPlane(count: frames)
+            for f in 0..<frames { plane.pointer[f] = Float(Int16(truncatingIfNeeded: u16(44 + (f * channels + c) * 2))) / 32768 }
+            planes.append(plane)
+        }
+        return ETSFZScriptPCM(channels: planes, sampleRate: rate)
+    }
+
+    /// 本物の kernel の見積りの代わり。payload の頭から、上流の sfzSampleCacheFootprint と同じ式でキャッシュ分を数え、固定の分を足す
+    /// （Tools/sfzjs/glue_host.mjs の emulatedEstimate と同じ）。
+    private static func estimate(_ control: Data, _ payloadBytes: Int, _ geometry: ETSFZGeometry, _ formatTag: Int) -> Int {
+        func word(_ index: Int) -> Int {
+            let at = control.startIndex + 32 + index * 4
+            return Int(UInt32(control[at]) | UInt32(control[at + 1]) << 8 | UInt32(control[at + 2]) << 16 | UInt32(control[at + 3]) << 24)
+        }
+        let other = 256 * 1024
+        guard [8, 9, 10].contains(word(1)) else { return other }
+        let table = word(12), count = word(13), slots = word(14), storage = word(15) == 2
+        let slots16 = storage ? word(16) : 0, rowWords = storage ? 16 : 12
+        var channels = 1
+        for sample in 0..<count where word(table + sample * rowWords + 2) == 2 { channels = 2 }
+        var buckets = 1
+        while buckets < slots * 4 { buckets *= 2 }
+        return 4096 * channels * ((slots - slots16) * 4 + slots16 * 2) + slots * 32 + buckets * 4 +
+            count * (2 * 16 + (storage ? 2 : 0)) + 4096 * 24 + slots * 16 + 64 * 4096 + other
+    }
+
+    private struct Setup {
+        var service: ETSFZScriptService
+        var backend: ETSFZLibraryBackend
+        var staging: ETSFZStreamStaging
+    }
+
+    private func makeService(maxBytes: Int = 256 * 1024 * 1024, streaming: Bool = true) throws -> Setup {
+        let root = temporaryRoot()
+        let backend = ETSFZLibraryBackend(root: root.appendingPathComponent("library", isDirectory: true))
+        let staging = ETSFZStreamStaging(root: root.appendingPathComponent("staging", isDirectory: true))
+        let service = ETSFZScriptService(backend: ETSFZScriptBackendAdapter(backend: backend), decode: Self.decodeWAV,
+                                         estimate: Self.estimate, sources: try SFZScriptTestResources.sources(), maxBytes: maxBytes,
+                                         poolMode: .host, streaming: streaming, idleSeconds: -1, staging: staging, log: { _, _ in })
+        return Setup(service: service, backend: backend, staging: staging)
+    }
+
+    func testLoadOpcodesBankImportsAsStreamedAndPrepareReturnsTheSamplePlaces() async throws {
+        let item = try streamedItem("streamed-load-opcodes")
+        let setup = try makeService()
+        let entry = try await setup.service.importFolder(files: try writeFolder(try XCTUnwrap(item["folder"] as? [String: Any])),
+                                                         selectedPath: try XCTUnwrap(item["selected"] as? String))
+        XCTAssertTrue(entry.streamedSource)
+        let maybe = try await setup.service.prepare(id: entry.id, geometry: geometry)
+        let prepared = try XCTUnwrap(maybe)
+        XCTAssertEqual(prepared.tableVersion, 10)
+        XCTAssertNil(prepared.soundFont)
+        XCTAssertEqual(prepared.control.count, prepared.payloadByteCount, "流し込みの入れ物は制御の部分が payload 全体")
+        XCTAssertTrue(prepared.poolEntries.isEmpty)
+        XCTAssertGreaterThan(prepared.footprintBytes ?? 0, prepared.payloadByteCount)
+        // 標本の置き場所と読み口
+        XCTAssertEqual(prepared.streamSamples.map(\.mode), [1, 0])
+        XCTAssertEqual(prepared.streamSamples.map(\.frames), [600, 300])
+        XCTAssertEqual(prepared.streamSources.count, 2)
+        let bank = try XCTUnwrap(try setup.backend.readSfzBankFile("\(entry.id).sfzbank"))
+        for (index, source) in prepared.streamSources.enumerated() {
+            XCTAssertEqual(source.url, bank.url, "入れ物の中のまま読む")
+            XCTAssertEqual(source.baseOffset, prepared.streamSamples[index].offset)
+            guard case .pcm = source.format else { return XCTFail("標本 \(index) は pcm") }
+        }
+        // payload の表と resident のページ（load_start=10 load_end=300 は頭の 1 ページ）
+        XCTAssertEqual(try ETSFZStreamTable.rows(payload: prepared.control).map(\.mode), [1, 0])
+        XCTAssertEqual(try ETSFZStreamTable.residentPages(payload: prepared.control).map { [$0.sample, Int($0.page)] }, [[0, 0]])
+        // 入れ物は、Node の束ねが同じ入力から作ったもの（Tests/Fixtures/SFZ/stream-table-golden.json）と同じバイト
+        let url = try XCTUnwrap(TestResource.url("stream-table-golden", "json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let cases = try XCTUnwrap(root["cases"] as? [[String: Any]])
+        let expected = try XCTUnwrap(cases.first { ($0["name"] as? String) == "streamed-load-opcodes" })
+        let expectedBank = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(expected["bank"] as? String)))
+        XCTAssertEqual(try Data(contentsOf: bank.url), expectedBank)
+        // もう 1 度読んでも同じ表が出る
+        let again = try await setup.service.prepare(id: entry.id, geometry: geometry)
+        XCTAssertEqual(again?.streamSamples, prepared.streamSamples)
+    }
+
+    func testGeneratedSampleIsStagedBesideTheLibrary() async throws {
+        let item = try streamedItem("streamed-generators")
+        let setup = try makeService()
+        let entry = try await setup.service.importFolder(files: try writeFolder(try XCTUnwrap(item["folder"] as? [String: Any])),
+                                                         selectedPath: try XCTUnwrap(item["selected"] as? String))
+        let maybe = try await setup.service.prepare(id: entry.id, geometry: geometry)
+        let prepared = try XCTUnwrap(maybe)
+        XCTAssertNotNil(prepared.streamSamples[0].inline)
+        let generated = prepared.streamSources[0]
+        XCTAssertTrue(generated.url.path.hasPrefix(setup.staging.root.path))
+        XCTAssertEqual(generated.baseOffset, 0)
+        XCTAssertEqual(generated.frames, 4095)
+        XCTAssertEqual(try Data(contentsOf: generated.url), prepared.streamSamples[0].inline)
+    }
+
+    /// 4 本の 300000 フレーム（16 bit のモノ、約 600 KB）。常駐だと float で約 4.8 MB 要るので 2 MiB の予算を超える。
+    private func bigFolder() throws -> [ETSFZScriptFile] {
+        func wav(seed: UInt32) -> Data {
+            let frames = 300_000
+            var data = Data()
+            func u16(_ v: Int) { data.append(UInt8(v & 255)); data.append(UInt8(v >> 8 & 255)) }
+            func u32(_ v: Int) { u16(v & 0xffff); u16(v >> 16 & 0xffff) }
+            data.append(contentsOf: Array("RIFF".utf8)); u32(36 + frames * 2)
+            data.append(contentsOf: Array("WAVEfmt ".utf8)); u32(16); u16(1); u16(1); u32(48000); u32(96000); u16(2); u16(16)
+            data.append(contentsOf: Array("data".utf8)); u32(frames * 2)
+            var state = seed
+            for _ in 0..<frames {
+                state = state &* 1664525 &+ 1013904223
+                u16(Int(state >> 16) & 0xffff)
+            }
+            return data
+        }
+        let names = ["a", "b", "c", "d"]
+        let regions = names.enumerated().map { index, name in
+            "<region> sample=\(name).wav lokey=\(36 + index * 12) hikey=\(47 + index * 12)"
+        }
+        var folder: [String: Any] = ["big.sfz": ["text": (["<control> default_path=s/"] + regions).joined(separator: "\n")]]
+        for (index, name) in names.enumerated() {
+            folder["s/\(name).wav"] = ["b64": wav(seed: UInt32(index + 1)).base64EncodedString()]
+        }
+        return try writeFolder(folder)
+    }
+
+    func testBankOverTheBudgetImportsAsStreamedAndFitsAfterPrepare() async throws {
+        let maxBytes = 2 * 1024 * 1024
+        let setup = try makeService(maxBytes: maxBytes)
+        let entry = try await setup.service.importFolder(files: try bigFolder(), selectedPath: "big.sfz")
+        XCTAssertTrue(entry.streamedSource, "予算を超えるので流し込みの入れ物（以前は too-large）")
+        let maybe = try await setup.service.prepare(id: entry.id, geometry: geometry)
+        let prepared = try XCTUnwrap(maybe)
+        XCTAssertEqual(prepared.tableVersion, 10)
+        XCTAssertLessThanOrEqual(prepared.footprintBytes ?? Int.max, maxBytes)
+        XCTAssertEqual(prepared.streamSamples.map(\.frames), [300_000, 300_000, 300_000, 300_000])
+        XCTAssertEqual(prepared.streamSources.count, 4)
+    }
+
+    func testResidentBankStaysResidentOnTheFileBackend() async throws {
+        // 置き場の入れ物（writeAtomic で書かれた常駐のバンク）は、流し込みの道を通っても今までの payload（v6・v7）で、表は付かない
+        let plain = try importItem("plain")
+        let setup = try makeService()
+        let entry = try await setup.service.importFolder(files: try writeFolder(plain.folder), selectedPath: plain.selected)
+        XCTAssertFalse(entry.streamedSource)
+        let maybe = try await setup.service.prepare(id: entry.id, geometry: geometry)
+        let prepared = try XCTUnwrap(maybe)
+        XCTAssertTrue([6, 7].contains(prepared.tableVersion), "v\(prepared.tableVersion)")
+        XCTAssertTrue(prepared.streamSamples.isEmpty)
+        XCTAssertTrue(prepared.streamSources.isEmpty)
+        XCTAssertFalse(prepared.poolEntries.isEmpty)
+    }
+
+    func testStreamingOffKeepsUpstreamRefusal() async throws {
+        let item = try streamedItem("streamed-load-opcodes")
+        let setup = try makeService(streaming: false)
+        let files = try writeFolder(try XCTUnwrap(item["folder"] as? [String: Any]))
+        do {
+            _ = try await setup.service.importFolder(files: files, selectedPath: try XCTUnwrap(item["selected"] as? String))
+            XCTFail("流し込みが無いのに通った")
+        } catch let error as ETSFZError {
+            XCTAssertTrue(error.message.contains("needs sample streaming"), error.message)
+        }
     }
 }
 

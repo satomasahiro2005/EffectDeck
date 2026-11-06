@@ -239,10 +239,14 @@ test('束ねの先頭の印が中身と合い、プレリュードの写しが�
   const lines = bundleText.split('\n');
   assert.match(lines[1], /^\/\/ pin: [0-9a-f]{40}$/);
   assert.match(lines[2], /^\/\/ esbuild: 0\.28\.2$/);
-  assert.match(lines[3], /^\/\/ patch: effetune-js-sfz-pool-writer\.diff sha256=[0-9a-f]{64}$/);
-  const claimed = /^\/\/ sha256: ([0-9a-f]{64})$/.exec(lines[4])[1];
-  assert.equal(crypto.createHash('sha256').update(lines.slice(5).join('\n')).digest('hex'), claimed);
-  assert.equal(lines[3].split('sha256=')[1], crypto.createHash('sha256').update(read(path.join(repo, 'Patches', 'effetune-js-sfz-pool-writer.diff'))).digest('hex'));
+  const patches = ['effetune-js-sfz-pool-writer.diff', 'effetune-js-sfz-stream-table.diff'];
+  patches.forEach((name, index) => {
+    assert.equal(lines[3 + index].split(' sha256=')[0], `// patch: ${name}`);
+    assert.match(lines[3 + index].split(' sha256=')[1], /^[0-9a-f]{64}$/);
+    assert.equal(lines[3 + index].split('sha256=')[1], crypto.createHash('sha256').update(read(path.join(repo, 'Patches', name))).digest('hex'));
+  });
+  const claimed = /^\/\/ sha256: ([0-9a-f]{64})$/.exec(lines[3 + patches.length])[1];
+  assert.equal(crypto.createHash('sha256').update(lines.slice(4 + patches.length).join('\n')).digest('hex'), claimed);
   assert.equal(read(path.join(resources, 'effetune-sfz-prelude.js')), preludeText);
 });
 

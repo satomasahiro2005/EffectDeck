@@ -7,7 +7,7 @@
 //
 // 1. 指している版の上流（HEADのgitlink）を Tools/golden/extract_pin.sh で展開する（作業ツリーの
 //    Vendor/effetune は読まない）。EFFETUNE_ROOT があればそこを使う（Tools/golden/*.mjs と同じ約束）。
-// 2. その js/ を作業用の場所へ写し、Patches/effetune-js-sfz-pool-writer.diff を当てる。
+// 2. その js/ を作業用の場所へ写し、Patches の js-sfz パッチ（patchNames の順）を当てる。
 // 3. entry.mjs を同じ場所へ写し、esbuild（IIFE・グローバル名 ETSFZ）で束ねる。
 //    パスのコメントは absWorkingDir からの相対なので、手元でも CI でも同じバイトになる。
 // 4. 束ねた木（metafile の inputs）を modules.txt と突き合わせる。上流が新しい import を足すと
@@ -28,7 +28,8 @@ const repo = path.resolve(here, '..', '..');
 const outDir = path.join(repo, 'Sources', 'EffeTuneLive', 'Resources', 'SFZ');
 const bundleFile = path.join(outDir, 'effetune-sfz.js');
 const preludeCopy = path.join(outDir, 'effetune-sfz-prelude.js');
-const patchFile = path.join(repo, 'Patches', 'effetune-js-sfz-pool-writer.diff');
+// 上流の js/ へ当てるパッチ。別々のファイルに触れるので順は結果に効かないが、束ねの先頭の印にもこの順で書く。
+const patchNames = ['effetune-js-sfz-pool-writer.diff', 'effetune-js-sfz-stream-table.diff'];
 const modulesFile = path.join(here, 'modules.txt');
 const updateModules = process.argv.includes('--update-modules');
 
@@ -77,12 +78,14 @@ fs.mkdirSync(work, { recursive: true });
 fs.cpSync(path.join(root, 'js'), path.join(work, 'js'), { recursive: true });
 fs.writeFileSync(path.join(work, 'entry.mjs'), readLf(path.join(here, 'entry.mjs')));
 
-const patchText = readLf(patchFile);
-const patchPath = path.join(work, 'patch.diff');
-fs.writeFileSync(patchPath, patchText);
-const applied = spawnSync('git', ['apply', '-p1', '--whitespace=nowarn', patchPath], { cwd: work, encoding: 'utf8' });
-if (applied.status !== 0) fail(`パッチが当たらない（上流が動いたらパッチを作り直す）\n${applied.stderr}`);
-fs.rmSync(patchPath);
+const patchTexts = patchNames.map(name => readLf(path.join(repo, 'Patches', name)));
+for (const [index, patchText] of patchTexts.entries()) {
+  const patchPath = path.join(work, 'patch.diff');
+  fs.writeFileSync(patchPath, patchText);
+  const applied = spawnSync('git', ['apply', '-p1', '--whitespace=nowarn', patchPath], { cwd: work, encoding: 'utf8' });
+  if (applied.status !== 0) fail(`パッチが当たらない: ${patchNames[index]}（上流が動いたらパッチを作り直す）\n${applied.stderr}`);
+  fs.rmSync(patchPath);
+}
 
 const result = await esbuild.build({
   absWorkingDir: work,
@@ -125,7 +128,7 @@ const header = [
   '// effetune-sfz.js: 生成物。Tools/sfzjs/build.mjs が作る。手で直さない。',
   `// pin: ${pin}`,
   `// esbuild: ${esbuild.version}`,
-  `// patch: effetune-js-sfz-pool-writer.diff sha256=${sha256(patchText)}`,
+  ...patchNames.map((name, index) => `// patch: ${name} sha256=${sha256(patchTexts[index])}`),
   `// sha256: ${sha256(body)}`,
   '',
 ].join('\n');

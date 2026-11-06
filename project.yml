@@ -383,6 +383,8 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SFZStream/SFZSoundFont.swift
       # SoundFont Note Player の Instrument Details と鍵盤スイッチの枠（型 34）（SFZInstrumentDetailsTests）。Foundation だけ。
       - path: Sources/EffeTuneLive/DSP/SFZInstrumentDetails.swift
+      # 流し込みの SFZ の表・常駐ページ・staging（SFZStreamTableTests）。Foundation だけ。
+      - path: Sources/EffeTuneLive/DSP/SFZStream/SFZStreamTable.swift
       # SFZ の JS を JavaScriptCore で動かす入れ物と取り込みの入口（SFZScriptHostTests）。
       # JavaScriptCore の側は Logic だけで試す。どちらも #if canImport(JavaScriptCore) で囲んであり、Linux では空になる。
       # 束ね（effetune-sfz.js）・下ごしらえ・見本の駆動は資源として入れる（本体は Sources/EffeTuneLive 全体を取るので要らない）。
@@ -409,6 +411,9 @@ targets:
         buildPhase: resources
       # ストリーミングのページの復号の見本（SFZPageDecodeTests。Tools/golden/sample_page_golden.mjs が作る）。
       - path: Tests/Fixtures/SFZ/sample-page-golden.json
+        buildPhase: resources
+      # 流し込みの SFZ の見本（SFZStreamTableTests と ETSFZStreamedServiceTests。Tools/sfzjs/stream_table_golden.mjs が作る）。
+      - path: Tests/Fixtures/SFZ/stream-table-golden.json
         buildPhase: resources
       - path: Sources/EffeTuneLive/DSP/ETChannel.swift
       - path: Sources/EffeTuneLive/Generated/SystemPresets.swift

@@ -1,0 +1,22 @@
+diff --git a/js/sfz/streamed-bank.js b/js/sfz/streamed-bank.js
+index 72f76a6..e9ec3df 100644
+--- a/js/sfz/streamed-bank.js
++++ b/js/sfz/streamed-bank.js
+@@ -67,6 +67,17 @@ export async function prepareStreamedSfzBank({ id, parsed, maxBytes, createSampl
+       return opened;
+     } });
+   const samples = new Map(paths.map((path, index) => [path, factory.samples[index]]));
++  // EffectDeck: the host page supply needs where each payload sample lives (index = payload sample number).
++  // The readers were all captured by the factory above, so this only collects them.
++  if (typeof globalThis.__effectdeckSfzSampleTable === 'function') {
++    const table = [];
++    for (const [index, key] of paths.entries()) {
++      const path = storage?.sources.get(key) ?? key;
++      table.push({ index, path, reader: await readers.get(path), sample: factory.samples[index],
++        mode: storage ? storage.modes.get(key) : 0 });
++    }
++    globalThis.__effectdeckSfzSampleTable(table);
++  }
+   const build = async (context, budget = maxBytes, estimate = estimateEffectBytes, previous = null) => {
+     const warnings = [];
+     const options = { maxBytes: budget, script, modulation: parsed.modulation, effects: parsed.effects,

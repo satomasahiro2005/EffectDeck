@@ -265,6 +265,9 @@ jobs:
         run: |
           npm ci --prefix Tools/sfzjs
           node Tools/sfzjs/build.mjs
+      # 流し込みの SFZ の見本（Swift の SFZStreamTableTests が読む）。今の束ねと glue から作る
+      - name: 流し込みの見本を作り直す（Tools/sfzjs/stream_table_golden.mjs）
+        run: node Tools/sfzjs/stream_table_golden.mjs
       - name: 追跡している生成物が変わっていないこと
         run: |
           drift=$(git status --porcelain --ignore-submodules=dirty)

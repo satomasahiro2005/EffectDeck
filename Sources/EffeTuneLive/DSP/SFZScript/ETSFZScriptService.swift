@@ -166,6 +166,10 @@ struct ETSFZScriptPrepared {
     var presentation: ETSFZScriptPresentation?
     /// SoundFont のときだけ。Preset の一覧と、流し込みの標本の置き場所（tableVersion 9）。
     var soundFont: ETSFZSoundFontInfo?
+    /// 流し込みの SFZ のときだけ（tableVersion 8・10）。標本の番号ごとの置き場所。SFZ の常駐・SoundFont では空。
+    var streamSamples: [ETSFZStreamSample] = []
+    /// streamSamples から組んだ、ページを作る側の読み口（prepare が作る。FLAC などは単体のファイルへ写し出してある）。
+    var streamSources: [ETSFZSampleSource] = []
 }
 
 /// 取り消しの旗。Swift の Task の取り消しと、呼び手が渡す旗の両方がここへ集まる。JS は isCurrent で見る。
@@ -336,12 +340,16 @@ final class ETSFZScriptService: @unchecked Sendable {
     private let loadError: Error?
     private let poolMode: ETSFZPoolMode
     private let maxBytes: Int
+    private let staging: ETSFZStreamStaging
 
     /// sources が nil のときはアプリの資源（Bundle.main）から探す。
     /// maxBytes は上流の既定の上限（256 MiB。設定の画面は持たない）。
+    /// streaming は流し込みの SFZ（load_*・予算超え）を受けるか。本番はいつも true（上流の Electron・Android と同じ）。
+    /// false は、流し込みを持たない置き場（旧い見本の照合）で、上流の「too-large」「needs sample streaming」をそのまま見るため。
     init(backend: ETSFZScriptBackend, decode: @escaping ETSFZScriptDecode, estimate: ETSFZScriptEstimate? = nil,
          sources: ETSFZScriptSources? = nil, maxBytes: Int = 256 * 1024 * 1024, poolMode: ETSFZPoolMode = .host,
-         idleSeconds: TimeInterval = 30, log: ((String, String) -> Void)? = nil) {
+         streaming: Bool = true, idleSeconds: TimeInterval = 30, staging: ETSFZStreamStaging = .standard,
+         log: ((String, String) -> Void)? = nil) {
         var resolved = sources
         var failure: Error?
         if resolved == nil {
@@ -351,10 +359,12 @@ final class ETSFZScriptService: @unchecked Sendable {
         loadError = failure
         self.poolMode = poolMode
         self.maxBytes = maxBytes
+        self.staging = staging
         let sink = log ?? ETSFZScriptService.defaultLog
         // setup は host の init で要るが、self をまだ持てない。必要なものだけ値で渡す。
         let environment = ETSFZScriptEnvironment(backend: backend, decode: decode, estimate: estimate, log: sink,
-                                                 sources: resolved, failure: failure, poolMode: poolMode, maxBytes: maxBytes)
+                                                 sources: resolved, failure: failure, poolMode: poolMode, maxBytes: maxBytes,
+                                                 streaming: streaming)
         host = ETJSHost(idleSeconds: idleSeconds) { context in try environment.install(into: context) }
     }
 
@@ -403,6 +413,7 @@ final class ETSFZScriptService: @unchecked Sendable {
     /// geometry があれば、上流の見積り（footprint）まで JS が計算する。
     func prepare(id: String, geometry: ETSFZGeometry? = nil, cancel: ETSFZCancelToken? = nil) async throws -> ETSFZScriptPrepared? {
         let writes = poolMode == .host
+        let staging = staging
         return try await job(cancel) { context, state in
             if writes { state.pool = [] }
             var arguments: [JSValueRef] = [context.keptString(id)]
@@ -410,7 +421,18 @@ final class ETSFZScriptService: @unchecked Sendable {
                 arguments.append(context.keptString(Self.geometryJSON(geometry)))
             }
             guard let text = try Self.callNullable(context, "prepare", arguments) else { return nil }
-            return try Self.parsePrepared(text, state: state)
+            var prepared = try Self.parsePrepared(text, state: state)
+            if !prepared.streamSamples.isEmpty {
+                // 流し込みの SFZ。標本の読み口は置き場の入れ物から組む（FLAC などの写し出しもここで。UI のスレッドでしない）。
+                try state.requireCurrent()
+                guard let bank = try state.backend.readSfzBankFile("\(id).sfzbank") else {
+                    throw ETSFZError.prepare(ETSFZPreparedCheck.preparationFailedMessage)
+                }
+                prepared.streamSources = try ETSFZStreamTable.sources(
+                    samples: prepared.streamSamples, payload: prepared.control, bank: bank.url, bankBytes: UInt64(bank.size),
+                    bankID: id, staging: staging)
+            }
+            return prepared
         }
     }
 
@@ -578,7 +600,8 @@ final class ETSFZScriptService: @unchecked Sendable {
             tailSeconds: (object["tailSeconds"] as? NSNumber)?.doubleValue, warmupSamples: int(object["warmupSamples"]),
             footprintBytes: int(object["footprintBytes"]), nativePreparationBytes: int(object["nativePreparationBytes"]),
             processingChannels: int(object["processingChannels"]) ?? 1, presentation: presentation,
-            soundFont: ETSFZSoundFontInfo.parse(object["soundFont"]))
+            soundFont: ETSFZSoundFontInfo.parse(object["soundFont"]),
+            streamSamples: ETSFZStreamTable.parse(object["streamSamples"], inline: { state.delivered["stream:\($0)"] }) ?? [])
     }
 }
 
@@ -594,13 +617,14 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
     let failure: Error?
     let poolMode: ETSFZPoolMode
     let maxBytes: Int
+    let streaming: Bool
 
     private let lock = NSLock()
     private var text: (prelude: String, bundle: String)?
 
     init(backend: ETSFZScriptBackend, decode: @escaping ETSFZScriptDecode, estimate: ETSFZScriptEstimate?,
          log: @escaping (String, String) -> Void, sources: ETSFZScriptSources?, failure: Error?,
-         poolMode: ETSFZPoolMode, maxBytes: Int) {
+         poolMode: ETSFZPoolMode, maxBytes: Int, streaming: Bool) {
         self.backend = backend
         self.decode = decode
         self.estimate = estimate
@@ -609,6 +633,7 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         self.failure = failure
         self.poolMode = poolMode
         self.maxBytes = maxBytes
+        self.streaming = streaming
     }
 
     private func scripts() throws -> (prelude: String, bundle: String) {
@@ -643,7 +668,8 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         guard let api = context.property(context.global, "__etSfz"), let object = context.asObject(api) else {
             throw ETSFZError(code: .prepare, message: "SoundFont playback is unavailable. Reload the app and try again.")
         }
-        _ = try context.callMethod(object, "configure", [context.number(Double(maxBytes)), context.boolean(poolMode == .js)])
+        _ = try context.callMethod(object, "configure", [context.number(Double(maxBytes)), context.boolean(poolMode == .js),
+                                                         context.boolean(streaming)])
     }
 
     // MARK: ホストの関数
@@ -830,7 +856,7 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
     (function () {
       'use strict';
       const G = globalThis, H = G.__et, API = G.ETSFZ;
-      const config = { maxBytes: 256 * 1024 * 1024, fullPayload: false };
+      const config = { maxBytes: 256 * 1024 * 1024, fullPayload: false, streaming: true };
       let service = null;
       const safe = value => { try { return JSON.stringify(value); } catch (error) { return String(value); } };
       const decode = async (buffer, sampleRate) => H.decode(buffer, sampleRate === undefined ? null : sampleRate);
@@ -874,12 +900,60 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         });
         return result;
       };
+      // 流し込みの SFZ（load_*・予算超え）。上流の prepareStreamedSfzBank に、JavaScriptCore に無い Worker の代わりを渡す。
+      // 「別スレッド」は同じ文脈の中の組で、メッセージは Promise の列に載せて渡す（再入しない・timer も要らない）。
+      // 読みは host の readRange（pread）、ページの復号は上流の JS が頭の検査にだけ使い、鳴らすページは Swift が作る。
+      const inProcessWorker = () => {
+        const worker = { onmessage: null, onerror: null, onmessageerror: null }, server = { onmessage: null };
+        let closed = false;
+        const send = (target, data) => Promise.resolve().then(() => {
+          if (!closed && typeof target.onmessage === 'function') target.onmessage({ data });
+        });
+        worker.postMessage = data => { send(server, data); };
+        server.postMessage = data => { send(worker, data); };
+        worker.terminate = () => { closed = true; };
+        API.attachSfzSampleStreamWorker(server);
+        return worker;
+      };
+      // 標本の置き場所の表（payload の標本の番号ごと）。上流のパッチ（effetune-js-sfz-stream-table.diff）が、表を作り終えたところで渡す。
+      let rawStreamTable = null;
+      G.__effectdeckSfzSampleTable = table => { rawStreamTable = table; };
+      const prepareStreamedBank = options => {
+        rawStreamTable = null;
+        return API.prepareStreamedSfzBank(options, { workerFactory: inProcessWorker, persistentCache: null });
+      };
+      // 入れ物（.sfzbank）の中の標本は位置（offset はファイルの先頭から）だけ。入れ物の外の標本（オシレーターの周期・*sine などの発生源・
+      // 埋め込み）は JS の中にしか無いので、バイト列を host へ渡す（deliver('stream:<番号>')）。
+      async function describeStreamTable(table) {
+        const rows = [];
+        for (const entry of table) {
+          const reader = entry.reader, source = reader.rangeSource, sample = entry.sample;
+          const row = { index: entry.index, mode: entry.mode ?? 0, frames: sample.frames, channels: sample.channels,
+            sampleRate: sample.sampleRate, size: reader.size, offset: null, inline: false };
+          const segments = source && source.kind === 'file' ? G.__etShim.segments(source.file) : null;
+          if (!segments) {
+            const error = new Error('The instrument samples could not be prepared. Reload the instrument.');
+            error.code = 'prepare';
+            throw error;
+          }
+          if (segments.length === 1 && segments[0].handle !== undefined && segments[0].offset + source.offset + reader.size <= segments[0].offset + segments[0].length) {
+            row.offset = segments[0].offset + source.offset;
+          } else {
+            H.deliver('stream:' + entry.index, new Uint8Array(await source.file.slice(source.offset, source.offset + reader.size).arrayBuffer()));
+            row.inline = true;
+          }
+          rows.push(row);
+        }
+        return rows;
+      }
       async function prepare(id, geometryJson) {
         const library = await ensure();
         // 上流の cache に当たると書き手が呼ばれない。いつも作り直す（呼び手が cache を持つ）
         library.prepared = null;
         soundFontSamples = null;
-        const options = { decode, isCurrent, persistentCache: null, prepareSoundFontBank };
+        rawStreamTable = null;
+        const options = { decode, isCurrent, persistentCache: null, prepareSoundFontBank,
+          prepareStreamedBank: config.streaming ? prepareStreamedBank : undefined };
         if (geometryJson) {
           options.preparationContext = API.sfzPreparationContext(JSON.parse(geometryJson));
           options.estimateEffectBytes = estimate;
@@ -887,6 +961,8 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         const value = await library.prepare(id, options);
         library.prepared = null;
         if (!value) return null;
+        const streamSamples = rawStreamTable && !soundFontSamples ? await describeStreamTable(rawStreamTable) : null;
+        rawStreamTable = null;
         const d = value.descriptor, data = API.samplePlayerPreparationData(d.payload);
         H.deliver('control', config.fullPayload ? d.payload : data.control);
         let imageBytes = null;
@@ -905,18 +981,23 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
           presentation: value.presentation ? { ...value.presentation, imageBlob: undefined, imageBytes } : null,
           soundFont: soundFontSamples && ['sf2', 'sf3'].includes(value.format)
             ? { format: value.format, presets: (value.presets ?? []).map(preset => ({ bank: preset.bank, program: preset.program, name: preset.name })),
-                samples: soundFontSamples } : null });
+                samples: soundFontSamples } : null,
+          streamSamples });
       }
       Object.defineProperty(G, '__etSfz', { value: Object.freeze({
-        configure(maxBytes, fullPayload) { config.maxBytes = maxBytes; config.fullPayload = fullPayload; service = null; },
+        configure(maxBytes, fullPayload, streaming = true) {
+          config.maxBytes = maxBytes; config.fullPayload = fullPayload; config.streaming = streaming; service = null;
+        },
         reset() { service = null; },
         async list() { return safe(await (await ensure()).list()); },
         async listInstruments(json) { return safe(API.listSfzFolderFiles(hostFiles(json))); },
         async importFolder(json, selectedPath) {
           const library = await ensure();
           const entry = await library.importFolderFiles(hostFiles(json), selectedPath,
-            { decode, isCurrent, persistentCache: null, prepareSoundFontBank });
+            { decode, isCurrent, persistentCache: null, prepareSoundFontBank,
+              prepareStreamedBank: config.streaming ? prepareStreamedBank : undefined });
           library.prepared = null;
+          rawStreamTable = null;
           return safe(entry);
         },
         prepare,

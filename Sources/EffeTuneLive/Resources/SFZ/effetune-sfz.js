@@ -2,7 +2,8 @@
 // pin: 5ffca1b31e8a74ada7140aefd0c9c9fe4b7740da
 // esbuild: 0.28.2
 // patch: effetune-js-sfz-pool-writer.diff sha256=7eb3d033f4255212b6ee31d9251ea13221fcfe2a8c912796407e38cef1baa157
-// sha256: 7195fe2a67dbfad711019c1abce34d15c144b8527b2c0714d510ddc298afe60b
+// patch: effetune-js-sfz-stream-table.diff sha256=68b0c0d2d02125e5dcfa8b20861b6b9ca8f224084914f237ea2a6378dc8c54c7
+// sha256: 4160568cbe5e102009a6dd2fb37445fb04ec95c7b262f67330d3340bde81586b
 var ETSFZ = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -12583,6 +12584,20 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
       }
     });
     const samples = new Map(paths.map((path, index) => [path, factory.samples[index]]));
+    if (typeof globalThis.__effectdeckSfzSampleTable === "function") {
+      const table = [];
+      for (const [index, key] of paths.entries()) {
+        const path = storage?.sources.get(key) ?? key;
+        table.push({
+          index,
+          path,
+          reader: await readers.get(path),
+          sample: factory.samples[index],
+          mode: storage ? storage.modes.get(key) : 0
+        });
+      }
+      globalThis.__effectdeckSfzSampleTable(table);
+    }
     const build = async (context, budget = maxBytes, estimate = estimateEffectBytes, previous = null) => {
       const warnings2 = [];
       const options = {
