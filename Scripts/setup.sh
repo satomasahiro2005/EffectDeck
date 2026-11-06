@@ -108,7 +108,7 @@ fi
 # **上流のパッチを当てる。**
 #
 # 資産を送り込む 64bit の口 et_instance_asset_begin_ptr は上流 2.17.0（DSP 0.17.0）が
-# 入れた（前は Patches/abi-begin-ptr.diff で足していた）。AssetUpload.swift が直に呼ぶ。
+# 入れた（前は abi-begin-ptr のパッチ で足していた）。AssetUpload.swift が直に呼ぶ。
 # **無いとビルドが止まる。**古い版を指していないかを先に確かめる。
 if ! grep -q et_instance_asset_begin_ptr Vendor/effetune/dsp/include/effetune/abi.h 2>/dev/null; then
   echo "!! Vendor/effetune に et_instance_asset_begin_ptr が無い。DSP 0.17.0 より前の版を指していないか確かめること"

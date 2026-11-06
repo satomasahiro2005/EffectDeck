@@ -233,7 +233,7 @@ extension AssetUpload {
 
     // abi.cpp の et_instance_asset_begin は staging の番地を uint32 で返す WASM 用の口で、
     // native 64bit では 0 を返す。番地を返す口は et_instance_asset_begin_ptr。
-    // 以前は Patches/abi-begin-ptr.diff で足していたが、上流 2.17.0（DSP 0.17.0）が
+    // 以前は abi-begin-ptr のパッチ で足していたが、上流 2.17.0（DSP 0.17.0）が
     // 同じ名前で入れた。上流の版は最後に minimum_physical_bpm を取る。
     // 0 は「MIDI の地図に関係なく 120 BPM で用意する」。EffectDeck は MIDI を持たないので 0 を渡す。
     //

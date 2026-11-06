@@ -16,7 +16,7 @@ on a device.** Everything that needs UIKit, SwiftUI, AVFoundation or JavaScriptC
 
 - Pin `5ffca1b3`. Catalog: **113 effects, 726 parameters** (was 112 / 721). `chain/v0.17.0/` added, `CHAIN.md` and the README
   badge point at 0.17.0.
-- `Patches/abi-begin-ptr.diff` is **gone**: upstream now has `et_instance_asset_begin_ptr`. Upstream's version takes a last
+- Our `abi-begin-ptr` patch is **gone**: upstream now has `et_instance_asset_begin_ptr`. Upstream's version takes a last
   argument `minimum_physical_bpm`; `AssetUpload` passes 0 (prepared at 120 BPM). `Scripts/setup.sh` only checks that the entry
   point exists. The three `effetune-external-*` patches were re-based onto the new pin without changing their content.
 - Two new patches for the JS bundle, `Patches/effetune-js-sfz-pool-writer.diff` and `Patches/effetune-js-sfz-stream-table.diff`
@@ -142,7 +142,7 @@ prefetch, readiness); the host transport, MIDI and offline graph entry points ar
 
 ## Streaming runtime (SF2, SF3, `load_*`, over-budget SFZ)
 
-- `Sources/Shared/ETSampleStream.{c,h}`, hooked into `ETPipeline_Process`. Per instance (up to 4 slots): an SPSC request ring
+- `Sources/Shared/ETSampleStream.c` / `.h`, hooked into `ETPipeline_Process`. Per instance (up to 4 slots): an SPSC request ring
   (4096), an SPSC ready-page ring, and a pool of 64 pages (4096 x 2 floats, 2 MiB), allocated once at attach.
   `BeforeProcess` publishes **at most 8 pages per block**, round-robin over slots (`ET_STREAM_PUBLISH_PER_BLOCK`, **a guess**:
   lower it if a device shows xruns). `AfterProcess` takes requests in chunks of 256 using the stack only. A generation fence
