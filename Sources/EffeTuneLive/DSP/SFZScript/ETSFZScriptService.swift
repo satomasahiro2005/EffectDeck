@@ -380,8 +380,7 @@ final class ETSFZScriptService: @unchecked Sendable {
         }
     }
 
-    /// フォルダの中の SFZ と SoundFont の道（正規化・並べ替え済み）。SF3 は Vorbis を読む段（D4）まで一覧に出さない
-    /// （ETSFZSoundFormats）。
+    /// フォルダの中の SFZ と SoundFont（SF2・SF3）の道（正規化・並べ替え済み）。
     func listInstruments(in files: [ETSFZScriptFile], cancel: ETSFZCancelToken? = nil) async throws -> [String] {
         try await job(cancel) { context, state in
             let json = try Self.fileList(files, state)
@@ -389,16 +388,12 @@ final class ETSFZScriptService: @unchecked Sendable {
             guard let data = text.data(using: .utf8), let list = try JSONSerialization.jsonObject(with: data) as? [String] else {
                 throw ETSFZError(code: .prepare, message: "The SFZ folder could not be read.")
             }
-            return list.filter { ETSFZSoundFormats.isInstrument(path: $0) }
+            return list
         }
     }
 
     /// フォルダの SFZ 1 本を取り込む（置き場へ書き、一覧に足す）。PCM は運ばない（読み直しは prepare）。
     func importFolder(files: [ETSFZScriptFile], selectedPath: String, cancel: ETSFZCancelToken? = nil) async throws -> ETSFZScriptEntry {
-        // SF3 は圧縮標本を鳴らせるまで取り込まない（大きな入れ物を書いてから断ることになる）。
-        guard !ETSFZSoundFormats.isSoundFont(path: selectedPath) || ETSFZSoundFormats.isInstrument(path: selectedPath) else {
-            throw ETSFZError(code: .prepare, message: ETSFZSoundFontInfo.compressedMessage)
-        }
         return try await job(cancel) { context, state in
             let json = try Self.fileList(files, state)
             let text = try Self.callString(context, "importFolder", [context.keptString(json), context.keptString(selectedPath)])
@@ -895,8 +890,12 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
             error.code = 'prepare';
             throw error;
           }
+          const compressed = pcm.format !== 'sf2-pcm';
+          // SF3（sf3-vorbis）の標本は、Ogg の長さと、復号後のどこからどこまでを標本として使うかも渡す（native が復号する）。
+          // frames は使う範囲の長さ（firstFrame から）、sourceFrames は復号後の全体（最後の granule）。
           return { base: reader.rangeSource.offset, dataOffset: pcm.dataOffset ?? 0, lowByteOffset: pcm.lowByteOffset ?? null,
-            frames: pcm.frames, sampleRate: pcm.sampleRate, compressed: pcm.format !== 'sf2-pcm' };
+            frames: pcm.frames, sampleRate: pcm.sampleRate, compressed,
+            ...(compressed && { dataBytes: pcm.dataBytes, firstFrame: pcm.firstFrame, sourceFrames: pcm.sourceFrames }) };
         });
         return result;
       };

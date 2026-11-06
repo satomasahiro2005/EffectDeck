@@ -112,12 +112,73 @@ final class SFZSoundFontTests: XCTestCase {
         XCTAssertEqual(sources[1].channels, 1)
     }
 
-    func testSourcesRefuseCompressedSamplesUntilVorbisIsSupported() {
-        let compressed = ETSFZSoundFontSample(baseOffset: 0, dataOffset: 0, lowByteOffset: nil, frames: 8, sampleRate: 44100,
-                                              compressed: true)
-        XCTAssertThrowsError(try info([compressed]).sources(bank: URL(fileURLWithPath: "/x"))) { error in
-            XCTAssertEqual((error as? ETSFZError)?.message, ETSFZSoundFontInfo.compressedMessage)
+    private func compressed(frames: UInt64 = 8, dataOffset: UInt64 = 70, dataBytes: UInt64 = 400, firstFrame: UInt64 = 0,
+                            sourceFrames: UInt64 = 8) -> ETSFZSoundFontSample {
+        ETSFZSoundFontSample(baseOffset: 100, dataOffset: dataOffset, lowByteOffset: nil, frames: frames, sampleRate: 44100,
+                             compressed: true, dataBytes: dataBytes, firstFrame: firstFrame, sourceFrames: sourceFrames)
+    }
+
+    func testSourcesMapACompressedSampleToAVorbisRead() throws {
+        let bank = URL(fileURLWithPath: "/tmp/bank.sfzbank")
+        let sources = try info([compressed(frames: 6, firstFrame: 2, sourceFrames: 10)]).sources(bank: bank, bankBytes: 570)
+        XCTAssertEqual(sources, [ETSFZSampleSource(
+            url: bank, baseOffset: 100,
+            format: .vorbis(ETSFZVorbisLayout(dataOffset: 70, dataBytes: 400, firstFrame: 2, sourceFrames: 10)),
+            frames: 6, channels: 1, sampleRate: 44100)])
+    }
+
+    func testCompressedSampleRangeIsCheckedAgainstTheBankAndTheLimits() {
+        let bank = URL(fileURLWithPath: "/x")
+        // Ogg は 170..<570。
+        XCTAssertNoThrow(try info([compressed()]).sources(bank: bank, bankBytes: 570))
+        XCTAssertThrowsError(try info([compressed()]).sources(bank: bank, bankBytes: 569)) { error in
+            XCTAssertEqual((error as? ETSFZError)?.message, ETSFZSoundFontInfo.invalidMessage)
         }
+        let bad: [ETSFZSoundFontSample] = [
+            compressed(frames: 9, sourceFrames: 8),                         // 使う範囲が復号後の外へ出る
+            compressed(frames: 4, firstFrame: 5, sourceFrames: 8),
+            compressed(frames: 1, firstFrame: UInt64.max, sourceFrames: 8), // 足すとあふれる
+            compressed(sourceFrames: 0),
+            compressed(frames: 8, sourceFrames: ETSFZVorbisLayout.maxFrames + 1),
+            compressed(dataBytes: ETSFZVorbisLayout.minBytes - 1),
+            compressed(dataBytes: ETSFZVorbisLayout.maxBytes + 1),
+        ]
+        for sample in bad {
+            XCTAssertThrowsError(try info([sample]).sources(bank: bank), "\(sample)") { error in
+                XCTAssertEqual((error as? ETSFZError)?.message, ETSFZSoundFontInfo.invalidMessage)
+            }
+        }
+        let overflow = compressed(dataOffset: UInt64.max - 8, dataBytes: 400)
+        XCTAssertThrowsError(try info([overflow]).sources(bank: bank, bankBytes: UInt64.max))
+        // 上限ちょうどは通る。
+        XCTAssertNoThrow(try info([compressed(frames: ETSFZVorbisLayout.maxFrames, dataBytes: ETSFZVorbisLayout.maxBytes,
+                                              sourceFrames: ETSFZVorbisLayout.maxFrames)]).sources(bank: bank))
+    }
+
+    func testParseReadsTheCompressedFieldsAndRequiresAllThree() throws {
+        let value = try json(#"""
+        {"format":"sf3","presets":[],"samples":[{"base":106,"dataOffset":70,"lowByteOffset":null,"frames":6,"sampleRate":44100,
+         "compressed":true,"dataBytes":400,"firstFrame":2,"sourceFrames":10}]}
+        """#)
+        let parsed = try XCTUnwrap(ETSFZSoundFontInfo.parse(value))
+        XCTAssertEqual(parsed.format, "sf3")
+        XCTAssertEqual(parsed.samples[0], ETSFZSoundFontSample(baseOffset: 106, dataOffset: 70, lowByteOffset: nil, frames: 6,
+                                                               sampleRate: 44100, compressed: true, dataBytes: 400, firstFrame: 2,
+                                                               sourceFrames: 10))
+        // 圧縮標本で 3 つのどれかが欠ける・負・小数なら、SoundFont として扱わない。
+        for missing in ["dataBytes", "firstFrame", "sourceFrames"] {
+            var fields: [String: Any] = ["base": 0, "dataOffset": 0, "frames": 1, "sampleRate": 44100, "compressed": true,
+                                         "dataBytes": 400, "firstFrame": 0, "sourceFrames": 1]
+            fields[missing] = nil
+            let data = try JSONSerialization.data(withJSONObject: ["format": "sf3", "presets": [], "samples": [fields]] as [String: Any])
+            XCTAssertNil(ETSFZSoundFontInfo.parse(try JSONSerialization.jsonObject(with: data)), missing)
+        }
+        XCTAssertNil(ETSFZSoundFontInfo.parse(try json(#"""
+        {"format":"sf3","presets":[],"samples":[{"base":0,"dataOffset":0,"frames":1,"sampleRate":44100,"compressed":true,
+         "dataBytes":400,"firstFrame":-1,"sourceFrames":1}]}
+        """#)))
+        // 圧縮でない標本には要らない（あっても読まない）。
+        XCTAssertNotNil(ETSFZSoundFontInfo.parse(try json(#"{"format":"sf2","presets":[],"samples":[\#(sample)]}"#)))
     }
 
     func testSourcesRefuseAnEmptySampleAndABadRate() {
@@ -196,7 +257,43 @@ final class SFZSoundFontTests: XCTestCase {
         XCTAssertTrue(ETSFZSoundFormats.isInstrument(path: "GM.SF2"))
         XCTAssertFalse(ETSFZSoundFormats.isInstrument(path: "sample.wav"))
         XCTAssertTrue(ETSFZSoundFormats.isSoundFont(path: "a.sf3"))
-        // SF3 は圧縮標本を鳴らせる段まで一覧に出さない。
-        XCTAssertEqual(ETSFZSoundFormats.isInstrument(path: "a.sf3"), ETSFZSoundFontInfo.supportsCompressedSamples)
+        // SF3（Vorbis）も取り込む。
+        XCTAssertTrue(ETSFZSoundFormats.isInstrument(path: "a.sf3"))
+        XCTAssertTrue(ETSFZSoundFormats.isInstrument(path: "A.SF3"))
+        XCTAssertEqual(ETSFZSoundFormats.soundFontExtensions, ["sf2", "sf3"])
+    }
+
+    /// SF3 のページは Foundation の読み手では作らない（ETVorbis.c の側）。unsupported を返して振り分ける。
+    func testRendererLeavesVorbisSamplesToTheVorbisReader() {
+        let layout = ETSFZVorbisLayout(dataOffset: 0, dataBytes: 400, firstFrame: 0, sourceFrames: 8)
+        let source = ETSFZSampleSource(url: URL(fileURLWithPath: "/x"), baseOffset: 0, format: .vorbis(layout), frames: 8,
+                                       channels: 1, sampleRate: 44100)
+        let renderer = ETSFZPageRenderer()
+        let out = UnsafeMutablePointer<Float>.allocate(capacity: ETSFZPageDecode.pageFrames * 2)
+        defer { out.deallocate() }
+        XCTAssertThrowsError(try renderer.render(source, page: 0, into: out, capacity: ETSFZPageDecode.pageFrames * 2)) { error in
+            XCTAssertEqual(error as? ETSFZPageError, .unsupported)
+        }
+    }
+
+    func testReadAllCollectsChunksAndChecksTheLimit() throws {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("SFZSoundFontTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        // 1 回の読みの上限（1 MiB）をまたぐ長さ。
+        let length = ETSFZPageDecode.maxReadBytes * 2 + 123
+        let bytes = (0..<length).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ ($0 >> 8)) }
+        let url = scratch.appendingPathComponent("file.bin")
+        try Data(bytes).write(to: url)
+        let reader = ETSFZFileReader()
+        defer { reader.closeAll() }
+        let all = try reader.readAll(url: url, offset: 5, length: UInt64(length - 10), limit: 64 * 1024 * 1024)
+        XCTAssertEqual([UInt8](all), Array(bytes[5..<(length - 5)]))
+        XCTAssertEqual(try reader.readAll(url: url, offset: 0, length: 0, limit: 10).count, 0)
+        // 上限を超える・ファイルの外へ出る。
+        XCTAssertThrowsError(try reader.readAll(url: url, offset: 0, length: 11, limit: 10)) { XCTAssertEqual($0 as? ETSFZPageError, .range) }
+        XCTAssertThrowsError(try reader.readAll(url: url, offset: UInt64(length - 4), length: 8, limit: 100)) {
+            XCTAssertEqual($0 as? ETSFZPageError, .changed)
+        }
     }
 }

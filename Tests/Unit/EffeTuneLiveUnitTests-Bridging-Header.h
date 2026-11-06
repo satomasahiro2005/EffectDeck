@@ -9,3 +9,5 @@
 #import "ETJSFXHost.h"
 // PiP の帯（MiniMetersTests）が音の輪へ書く。
 #import "ETMeterTap.h"
+// SF3 の標本を読む ETSFZVorbisReader（SFZVorbisReaderTests）が引く。
+#import "ETVorbis.h"

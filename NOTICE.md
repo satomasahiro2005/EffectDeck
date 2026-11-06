@@ -113,3 +113,13 @@ Developed at SunSoft, a Sun Microsystems, Inc. business.
 Permission to use, copy, modify, and distribute this
 software is freely granted, provided that this notice
 is preserved.
+
+## stb_vorbis
+
+SoundFont 3 (`.sf3`) files store their samples as Ogg Vorbis. The app decodes them natively
+with [stb_vorbis](https://github.com/nothings/stb) v1.22 by Sean Barrett, which is in
+`Sources/Shared/ThirdParty/stb_vorbis.c` exactly as upstream publishes it. It is available
+under the MIT license or as public domain; `Licenses/stb_vorbis.LICENSE` has both texts, which
+`Tools/gen_licenses.py` reads.
+
+Copyright (c) 2017 Sean Barrett

@@ -7,7 +7,8 @@
 //
 //    TakeRequests → AcquirePage → ファイルから読んで float にする → SubmitPage
 //
-//  ページの作り方は SFZPageDecode.swift（WAV / AIFF の PCM と SF2。上流とビットまで同じ）と、AVAudioFile（FLAC など）。
+//  ページの作り方は SFZPageDecode.swift（WAV / AIFF の PCM と SF2。上流とビットまで同じ）と、AVAudioFile（FLAC など）と、
+//  ETVorbis.c（SF3 の Ogg Vorbis。stb_vorbis。ETSFZVorbisReader.swift）。
 //  **置き場が空のあいだは待つ**（音のスレッドが止まっていれば publish が進まない。master bypass・別 node の資産の
 //  アップロード・割り込み・バックグラウンド）。要求は engine が再送しないので、捨てると bank を読み直すまでそのページが欠ける。
 //  **読めなかった要求は黙って捨てず、失敗として残して手を止める**（ETSampleStream_Fail）。上流の sfzStreamFailed と同じで、
@@ -131,6 +132,7 @@ protocol ETSFZPageReading: AnyObject {
 final class ETSFZPageReader: ETSFZPageReading {
 
     private let renderer = ETSFZPageRenderer()
+    private let vorbis = ETSFZVorbisReader()
     #if canImport(AVFoundation)
     private let audio = ETSFZAudioFileReader()
     #endif
@@ -140,6 +142,9 @@ final class ETSFZPageReader: ETSFZPageReading {
         do {
             return try renderer.render(source, page: page, into: out, capacity: capacity)
         } catch ETSFZPageError.unsupported {
+            if case .vorbis(let layout) = source.format {
+                return try vorbis.read(source, layout: layout, page: page, into: out, capacity: capacity)
+            }
             #if canImport(AVFoundation)
             return try audio.read(source, page: page, into: out, capacity: capacity)
             #else
@@ -150,6 +155,7 @@ final class ETSFZPageReader: ETSFZPageReading {
 
     func close() {
         renderer.close()
+        vorbis.close()
         #if canImport(AVFoundation)
         audio.close()
         #endif
@@ -280,6 +286,8 @@ final class ETSFZPageSource: @unchecked Sendable {
         }
         thread.name = "ai.nemut.effetune.sfz-page-source"
         thread.qualityOfService = .userInitiated
+        // SF3 の復号（stb_vorbis）は一時領域をスタックに取る。副スレッドの既定（512 KB）より余裕を持たせる。
+        thread.stackSize = 2 * 1024 * 1024
         thread.start()
     }
 

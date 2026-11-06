@@ -314,4 +314,62 @@ final class SFZPageDecodeTests: XCTestCase {
         XCTAssertEqual(try reader.read(url: urls[0], offset: 60, length: 4).count, 4)
         XCTAssertThrowsError(try reader.read(url: urls[0], offset: 62, length: 4)) { XCTAssertEqual($0 as? ETSFZPageError, .changed) }
     }
+
+    // MARK: SF3 の標本を覚える入れ物（ETSFZBudgetCache）
+
+    func testBudgetCacheOrdersByUseAndReplacesWithTheOldValueReturned() {
+        var cache = ETSFZBudgetCache<String, Int>(budget: 100)
+        XCTAssertNil(cache.insert("a", 1, cost: 10))
+        XCTAssertNil(cache.insert("b", 2, cost: 10))
+        XCTAssertNil(cache.insert("c", 3, cost: 10))
+        XCTAssertEqual(cache.order, ["a", "b", "c"])
+        // use は「いま使った」にする。peek は触らない。
+        XCTAssertEqual(cache.use("a"), 1)
+        XCTAssertEqual(cache.order, ["b", "c", "a"])
+        XCTAssertEqual(cache.peek("b"), 2)
+        XCTAssertEqual(cache.order, ["b", "c", "a"])
+        XCTAssertNil(cache.use("zzz"))
+        // 同じ鍵は置き換え（古い値を返す。閉じるのは呼び手）。順は最後へ。
+        XCTAssertEqual(cache.insert("b", 20, cost: 30), 2)
+        XCTAssertEqual(cache.order, ["c", "a", "b"])
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertEqual(cache.totalCost, 50)
+    }
+
+    func testBudgetCacheTrimEvictsTheOldestFirstAndNeverTheOneInUse() {
+        var cache = ETSFZBudgetCache<Int, String>(budget: 100)
+        for key in 1...4 { _ = cache.insert(key, "v\(key)", cost: 40) }   // 合計 160
+        // 1 が一番古い。keeping が最後でも、外すのは古い方から 2 件（160 → 80）。
+        XCTAssertEqual(cache.trim(keeping: 4), ["v1", "v2"])
+        XCTAssertEqual(cache.order, [3, 4])
+        XCTAssertEqual(cache.totalCost, 80)
+        XCTAssertEqual(cache.trim(keeping: 4), [], "上限の中なら何も外さない")
+        // 使っている 1 件が上限を超えても、その 1 件は残す（他は全部外す）。
+        cache.update(4, cost: 500)
+        XCTAssertEqual(cache.trim(keeping: 4), ["v3"])
+        XCTAssertEqual(cache.order, [4])
+        // keeping が先頭（一番古い）でも飛ばして、次の古いものから外す。
+        var other = ETSFZBudgetCache<Int, String>(budget: 50)
+        for key in 1...3 { _ = other.insert(key, "w\(key)", cost: 30) }
+        XCTAssertEqual(other.trim(keeping: 1), ["w2", "w3"])
+        XCTAssertEqual(other.order, [1])
+    }
+
+    func testBudgetCacheUpdateRemoveAndRemoveAll() {
+        var cache = ETSFZBudgetCache<String, Int>(budget: 10)
+        _ = cache.insert("a", 1, cost: 4)
+        _ = cache.insert("b", 2, cost: 4)
+        cache.update("a", cost: 9)
+        cache.update("missing", cost: 99)
+        XCTAssertEqual(cache.totalCost, 13)
+        XCTAssertEqual(cache.remove("a"), 1)
+        XCTAssertNil(cache.remove("a"))
+        XCTAssertEqual(cache.order, ["b"])
+        _ = cache.insert("c", 3, cost: -5)   // 負の費用は 0
+        XCTAssertEqual(cache.totalCost, 4)
+        XCTAssertEqual(cache.removeAll(), [2, 3], "古い順")
+        XCTAssertEqual(cache.count, 0)
+        XCTAssertEqual(cache.order, [])
+        XCTAssertEqual(ETSFZBudgetCache<Int, Int>(budget: -1).budget, 0)
+    }
 }

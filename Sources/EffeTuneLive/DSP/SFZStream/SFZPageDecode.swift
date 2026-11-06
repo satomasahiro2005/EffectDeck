@@ -9,6 +9,8 @@
 //    decodePCM が 1 つずつ float にする（value * 2^(1 - bits)、浮動小数はそのまま）。
 //  - SF2: 16 bit（高位）と sm24 の下位 8 bit から (high * 256 + low) / 8388608、sm24 が無ければ high / 32768。
 //  - FLAC などは AVAudioFile の側（ETSFZPageSource.swift）が読む。ここでは unsupported を返す。
+//  - SF3（Ogg Vorbis）は ETVorbis.c（stb_vorbis）の側（ETSFZPageSource.swift の ETSFZVorbisReader）が読む。ここでは
+//    unsupported を返す。ETSFZVorbisLayout は、その読み手が引く位置と長さの検査だけここに持つ（Foundation だけ）。
 //
 //  再生に使う標本は 1 または 2 チャンネル。ページはインターリーブの float（frames × channels）。
 
@@ -40,6 +42,37 @@ enum ETSFZSampleFormat: Equatable {
     case sf2PCM(dataOffset: UInt64, lowByteOffset: UInt64?)
     /// AVAudioFile に読ませる（FLAC など）。baseOffset は 0（ファイルそのもの）であること。
     case audioFile
+    /// SF3 の標本 1 本（モノの Ogg Vorbis）。ETVorbis.c で復号する。
+    case vorbis(ETSFZVorbisLayout)
+}
+
+/// SF3 の標本の Ogg の置き場所と、復号後のどの範囲を標本として使うか（上流の reader.pcm の dataOffset・dataBytes・
+/// firstFrame・sourceFrames）。標本の frames（ETSFZSampleSource.frames）は使う範囲の長さで、ページ 0 は復号後の
+/// firstFrame から始まる。
+struct ETSFZVorbisLayout: Equatable {
+    /// SoundFont ファイルの先頭から、この標本の Ogg の先頭まで。
+    var dataOffset: UInt64
+    /// Ogg のバイト数（最後のページの終わりまで）。
+    var dataBytes: UInt64
+    /// 復号後（最後の granule で切った全体）のどのフレームが標本のフレーム 0 か。
+    var firstFrame: UInt64
+    /// 復号後の全体の長さ（= 最後のページの granule）。
+    var sourceFrames: UInt64
+
+    /// 1 本の Ogg の上限（ETVorbis.h の ET_VORBIS_MAX_BYTES）。
+    static let maxBytes: UInt64 = 64 * 1024 * 1024
+    /// 復号後の上限（ET_VORBIS_MAX_FRAMES）。
+    static let maxFrames: UInt64 = 16 * 1024 * 1024
+    /// 識別・コメント・設定のヘッダーと 1 ページが収まる最小の長さ（上流の size < 58）。
+    static let minBytes: UInt64 = 58
+
+    /// 形の検査。frames は標本の長さ。範囲が sourceFrames の中にあり、Ogg の長さと復号後の長さが上限の中なら true。
+    func isValid(frames: UInt64) -> Bool {
+        guard frames >= 1, sourceFrames >= 1, sourceFrames <= Self.maxFrames,
+              dataBytes >= Self.minBytes, dataBytes <= Self.maxBytes else { return false }
+        let (end, overflow) = firstFrame.addingReportingOverflow(frames)
+        return !overflow && end <= sourceFrames
+    }
 }
 
 /// 1 本の標本がどこにどう入っているか。上流の「標本の道」（samples[i]）に当たる。
@@ -206,6 +239,24 @@ final class ETSFZFileReader {
     }
 }
 
+extension ETSFZFileReader {
+
+    /// offset から length バイトを 1 本の Data にして返す（SF3 の標本の Ogg。1 回の読みの上限 maxReadBytes ごとに区切って読む）。
+    /// 足りなければ changed、上限（limit）を超えれば range。
+    func readAll(url: URL, offset: UInt64, length: UInt64, limit: UInt64) throws -> Data {
+        guard length <= limit, length <= UInt64(Int.max) else { throw ETSFZPageError.range }
+        var data = Data()
+        data.reserveCapacity(Int(length))
+        var done: UInt64 = 0
+        while done < length {
+            let chunk = Int(min(UInt64(ETSFZPageDecode.maxReadBytes), length - done))
+            data.append(try read(url: url, offset: offset + done, length: chunk))
+            done += UInt64(chunk)
+        }
+        return data
+    }
+}
+
 /// ページ 1 枚を、ファイルから作る（PCM と SF2）。FLAC などは unsupported。
 final class ETSFZPageRenderer {
 
@@ -244,10 +295,87 @@ final class ETSFZPageRenderer {
                     try ETSFZPageDecode.convertSF2(high: highBytes, low: nil, frames: frames, into: out)
                 }
             }
-        case .audioFile:
+        case .audioFile, .vorbis:
             throw ETSFZPageError.unsupported
         }
         return (frames, source.channels)
+    }
+}
+
+// MARK: - 費用つきの LRU
+
+/// 使った順に並べ、費用（バイト）の合計が上限を超えたら古い方から外す入れ物。SF3 の標本（復号器と復号済みの PCM）を持つ
+/// ETSFZVorbisReader が使う。外した値は呼び手へ返す（閉じるのは呼び手）。**1 つのスレッドから使う。**
+struct ETSFZBudgetCache<Key: Hashable, Value> {
+
+    private var items: [Key: (value: Value, cost: Int)] = [:]
+    /// 古い順（先頭が一番使っていない）。
+    private(set) var order: [Key] = []
+    let budget: Int
+
+    init(budget: Int) { self.budget = max(0, budget) }
+
+    var count: Int { items.count }
+    var totalCost: Int { items.values.reduce(0) { $0 + $1.cost } }
+
+    /// 見つかれば「いま使った」にして返す。
+    mutating func use(_ key: Key) -> Value? {
+        guard let item = items[key] else { return nil }
+        touch(key)
+        return item.value
+    }
+
+    /// 触らずに見る（復号器を持つ数を数えるときなど）。
+    func peek(_ key: Key) -> Value? { items[key]?.value }
+
+    /// 入れる（いま使った）。同じ鍵があれば置き換え、古い値を返す。
+    mutating func insert(_ key: Key, _ value: Value, cost: Int) -> Value? {
+        let old = items[key]?.value
+        items[key] = (value, max(0, cost))
+        touch(key)
+        return old
+    }
+
+    /// 費用が変わった（復号が進んだ）。
+    mutating func update(_ key: Key, cost: Int) {
+        guard let item = items[key] else { return }
+        items[key] = (item.value, max(0, cost))
+    }
+
+    /// 上限を超えていれば、古い方から外す。keeping（いま使っている 1 件）は外さない。外した値を古い順に返す。
+    mutating func trim(keeping: Key) -> [Value] {
+        var evicted: [Value] = []
+        var total = totalCost
+        var index = 0
+        while total > budget, index < order.count {
+            let key = order[index]
+            if key == keeping { index += 1; continue }
+            if let item = items.removeValue(forKey: key) {
+                total -= item.cost
+                evicted.append(item.value)
+            }
+            order.remove(at: index)
+        }
+        return evicted
+    }
+
+    mutating func remove(_ key: Key) -> Value? {
+        guard let item = items.removeValue(forKey: key) else { return nil }
+        order.removeAll { $0 == key }
+        return item.value
+    }
+
+    /// 全部外す（古い順）。
+    mutating func removeAll() -> [Value] {
+        let all = order.compactMap { items[$0]?.value }
+        items.removeAll()
+        order.removeAll()
+        return all
+    }
+
+    private mutating func touch(_ key: Key) {
+        if let index = order.firstIndex(of: key) { order.remove(at: index) }
+        order.append(key)
     }
 }
 

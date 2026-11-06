@@ -29,6 +29,9 @@ ITEMS = [
     # Rhythm Analyzer の rd6_math.h（2.12.0 では g2_math.h、2.13.0 で改名）にある atan / atan2 は fdlibm 5.3 の移植。
     # 注意書きは Sun Microsystems のもので、ソースの頭のコメントにしか無い。
     ("fdlibm", "Sun Microsystems permissive", "Sun Microsystems, Inc.", "Licenses/fdlibm.LICENSE"),
+    # SoundFont 3（SF3）の Vorbis 標本を native で読む（Sources/Shared/ETVorbis.c が使う）。
+    # 上流の stb_vorbis.c を手を入れずに置いてある。本文は MIT か public domain の二択で、ファイルの末尾にある。
+    ("stb_vorbis", "MIT or public domain", "Sean Barrett", "Licenses/stb_vorbis.LICENSE"),
     # Synthetic Binaural Room（MIT、M0Rf30/easyeffects-presets）は外してある。使うのは
     # Virtual Room（feature/brir）で、まだアプリに入っていない。入れるときに、
     # 142c217で足したLicenses/easyeffects-presets.LICENSEとNOTICE.mdの節と一緒に戻す。

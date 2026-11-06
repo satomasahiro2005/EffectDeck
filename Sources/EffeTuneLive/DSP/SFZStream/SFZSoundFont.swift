@@ -7,6 +7,10 @@
 //                                    ここから ETSFZSampleSource（ページを作る側が読むファイルの範囲）を組む
 //    ETSFZSoundFormats               SoundFont Library が取り込む拡張子
 //
+//  SF3（標本が Ogg Vorbis）も同じ道。PCM は ETVorbis.c（stb_vorbis）が標本ごとに復号して、ページとして渡す。
+//  標本の位置は dataOffset（SoundFont ファイルの先頭から Ogg の先頭まで）・dataBytes（Ogg の長さ）、使う範囲は
+//  firstFrame（復号後のどこが標本のフレーム 0 か）と sourceFrames（復号後の全体の長さ = 最後の granule）。
+//
 //  SF2 の PCM は **payload に入れない**（payload は表だけ。v9）。engine が必要なページを要求し、ETSFZPageSource が
 //  置き場の .sfzbank（SF2 をそのまま入れた入れ物）から 16 bit（と sm24 の下位バイト）を読んで渡す。
 //  標本ごとの位置は上流の SF2 の読み手（js/sf2/sample-reader.js）が決める値をそのまま使う
@@ -82,8 +86,14 @@ struct ETSFZSoundFontSample: Equatable {
     var lowByteOffset: UInt64?
     var frames: UInt64
     var sampleRate: Int
-    /// SF3（Vorbis）の標本。SF3 を読む段（D4）までは扱えない。
+    /// SF3（Vorbis）の標本。
     var compressed: Bool = false
+    /// SF3 の標本だけ。Ogg のバイト数（dataOffset から）。
+    var dataBytes: UInt64 = 0
+    /// SF3 の標本だけ。復号後のどのフレームが標本のフレーム 0 か（frames は使う範囲の長さ）。
+    var firstFrame: UInt64 = 0
+    /// SF3 の標本だけ。復号後の全体の長さ。
+    var sourceFrames: UInt64 = 0
 }
 
 /// JS が返した SoundFont の情報。
@@ -93,17 +103,26 @@ struct ETSFZSoundFontInfo: Equatable {
     var presets: [ETSFZPreset]
     var samples: [ETSFZSoundFontSample]
 
-    /// 圧縮標本（SF3）を鳴らせるか。D4 で Vorbis のページを足したら true にする。
-    static let supportsCompressedSamples = false
-
     /// ページを作る側が読む標本の表。bank は置き場の .sfzbank。表の並びは payload の標本の番号と同じ。
-    /// 読めない形（圧縮・範囲の外・標本が 0 フレーム）は prepare の誤りにする。
+    /// 読めない形（範囲の外・標本が 0 フレーム・SF3 の上限超え）は prepare の誤りにする。
     func sources(bank: URL, bankBytes: UInt64? = nil) throws -> [ETSFZSampleSource] {
         try samples.map { sample in
-            guard !sample.compressed || Self.supportsCompressedSamples else {
-                throw ETSFZError.prepare(ETSFZSoundFontInfo.compressedMessage)
-            }
             guard sample.frames >= 1, (1...768_000).contains(sample.sampleRate) else { throw ETSFZError.prepare(ETSFZSoundFontInfo.invalidMessage) }
+            if sample.compressed {
+                let layout = ETSFZVorbisLayout(dataOffset: sample.dataOffset, dataBytes: sample.dataBytes,
+                                               firstFrame: sample.firstFrame, sourceFrames: sample.sourceFrames)
+                guard layout.isValid(frames: sample.frames) else { throw ETSFZError.prepare(ETSFZSoundFontInfo.invalidMessage) }
+                if let bankBytes {
+                    // Ogg が入れ物の外に出るのは、JS の表と置き場のファイルが食い違った印。
+                    let start = sample.baseOffset.addingReportingOverflow(sample.dataOffset)
+                    let end = start.partialValue.addingReportingOverflow(sample.dataBytes)
+                    guard !start.overflow, !end.overflow, end.partialValue <= bankBytes else {
+                        throw ETSFZError.prepare(ETSFZSoundFontInfo.invalidMessage)
+                    }
+                }
+                return ETSFZSampleSource(url: bank, baseOffset: sample.baseOffset, format: .vorbis(layout),
+                                         frames: sample.frames, channels: 1, sampleRate: sample.sampleRate)
+            }
             if let bankBytes {
                 // 範囲が入れ物の外に出るのは、JS の表と置き場のファイルが食い違った印。
                 let (highEnd, overflowHigh) = sample.frames.multipliedReportingOverflow(by: 2)
@@ -128,6 +147,7 @@ struct ETSFZSoundFontInfo: Equatable {
     }
 
     /// 上流の prepareSoundFontBank の「圧縮標本を断る」文（sf2/asset.js）。「This browser」は「This device」にする（SFZMessages と同じ）。
+    /// Vorbis を native で復号するので、この文が出るのは JS が codec を使えないと答えたときだけ（出ない）。
     static let compressedMessage = "This device cannot play compressed SoundFonts. Choose an SF2 SoundFont."
     static let invalidMessage = "The SoundFont collection could not be prepared."
 
@@ -140,7 +160,8 @@ struct ETSFZSoundFontInfo: Equatable {
         return UInt64(double)
     }
 
-    /// glue が返す `soundFont`（{format, presets:[{bank, program, name}], samples:[{base, dataOffset, lowByteOffset, frames, sampleRate, compressed}]}）。
+    /// glue が返す `soundFont`（{format, presets:[{bank, program, name}], samples:[{base, dataOffset, lowByteOffset, frames, sampleRate,
+    /// compressed, dataBytes, firstFrame, sourceFrames}]}。最後の 3 つは SF3 の標本だけ）。
     /// 形が違えば nil（SoundFont として扱わない）。
     static func parse(_ value: Any?) -> ETSFZSoundFontInfo? {
         guard let object = value as? [String: Any], let format = object["format"] as? String,
@@ -162,8 +183,18 @@ struct ETSFZSoundFontInfo: Equatable {
                 guard let parsed = unsigned(raw) else { return nil }
                 low = parsed
             }
-            samples.append(ETSFZSoundFontSample(baseOffset: base, dataOffset: data, lowByteOffset: low, frames: frames,
-                                                sampleRate: Int(rate), compressed: (item["compressed"] as? Bool) ?? false))
+            let compressed = (item["compressed"] as? Bool) ?? false
+            var sample = ETSFZSoundFontSample(baseOffset: base, dataOffset: data, lowByteOffset: low, frames: frames,
+                                              sampleRate: Int(rate), compressed: compressed)
+            if compressed {
+                // SF3 の標本は 3 つとも要る。欠けた表は SoundFont として扱わない。
+                guard let bytes = unsigned(item["dataBytes"]), let first = unsigned(item["firstFrame"]),
+                      let source = unsigned(item["sourceFrames"]) else { return nil }
+                sample.dataBytes = bytes
+                sample.firstFrame = first
+                sample.sourceFrames = source
+            }
+            samples.append(sample)
         }
         return ETSFZSoundFontInfo(format: format, presets: presets, samples: samples)
     }
@@ -173,10 +204,8 @@ struct ETSFZSoundFontInfo: Equatable {
 
 enum ETSFZSoundFormats {
 
-    /// SoundFont Library が取り込む SoundFont の拡張子。SF3 は Vorbis を読む段（D4）で足す。
-    static var soundFontExtensions: [String] {
-        ETSFZSoundFontInfo.supportsCompressedSamples ? ["sf2", "sf3"] : ["sf2"]
-    }
+    /// SoundFont Library が取り込む SoundFont の拡張子。
+    static let soundFontExtensions = ["sf2", "sf3"]
 
     /// 取り込みの一覧に出す道か（SFZ か、取り込める SoundFont）。
     static func isInstrument(path: String) -> Bool {

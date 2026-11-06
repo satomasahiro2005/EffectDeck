@@ -226,10 +226,15 @@ test('console はホストの log へ、無ければ捨てる', () => {
   realm().run('console.log("nothing")');
 });
 
-test('AudioDecoder は「圧縮 SoundFont は非対応」と答える入口だけ', async () => {
+test('AudioDecoder は Vorbis だけ「対応」と答える入口で、復号器は作らせない', async () => {
   const r = realm();
   assert.equal(r.run('typeof AudioDecoder'), 'function');
-  assert.deepEqual(plain(await r.run('AudioDecoder.isConfigSupported({ codec: "vorbis" })')), { supported: false });
+  // sf2/asset.js が見る形（上流は supported しか読まない）。
+  assert.equal(plain(await r.run('AudioDecoder.isConfigSupported({ codec: "vorbis", sampleRate: 44100, numberOfChannels: 1 })')).supported, true);
+  assert.equal(plain(await r.run('AudioDecoder.isConfigSupported({ codec: "opus" })')).supported, false);
+  assert.equal(plain(await r.run('AudioDecoder.isConfigSupported()')).supported, false);
+  // 復号は native。new は上流と同じ code の誤りで断る（ページを JS で復号しない）。
+  assert.equal(r.run('try { new AudioDecoder({ output() {}, error() {} }); "built" } catch (error) { error.code }'), 'sample-codec-unavailable');
 });
 
 // ---------------------------------------------------------------- 束ね

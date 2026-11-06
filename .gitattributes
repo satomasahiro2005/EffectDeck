@@ -4,3 +4,6 @@
 Tools/sfzjs/* text eol=lf
 Patches/effetune-js-*.diff text eol=lf
 Sources/EffeTuneLive/Resources/SFZ/*.js text eol=lf
+Sources/Shared/ThirdParty/* text eol=lf
+Tests/Fixtures/SFZ/vorbis/*.ogg binary
+Tests/Fixtures/SFZ/vorbis/*.s16 binary

@@ -255,3 +255,83 @@ test('SFZ の prepare には soundFont が付かない（Preset の欄は出さ�
         assert.notEqual(prepared.tableVersion, 9);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// ---------------------------------------------------------------- SF3（Vorbis）
+// 見本の本物の Ogg Vorbis（Tests/Fixtures/SFZ/vorbis/tone-44100.ogg、12000 フレーム）を標本 1 本の SF3 に入れる。
+// 上流の tests/helpers/sf3-fixture.mjs は枠だけ（設定ヘッダーが空）の Ogg なので、native が読める本物を使う。
+// startOffset は startAddrsOffset（generator 0）で、標本の使う範囲が復号後の途中から始まる形（firstFrame != 0）を作る。
+const vorbisDir = path.join(repo, 'Tests', 'Fixtures', 'SFZ', 'vorbis');
+const vorbisFixture = JSON.parse(read(path.join(vorbisDir, 'vorbis-golden.json'))).cases.find(item => item.name === 'tone-44100');
+
+function sf3FromOgg(ogg, { frames, rate, startOffset = 0, minor = 0 }) {
+    const text = value => Buffer.from(value, 'ascii');
+    const chunk = (name, data) => { const head = Buffer.alloc(8); head.write(name); head.writeUInt32LE(data.length, 4); return Buffer.concat([head, data, Buffer.alloc(data.length % 2)]); };
+    const list = (name, children) => chunk('LIST', Buffer.concat([text(name), ...children]));
+    const gen = (operator, amount) => { const b = Buffer.alloc(4); b.writeUInt16LE(operator); b.writeUInt16LE(amount & 65535, 2); return b; };
+    const phdr = Buffer.alloc(2 * 38); phdr.write('Preset'); phdr.writeUInt16LE(0, 24); phdr.writeUInt16LE(1, 38 + 24);
+    const inst = Buffer.alloc(44); inst.write('Instrument'); inst.writeUInt16LE(0, 20); inst.writeUInt16LE(1, 22 + 20);
+    // 圧縮標本: start/end は smpl の中の Ogg のバイト位置、ループは復号後のフレーム（sampleType に 16 を足す）
+    const shdr = Buffer.alloc(2 * 46);
+    shdr.write('Tone', 0, 20, 'ascii'); shdr.writeUInt32LE(0, 20); shdr.writeUInt32LE(ogg.length, 24);
+    shdr.writeUInt32LE(1500, 28); shdr.writeUInt32LE(frames - 1000, 32); shdr.writeUInt32LE(rate, 36); shdr[40] = 60;
+    shdr.writeUInt16LE(1 | 16, 44);
+    const zone = [gen(43, 0 | 127 << 8), gen(54, 1), ...(startOffset ? [gen(0, startOffset)] : []), gen(53, 0)];
+    const tables = { phdr, pbag: Buffer.concat([gen(0, 0), gen(1, 0)]), pmod: Buffer.alloc(10),
+        pgen: Buffer.concat([gen(41, 0), gen(0, 0)]), inst, ibag: Buffer.concat([gen(0, 0), gen(zone.length, 0)]), imod: Buffer.alloc(10),
+        igen: Buffer.concat([...zone, gen(0, 0)]), shdr };
+    return chunk('RIFF', Buffer.concat([text('sfbk'),
+        list('INFO', [chunk('ifil', Buffer.from([3, 0, minor, 0])), chunk('INAM', text('Tone\0'))]),
+        list('sdta', [chunk('smpl', ogg)]), list('pdta', Object.entries(tables).map(([name, bytes]) => chunk(name, bytes)))]));
+}
+
+for (const { name, startOffset } of [{ name: '頭から', startOffset: 0 }, { name: '復号後の 1000 フレーム目から', startOffset: 1000 }]) {
+    test(`SF3（本物の Vorbis、${name}）: 一覧 → 取り込み → prepare が通り、Ogg の置き場所と復号後の範囲が合う`, async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfzglue-'));
+        try {
+            const ogg = fs.readFileSync(path.join(vorbisDir, vorbisFixture.ogg));
+            const bytes = sf3FromOgg(ogg, { frames: vorbisFixture.frames, rate: vorbisFixture.sampleRate, startOffset });
+            const r = realm(root);
+            const file = path.join(root, '..', `${path.basename(root)}-tone.sf3`);
+            fs.writeFileSync(file, bytes);
+            const list = JSON.stringify([{ handle: r.register(file), size: bytes.length, lastModified: 0, name: 'tone.sf3', path: 'Banks/tone.sf3' }]);
+
+            assert.deepEqual(JSON.parse(await r.api.listInstruments(list)), ['Banks/tone.sf3']);
+            const entry = JSON.parse(await r.api.importFolder(list, 'Banks/tone.sf3'));
+            assert.equal(entry.format, 'sf3');
+            assert.equal(entry.streamedSource, true);
+            const bank = fs.readFileSync(path.join(root, `${entry.id}.sfzbank`));
+
+            const prepared = JSON.parse(await r.api.prepare(entry.id, geometry));
+            assert.equal(prepared.format, 'sf3');
+            assert.equal(prepared.tableVersion, 9);
+            const control = r.delivered.control;
+            assert.equal(control.length, prepared.payloadBytes, '流し込みの入れ物は制御の部分が payload 全体');
+
+            const soundFont = prepared.soundFont;
+            assert.ok(soundFont, 'soundFont がある');
+            assert.equal(soundFont.format, 'sf3');
+            assert.equal(soundFont.samples.length, 1);
+            const sample = soundFont.samples[0];
+            assert.equal(sample.compressed, true);
+            assert.equal(sample.lowByteOffset, null);
+            assert.equal(sample.sampleRate, vorbisFixture.sampleRate);
+            // 使う範囲 = 復号後の firstFrame から frames、復号後の全体 = 最後の granule
+            assert.equal(sample.sourceFrames, vorbisFixture.frames);
+            assert.equal(sample.firstFrame, startOffset);
+            assert.equal(sample.frames, vorbisFixture.frames - startOffset);
+            assert.equal(sample.dataBytes, ogg.length);
+            // .sfzbank の base + dataOffset から dataBytes バイトが、Ogg そのもの
+            const stored = bank.subarray(sample.base + sample.dataOffset, sample.base + sample.dataOffset + sample.dataBytes);
+            assert.ok(stored.equals(ogg), 'Ogg の置き場所が合う');
+            // payload の標本の表も同じ長さ・レート
+            const ints = new Uint32Array(control.buffer.slice(control.byteOffset, control.byteOffset + control.length), 32);
+            const tableOffset = ints[12];
+            assert.equal(ints[13], 1);
+            assert.equal(ints[tableOffset], sample.frames);
+            assert.equal(ints[tableOffset + 1], 0);
+            assert.equal(ints[tableOffset + 2], 1);
+            assert.equal(ints[tableOffset + 3], sample.sampleRate);
+            assert.equal(JSON.parse(await r.api.list())[0].format, 'sf3');
+        } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    });
+}

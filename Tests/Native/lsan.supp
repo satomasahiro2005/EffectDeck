@@ -4,3 +4,8 @@
 # 音のスレッドが古いポインタを読み込んだ直後かもしれず、解放すると解放後の読み出しになる
 # （ETPipeline.c の gExternal の説明）。1 回 56 バイトで、差し替えは人の操作のときだけ。
 leak:ETPipeline_SetExternalProcessorAt
+#
+# stb_vorbis（Sources/Shared/ThirdParty、上流のまま）は、符号表を読む途中で断るとき、疎な符号表の符号長の一時領域を
+# 解放しない（stb_vorbis.c の start_decoder の early return）。ETVorbis.c は表の大きさを 1M 件までに収めてから渡すので、
+# 残るのは 1 回の失敗で 1 MiB まで。Tests/Native/vorbis.c の「CRC を直した壊れ方」の試験が拾う。
+leak:setup_temp_malloc

@@ -887,29 +887,29 @@ final class ETSFZScriptServiceTests: XCTestCase {
         }
     }
 
-    func testListInstrumentsKeepsOnlySFZ() async throws {
+    func testListInstrumentsKeepsSFZAndSoundFonts() async throws {
         let service = try makeService(poolMode: .js, idleSeconds: -1)
         let dummy = URL(fileURLWithPath: "/nonexistent")
         let files = ["a.sfz", "b/c.SFZ", "d.wav", "b/e.sfz", "f.sf2", "g/h.SF3", "i.sf2.txt"].map {
             ETSFZScriptFile(path: $0, url: dummy, size: 1)
         }
         let listed = try await service.listInstruments(in: files)
-        // SoundFont は D2 まで出さない。上流の並べ替え（正規化済み）のまま
-        XCTAssertEqual(listed, ["a.sfz", "b/c.SFZ", "b/e.sfz"])
+        // SFZ・SF2・SF3。上流の並べ替え（正規化済み）のまま
+        XCTAssertEqual(listed, ["a.sfz", "b/c.SFZ", "b/e.sfz", "f.sf2", "g/h.SF3"])
     }
 
-    func testSoundFontImportIsRefusedWithoutStartingJS() async throws {
+    /// SoundFont（SF2・SF3）の取り込みを入口で断らない（SF3 は Vorbis を native で復号する）。
+    /// 中身の無い見本なので取り込みは失敗するが、「圧縮 SoundFont は鳴らせない」の文では断られない。
+    func testSoundFontImportIsNotRefusedUpFront() async throws {
         let service = try makeService(poolMode: .js, idleSeconds: -1)
         let dummy = URL(fileURLWithPath: "/nonexistent")
         for path in ["x.sf2", "dir/X.SF3"] {
             do {
                 _ = try await service.importFolder(files: [ETSFZScriptFile(path: path, url: dummy, size: 1)], selectedPath: path)
-                XCTFail("SoundFont の取り込みが通った")
             } catch let error as ETSFZError {
-                XCTAssertEqual(error.code, .prepare)
+                XCTAssertNotEqual(error.message, ETSFZSoundFontInfo.compressedMessage, path)
             }
         }
-        XCTAssertEqual(service.contextCount, 0, "断る前に JS の文脈を建てない")
     }
 
     func testContextIsLazyAndRebuiltAfterIdle() async throws {

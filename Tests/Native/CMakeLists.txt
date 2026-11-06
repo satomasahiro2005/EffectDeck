@@ -76,6 +76,20 @@ et_native_test(resample SOURCES resample.c "${ET_SHARED}/ETResample.c")
 et_native_test(preview_tone SOURCES preview_tone.c "${ET_SHARED}/ETPreviewTone.c")
 et_native_test(external_processor
   SOURCES external_processor.c "${ET_SHARED}/ETExternalProcessor.c")
+# SF3 の Vorbis 標本の復号（ETVorbis.c）。stb_vorbis.c は上流のまま置いてあるので、その 1 本だけ警告を出さない
+# （-Werror の対象は自前のコード）。見本は Tests/Fixtures/SFZ/vorbis。
+et_native_test(vorbis
+  SOURCES vorbis.c "${ET_SHARED}/ETVorbis.c" "${ET_SHARED}/ThirdParty/stb_vorbis.c")
+target_compile_definitions(vorbis PRIVATE ET_VORBIS_FIXTURES="${ET_REPO}/Tests/Fixtures/SFZ/vorbis")
+if(MSVC)
+  target_compile_definitions(vorbis PRIVATE _CRT_SECURE_NO_WARNINGS)   # fopen / getenv（試験だけ）
+  set_source_files_properties("${ET_SHARED}/ThirdParty/stb_vorbis.c" PROPERTIES COMPILE_OPTIONS "/w")
+else()
+  # 上流は `(1 << 31) - 1`（int）のような書き方をする（UBSan の shift と signed-integer-overflow が止まる。どの処理系でも
+  # 意図どおりの値になる）。このファイルだけその 2 つの検査を外す。範囲外・NULL・アラインメントなど、メモリの検査は効いたまま。
+  set_source_files_properties("${ET_SHARED}/ThirdParty/stb_vorbis.c" PROPERTIES
+    COMPILE_OPTIONS "-w;-fno-sanitize=shift,signed-integer-overflow")
+endif()
 
 # ---- ETPipeline（POSIX のスレッドと、上流の abi.h が要る） -------------------
 if(NOT MSVC)

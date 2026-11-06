@@ -1,0 +1,50 @@
+{
+  "note": "Tools/golden/vorbis_fixtures.py が作る。ref は ffmpeg の復号（s16le）。",
+  "cases": [
+    {
+      "name": "tone-44100",
+      "sampleRate": 44100,
+      "frames": 12000,
+      "channels": 1,
+      "ogg": "tone-44100.ogg",
+      "ref": "tone-44100.s16",
+      "oggBytes": 6243
+    },
+    {
+      "name": "rate-22050",
+      "sampleRate": 22050,
+      "frames": 9000,
+      "channels": 1,
+      "ogg": "rate-22050.ogg",
+      "ref": "rate-22050.s16",
+      "oggBytes": 5364
+    },
+    {
+      "name": "tiny-48000",
+      "sampleRate": 48000,
+      "frames": 300,
+      "channels": 1,
+      "ogg": "tiny-48000.ogg",
+      "ref": "tiny-48000.s16",
+      "oggBytes": 4151
+    },
+    {
+      "name": "long-44100",
+      "sampleRate": 44100,
+      "frames": 70000,
+      "channels": 1,
+      "ogg": "long-44100.ogg",
+      "ref": "long-44100.s16",
+      "oggBytes": 7465
+    },
+    {
+      "name": "stereo-44100",
+      "sampleRate": 44100,
+      "frames": 4000,
+      "channels": 2,
+      "ogg": "stereo-44100.ogg",
+      "ref": "stereo-44100.s16",
+      "oggBytes": 6553
+    }
+  ]
+}

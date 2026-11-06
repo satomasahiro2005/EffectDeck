@@ -459,9 +459,16 @@
   define('MessageChannel', ETMessageChannel);
 
   // ---------------------------------------------------------------- AudioDecoder（SF3 の入口の印だけ）
-  // sf2/asset.js は AudioDecoder.isConfigSupported の結果で圧縮 SoundFont を断る。
-  // 復号はネイティブに置くので、それができるまでは「非対応」を返して上流の断り文に落とす。
+  // sf2/asset.js は AudioDecoder.isConfigSupported の結果で圧縮 SoundFont（SF3）を断る。上流の JS がここで見るのはこの 1 回だけで、
+  // 復号はしない。SF3 の標本は native（Sources/Shared/ETVorbis.c、stb_vorbis）が復号してページにする（ETSFZPageSource）ので、
+  // Vorbis だけ「対応」と答える。**new AudioDecoder はここでは作れない**（上流が復号器を作るのは、ブラウザの中でページを
+  // 復号するときだけ。こちらでは JS がページを作らない）ので、作ろうとしたら上流と同じ形の誤りで断る。
   define('AudioDecoder', class AudioDecoder {
-    static isConfigSupported() { return Promise.resolve({ supported: false }); }
+    constructor() {
+      throw Object.assign(new Error('Sample decoding is native on this device.'), { code: 'sample-codec-unavailable' });
+    }
+    static isConfigSupported(config) {
+      return Promise.resolve({ supported: !!config && config.codec === 'vorbis', config: config || null });
+    }
   });
 })();

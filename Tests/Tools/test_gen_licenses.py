@@ -28,6 +28,27 @@ class GenLicensesTests(unittest.TestCase):
         self.assertIn("Sun Microsystems", text)
         self.assertIn("provided that this notice", text)
 
+    def test_lists_stb_vorbis(self):
+        # SF3 の Vorbis 標本を読む stb_vorbis（Sources/Shared/ThirdParty、上流のまま）。MIT か public domain の二択。
+        entry = next(item for item in self.gl.ITEMS if item[0] == "stb_vorbis")
+        self.assertEqual(entry[3], "Licenses/stb_vorbis.LICENSE")
+        self.assertEqual(entry[2], "Sean Barrett")
+        text = (ROOT / entry[3]).read_text("utf-8")
+        self.assertIn("ALTERNATIVE A - MIT License", text)
+        self.assertIn("ALTERNATIVE B - Public Domain", text)
+        self.assertIn("Copyright (c) 2017 Sean Barrett", text)
+
+    def test_stb_vorbis_license_matches_the_end_of_the_vendored_file(self):
+        # 写しが上流のファイルの末尾（`/*` と `*/` の間）と同じ本文か。ファイルを差し替えたら写しも見直す。
+        source = (ROOT / "Sources/Shared/ThirdParty/stb_vorbis.c").read_text("utf-8")
+        tail = source[source.rindex("/*\n---") + 3:source.rindex("*/")]
+        # 罫線（-----）の行は、あるなしを問わない。
+        lines = [" ".join(line.split()) for line in tail.splitlines() if line.strip() and set(line.strip()) != {"-"}]
+        copy = [" ".join(line.split()) for line in (ROOT / "Licenses/stb_vorbis.LICENSE").read_text("utf-8").splitlines()
+                if line.strip() and set(line.strip()) != {"-"}]
+        self.assertEqual(copy[1:], lines)    # 先頭の 1 行は、何のライセンスかの説明
+        self.assertIn("v1.22", source.splitlines()[0])
+
     @unittest.skipUnless(vendor_at_pin("effetune", "dsp/plugins/analyzer/rhythm_analyzer"),
                          "Vendor/effetune が固定した版でない")
     def test_fdlibm_copy_matches_vendor_header(self):

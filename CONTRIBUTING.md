@@ -214,6 +214,11 @@ cases are replayed against the committed bundle by `node --test Tools/sfzjs/bund
 are fixed inputs from the 0.16 era (saved `.sfzbank` containers and a v2 payload); they are
 not regenerated.
 
+The SF3 fixtures (`Tests/Fixtures/SFZ/vorbis/`: real mono Ogg Vorbis streams, and ffmpeg's decoding of
+each as 16-bit PCM) are not made by the `generated` job. `python3 Tools/golden/vorbis_fixtures.py` needs
+ffmpeg with libvorbis, and the Ogg serial number is random, so a rerun changes the bytes. They are fixed
+inputs for `Tests/Native/vorbis.c` and `Tests/Unit/SFZVorbisReaderTests.swift`; regenerate them only to add a case.
+
 ### UI tests (Mac)
 
 ```bash

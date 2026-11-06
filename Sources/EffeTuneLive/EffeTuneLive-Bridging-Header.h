@@ -7,3 +7,4 @@
 #import "ETMeterTap.h"
 #import "ETJSFXHost.h"
 #import "effetune/abi.h"
+#import "ETVorbis.h"
