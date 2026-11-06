@@ -213,6 +213,7 @@ targets:
       - path: Sources/Shared
         excludes:
           - "ETPipeline.*"
+          - "ETSampleStream.*"
           - "ETResample.*"
           - "ETPreviewTone.*"
           - "ETMeterTap.*"
@@ -373,6 +374,11 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SFZLibraryBackend.swift
       - path: Sources/EffeTuneLive/DSP/SFZPoolFill.swift
       - path: Sources/EffeTuneLive/DSP/SFZPreparationRules.swift
+      # SFZ の読み込み側の純粋な部分（SFZLoaderSupportTests）、メッセージの文言（SFZMessagesTests）、
+      # 録音されたページ列の復号（SFZPageDecodeTests）。どれも Foundation だけ。
+      - path: Sources/EffeTuneLive/DSP/SFZLoaderSupport.swift
+      - path: Sources/EffeTuneLive/DSP/SFZMessages.swift
+      - path: Sources/EffeTuneLive/DSP/SFZStream/SFZPageDecode.swift
       # SFZ の JS を JavaScriptCore で動かす入れ物と取り込みの入口（SFZScriptHostTests）。
       # JavaScriptCore の側は Logic だけで試す。どちらも #if canImport(JavaScriptCore) で囲んであり、Linux では空になる。
       # 束ね（effetune-sfz.js）・下ごしらえ・見本の駆動は資源として入れる（本体は Sources/EffeTuneLive 全体を取るので要らない）。
@@ -396,6 +402,9 @@ targets:
         buildPhase: resources
       # 0.16 時代の見本を凍結したもの（SFZTests）。
       - path: Tests/Fixtures/SFZ/sfz-golden-legacy.json
+        buildPhase: resources
+      # ストリーミングのページの復号の見本（SFZPageDecodeTests。Tools/golden/sample_page_golden.mjs が作る）。
+      - path: Tests/Fixtures/SFZ/sample-page-golden.json
         buildPhase: resources
       - path: Sources/EffeTuneLive/DSP/ETChannel.swift
       - path: Sources/EffeTuneLive/Generated/SystemPresets.swift
