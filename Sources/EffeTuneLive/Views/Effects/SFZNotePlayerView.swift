@@ -11,6 +11,7 @@
 //    Velocity 127 Level → Max Voices → Dry → Wet → Octave → Sample Shift → Output Gain → Timing →
 //    Lowest Note → Highest Note
 //    声の図（SFZVoiceGraph。触ると鳴る）
+//    Instrument Details（バンクにラベルか画像があるときだけ。押されている鍵盤スイッチの 1 行と、標準の開閉の欄）
 //  つまみは汎用の ParameterRow、Lowest / Highest Note だけ音名で読ませる（Note Spectrogram と同じ ETNoteRangeRow）。
 //  Preset（sp0）は数の行にしない（生の bank × 128 + program が見える）。SoundFont を読めたときだけ、音源の持つ Preset の
 //  一覧から選ぶ欄を出す（既存のメニューの行 ETDisplayChoiceRow。Default = -1、続きは Bank b · p+1. 名前。SFZ のバンクでは
@@ -25,10 +26,15 @@
 //  鍵が指すバンクがこちらに無いときは、名前の所に Missing SoundFont と赤い状態行に見つからない旨を出す（上流 2.17.0 と同じ）。
 //  文面は ETSFZMessages（上流の sfzNotePlayer.*）。
 //
+//  Instrument Details は上流の sfz-instrument.js の _renderInstrumentDetails。行の並びと字面は ETSFZInstrumentDetails
+//  （Key n・CC n・Output n・Group・Global/Master/Region・Keyswitch a–b）。押されている鍵盤スイッチの 1 行は
+//  テレメトリの型 34（ETSFZKeyswitchFrame）。段が入っていて鳴らせるあいだだけ出す。
+//
 //  読み込みの知らせ（飛ばした領域・補正したループや時間・縮めたバンク）は読み込んだ後に一度だけ警告で出す。
 //  バンクが無いあいだ、効果音の側は鳴らず（wet が無音）、dry（既定 20%）だけが通る。上流も同じ。
 
 import SwiftUI
+import UIKit
 
 struct SFZNotePlayerView: View {
 
@@ -88,6 +94,11 @@ struct SFZNotePlayerView: View {
                 }
                 graph(canPreview: ready && node.enabled && !dsp.bypass && !remote.isRemote)
                     .etLocalAudioOnly()
+                if let presentation = loader.presentation(of: node.id) {
+                    SFZInstrumentDetailsView(node: node, presentation: presentation, name: bankName,
+                                             live: ready && node.enabled && !dsp.bypass)
+                        .etLocalAudioOnly()
+                }
             }
             .alert(ETSFZMessages.playerTitle, isPresented: Binding(
                 get: { loader.notice != nil },
@@ -181,5 +192,87 @@ struct SFZNotePlayerView: View {
         case .missing: return ETSFZMessages.error("missing")
         default: return nil
         }
+    }
+}
+
+/// Instrument Details（上流の _createInstrumentDetails）。押されている鍵盤スイッチの 1 行と、標準の開閉の欄。
+/// 枠を見るのは 1 行の部品（SFZKeyswitchLine）だけ。ここ（画像と行の一覧）は枠のたびに組み直さない。
+private struct SFZInstrumentDetailsView: View {
+    let node: EffeTuneDSP.Node
+    let presentation: ETSFZScriptPresentation
+    /// 画像の読み上げ名（上流の alt。空なら Instrument）。
+    let name: String
+    /// 型 34 の枠を信じてよいか（バンクが読めていて、段が入っている）。
+    let live: Bool
+
+    @State private var open = false
+    /// 画像は presentation が変わったときだけ復号する（body の中で毎回 UIImage(data:) を作らない）。
+    @State private var image: UIImage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !presentation.switches.isEmpty {
+                SFZKeyswitchLine(node: node, presentation: presentation, live: live)
+            }
+            DisclosureGroup(isExpanded: $open) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let image {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .accessibilityLabel(name.isEmpty ? "Instrument" : name)
+                    }
+                    ForEach(Array(ETSFZInstrumentDetails.rows(presentation).enumerated()), id: \.offset) { _, row in
+                        LabeledContent(row.name) { Text(row.value) }
+                            .etFont(size: 12)
+                    }
+                }
+            } label: {
+                Text("Instrument Details").etFont(size: 13, weight: .semibold)
+            }
+        }
+        .onAppear { decodeImage() }
+        .onChange(of: presentation) { _, _ in decodeImage() }
+    }
+
+    private func decodeImage() {
+        image = presentation.imageData.flatMap { UIImage(data: $0) }
+    }
+}
+
+/// 押されている鍵盤スイッチの 1 行。テレメトリを見るのはこの部品だけ。
+/// 上流は表示やバンクの版が変わると押下状態を捨て、古い版の枠を無視する（_activeSwitches = null）。
+/// こちらは版を持たないので、表示が変わった時点（と段が鳴らせなくなった時点）の枠の連番を覚え、
+/// それより新しい枠だけを信じる。前のバンクの枠が新しいバンクの範囲に当たって一瞬違う名前が出るのを防ぐ。
+private struct SFZKeyswitchLine: View {
+    let node: EffeTuneDSP.Node
+    let presentation: ETSFZScriptPresentation
+    let live: Bool
+
+    @ETTelemetryFeed private var telemetry
+    /// これ以前の連番の枠は捨てる。nil は捨てるものが無かった（まだ枠が来ていなかった）。
+    @State private var floor: UInt32?
+
+    private var line: String? {
+        guard live, let raw = telemetry.frame(tap: node.tapId, type: .sfzKeyswitches) else { return nil }
+        if let floor, raw.sequence <= floor { return nil }
+        return ETSFZInstrumentDetails.activeLine(
+            frame: ETSFZKeyswitchFrame.parse(type: raw.type, version: raw.version, payload: raw.payload),
+            switches: presentation.switches)
+    }
+
+    var body: some View {
+        Group {
+            if let line {
+                Text(line).etFont(size: 12)
+            }
+        }
+        .onAppear { resetFloor() }
+        .onChange(of: presentation) { _, _ in resetFloor() }
+        .onChange(of: live) { _, now in if !now { resetFloor() } }
+    }
+
+    private func resetFloor() {
+        floor = telemetry.frame(tap: node.tapId, type: .sfzKeyswitches)?.sequence
     }
 }

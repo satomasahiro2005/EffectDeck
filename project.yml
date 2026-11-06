@@ -381,6 +381,8 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SFZStream/SFZPageDecode.swift
       # SoundFont の Preset の一覧と標本の置き場所（SFZSoundFontTests）。Foundation だけ。
       - path: Sources/EffeTuneLive/DSP/SFZStream/SFZSoundFont.swift
+      # SoundFont Note Player の Instrument Details と鍵盤スイッチの枠（型 34）（SFZInstrumentDetailsTests）。Foundation だけ。
+      - path: Sources/EffeTuneLive/DSP/SFZInstrumentDetails.swift
       # SFZ の JS を JavaScriptCore で動かす入れ物と取り込みの入口（SFZScriptHostTests）。
       # JavaScriptCore の側は Logic だけで試す。どちらも #if canImport(JavaScriptCore) で囲んであり、Linux では空になる。
       # 束ね（effetune-sfz.js）・下ごしらえ・見本の駆動は資源として入れる（本体は Sources/EffeTuneLive 全体を取るので要らない）。

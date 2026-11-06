@@ -218,6 +218,8 @@ final class SFZLoader: ObservableObject {
     private var streams: [UUID: SFZActiveStream] = [:]
     /// 段ごとの、読み込んだ SoundFont の Preset の一覧（カードの Preset の欄）。SFZ のバンクや、読み込み中・失敗の段には無い。
     @Published private(set) var presetLists: [UUID: [ETSFZPreset]] = [:]
+    /// 段ごとの、読み込んだバンクの Instrument Details（ラベルと画像）。ラベルの無いバンク・読み込み中・失敗の段には無い。
+    @Published private(set) var presentations: [UUID: ETSFZScriptPresentation] = [:]
     /// 直前に読んだバンク（小さいときだけ）。出力先の切り替えなどで instance が作り直されるたびに
     /// 読み直さないため。256MiB 級のバンクは持たない（メモリを食う）。
     private var recent = ETSFZPreparedCache()
@@ -241,12 +243,17 @@ final class SFZLoader: ObservableObject {
         // Preset の一覧は読み込めた段のものだけ（読み込み中は前の一覧を残す。欄が点滅しないように）。
         switch state {
         case .ready, .loading: break
-        default: if presetLists[id] != nil { presetLists[id] = nil }
+        default:
+            if presetLists[id] != nil { presetLists[id] = nil }
+            if presentations[id] != nil { presentations[id] = nil }
         }
     }
 
     /// 段の Preset の一覧。SoundFont でなければ空（欄を出さない）。
     func presets(of id: UUID) -> [ETSFZPreset] { presetLists[id] ?? [] }
+
+    /// 段の Instrument Details。出すものが無ければ nil（欄ごと出さない）。
+    func presentation(of id: UUID) -> ETSFZScriptPresentation? { presentations[id] }
 
     /// 新しい読み込みを始める。**前の読み込みの結果は捨て、JS の仕事は取り消し、見張りも止める。**
     private func nextGeneration(_ id: UUID) -> Int {
@@ -365,6 +372,7 @@ final class SFZLoader: ObservableObject {
                 try send(prepared, to: node, dsp: dsp, number: number)
                 recent.store(prepared, for: cacheKey(bankID))
                 presetLists[nodeID] = prepared.soundFont.map(\.presets)
+                presentations[nodeID] = ETSFZInstrumentDetails.isEmpty(prepared.presentation) ? nil : prepared.presentation
                 reconcilePreset(prepared, nodeID: nodeID, dsp: dsp)
                 set(.ready(name: prepared.name, regions: prepared.regionCount), for: nodeID)
                 if announce, let text = ETSFZMessages.warning(prepared.warnings.map(\.code)) { notice = text }
@@ -456,6 +464,7 @@ final class SFZLoader: ObservableObject {
             }
         }
         for id in Array(presetLists.keys) where dsp.slot(of: id) == nil { presetLists[id] = nil }
+        for id in Array(presentations.keys) where dsp.slot(of: id) == nil { presentations[id] = nil }
     }
 
     /// 段の供給を差し替える。前の供給は止める（待ちが最大 1 秒あるので UI のスレッドでは止めない）。
@@ -657,7 +666,10 @@ final class SFZLoader: ObservableObject {
     func choose(bankID: String, for nodeID: UUID, dsp: EffeTuneDSP) {
         guard let slot = dsp.slot(of: nodeID) else { return }
         // 別のバンクの Preset の一覧は出さない（読み込めたら入れ直す）。
-        if dsp.node(at: slot)?.irId != bankID { presetLists[nodeID] = nil }
+        if dsp.node(at: slot)?.irId != bankID {
+            presetLists[nodeID] = nil
+            presentations[nodeID] = nil
+        }
         select(bankID: bankID, at: slot, nodeID: nodeID, dsp: dsp)
         if bankID.isEmpty {
             _ = nextGeneration(nodeID)

@@ -37,6 +37,10 @@ enum ETFrameType: UInt16 {
     case sfzVoices          = 30
     /// Note Spectrogram の和音と調（2.16.0、版 1・32 バイト）。NoteSpectrogramFrame.swift。
     case noteChordKey       = 32
+    /// SFZ スクリプトの知らせ（2.17.0、版 1）。スクリプトが動いているときだけ出る。こちらは読まない（番号だけ）。
+    case sfzScriptMessage   = 33
+    /// 鍵盤スイッチ（2.17.0、版 1・32 バイト）。SFZ Note Player が毎回出す。SFZInstrumentDetails.swift。
+    case sfzKeyswitches     = 34
 }
 
 struct ETFrame {

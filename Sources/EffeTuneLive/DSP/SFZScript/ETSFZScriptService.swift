@@ -111,6 +111,8 @@ struct ETSFZScriptPresentation: Equatable {
     var outputs: [ETSFZScriptLabel] = []
     var switches: [(first: Int, last: Int, label: String)] = []
     var groups: [String] = []
+    /// global_label・master_label・region_label（scope は "global" / "master" / "region"）。無いバンクでは空。
+    var scopes: [(scope: String, label: String)] = []
     /// 画像の道（バンクの中）。imageData は読めたときだけ。
     var image: String?
     var imageData: Data?
@@ -119,7 +121,9 @@ struct ETSFZScriptPresentation: Equatable {
         lhs.keys == rhs.keys && lhs.controllers == rhs.controllers && lhs.outputs == rhs.outputs &&
             lhs.groups == rhs.groups && lhs.image == rhs.image && lhs.imageData == rhs.imageData &&
             lhs.switches.count == rhs.switches.count &&
-            zip(lhs.switches, rhs.switches).allSatisfy { $0.first == $1.first && $0.last == $1.last && $0.label == $1.label }
+            zip(lhs.switches, rhs.switches).allSatisfy { $0.first == $1.first && $0.last == $1.last && $0.label == $1.label } &&
+            lhs.scopes.count == rhs.scopes.count &&
+            zip(lhs.scopes, rhs.scopes).allSatisfy { $0.scope == $1.scope && $0.label == $1.label }
     }
 }
 
@@ -551,6 +555,10 @@ final class ETSFZScriptService: @unchecked Sendable {
                 return (first, last, label)
             }
             value.groups = (item["groups"] as? [String]) ?? []
+            value.scopes = ((item["scopes"] as? [[String: Any]]) ?? []).compactMap { entry in
+                guard let scope = entry["scope"] as? String, let label = entry["label"] as? String else { return nil }
+                return (scope, label)
+            }
             value.image = item["image"] as? String
             value.imageData = state.delivered["image"]
             presentation = value
