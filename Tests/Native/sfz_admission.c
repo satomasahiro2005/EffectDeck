@@ -46,8 +46,9 @@ typedef struct {
 } Result;
 
 // delta は見積りの footprint に足す差（0 が上流どおり、-1 は 1 バイト足りない）。
-static Result admit(const char *type, uint32_t kind, const char *file, uint32_t proc, int32_t delta,
-                    int configureStream)
+// proc は見積りと begin の processingChannels、runChannels は process に渡す実際のチャンネル数。
+static Result admitRun(const char *type, uint32_t kind, const char *file, uint32_t proc, uint32_t runChannels,
+                       int32_t delta, int configureStream)
 {
     Result r = { 0, -99, 0, 0, 0, 0 };
     size_t n;
@@ -71,14 +72,20 @@ static Result admit(const char *type, uint32_t kind, const char *file, uint32_t 
         if (configureStream) ET_CHECK(et_instance_stream_configure(e, inst, 9, 0) == 0);
         float *buf = et_arena_combined_ptr(e);
         for (int k = 0; k < BLOCKS; k++) {
-            memset(buf, 0, sizeof(float) * 2 * FR);
-            r.processStatus = (int)et_instance_process(e, inst, buf, 2, FR, (double)k * FR / SAMPLE_RATE_HZ);
+            memset(buf, 0, sizeof(float) * runChannels * FR);
+            r.processStatus = (int)et_instance_process(e, inst, buf, runChannels, FR, (double)k * FR / SAMPLE_RATE_HZ);
         }
         r.stateAfterRun = et_instance_asset_state(e, inst, 0);
     }
     et_engine_destroy(e);
     free(b);
     return r;
+}
+
+static Result admit(const char *type, uint32_t kind, const char *file, uint32_t proc, int32_t delta,
+                    int configureStream)
+{
+    return admitRun(type, kind, file, proc, 2, delta, configureStream);
 }
 
 static void expectActive(Result r)
@@ -99,6 +106,24 @@ ET_CASE(sfz_two_samples_admitted)
 ET_CASE(sfz_plain_admitted)
 {
     expectActive(admit("SFZNotePlayerPlugin", PLAYER_SFZ, "payloads/imports-plain.bin", 2, 0, 0));
+}
+
+// v6（モジュレーション無し）・v7（モジュレーション付き）・効果つきの見本を、見積りどおりの footprint で通す。
+ET_CASE(sfz_v6_goldens_admitted)
+{
+    static const char *const files[] = { "payloads/asset-bad-loop-oneshot.bin", "payloads/asset-groups-and-offsets.bin",
+                                         "payloads/asset-two-samples.bin" };
+    for (size_t i = 0; i < sizeof files / sizeof files[0]; i++)
+        expectActive(admit("SFZNotePlayerPlugin", PLAYER_SFZ, files[i], 2, 0, 0));
+}
+
+ET_CASE(sfz_v7_goldens_admitted)
+{
+    static const char *const files[] = { "payloads/imports-plain.bin", "payloads/imports-cc-aftertouch-program.bin",
+                                         "payloads/imports-curve-and-modulation.bin", "payloads/imports-script.bin",
+                                         "payloads/imports-trigger-all.bin" };
+    for (size_t i = 0; i < sizeof files / sizeof files[0]; i++)
+        expectActive(admit("SFZNotePlayerPlugin", PLAYER_SFZ, files[i], 2, 0, 0));
 }
 
 ET_CASE(sfz_effects_admitted)
@@ -124,6 +149,23 @@ ET_CASE(sfz_legacy_v2_payload_rejected)
     ET_CHECK_MSG(r.stateAfterRun == ET_ASSET_STATE_ERROR, "state=%u", r.stateAfterRun);
 }
 
+// 効果つきの payload は、begin の processingChannels と process のチャンネル数が違うと動かせない
+// （commitSfzEffects が一致を要る）。見積りと begin に同じ値を入れる理由。
+ET_CASE(sfz_effects_channel_mismatch_fails)
+{
+    Result r = admitRun("SFZNotePlayerPlugin", PLAYER_SFZ, "payloads/imports-effects.bin", 1, 2, 0, 0);
+    ET_CHECK(r.prepStatus == 0 && r.began && r.commitStatus == 0);
+    ET_CHECK_MSG(r.stateAfterRun == ET_ASSET_STATE_ERROR, "state=%u process=%d", r.stateAfterRun,
+                 r.processStatus);
+}
+
+ET_CASE(sfz_effects_channels_match_active)
+{
+    Result r = admitRun("SFZNotePlayerPlugin", PLAYER_SFZ, "payloads/imports-effects.bin", 1, 1, 0, 0);
+    ET_CHECK(r.prepStatus == 0 && r.began && r.commitStatus == 0);
+    ET_CHECK_MSG(r.stateAfterRun == ET_ASSET_STATE_ACTIVE, "state=%u", r.stateAfterRun);
+}
+
 ET_CASE(sf2_native_fixture_admitted)
 {
     Result r = admit("SoundFontPlayerPlugin", PLAYER_SF2, "payloads/sf2-native-fixture.bin", 2, 0, 0);
@@ -131,7 +173,8 @@ ET_CASE(sf2_native_fixture_admitted)
     ET_CHECK_MSG(r.stateAfterRun == ET_ASSET_STATE_PREPARING, "state=%u", r.stateAfterRun);
 }
 
-// SoundFont は stream_configure を呼ぶまで PREPARING のまま。呼べば ACTIVE になる。
+// SoundFont（版 9）は et_instance_stream_configure を呼ぶまで ACTIVE にならず（PREPARING のまま・process は失敗しない）、
+// 呼べば ACTIVE になって落ちない。流し込みの SFZ（版 8）は、ホストが標本のページを渡すところまで要るので D1 で見る。
 ET_CASE(sf2_native_fixture_active_after_configure)
 {
     Result r = admit("SoundFontPlayerPlugin", PLAYER_SF2, "payloads/sf2-native-fixture.bin", 2, 0, 1);
@@ -142,7 +185,11 @@ ET_CASE(sf2_native_fixture_active_after_configure)
 static const et_case cases[] = {
     ET_ENTRY(sfz_two_samples_admitted),
     ET_ENTRY(sfz_plain_admitted),
+    ET_ENTRY(sfz_v6_goldens_admitted),
+    ET_ENTRY(sfz_v7_goldens_admitted),
     ET_ENTRY(sfz_effects_admitted),
+    ET_ENTRY(sfz_effects_channel_mismatch_fails),
+    ET_ENTRY(sfz_effects_channels_match_active),
     ET_ENTRY(sfz_footprint_one_byte_short_rejected),
     ET_ENTRY(sfz_legacy_v2_payload_rejected),
     ET_ENTRY(sf2_native_fixture_admitted),
