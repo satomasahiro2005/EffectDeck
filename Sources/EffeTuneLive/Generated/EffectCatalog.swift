@@ -1333,14 +1333,15 @@ let ETCatalog: [ETEffect] = [
       ]),
     ETEffect(
       type: "SFZNotePlayerPlugin",
-      name: "SFZ Note Player",
-      about: "Plays an imported SFZ instrument from detected notes",
+      name: "SoundFont Note Player",
+      about: "Plays detected notes with SF2 SoundFonts and SFZ instruments",
       category: "others",
-      paramsHash: 0xdfb4bbc5,
-      floatCount: 20,
-      defaults: [0.75, -60.0, -10.0, 28.0, 91.0, 32.0, 20.0, 100.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 40.0, 50.0, 0.0, -1.0, 100.0, 0.0],
+      paramsHash: 0x3785c6ed,
+      floatCount: 21,
+      defaults: [0.75, -60.0, -10.0, 28.0, 91.0, 32.0, 20.0, 100.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 40.0, 50.0, 0.0, -1.0, 100.0, 0.0, -1.0],
       params: [
         ETParam(name: "detection", key: "dt", label: "Detection", kind: .enumeration(["Classic", "Event"]), defaultValue: 0.0, offset: 19, count: 1),
+        ETParam(name: "preset", key: "sp0", label: "Preset", kind: .number(min: -1.0, max: 8388607.0, step: 0.0, unit: "", isInteger: true), defaultValue: -1.0, offset: 20, count: 1),
         ETParam(name: "playHighest", key: "hi", label: "Highest", kind: .toggle, defaultValue: 1.0, offset: 12, count: 1),
         ETParam(name: "playMiddle", key: "md", label: "Middle", kind: .toggle, defaultValue: 1.0, offset: 11, count: 1),
         ETParam(name: "playLowest", key: "lo", label: "Lowest", kind: .toggle, defaultValue: 1.0, offset: 10, count: 1),
@@ -1360,6 +1361,20 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "timingOffsetMs", key: "tm", label: "Timing", kind: .number(min: -100.0, max: 100.0, step: 1.0, unit: "ms", isInteger: true), defaultValue: 0.0, offset: 13, count: 1),
         ETParam(name: "minimumMidi", key: "mn", label: "Lowest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 28.0, offset: 3, count: 1),
         ETParam(name: "maximumMidi", key: "mx", label: "Highest Note", kind: .number(min: 21.0, max: 108.0, step: 0.0, unit: "", isInteger: true), defaultValue: 91.0, offset: 4, count: 1)
+      ]),
+    ETEffect(
+      type: "SoundFontPlayerPlugin",
+      name: "SoundFont Player",
+      about: "Plays MIDI songs through SoundFont and SFZ instruments",
+      category: "others",
+      paramsHash: 0x844a0998,
+      floatCount: 4,
+      defaults: [0.0, 64.0, 0.0, 0.0],
+      params: [
+        ETParam(name: "midiChannel", key: "mc", label: "MIDI Channel", kind: .number(min: 0.0, max: 16.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 0, count: 1),
+        ETParam(name: "maxVoices", key: "pl", label: "Max Voices", kind: .number(min: 1.0, max: 1024.0, step: 0.0, unit: "", isInteger: true), defaultValue: 64.0, offset: 1, count: 1),
+        ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -60.0, max: 12.0, step: 0.1, unit: "", isInteger: false), defaultValue: 0.0, offset: 2, count: 1),
+        ETParam(name: "sampleQuality", key: "sq", label: "Interpolation", kind: .number(min: 0.0, max: 2.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 3, count: 1)
       ]),
     ETEffect(
       type: "AdaptivePredictionEffectPlugin",

@@ -15,7 +15,7 @@ Website: [effectdeck.nemut.ai](https://effectdeck.nemut.ai/)
 <!-- 2 行目は <br> で折る（空行で段落を分けると行の間が空きすぎる。行頭に HTML コメントを置いても
      段落が切れる）。Downloads と Rating の数字は .github/workflows/badges.yml が孤立ブランチ badges に置く。 -->
 [![Release](https://img.shields.io/github/v/release/satomasahiro2005/EffectDeck?label=release&color=3B82F6)](https://github.com/satomasahiro2005/EffectDeck/releases)
-![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.16.0-3B82F6)
+![EffeTune DSP](https://img.shields.io/badge/EffeTune%20DSP-0.17.0-3B82F6)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Discord](https://img.shields.io/discord/1554111611067695114?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://fxdB.nemut.ai/)<br>
 [![iOS](https://img.shields.io/badge/iOS-27%2B-000000?logo=apple&logoColor=white)](#building)
@@ -224,7 +224,6 @@ name, EffeTune Live: `EffeTuneLive.xcodeproj`, the `EffeTuneLive` app target (pr
 |---|---|
 | `Vendor/effetune` | EffeTune, pinned by the submodule. Its `dsp/` is the audio engine |
 | `Vendor/ysfx` | ysfx, the JSFX interpreter, pinned to `5c3452fe`. `Scripts/setup.sh` refuses another revision |
-| `Patches/abi-begin-ptr.diff` | Adds `et_instance_asset_begin_ptr`, a 64-bit staging pointer. Without it the seven effects that load data (IR Reverb and the ones designed in the app, such as Room EQ) pass audio through silently |
 | `Patches/effetune-external-*.diff` | Let AUv3 and JSFX run as nodes inside the EffeTune chain ([docs/external-processor.md](docs/external-processor.md)) |
 | `Patches/ysfx-effectdeck-ios.diff` | The iOS sandbox for ysfx and fixes taken from upstream WDL |
 | `Patches/ysfx-effectdeck-ios.old.diff` | The previous ysfx patch. Never applied; setup.sh uses it to take the old version off a copied tree |

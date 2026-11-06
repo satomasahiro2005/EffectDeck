@@ -138,7 +138,7 @@ if(ET_NATIVE_WITH_ENGINE)
     message(FATAL_ERROR "no dsp/CMakeLists.txt under ${root}")
   endif()
 
-  set(patches abi-begin-ptr effetune-external-node effetune-external-latency
+  set(patches effetune-external-node effetune-external-latency
       effetune-external-routing)
   set(stamp "${root}")
   if(EXISTS "${root}/.pin")

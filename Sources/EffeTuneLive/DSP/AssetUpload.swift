@@ -191,25 +191,11 @@ extension AssetUpload {
 
     // MARK: - 64bit の口
 
-    // ここが今のところ塞がっている。
-    //
-    // abi.cpp:170-185 の et_instance_asset_begin は
-    //   return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(staging));
-    // と書いてあって、番地を uint32 に切り落としている。WASM（32bit）では
-    // これで足りるが、arm64 では上位 32bit が落ちて使えない番地になる。
-    // dsp 側も native のテストでは C++ の Engine::beginInstanceAsset を直に呼んでいて
-    // （plugins/eq/five_band_fir_peq/native_test.cpp:90）、この口は通っていない。
-    //
-    // Vendor を書き換えずに済ませるため、番地を返す口があればそちらを使う。
-    // abi.cpp に次の 1 本を足せば、ここは自動で繋がる:
-    //
-    //   ET_EXPORT uint8_t *et_instance_asset_begin_ptr(
-    //       et_engine engine, et_instance instance, uint32_t slot,
-    //       uint32_t channels, uint32_t frames, uint32_t topology,
-    //       uint32_t head_block, uint32_t rate_divider,
-    //       uint32_t path_count, uint32_t input_count,
-    //       uint32_t processing_channels, uint32_t footprint_bytes,
-    //       uint32_t byte_size);
+    // abi.cpp の et_instance_asset_begin は staging の番地を uint32 で返す WASM 用の口で、
+    // native 64bit では 0 を返す。番地を返す口は et_instance_asset_begin_ptr。
+    // 以前は Patches/abi-begin-ptr.diff で足していたが、上流 2.17.0（DSP 0.17.0）が
+    // 同じ名前で入れた。上流の版は最後に minimum_physical_bpm を取る。
+    // 0 は「MIDI の地図に関係なく 120 BPM で用意する」。EffectDeck は MIDI を持たないので 0 を渡す。
     //
     // 別の形で通したいときは stagingAddressProvider に入れる。
 
@@ -224,8 +210,6 @@ extension AssetUpload {
     /// シンボルを strip する**ので、Debug では見つかって TestFlight と App Store
     /// では見つからない。出荷した ipa を `nm` で見ると `asset_begin` は 0 件だった。
     /// 宣言は abi.h に ET_EXPORT 付きで在るので、直に呼べばリンク時に解決される。
-    /// パッチが当たっていない木では**ビルドが止まる**が、利用者の手元で
-    /// 「IR を入れられない」になるより、そちらのほうが早く気づける。
     static var canStage: Bool { true }
 
     private static func beginStaging(_ request: BeginRequest) throws -> UnsafeMutableRawPointer {
@@ -239,7 +223,8 @@ extension AssetUpload {
             request.headBlock, request.rateDivider,
             request.pathCount, request.inputCount,
             request.processingChannels, request.footprintBytes,
-            request.byteSize
+            request.byteSize,
+            0
         ) else {
             throw ETAssetUploadError.beginRejected
         }

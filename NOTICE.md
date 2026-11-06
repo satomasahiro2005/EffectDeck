@@ -17,7 +17,7 @@ The audio processing is EffeTune's DSP core (`dsp/`):
 MIT License / Copyright (c) 2025-2026, Yoshiyuki Kobayashi
 
 It is used with small patches that connect it to the app. `Scripts/setup.sh` applies
-`Patches/abi-begin-ptr.diff` and `Patches/effetune-external-*.diff` to `dsp/core` before
+`Patches/effetune-external-*.diff` to `dsp/core` before
 each build; the patches are the complete list of changes.
 
 EffeTune's `dsp/` is host-neutral C++20 with no browser or WebAudio API in it, so it
