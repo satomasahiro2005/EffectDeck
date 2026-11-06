@@ -206,6 +206,15 @@ struct ETSFZScriptSources {
     }
 }
 
+/// 上流の誤りの code と message を ETSFZError にする（JS が付けた綴りだけを受け、知らない綴りは prepare）。
+/// code が無いとき、取り消しの旗が立っていれば cancelled（待ちの途中で止まった誤りは code を持たない）。
+enum ETSFZScriptErrors {
+    static func map(code: String?, message: String, cancelled: Bool) -> ETSFZError {
+        let known = code.flatMap(ETSFZErrorCode.init(rawValue:))
+        return ETSFZError(code: known ?? (cancelled ? .cancelled : .prepare), message: message)
+    }
+}
+
 enum ETSFZPoolMode {
     /// PCM は Swift が運ぶ（本番）。
     case host
@@ -322,9 +331,6 @@ final class ETSFZScriptService: @unchecked Sendable {
     private let poolMode: ETSFZPoolMode
     private let maxBytes: Int
 
-    private let scriptLock = NSLock()
-    private var scripts: (prelude: String, bundle: String)?
-
     /// sources が nil のときはアプリの資源（Bundle.main）から探す。
     /// maxBytes は上流の既定の上限（256 MiB。設定の画面は持たない）。
     init(backend: ETSFZScriptBackend, decode: @escaping ETSFZScriptDecode, estimate: ETSFZScriptEstimate? = nil,
@@ -362,7 +368,7 @@ final class ETSFZScriptService: @unchecked Sendable {
     func listInstruments(in files: [ETSFZScriptFile], cancel: ETSFZCancelToken? = nil) async throws -> [String] {
         try await job(cancel) { context, state in
             let json = try Self.fileList(files, state)
-            let text = try Self.callString(context, "listInstruments", [context.string(json)])
+            let text = try Self.callString(context, "listInstruments", [context.keptString(json)])
             guard let data = text.data(using: .utf8), let list = try JSONSerialization.jsonObject(with: data) as? [String] else {
                 throw ETSFZError(code: .prepare, message: "The SFZ folder could not be read.")
             }
@@ -377,7 +383,7 @@ final class ETSFZScriptService: @unchecked Sendable {
         }
         return try await job(cancel) { context, state in
             let json = try Self.fileList(files, state)
-            let text = try Self.callString(context, "importFolder", [context.string(json), context.string(selectedPath)])
+            let text = try Self.callString(context, "importFolder", [context.keptString(json), context.keptString(selectedPath)])
             guard let entry = try Self.parseEntries("[\(text)]").first else {
                 throw ETSFZError(code: .prepare, message: "The SFZ could not be imported.")
             }
@@ -391,12 +397,11 @@ final class ETSFZScriptService: @unchecked Sendable {
         let writes = poolMode == .host
         return try await job(cancel) { context, state in
             if writes { state.pool = [] }
-            var arguments: [JSValueRef] = [context.string(id)]
+            var arguments: [JSValueRef] = [context.keptString(id)]
             if let geometry {
-                arguments.append(context.string(Self.geometryJSON(geometry)))
+                arguments.append(context.keptString(Self.geometryJSON(geometry)))
             }
-            let text = try Self.callString(context, "prepare", arguments, nullable: true)
-            guard let text else { return nil }
+            guard let text = try Self.callNullable(context, "prepare", arguments) else { return nil }
             return try Self.parsePrepared(text, state: state)
         }
     }
@@ -404,14 +409,14 @@ final class ETSFZScriptService: @unchecked Sendable {
     /// バンクを置き場から消す（一覧と入れ物）。
     func remove(id: String) async throws {
         try await job(nil) { context, _ in
-            _ = try Self.callString(context, "remove", [context.string(id)], nullable: true)
+            _ = try Self.callNullable(context, "remove", [context.keptString(id)])
         }
     }
 
     /// JS が持つ一覧を開き直す（置き場を JS の外から書き換えたとき）。
     func reset() async throws {
         try await job(nil) { context, _ in
-            _ = try Self.callString(context, "reset", [], nullable: true)
+            _ = try Self.callNullable(context, "reset", [])
         }
     }
 
@@ -445,8 +450,7 @@ final class ETSFZScriptService: @unchecked Sendable {
     static func map(_ error: Error, cancelled: Bool) -> Error {
         if let error = error as? ETSFZError { return error }
         if let error = error as? ETJSError {
-            let code = error.code.flatMap(ETSFZErrorCode.init(rawValue:)) ?? (cancelled ? .cancelled : .prepare)
-            return ETSFZError(code: code, message: error.message)
+            return ETSFZScriptErrors.map(code: error.code, message: error.message, cancelled: cancelled)
         }
         if cancelled { return ETSFZError(code: .cancelled, message: "Instrument import was cancelled.") }
         return ETSFZError(code: .prepare, message: String(describing: error))
@@ -465,19 +469,12 @@ final class ETSFZScriptService: @unchecked Sendable {
 
     // MARK: JS の呼び出し
 
-    /// __etSfz.<name>(…) を呼んで、Promise を待ち、文字列（JSON）で受ける。null / undefined は nil。
-    private static func callString(_ context: ETJSContext, _ name: String, _ arguments: [JSValueRef],
-                                   nullable: Bool = false) throws -> String {
+    /// __etSfz.<name>(…) を呼んで、Promise を待ち、文字列（JSON）で受ける。null / undefined は誤り。
+    private static func callString(_ context: ETJSContext, _ name: String, _ arguments: [JSValueRef]) throws -> String {
         guard let text = try callNullable(context, name, arguments) else {
-            if nullable { return "null" }
             throw ETSFZError(code: .prepare, message: "The SFZ library is unavailable.")
         }
         return text
-    }
-
-    private static func callString(_ context: ETJSContext, _ name: String, _ arguments: [JSValueRef],
-                                   nullable: Bool) throws -> String? {
-        try callNullable(context, name, arguments)
     }
 
     private static func callNullable(_ context: ETJSContext, _ name: String, _ arguments: [JSValueRef]) throws -> String? {
@@ -753,12 +750,12 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
             try state.requireCurrent()
             let data = window.baseAddress.map { Data(bytes: $0, count: window.count) } ?? Data()
             let pcm = try state.decode(data)
-            let result = context.makeObject()
+            let result = context.keep(context.makeObject())
             context.setProperty(result, "sampleRate", context.number(Double(pcm.sampleRate)))
             var arrays: [JSValueRef] = []
             for plane in pcm.channels {
                 state.planes[UInt(bitPattern: plane.pointer)] = plane
-                arrays.append(try context.makeFloat32Array(pointer: plane.pointer, count: plane.count, owner: plane))
+                arrays.append(context.keep(try context.makeFloat32Array(pointer: plane.pointer, count: plane.count, owner: plane)))
             }
             context.setProperty(result, "channels", context.makeArray(arrays))
             return result
@@ -849,7 +846,7 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         const library = await ensure();
         // 上流の cache に当たると書き手が呼ばれない。いつも作り直す（呼び手が cache を持つ）
         library.prepared = null;
-        const options = { decode, isCurrent };
+        const options = { decode, isCurrent, persistentCache: null };
         if (geometryJson) {
           options.preparationContext = API.sfzPreparationContext(JSON.parse(geometryJson));
           options.estimateEffectBytes = estimate;
@@ -881,7 +878,7 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         async listInstruments(json) { return safe(API.listSfzFolderFiles(hostFiles(json))); },
         async importFolder(json, selectedPath) {
           const library = await ensure();
-          const entry = await library.importFolderFiles(hostFiles(json), selectedPath, { decode, isCurrent });
+          const entry = await library.importFolderFiles(hostFiles(json), selectedPath, { decode, isCurrent, persistentCache: null });
           library.prepared = null;
           return safe(entry);
         },

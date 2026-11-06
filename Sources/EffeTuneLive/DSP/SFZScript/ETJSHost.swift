@@ -21,7 +21,9 @@ import JavaScriptCore
 
 // MARK: - 誤り
 
-/// JS の例外。`code` は上流の sfzError が付ける綴り（prepare / too-large / no-regions / storage / cancelled）。
+/// JS の例外。`code` は上流の sfzError が付ける綴り。主なものは prepare / too-large / no-regions / storage / cancelled。
+/// ETSFZErrorCode に無い綴り（sample-integrity・script-invalid・source-changed・sample-lookup-limit・sample-format・invalid-sf2）は
+/// 上に載せる側が prepare にし、文は上流のまま残す。
 struct ETJSError: Error, CustomStringConvertible {
     var name: String
     var message: String
@@ -184,6 +186,26 @@ final class ETJSContext {
     }
 
     func makeObject() -> JSObjectRef { JSObjectMake(ref, nil, nil) }
+
+    /// 値を仕事の終わりまで GC から守って、そのまま返す。
+    /// **Swift の配列などヒープに置く値は、JSC の GC が（スタックとレジスタしか見ないので）見つけられない。**
+    /// 次の JS の確保より前に、これで守る。
+    @discardableResult
+    func keep(_ value: JSValueRef) -> JSValueRef {
+        JSValueProtect(ref, value)
+        retained.append(value)
+        return value
+    }
+
+    @discardableResult
+    func keep(_ object: JSObjectRef) -> JSObjectRef {
+        JSValueProtect(ref, object)
+        retained.append(object)
+        return object
+    }
+
+    /// 守られた文字列。引数の配列に入れて呼ぶ前に作る値に使う。
+    func keptString(_ text: String) -> JSValueRef { keep(string(text)) }
 
     func makeArray(_ values: [JSValueRef]) -> JSObjectRef {
         let optional: [JSValueRef?] = values
@@ -388,7 +410,7 @@ final class ETJSContext {
                 return nil
             }
         }
-        try call(thenFunction, this: object, [makeFunction(settle(false)), makeFunction(settle(true))])
+        try call(thenFunction, this: object, [keep(makeFunction(settle(false))), keep(makeFunction(settle(true)))])
         try pump { outcome.done }
         let result = outcome.value ?? undefined
         if outcome.rejected { throw error(from: result) }
@@ -511,7 +533,7 @@ final class ETJSHost: @unchecked Sendable {
                     continuation.resume(throwing: error)
                 }
                 if idleSeconds >= 0 {
-                    thread.armIdle(at: Date().addingTimeInterval(idleSeconds)) { [self] in dropContext() }
+                    thread.armIdle(at: Date().addingTimeInterval(idleSeconds)) { [weak self] in self?.dropContext() }
                 }
             }
         }

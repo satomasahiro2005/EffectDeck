@@ -368,11 +368,26 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SFZAsset.swift
       - path: Sources/EffeTuneLive/DSP/SFZLibraryFiles.swift
       # SFZ・SoundFont の置き場の入れ物（SFZLibraryBackendTests）と、PCM を staging へ直に書く道・確保の見積りの
-      # 純粋な部分（SFZPoolFillTests）。どちらも Foundation だけ。見積りをエンジンに聞く側（SamplePlayerPreparation）と
-      # JavaScriptCore の側（SFZScript/）はここに入れない。
+      # 純粋な部分（SFZPoolFillTests）。どちらも Foundation だけ。見積りをエンジンに聞く側（SamplePlayerPreparation）は
+      # ここに入れない。
       - path: Sources/EffeTuneLive/DSP/SFZLibraryBackend.swift
       - path: Sources/EffeTuneLive/DSP/SFZPoolFill.swift
       - path: Sources/EffeTuneLive/DSP/SFZPreparationRules.swift
+      # SFZ の JS を JavaScriptCore で動かす入れ物と取り込みの入口（SFZScriptHostTests）。
+      # JavaScriptCore の側は Logic だけで試す。どちらも #if canImport(JavaScriptCore) で囲んであり、Linux では空になる。
+      # 束ね（effetune-sfz.js）・下ごしらえ・見本の駆動は資源として入れる（本体は Sources/EffeTuneLive 全体を取るので要らない）。
+      - path: Sources/EffeTuneLive/DSP/SFZScript/ETJSHost.swift
+      - path: Sources/EffeTuneLive/DSP/SFZScript/ETSFZScriptService.swift
+      - path: Sources/EffeTuneLive/Resources/SFZ/effetune-sfz.js
+        buildPhase: resources
+      - path: Sources/EffeTuneLive/Resources/SFZ/effetune-sfz-prelude.js
+        buildPhase: resources
+      - path: Tools/golden/sfz_runner.mjs
+        buildPhase: resources
+      - path: Tools/golden/sf2_runner.mjs
+        buildPhase: resources
+      - path: Tests/Fixtures/SFZ/sf2-golden.json
+        buildPhase: resources
       # 上流の js/sfz/asset.js が書いた payload（SFZPoolFillTests）。subdirectory: "payloads" で引くのでフォルダのまま入れる。
       - path: Tests/Fixtures/SFZ/payloads
         type: folder
