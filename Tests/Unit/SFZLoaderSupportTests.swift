@@ -188,6 +188,25 @@ final class SFZLoaderSupportTests: XCTestCase {
         XCTAssertNil(cache.get(ETSFZPreparedCache.Key(bankID: "b", bundleSHA: "s1")))
     }
 
+    func testStreamedPayloadIsKeyedByGeometry() throws {
+        let stereo = try ETSFZPreparationRules.Geometry(sampleRate: 48000, processingChannels: 2, maxFrames: 4096)
+        let mono = try ETSFZPreparationRules.Geometry(sampleRate: 48000, processingChannels: 1, maxFrames: 4096)
+        let rate = try ETSFZPreparationRules.Geometry(sampleRate: 44100, processingChannels: 2, maxFrames: 4096)
+        var cache = ETSFZPreparedCache(limitBytes: 1000)
+        // 常駐（版 7）は幾何で payload が変わらないので、幾何が違っても当たる。
+        cache.store(prepared(bytes: 10), for: ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s", geometry: stereo))
+        XCTAssertNotNil(cache.get(ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s", geometry: mono)))
+        // 流し込み（版 8 以上）は、上流が幾何ごとに枠数を選び直すので、同じ幾何だけ当たる。
+        for version in [8, 9, 10] {
+            var streamed = prepared(bytes: 10)
+            streamed.tableVersion = version
+            cache.store(streamed, for: ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s", geometry: stereo))
+            XCTAssertNotNil(cache.get(ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s", geometry: stereo)))
+            XCTAssertNil(cache.get(ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s", geometry: mono)))
+            XCTAssertNil(cache.get(ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s", geometry: rate)))
+        }
+    }
+
     func testCacheDropsOverLimitAndForgetsRemoved() {
         var cache = ETSFZPreparedCache(limitBytes: 1000)
         let key = ETSFZPreparedCache.Key(bankID: "a", bundleSHA: "s")

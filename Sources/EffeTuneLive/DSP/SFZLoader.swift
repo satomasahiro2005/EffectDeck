@@ -270,8 +270,8 @@ final class SFZLoader: ObservableObject {
 
     private func current(_ id: UUID, _ number: Int) -> Bool { generation[id] == number }
 
-    private func cacheKey(_ bankID: String) -> ETSFZPreparedCache.Key {
-        ETSFZPreparedCache.Key(bankID: bankID, bundleSHA: bundleSHA)
+    private func cacheKey(_ bankID: String, _ geometry: ETSFZPreparationRules.Geometry) -> ETSFZPreparedCache.Key {
+        ETSFZPreparedCache.Key(bankID: bankID, bundleSHA: bundleSHA, geometry: geometry)
     }
 
     // MARK: 幾何
@@ -328,8 +328,10 @@ final class SFZLoader: ObservableObject {
             return false
         }
         set(.loading, for: nodeID)
-        if let cached = recent.get(cacheKey(bankID)) {
-            finish(nodeID: nodeID, bankID: bankID, number: number, dsp: dsp, announce: announce, result: .success(cached))
+        let key = cacheKey(bankID, geometry)
+        if let cached = recent.get(key) {
+            finish(nodeID: nodeID, bankID: bankID, key: key, number: number, dsp: dsp, announce: announce,
+                   result: .success(cached))
             return true
         }
         let token = ETSFZCancelToken()
@@ -341,15 +343,16 @@ final class SFZLoader: ObservableObject {
             do { result = .success(try await service.prepare(id: bankID, geometry: scripted, cancel: token)) } catch {
                 result = .failure(error)
             }
-            self.finish(nodeID: nodeID, bankID: bankID, number: number, dsp: EffeTuneDSP.shared, announce: announce,
-                        result: result)
+            self.finish(nodeID: nodeID, bankID: bankID, key: key, number: number, dsp: EffeTuneDSP.shared,
+                        announce: announce, result: result)
         }
         return true
     }
 
     /// 読めた資産を送る。UI のスレッドで。段がもう別の鍵になっていたら捨てる。
-    private func finish(nodeID: UUID, bankID: String, number: Int, dsp: EffeTuneDSP, announce: Bool,
-                        result: Result<ETSFZScriptPrepared?, Error>) {
+    /// key は読んだときの幾何を含む覚えの鍵（流し込みの payload は幾何ごとに違う）。
+    private func finish(nodeID: UUID, bankID: String, key: ETSFZPreparedCache.Key, number: Int, dsp: EffeTuneDSP,
+                        announce: Bool, result: Result<ETSFZScriptPrepared?, Error>) {
         guard current(nodeID, number) else { return }
         tokens[nodeID] = nil
         switch result {
@@ -372,7 +375,7 @@ final class SFZLoader: ObservableObject {
             }
             do {
                 try send(prepared, to: node, dsp: dsp, number: number)
-                recent.store(prepared, for: cacheKey(bankID))
+                recent.store(prepared, for: key)
                 presetLists[nodeID] = prepared.soundFont.map(\.presets)
                 presentations[nodeID] = ETSFZInstrumentDetails.isEmpty(prepared.presentation) ? nil : prepared.presentation
                 reconcilePreset(prepared, nodeID: nodeID, dsp: dsp)

@@ -63,12 +63,26 @@ enum ETSFZPayloadFill {
 /// 直前に読んだバンク 1 つ。出力先の切り替えなどで instance が作り直されるたびに JS で読み直さないための覚え。
 /// **覚えるのは payload の制御の部分とプールの面（PCM）だけ。footprint は覚えない**（幾何が変われば変わるので send のたびに出す）。
 /// 鍵に束ねの sha を入れるのは、JS を差し替えた版が前の版の payload を返さないため。
+/// **流し込みの payload（表の版 8 以上。SoundFont と流し込みの SFZ）は幾何でも引く。**上流は幾何ごとに標本の置き場の枠数を
+/// 予算いっぱいに選び直して payload に書く（streamed-bank.js の materializeForContext）。別の幾何の payload を送ると、
+/// 幅・レート・maxFrames が増えた側で上限を越える。常駐（6・7）の payload は幾何で変わらない（footprint だけ）。
 struct ETSFZPreparedCache {
 
     struct Key: Hashable {
         var bankID: String
         var bundleSHA: String
+        /// 読んだときの幾何。流し込みの payload だけがこれも見る。
+        var geometry: ETSFZPreparationRules.Geometry?
+
+        init(bankID: String, bundleSHA: String, geometry: ETSFZPreparationRules.Geometry? = nil) {
+            self.bankID = bankID
+            self.bundleSHA = bundleSHA
+            self.geometry = geometry
+        }
     }
+
+    /// payload が幾何で変わるか（流し込みの表。版 8・9・10）。
+    static func dependsOnGeometry(_ prepared: ETSFZScriptPrepared) -> Bool { prepared.tableVersion >= 8 }
 
     /// 覚える上限（payload 全体のバイト数）。256 MiB 級のバンクは持たない（メモリを食う）。
     let limitBytes: Int
@@ -79,7 +93,8 @@ struct ETSFZPreparedCache {
     }
 
     func get(_ key: Key) -> ETSFZScriptPrepared? {
-        guard let held, held.key == key else { return nil }
+        guard let held, held.key.bankID == key.bankID, held.key.bundleSHA == key.bundleSHA else { return nil }
+        if Self.dependsOnGeometry(held.prepared), held.key.geometry != key.geometry { return nil }
         return held.prepared
     }
 

@@ -42,7 +42,7 @@ enum ETSFZPreparationRules {
 
     /// 見積りと確保が同じ値を見るための幾何（上流 sfzPreparationContext）。
     /// **同じ processingChannels を BeginInfo にも入れる**こと（commitSfzEffects が一致を要る）。
-    struct Geometry: Equatable {
+    struct Geometry: Hashable {
         var sampleRate: Double
         var processingChannels: Int
         var maxFrames: Int

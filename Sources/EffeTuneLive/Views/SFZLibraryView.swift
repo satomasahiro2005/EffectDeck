@@ -4,8 +4,8 @@
 //  上流は 2.14.0 で、SFZ Note Player のカードにあった選択欄・Import Folder…・Remove を、この一覧 1 枚に
 //  まとめた。カードには SoundFont Library… と選んでいる名前と Clear だけが残る（SFZNotePlayerView.swift）。
 //
-//  - 取り込みはフォルダを選ぶと**中の SFZ と SoundFont（SF2）を全部**置き場へ入れる（上流の importFiles と同じ。段には入れない）。
-//    SoundFont はファイル 1 本を選んでもよい（ファイル選択は .folder と SF2 の型。SF3 は Vorbis を読める段で足す）
+//  - 取り込みはフォルダを選ぶと**中の SFZ と SoundFont（SF2・SF3）を全部**置き場へ入れる（上流の importFiles と同じ。段には入れない）。
+//    SoundFont はファイル 1 本を選んでもよい（ファイル選択は .folder と SF2・SF3 の型）
 //  - 名前で探す・名前順と新しい順で並べる（上流の list の query と sort）
 //  - 押すとその段のバンクにして閉じる
 //  - 消すのはどの段も使っていないものだけ（上流の status.inUse）
