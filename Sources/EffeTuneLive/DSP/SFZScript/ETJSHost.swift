@@ -190,18 +190,12 @@ final class ETJSContext {
     /// 値を仕事の終わりまで GC から守って、そのまま返す。
     /// **Swift の配列などヒープに置く値は、JSC の GC が（スタックとレジスタしか見ないので）見つけられない。**
     /// 次の JS の確保より前に、これで守る。
+    /// JSObjectRef も Swift では同じ OpaquePointer なので、この一つで両方を受ける。
     @discardableResult
     func keep(_ value: JSValueRef) -> JSValueRef {
         JSValueProtect(ref, value)
         retained.append(value)
         return value
-    }
-
-    @discardableResult
-    func keep(_ object: JSObjectRef) -> JSObjectRef {
-        JSValueProtect(ref, object)
-        retained.append(object)
-        return object
     }
 
     /// 守られた文字列。引数の配列に入れて呼ぶ前に作る値に使う。
