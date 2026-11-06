@@ -297,22 +297,25 @@ enum ETUpstreamNormalize {
         return values
     }
 
-    /// plugins/others/sfz_note_player.js:45-60 の setParameters。各鍵を params.json の範囲へ寄せ
-    /// （parseFiniteNumber の min / max）、Lowest / Highest Note・Max Voices・Octave は整数に丸め、
+    /// plugins/others/sfz_note_player.js:45-83 の setParameters。各鍵を params.json の範囲へ寄せ
+    /// （parseFiniteNumber の min / max）、Lowest / Highest Note・Max Voices・Octave・Sample Shift・
+    /// **Preset（sp0。-1…8388607）**は整数に丸め、
     /// そのあとで Highest Note は Lowest Note より下にせず、Velocity 127 Level は Velocity 1 Level より
     /// 1 dB 以上上にする。寄せる前に比べると、範囲の外の値で上流と違う所に着地する
     /// （vf: 5, vc: -10 は、上流は vf を 0 に寄せてから vc を 1 にする）。
+    /// sp0 は規則の外（上流は :83 で単独に丸める）。-1 は音源の先頭、0 以上は bank × 128 + program。
     /// ほかの鍵が来なくても毎回かける（上流と同じ）。
     private static func sfzNotePlayer(params: [ETParam], values input: [Float]) -> [Float] {
         var values = input
-        for key in ["mn", "mx", "pl", "os", "vf", "vc"] {
+        for key in ["mn", "mx", "pl", "os", "ss", "vf", "vc", "sp0"] {
             guard let p = params.first(where: { $0.key == key }), values.indices.contains(p.offset),
                   values[p.offset].isFinite else { continue }
             var v = values[p.offset]
             if case .number(let lo, let hi, _, _, _) = p.kind { v = min(max(v, lo), hi) }
             // **Int(_:) にしない。**ここの値は bounded の前で、1e30 も来る（Int の外で落ちる）。
-            // 丸めは JS の Math.round（.5 は +∞ 側。-1.5 は -1）。
-            if key != "vf", key != "vc" { v = (v + 0.5).rounded(.down) }
+            // 丸めは JS の Math.round（.5 は +∞ 側。-1.5 は -1）。足すのは Double で
+            // （Float は 2^23 以上で .5 を表せず偶数へ丸まる。sp0 の上限 8388607 はその手前）。
+            if key != "vf", key != "vc" { v = Float((Double(v) + 0.5).rounded(.down)) }
             values[p.offset] = v
         }
         return sfzCrossRules(params: params, values: values)

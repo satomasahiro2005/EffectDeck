@@ -1,14 +1,15 @@
 //  SFZLibraryView.swift
-//  SFZ の置き場（2.14.0 の上流の SFZ Library。js/sfz/browser.js と js/ui/asset-library-browser.js）。
+//  SF2・SFZ の置き場（上流の SoundFont Library。2.17.0 で SFZ Library から改名。js/sfz/browser.js と js/ui/asset-library-browser.js）。
 //
 //  上流は 2.14.0 で、SFZ Note Player のカードにあった選択欄・Import Folder…・Remove を、この一覧 1 枚に
-//  まとめた。カードには SFZ Library… と選んでいる名前と Clear だけが残る（SFZNotePlayerView.swift）。
+//  まとめた。カードには SoundFont Library… と選んでいる名前と Clear だけが残る（SFZNotePlayerView.swift）。
 //
 //  - 取り込みはフォルダを選ぶと**中の SFZ を全部**置き場へ入れる（上流の importFiles と同じ。段には入れない）
 //  - 名前で探す・名前順と新しい順で並べる（上流の list の query と sort）
 //  - 押すとその段のバンクにして閉じる
 //  - 消すのはどの段も使っていないものだけ（上流の status.inUse）
-//  - 行の小さい字は 大きさ · Files · Regions（上流の formatBadge）。2.13.0 で入れたものは Regions だけ
+//  - 行の小さい字は 大きさ · Files · Regions（上流の formatBadge。ETSFZMessages.libraryBadge）。2.13.0 で入れたものは Regions だけ
+//  - 文面は ETSFZMessages（上流の sfzLibrary.*）
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -72,7 +73,7 @@ struct SFZLibraryView: View {
                 }
                 Section {
                     if entries.isEmpty {
-                        Text("No matching SFZ instruments.")
+                        Text(ETSFZMessages.libraryEmpty)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -104,8 +105,8 @@ struct SFZLibraryView: View {
                     .textCase(nil)
                 }
             }
-            .searchable(text: $query, prompt: "Search SFZ instruments")
-            .etNavigationTitle("SFZ Library")
+            .searchable(text: $query, prompt: ETSFZMessages.librarySearchPrompt)
+            .etNavigationTitle(ETSFZMessages.libraryTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
@@ -114,7 +115,7 @@ struct SFZLibraryView: View {
                 guard case .success(let url) = result else { return }
                 Task { report = await loader.importToLibrary(folder: url) }
             }
-            .confirmationDialog("Delete “\(pendingDelete?.name ?? "")” from the library?",
+            .confirmationDialog(ETSFZMessages.libraryConfirmDelete(pendingDelete?.name ?? ""),
                                 isPresented: Binding(get: { pendingDelete != nil },
                                                      set: { if !$0 { pendingDelete = nil } }),
                                 titleVisibility: .visible,
@@ -132,28 +133,19 @@ struct SFZLibraryView: View {
             $0.spec.type == ETChainText.sfzType && $0.irId == entry.id
         }
         guard !inUse else {
-            report = "This SFZ is in use by an effect pipeline and cannot be deleted."
+            report = ETSFZMessages.libraryInUse
             return
         }
         do {
             try library.remove(id: entry.id)
-            report = "SFZ deleted."
+            report = ETSFZMessages.libraryDeleted
         } catch {
-            report = "The SFZ could not be deleted."
+            report = ETSFZMessages.libraryDeleteFailed
         }
     }
 
     /// 大きさ · Files: n · Regions: n（上流の formatBadge）。
     private func badge(_ entry: ETSFZLibraryEntry) -> String {
-        var parts: [String] = []
-        if let size = entry.size {
-            parts.append(size >= 1_048_576 ? String(format: "%.1f MiB", Double(size) / 1_048_576)
-                         : size >= 1024 ? String(format: "%.1f KiB", Double(size) / 1024) : "\(size) B")
-        } else {
-            parts.append("size unknown")
-        }
-        if let files = entry.fileCount { parts.append("Files: \(files)") }
-        parts.append("Regions: \(entry.regionCount)")
-        return parts.joined(separator: " · ")
+        ETSFZMessages.libraryBadge(size: entry.size, fileCount: entry.fileCount, regionCount: entry.regionCount)
     }
 }

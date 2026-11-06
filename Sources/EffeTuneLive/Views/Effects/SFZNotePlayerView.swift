@@ -1,8 +1,8 @@
 //  SFZNotePlayerView.swift
-//  SFZ Note Player（SFZNotePlayerPlugin。検出した音の高さで SFZ の楽器を鳴らす）。
+//  SoundFont Note Player（SFZNotePlayerPlugin。検出した音の高さで SF2・SFZ の楽器を鳴らす。2.17.0 で SFZ Note Player から改名）。
 //
-//  上流 plugins/others/sfz_note_player.js（2.15.0）の createUI。並びは
-//    SFZ: [SFZ Library…] 選んでいる名前 [Clear]
+//  上流 plugins/others/sfz_note_player.js（2.17.0）の createUI。並びは
+//    SoundFont: [SoundFont Library…] 選んでいる名前 [Clear]
 //    赤い状態行
 //    Detection（Classic / Event）
 //    Color（Normal / Note Colors）
@@ -11,14 +11,17 @@
 //    Lowest Note → Highest Note
 //    声の図（SFZVoiceGraph。触ると鳴る）
 //  つまみは汎用の ParameterRow、Lowest / Highest Note だけ音名で読ませる（Note Spectrogram と同じ ETNoteRangeRow）。
+//  Preset（sp0）は数の行にしない（生の bank × 128 + program が見える）。音源の持つ Preset の一覧から選ぶ欄は SF2 を読めるようにする段で足す。
+//  それまで sp0 は保存と PC への写しだけで、画面からは動かさない。
 //  Detection（dt）は音の拾い方。Event は PC 側の値なので etLocalAudioOnly にしない。Event の間は
 //  Threshold と Retrigger Drop を止める（ETParamGate。値は残す）。Event は約 140 ms 遅れる。
 //  試し弾きの Preview Midi / Velocity は保存しない値なので行を出さない（runtimeOnly）。
 //
-//  バンクの出し入れは SFZ Library（SFZLibraryView）。2.13.0 の選択欄・Import Folder…・Remove はそこへ移った。
+//  バンクの出し入れは SoundFont Library（SFZLibraryView）。2.13.0 の選択欄・Import Folder…・Remove はそこへ移った。
 //  Clear は段を None に戻すだけで、置き場からは消さない。
 //  PC と同じフォルダなら同じ鍵になる（SFZBank の注記）が、バンクの中身は PC と送り合わない。
-//  鍵が指すバンクがこちらに無いときは、名前の所に Missing SFZ と出す（上流と同じ）。
+//  鍵が指すバンクがこちらに無いときは、名前の所に Missing SoundFont と赤い状態行に見つからない旨を出す（上流 2.17.0 と同じ）。
+//  文面は ETSFZMessages（上流の sfzNotePlayer.*）。
 //
 //  読み込みの知らせ（飛ばした領域・補正したループや時間・縮めたバンク）は読み込んだ後に一度だけ警告で出す。
 //  バンクが無いあいだ、効果音の側は鳴らず（wet が無音）、dry（既定 20%）だけが通る。上流も同じ。
@@ -57,7 +60,7 @@ struct SFZNotePlayerView: View {
             graph(canPreview: false).etLocalAudioOnly()
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                // バンクは手元の SFZ Library、声の図は手元の音。PC の鎖を編集しているあいだは
+                // バンクは手元の SoundFont Library、声の図は手元の音。PC の鎖を編集しているあいだは
                 // 出さない（上流 2.14.0。バンクは PC で選ぶ）。
                 bankRow.etLocalAudioOnly()
                 if let line = errorLine {
@@ -73,7 +76,7 @@ struct SFZNotePlayerView: View {
                                        color = value
                                        dsp.setDisplay(value, key: "cl", at: index)
                                    }))
-                ForEach(node.spec.params.filter { !$0.runtimeOnly && $0.key != "dt" }) { param in
+                ForEach(node.spec.params.filter { !$0.runtimeOnly && $0.key != "dt" && $0.key != "sp0" }) { param in
                     if param.key == "mn" || param.key == "mx" {
                         ETNoteRangeRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
                     } else {
@@ -83,7 +86,7 @@ struct SFZNotePlayerView: View {
                 graph(canPreview: ready && node.enabled && !dsp.bypass && !remote.isRemote)
                     .etLocalAudioOnly()
             }
-            .alert("SFZ Note Player", isPresented: Binding(
+            .alert(ETSFZMessages.playerTitle, isPresented: Binding(
                 get: { loader.notice != nil },
                 set: { if !$0 { loader.notice = nil } })
             ) {
@@ -122,14 +125,14 @@ struct SFZNotePlayerView: View {
     // MARK: 選択欄
 
     private var bankName: String {
-        guard !node.irId.isEmpty else { return "None" }
-        return library.entry(id: node.irId)?.name ?? "Missing SFZ"
+        guard !node.irId.isEmpty else { return ETSFZMessages.noBankName }
+        return library.entry(id: node.irId)?.name ?? ETSFZMessages.missingBankName
     }
 
     private var bankRow: some View {
         HStack(spacing: 8) {
-            Text("SFZ").etFont(size: 14)
-            ETMeasurementButton(title: "SFZ Library…", isEnabled: !loading && !remote.isRemote) {
+            Text(ETSFZMessages.bankLabel).etFont(size: 14)
+            ETMeasurementButton(title: ETSFZMessages.libraryButton, isEnabled: !loading && !remote.isRemote) {
                 browsing = true
             }
             Text(loading ? "Loading…" : bankName)
@@ -144,9 +147,12 @@ struct SFZNotePlayerView: View {
         }
     }
 
-    /// 赤い状態行。失敗した段だけ。
+    /// 赤い状態行。失敗した段と、鍵が指すバンクが置き場に無い段（上流 2.17.0 の sfzNotePlayer.error.missing）。
     private var errorLine: String? {
-        if case .failed(let code) = state { return SFZLoader.errorMessage(code) }
-        return nil
+        switch state {
+        case .failed(let code): return ETSFZMessages.error(code.rawValue)
+        case .missing: return ETSFZMessages.error("missing")
+        default: return nil
+        }
     }
 }
