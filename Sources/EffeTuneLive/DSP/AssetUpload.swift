@@ -74,11 +74,38 @@ extension AssetUpload {
                      info: BeginInfo,
                      formatTag: UInt32 = AssetUpload.formatTagF32MultiChannel,
                      capacity: Int = AssetUpload.capacityBytes) throws {
+        try send(engine: engine, instance: instance, slot: slot, header: payload, byteCount: payload.count,
+                 info: info, formatTag: formatTag, capacity: capacity) { staging in
+            payload.withUnsafeBytes { source in
+                if let base = source.baseAddress {
+                    staging.baseAddress?.copyMemory(from: base, byteCount: payload.count)
+                }
+            }
+        }
+    }
+
+    /// 本体を配列で持たず、staging へ**直に書く**版（SFZ・SoundFont。PCM が数百 MiB になるので、
+    /// 配列を作ってから写すと同じ量がもう 1 つ要る）。
+    /// - header: payload の頭 32 バイト以上（begin の引数を頭から読むため）
+    /// - byteCount: payload 全体の長さ（begin のサイズ）
+    /// - fill: staging（byteCount バイト）を書き切る。投げたら staging を手放して（abort）そのまま投げ直す。
+    ///   **音のスレッドを締め出している間に呼ばれる**ので、重い計算はここに入れない（写すだけ）。
+    @MainActor
+    static func send(engine: UInt32,
+                     instance: UInt32,
+                     slot: UInt32 = 0,
+                     header: [UInt8],
+                     byteCount: Int,
+                     info: BeginInfo,
+                     formatTag: UInt32 = AssetUpload.formatTagF32MultiChannel,
+                     capacity: Int = AssetUpload.capacityBytes,
+                     fill: (UnsafeMutableRawBufferPointer) throws -> Void) throws {
         // capacity は 1 枠の上限。FIR 系の 7 種は 32MiB、SFZ Note Player は 1GiB（sfz_note_player/bank.h の kCapacity）。
         let request = try beginRequest(engine: engine,
                                        instance: instance,
                                        slot: slot,
-                                       payload: payload,
+                                       header: header,
+                                       byteCount: byteCount,
                                        info: info,
                                        capacity: capacity)
 
@@ -99,13 +126,15 @@ extension AssetUpload {
         holdOffAudioThread {
             do {
                 let staging = try beginStaging(request)
-                payload.withUnsafeBytes { source in
-                    if let base = source.baseAddress {
-                        staging.copyMemory(from: base, byteCount: payload.count)
-                    }
+                do {
+                    try fill(UnsafeMutableRawBufferPointer(start: staging, count: byteCount))
+                } catch {
+                    // 書き切れなかった staging を握ったままにしない。
+                    et_instance_asset_abort(engine, instance, slot)
+                    throw error
                 }
                 let status = et_instance_asset_commit(engine, instance, slot,
-                                                      UInt32(payload.count), formatTag)
+                                                      UInt32(byteCount), formatTag)
                 guard Int(status) == ET_OK else {
                     // 失敗したら staging を握ったままにしない。
                     et_instance_asset_abort(engine, instance, slot)
@@ -122,7 +151,7 @@ extension AssetUpload {
             if ETConsoleLog.on { print(line) }
             throw error
         }
-        log.notice("asset 送り込み instance=\(instance) slot=\(slot) bytes=\(payload.count) ch=\(request.channels) frames=\(request.frames) topology=\(request.topology)")
+        log.notice("asset 送り込み instance=\(instance) slot=\(slot) bytes=\(byteCount) ch=\(request.channels) frames=\(request.frames) topology=\(request.topology)")
     }
 
     /// 係数から組んで送るところまで。設計側はふつうこちらを呼べばよい。

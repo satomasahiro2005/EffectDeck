@@ -750,12 +750,15 @@ final class EffeTuneDSP: ObservableObject {
                     || Self.isChannelBypassed(node) != Self.isChannelBypassed(saved)
                 let externalWidthChanged = node.isExternal
                     && Self.externalChannels(of: node) != Self.externalChannels(of: saved)
+                // SFZ は処理幅が見積りと begin に入るので、幅が変わるなら読み直す（SFZLoader）。
+                let sfzWidthChanged = node.spec.type == ETChainText.sfzType
+                    && Self.routedChannels(of: node) != Self.routedChannels(of: saved)
                 ETUndo.adopt(saved, into: &node)
                 // 専用の画面は表示の設定を現れたときにしか読まないので、作り直させる（resetCount の注記）。
                 if viewChanged { node.resetCount += 1 }
                 next.append(node)
                 pushed.append(node.id)
-                if assetChanged && (!node.irId.isEmpty || node.spec.type == ETChainText.sfzType) {
+                if (assetChanged || sfzWidthChanged) && (!node.irId.isEmpty || node.spec.type == ETChainText.sfzType) {
                     reloaded.append(node.id)
                 }
                 if paramsChanged && !node.isExternal { redesigned.append(node.id) }
@@ -2457,6 +2460,12 @@ final class EffeTuneDSP: ObservableObject {
            Self.routedChannels(of: self[slot: index]) != previousChannels
             || Self.isChannelBypassed(self[slot: index]) != previousBypass {
             ETAssetReattach.paramsChanged(self[slot: index])
+        }
+        // SFZ Note Player は処理幅が見積りと begin の processingChannels になる。幅が変わったら読み直す
+        // （鳴っていなければ送り先が無いので reloadAsset が黙って戻る）。
+        if self[slot: index].spec.type == ETChainText.sfzType, !self[slot: index].irId.isEmpty,
+           Self.routedChannels(of: self[slot: index]) != previousChannels {
+            reloadAsset(at: index)
         }
         if self[slot: index].isExternal {
             let channels = Self.externalChannels(of: self[slot: index])

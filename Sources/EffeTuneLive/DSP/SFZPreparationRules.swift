@@ -83,6 +83,24 @@ enum ETSFZPreparationRules {
         return control
     }
 
+    /// 制御の部分だけ持っているとき（payload の本体は staging へ直に書くので、配列には作らない）の長さ。
+    /// control は payload の頭から数えた制御の部分（流し込みの入れ物は payload 全体）、payloadBytes は payload 全体の長さ。
+    static func controlBytes(of control: [UInt8], payloadBytes: Int) throws -> Int {
+        guard payloadBytes >= control.count, payloadBytes <= Int(UInt32.max), payloadBytes % 4 == 0 else {
+            throw ETSFZError.prepare(invalidDataMessage)
+        }
+        return try controlBytes(of: control)
+    }
+
+    /// JS が渡す幾何（ETSFZGeometry）を、見積りと begin が同じ値を見る形にする。player kind は 0・1 だけ。
+    static func geometry(_ value: ETSFZGeometry) throws -> Geometry {
+        guard let raw = UInt32(exactly: value.playerKind), let kind = PlayerKind(rawValue: raw) else {
+            throw ETSFZError.prepare(audioConfigMessage)
+        }
+        return try Geometry(sampleRate: value.sampleRate, processingChannels: value.processingChannels,
+                            maxFrames: value.maxFrames, minimumPhysicalBpm: value.minimumPhysicalBpm, playerKind: kind)
+    }
+
     /// 追加分を足して上限に収める（上流 materializeSfzAsset ＋ Android の native_engine.cpp:390-395）。
     /// footprint = payload + 追加分。maxBytes を超えるか UInt32 に入らなければ too-large。
     static func footprint(payloadBytes: Int, additionalBytes: UInt64, maxBytes: Int) throws -> UInt32 {

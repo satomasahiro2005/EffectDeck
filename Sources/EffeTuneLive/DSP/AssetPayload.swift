@@ -290,8 +290,21 @@ enum AssetUpload {
                              payload: [UInt8],
                              info: BeginInfo,
                              capacity: Int = AssetUpload.capacityBytes) throws -> BeginRequest {
+        try beginRequest(engine: engine, instance: instance, slot: slot,
+                         header: payload, byteCount: payload.count, info: info, capacity: capacity)
+    }
+
+    /// 本体を持たずに頭の 32 バイトと全体の長さだけで決める版（SFZ・SoundFont は PCM を staging へ直に書くので、
+    /// payload の配列を作らない。SFZLoader）。header は 32 バイト以上なら長くてもよい（先頭だけ見る）。
+    static func beginRequest(engine: UInt32,
+                             instance: UInt32,
+                             slot: UInt32 = 0,
+                             header payload: [UInt8],
+                             byteCount: Int,
+                             info: BeginInfo,
+                             capacity: Int = AssetUpload.capacityBytes) throws -> BeginRequest {
         guard engine != 0, instance != 0 else { throw ETAssetUploadError.engineNotReady }
-        guard payload.count >= headerBytes else { throw ETAssetUploadError.payloadTooShort }
+        guard byteCount >= headerBytes, payload.count >= headerBytes else { throw ETAssetUploadError.payloadTooShort }
         guard readLittleEndian(payload, 0) == magic else { throw ETAssetUploadError.badMagic }
 
         // 呼び出し側の指定が優先。無ければ頭から読む。
@@ -309,8 +322,8 @@ enum AssetUpload {
         // 式はaudio-processor.js:3040-3041と同じ。
         let matrixBytes = topology == .matrix ? Int(info.pathCount) * pathBytes : 0
         let expected = headerBytes + matrixBytes + Int(channels) * Int(frames) * 4
-        guard expected == payload.count else {
-            throw ETAssetUploadError.sizeMismatch(expected: expected, actual: payload.count)
+        guard expected == byteCount else {
+            throw ETAssetUploadError.sizeMismatch(expected: expected, actual: byteCount)
         }
 
         let estimated = estimateFootprintBytes(frames: Int(frames),
@@ -321,8 +334,8 @@ enum AssetUpload {
                                                pathCount: Int(info.pathCount),
                                                inputCount: Int(info.inputCount))
         let footprint = info.footprintBytes.map { Int($0) } ?? estimated
-        guard footprint >= payload.count, footprint <= capacity else {
-            throw ETAssetUploadError.tooLarge(bytes: max(footprint, payload.count),
+        guard footprint >= byteCount, footprint <= capacity else {
+            throw ETAssetUploadError.tooLarge(bytes: max(footprint, byteCount),
                                               capacity: capacity)
         }
 
@@ -338,7 +351,7 @@ enum AssetUpload {
                             inputCount: info.inputCount,
                             processingChannels: info.processingChannels,
                             footprintBytes: UInt32(footprint),
-                            byteSize: UInt32(payload.count))
+                            byteSize: UInt32(byteCount))
     }
 
     // MARK: - 確保の見積り
