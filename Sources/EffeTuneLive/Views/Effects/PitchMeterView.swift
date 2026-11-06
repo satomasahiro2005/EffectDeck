@@ -38,6 +38,8 @@ struct PitchMeterView: View {
             PitchMeterGraph(tap: node.tapId, minimum: value("mn"), maximum: value("mx"),
                             reference: value("rf"), color: color, layout: layout)
                 .etDimmedWhenMeasuring(measurementDimmed)
+                // GraphCanvas を通らない図なので、graph peek への報せは自分で付ける。
+                .etPeekGraphAnchor()
             if !graphOnly {
                 // 上流は Color → Layout を数値の行より先に置く（pitch_meter.js v2.11.0:410-417）。
                 colorPicker

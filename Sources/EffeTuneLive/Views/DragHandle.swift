@@ -104,7 +104,7 @@ struct ETDragHandle: UIViewRepresentable {
         /// そこに付ければ、カードのどこを触っても祖先として必ず呼ばれる。
         func attach() {
             guard recognizer == nil, let anchor else { return }
-            guard let host = Self.enclosingScrollView(of: anchor) else { return }
+            guard let host = anchor.etEnclosingScrollView else { return }
             let g = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
             // **持ち上がるまで。**0.4 秒は待たされる。
             // 短くしすぎると軽く触れただけで掴んでしまうが、下限はタップが
@@ -169,16 +169,6 @@ struct ETDragHandle: UIViewRepresentable {
             default:
                 break
             }
-        }
-
-        /// 自分を載せている UIScrollView。
-        private static func enclosingScrollView(of view: UIView) -> UIScrollView? {
-            var v: UIView? = view.superview
-            while let current = v {
-                if let scroll = current as? UIScrollView { return scroll }
-                v = current.superview
-            }
-            return nil
         }
 
         @objc func handle(_ g: UILongPressGestureRecognizer) {
@@ -364,35 +354,6 @@ struct ETDragHandle: UIViewRepresentable {
                 v = cur.superview
             }
             return false
-        }
-    }
-
-    /// 場所を表すだけの面。**当たりは一切取らない。**
-    ///
-    /// ここが当たりを取ると、重ねたカードの中のつまみもボタンも触れなくなる。
-    /// 認識器はこの面ではなく superview に付いているので、nil を返しても
-    /// 呼ばれなくなることはない（触りはカードへ行き、その祖先に認識器がいる）。
-    private final class HoleView: UIView {
-        /// superview か window に入った。認識器を付ける頃合い。
-        var onEnterHierarchy: (() -> Void)?
-
-        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
-
-        override func didMoveToSuperview() {
-            super.didMoveToSuperview()
-            if superview != nil { onEnterHierarchy?() }
-        }
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            if window != nil { onEnterHierarchy?() }
-        }
-
-        /// 階層に入った合図を取りこぼしても、置き直しのたびに試す。
-        /// 付いていれば attach() の頭の guard で素通りする。
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            if window != nil { onEnterHierarchy?() }
         }
     }
 }

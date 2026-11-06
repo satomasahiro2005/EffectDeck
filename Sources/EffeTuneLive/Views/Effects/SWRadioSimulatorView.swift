@@ -278,6 +278,8 @@ struct SWRadioSimulatorView: View {
         VStack(alignment: .leading, spacing: 12) {
             SWRadioHUD(tapId: node.tapId, isAM: mode == "AM", isEnabled: node.enabled)
                 .etLocalAudioOnly()
+                // GraphCanvas を通らない図なので、graph peek への報せは自分で付ける。
+                .etPeekGraphAnchor()
             if !graphOnly {
                 tabStrip
                 Divider()

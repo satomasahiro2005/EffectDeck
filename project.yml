@@ -417,6 +417,8 @@ targets:
       - path: Sources/EffeTuneLive/PreferencesValues.swift
       # Status節とツールバーの帯が出す数字と言い回し。両方が同じ関数で丸める（StatusReadingsTests）。
       - path: Sources/EffeTuneLive/Views/StatusReadings.swift
+      # graph peek の出し入れの判断（保持・パルス・猶予・置き場所・見えているか。GraphPeekGateTests）。Foundationだけ。
+      - path: Sources/EffeTuneLive/Views/GraphPeekGate.swift
       # 警告を1枚ずつ、前の1枚が閉じてから出す順番と、鎖を取り込んだ後に出すもの（AlertQueueTests）。
       # Foundationだけ。引くETChainText・ETShareLinkは上で入れてある。
       - path: Sources/EffeTuneLive/Views/AlertQueue.swift

@@ -200,6 +200,8 @@ struct GraphCanvas<Overlay: View>: View {
         }
         // 読み値の行ごと沈める。数字も手元の音のもの。
         .etDimmedWhenMeasuring(measurementDimmed)
+        // graph peek に、この図が画面のどこに居るかを報せる（外側の矩形。見出しの行を含む）。
+        .etPeekGraphAnchor()
         .onDisappear { ETPreviewTone_SetFrequency(0) }
         .onChange(of: previewActive) { wasActive, active in
             if wasActive && !active { ETPreviewTone_SetFrequency(0) }

@@ -1052,6 +1052,53 @@ extension EnvironmentValues {
     /// 音量に追従する PEQ の、もう1台（相方）が鳴らしている値。nil なら無い。
     /// PEQ の図が2台ぶんを足した曲線を描く（EffeTuneDSP.soundingPEQ）。読むだけの印は薄く出す。
     @Entry var etPEQCompanionValues: [Float]? = nil
+
+    /// カードの図を上へ見せる合図（graph peek）。呼ぶと 1.2 秒出す。nil なら受け手が居ない。
+    ///
+    /// 指を置いている間の変化は EffectCardView の触りの見張りが拾うので、
+    /// これを呼ぶのは **指が無くても値が変わる所**（メニュー・打ち込み・VoiceOver）だけ。
+    @Entry var etGraphPeekPulse: (() -> Void)? = nil
+
+    /// 図の矩形を報せる相手のカード。**指を置いている間かパルスの間だけ入る。**
+    /// nil のあいだ `etPeekGraphAnchor()` は何も報せない（触っていないときの preference は空）。
+    @Entry var etGraphPeekCard: UUID? = nil
+}
+
+/// graph peek が PipelineView の重ねる面へ届ける preference。
+/// カードごとに `.card`（出す図の中身・カードの矩形・指の高さ）と、`.graph`（図ごとの矩形）が入る。
+/// 重ねる面は `.graph` で「図が見えているか」を決め、最後の `.card` を出す。
+enum ETGraphPeekItem {
+    case card(id: UUID, anchor: Anchor<CGRect>, touchY: CGFloat?, content: AnyView)
+    case graph(id: UUID, anchor: Anchor<CGRect>)
+}
+
+struct ETGraphPeekKey: PreferenceKey {
+    static let defaultValue: [ETGraphPeekItem] = []
+
+    static func reduce(value: inout [ETGraphPeekItem], nextValue: () -> [ETGraphPeekItem]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+extension View {
+    /// 自分の矩形を、カードの図として graph peek へ報せる。**図の外側に付ける。**
+    ///
+    /// 付け外しはしない（`if` で枝を替えると図の @State が作り直される）。
+    /// 付けたまま、報せる中身だけを `etGraphPeekCard` で空にする。
+    func etPeekGraphAnchor() -> some View {
+        modifier(ETPeekGraphAnchor())
+    }
+}
+
+private struct ETPeekGraphAnchor: ViewModifier {
+    @Environment(\.etGraphPeekCard) private var card
+
+    func body(content: Content) -> some View {
+        content.anchorPreference(key: ETGraphPeekKey.self, value: .bounds) { [card] anchor in
+            guard let card else { return [] }
+            return [.graph(id: card, anchor: anchor)]
+        }
+    }
 }
 
 /// 組（Section とその配下）の上と下に引く横線。

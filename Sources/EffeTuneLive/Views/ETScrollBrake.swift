@@ -73,7 +73,7 @@ extension View {
     }
 }
 
-/// 場所を知らせるだけの面。当たりは取らない（DragHandle.swiftのHoleViewと同じ）。
+/// 場所を知らせるだけの面。当たりは取らない（TouchWatch.swiftのHoleViewと同じ）。
 private struct ETScrollBrakeAnchor: UIViewRepresentable {
     let brake: ETScrollBrake
 

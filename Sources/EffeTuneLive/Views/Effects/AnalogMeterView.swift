@@ -319,6 +319,8 @@ private struct AnalogMeterFigure: View {
             // 幅に余りがあれば中央に置く（針の数ぶんの幅で止め、左に寄せない）。
             .frame(maxWidth: min(CGFloat(layout.columns) * 320, 1024) + Self.bezelWidth * 2)
             .frame(maxWidth: .infinity)
+            // GraphCanvas を通らない図なので、graph peek への報せは自分で付ける。
+            .etPeekGraphAnchor()
             if loudness && !graphOnly {
                 ETMeasurementButton(title: "Reset") {
                     dsp.resetState(at: index)
