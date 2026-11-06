@@ -22,7 +22,7 @@
 //
 //  バンクの出し入れは SoundFont Library（SFZLibraryView）。2.13.0 の選択欄・Import Folder…・Remove はそこへ移った。
 //  Clear は段を None に戻すだけで、置き場からは消さない。
-//  PC と同じフォルダなら同じ鍵になる（SFZBank の注記）が、バンクの中身は PC と送り合わない。
+//  PC と同じフォルダなら同じ鍵になる（上流の js/sfz/bank.js が鍵を決める）が、バンクの中身は PC と送り合わない。
 //  鍵が指すバンクがこちらに無いときは、名前の所に Missing SoundFont と赤い状態行に見つからない旨を出す（上流 2.17.0 と同じ）。
 //  文面は ETSFZMessages（上流の sfzNotePlayer.*）。
 //

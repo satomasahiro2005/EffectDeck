@@ -8,8 +8,7 @@
 //  大きい入れ物（上限 1 GiB）は JS を通さない。writeSfzBankFile は、バイト列とファイルの範囲の並びを
 //  1 MiB ずつ一時ファイルへ流して、最後に差し替える（上流の createWritable と同じ「閉じて初めて見える」）。
 //  index.json は上流が JSON.stringify で書くので、知らない鍵（streamedSource・format など）を落とさない
-//  ETSFZLibraryIndex で読み書きする。旧 ETSFZLibraryFiles（SFZLibraryFiles.swift）は 5 つの鍵しか持たず落としていた。
-//  このファイルは旧 SFZParser.swift などに頼らない（B8 で旧い写しを外しても残る）。
+//  ETSFZLibraryIndex で読み書きする（2.16.0 までの Swift の写しは 5 つの鍵しか持たず落としていた。2.17.0 で外した）。
 
 import Foundation
 
