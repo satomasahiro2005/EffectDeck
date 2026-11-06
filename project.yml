@@ -367,6 +367,16 @@ targets:
       - path: Sources/EffeTuneLive/DSP/SFZBank.swift
       - path: Sources/EffeTuneLive/DSP/SFZAsset.swift
       - path: Sources/EffeTuneLive/DSP/SFZLibraryFiles.swift
+      # SFZ・SoundFont の置き場の入れ物（SFZLibraryBackendTests）と、PCM を staging へ直に書く道・確保の見積りの
+      # 純粋な部分（SFZPoolFillTests）。どちらも Foundation だけ。見積りをエンジンに聞く側（SamplePlayerPreparation）と
+      # JavaScriptCore の側（SFZScript/）はここに入れない。
+      - path: Sources/EffeTuneLive/DSP/SFZLibraryBackend.swift
+      - path: Sources/EffeTuneLive/DSP/SFZPoolFill.swift
+      - path: Sources/EffeTuneLive/DSP/SFZPreparationRules.swift
+      # 上流の js/sfz/asset.js が書いた payload（SFZPoolFillTests）。subdirectory: "payloads" で引くのでフォルダのまま入れる。
+      - path: Tests/Fixtures/SFZ/payloads
+        type: folder
+        buildPhase: resources
       - path: Tests/Fixtures/SFZ/sfz-golden.json
         buildPhase: resources
       # 0.16 時代の見本を凍結したもの（SFZTests）。

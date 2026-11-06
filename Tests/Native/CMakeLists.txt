@@ -183,6 +183,12 @@ if(ET_NATIVE_WITH_ENGINE)
     SOURCES pipeline_engine.c "${ET_SHARED}/ETPipeline.c" "${ET_SHARED}/ETExternalProcessor.c"
     LIBS effetune_dsp_core LABELS engine)
   set_target_properties(pipeline_engine PROPERTIES LINKER_LANGUAGE CXX)
+
+  # SFZ / SoundFont の資産が、上流の見積り（et_sample_player_preparation_bytes）どおりの footprint で
+  # カーネルに受け入れられるか。見本は Tests/Fixtures/SFZ（Tools/golden/sfz_golden.mjs が上流の JS で作ったもの）。
+  et_native_test(sfz_admission SOURCES sfz_admission.c LIBS effetune_dsp_core LABELS engine)
+  set_target_properties(sfz_admission PROPERTIES LINKER_LANGUAGE CXX)
+  target_compile_definitions(sfz_admission PRIVATE ET_SFZ_FIXTURES="${ET_REPO}/Tests/Fixtures/SFZ")
 endif()
 
 # ---- 下のフォルダ（別の包みが持つ link/ driver/ など） -----------------------
