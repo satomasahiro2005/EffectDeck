@@ -132,8 +132,15 @@ struct ParameterRow: View {
     private var offset: Int { param.offset + (param.isArray ? slot : 0) }
     private var value: Float { shown ?? (values.indices.contains(offset) ? values[offset] : 0) }
 
-    private func set(_ v: Float) {
+    /// 図を上に見せる合図（graph peek）。指が無くても値が変わる所（メニュー・打ち込み・VoiceOver）だけが呼ぶ。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
+    /// VoiceOver / スイッチコントロールの調整は触りを伴わない。このときだけ、つまみと入切も合図を出す。
+    private var assistive = ETAssistiveState()
+
+    /// - Parameter pulses: 書いたあとに合図を出す。つまみと入切は指の保持が拾うので、既定は出さない。
+    private func set(_ v: Float, pulses: Bool = false) {
         dsp.setValue(v, at: nodeIndex, offset: offset)
+        if pulses || assistive.isRunning { peekPulse?() }
     }
 
     @Environment(\.etGraphOnly) private var graphOnly
@@ -192,7 +199,7 @@ struct ParameterRow: View {
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 Picker(title, selection: Binding(
                     get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
-                    set: { set(Float($0)) })
+                    set: { set(Float($0), pulses: true) })
                 ) {
                     ForEach(Array(options.enumerated()), id: \.offset) { i, name in
                         Text(name).tag(i)
@@ -282,7 +289,7 @@ struct ParameterRow: View {
     private func choicePicker(_ choices: [Float]) -> some View {
         Picker(title, selection: Binding(
             get: { choices.contains(value) ? value : choices[0] },
-            set: { set($0) })
+            set: { set($0, pulses: true) })
         ) {
             ForEach(choices, id: \.self) { v in
                 Text("\(Int(v))x").tag(v)
@@ -404,9 +411,11 @@ struct ParameterRow: View {
         let v = param.store(typed)
         if case .number(let catalogLo, let hi, _, _, let isInteger) = param.kind {
             let clamped = min(max(v, lowerBound ?? catalogLo), hi)
-            set(isInteger ? clamped.rounded() : clamped)
+            let next = isInteger ? clamped.rounded() : clamped
+            // 触って外しただけ（値が変わらない）では、図を出さない。
+            set(next, pulses: next != value)
         } else {
-            set(v)
+            set(v, pulses: v != value)
         }
     }
 

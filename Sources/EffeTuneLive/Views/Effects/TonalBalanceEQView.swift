@@ -26,6 +26,8 @@ struct TonalBalanceEQView: View {
     @ObservedObject var dsp: EffeTuneDSP
 
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 種類のメニューで選んだとき、図を上に見せる（graph peek）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
     @State private var selected = 0
 
     var body: some View {
@@ -39,6 +41,8 @@ struct TonalBalanceEQView: View {
                 rows
             }
         }
+        // 畳むとこの View ごと消える。graph peek の複写も同じバンドを描くので、外に覚えておく（アプリを終うと消える）。
+        .etRemembers($selected, key: "band", node: node.id)
     }
 
     // MARK: つまみの行（上流の並び: Target → Slope → Corner → Amount → Range → Smoothing →
@@ -127,7 +131,7 @@ struct TonalBalanceEQView: View {
                     .etFont(size: 10, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
-                Picker("", selection: Binding(get: { band.type }, set: { setType($0, band: i) })) {
+                Picker("", selection: Binding(get: { band.type }, set: { setType($0, band: i); peekPulse?() })) {
                     ForEach(Array(Self.typeNames.indices), id: \.self) { t in
                         Text(Self.typeNames[t]).tag(t)
                     }

@@ -58,6 +58,8 @@ private struct BassManagementBody: View {
     @ObservedObject var designer: BassManagementDesigner
 
     @Environment(\.etGraphOnly) private var graphOnly
+    /// メニューで選んだとき、図を上に見せる（graph peek）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
     /// 図に出す Ch。上流の _graphChannel（:71, :1019-1028）。音には関係しない。
     @State private var graphChannel = 0
 
@@ -216,7 +218,7 @@ private struct BassManagementBody: View {
                 Spacer(minLength: 8)
                 Picker("\(name) Role", selection: Binding(
                     get: { role },
-                    set: { set("ro", channel: ch, Float($0)) })) {
+                    set: { set("ro", channel: ch, Float($0)); peekPulse?() })) {
                     ForEach(Self.roleChoices) { Text($0.label).tag($0.id) }
                 }
                 .pickerStyle(.menu)
@@ -259,7 +261,7 @@ private struct BassManagementBody: View {
             }
             Picker("\(name) crossover slope", selection: Binding(
                 get: { s.slopes[ch] },
-                set: { set("sl", channel: ch, Float($0)) })) {
+                set: { set("sl", channel: ch, Float($0)); peekPulse?() })) {
                 ForEach(Self.slopeChoices) { Text($0.label).tag($0.id) }
             }
             .pickerStyle(.menu)
@@ -439,7 +441,7 @@ private struct BassManagementBody: View {
         HStack {
             Text(title).etFont(size: 14)
             Spacer(minLength: 8)
-            Picker(title, selection: Binding(get: { selection }, set: onSelect)) {
+            Picker(title, selection: Binding(get: { selection }, set: { onSelect($0); peekPulse?() })) {
                 ForEach(choices) { Text($0.label).tag($0.id) }
             }
             .pickerStyle(.menu)

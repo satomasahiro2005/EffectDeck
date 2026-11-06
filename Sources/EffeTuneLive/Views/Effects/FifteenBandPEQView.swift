@@ -305,6 +305,8 @@ struct FifteenBandPEQView: View {
 
     /// 畳んでいて図だけのとき。カードが環境で渡してくる。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 種類のメニューで選んだとき、図を上に見せる（graph peek）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
     /// BANDS の行を、アクセシビリティサイズだけ 2 段にするため。
     @Environment(\.dynamicTypeSize) private var typeSize
     /// 音量に追従しているとき、もう1台が鳴らしている帯（EffeTuneDSP.soundingPEQ）。曲線に足して薄い印で出す。
@@ -542,7 +544,7 @@ struct FifteenBandPEQView: View {
             // 文字を大きくした人には、見出しと入切の下にメニューを出す（ETMenuHeader）。
             ETMenuHeader(title: "BAND \(selected + 1)") {
                 Picker("", selection: Binding(get: { current.type },
-                                              set: { setType($0) })) {
+                                              set: { setType($0); peekPulse?() })) {
                     ForEach(Array(PEQ15Math.typeNames.indices), id: \.self) { i in
                         Text(PEQ15Math.typeNames[i]).tag(i)
                     }

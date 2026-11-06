@@ -384,6 +384,8 @@ struct PhaseSelectEqView: View {
             }
         }
         .onChange(of: frameSequence) { _, _ in appendHistory() }
+        // 畳むとこの View ごと消える。graph peek の複写も同じバンドを描くので、外に覚えておく（アプリを終うと消える）。
+        .etRemembers($band, key: "band", node: node.id)
     }
 
     // MARK: 値の読み書き

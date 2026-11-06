@@ -234,3 +234,59 @@ extension ETGraphPeekGate {
         graphRects.contains { $0.contains(p) }
     }
 }
+
+// MARK: - 指の状態と、置き場所の固定
+
+/// 指の状態（置かれているか・離した時刻・最後に置かれた点）。置き場所の判断に渡す指の高さを引く。
+struct ETGraphPeekTouchState: Equatable {
+    /// 指が置かれているか。
+    var holding = false
+    /// 最後に置かれた点（カードの座標）。
+    var local: CGPoint?
+    var liftedAt: TimeInterval?
+
+    mutating func down(at point: CGPoint) {
+        holding = true
+        local = point
+        liftedAt = nil
+    }
+
+    mutating func up(now: TimeInterval) {
+        holding = false
+        liftedAt = now
+    }
+
+    /// 置き場所の判断に渡す指の高さ（カードの上端から）。
+    /// 置かれている間と、離した直後（猶予 + 0.1 秒）だけ。パルスだけで出るときは nil（上に出る）。
+    func touchY(now: TimeInterval) -> CGFloat? {
+        guard let p = local else { return nil }
+        if holding { return p.y }
+        // 時刻の引き算の丸めで、ちょうど境の所が外れないよう 1e-9 だけ緩める。
+        if let t = liftedAt, now - t <= ETGraphPeekGate.graceAfterLift + 0.1 + 1e-9 { return p.y }
+        return nil
+    }
+}
+
+/// 出す場所を、出したときに 1 度だけ決めて持つ（指が動いても、再描画で判断し直しても動かさない）。
+struct ETGraphPeekSticky: Equatable {
+    private var id: UUID?
+    private var placement: ETGraphPeekPlacement?
+
+    /// 同じカードなら前の決定を返す。決め直すのは、別のカードか、リセット後。
+    /// `decide` が nil（出せない）なら、持っている決定も捨てて nil。
+    mutating func resolve(for id: UUID, _ decide: () -> ETGraphPeekPlacement?) -> ETGraphPeekPlacement? {
+        if self.id == id, let placement { return placement }
+        guard let decided = decide() else {
+            reset()
+            return nil
+        }
+        self.id = id
+        placement = decided
+        return decided
+    }
+
+    mutating func reset() {
+        id = nil
+        placement = nil
+    }
+}

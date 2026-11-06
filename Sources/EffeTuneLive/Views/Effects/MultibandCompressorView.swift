@@ -101,6 +101,8 @@ struct MultibandCompressorView: View {
                 parameters(selected: selected)
             }
         }
+        // 畳むとこの View ごと消える。graph peek の複写も同じバンドを描くので、外に覚えておく（アプリを終うと消える）。
+        .etRemembers($band, key: "band", node: node.id)
     }
 
     // MARK: クロスオーバーの図

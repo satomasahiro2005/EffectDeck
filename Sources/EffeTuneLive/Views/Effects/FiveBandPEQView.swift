@@ -303,6 +303,8 @@ struct FiveBandPEQView: View {
 
     /// カードの頭のボタンで立つ。図だけにして、下のつまみを畳む。
     @Environment(\.etGraphOnly) private var graphOnly
+    /// 種類のメニューで選んだとき、図を上に見せる（graph peek）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
     /// 音量に追従しているとき、もう1台が鳴らしている帯（EffeTuneDSP.soundingPEQ）。曲線に足して薄い印で出す。
     @Environment(\.etPEQCompanionValues) private var companionValues
 
@@ -337,6 +339,8 @@ struct FiveBandPEQView: View {
         }
         // 畳むとこの View ごと消えるので、After / Compare は外に覚えておく。アプリを終うと消える。
         .etRemembers($spectrumMode, key: "spectrum", node: node.id)
+        // 選んでいるバンドも覚える。graph peek の複写が、選んでいるバンドの点線を同じに描く。
+        .etRemembers($selected, key: "band", node: node.id)
     }
 
     // MARK: 図
@@ -468,7 +472,7 @@ struct FiveBandPEQView: View {
             // 文字を大きくした人には、見出しと入切の下にメニューを出す（ETMenuHeader）。
             ETMenuHeader(title: "BAND \(selected + 1)") {
                 Picker("", selection: Binding(get: { current.type },
-                                              set: { setType($0) })) {
+                                              set: { setType($0); peekPulse?() })) {
                     ForEach(Array(PEQ5Math.typeNames.indices), id: \.self) { i in
                         Text(PEQ5Math.typeNames[i]).tag(i)
                     }

@@ -78,6 +78,14 @@ struct EffectCardView: View {
     @Environment(\.colorSchemeContrast) private var contrast
     /// 大きい文字サイズでだけ、名前と要約の折り返しを許す。
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// アプリが前に居なくなったら、図の複写（graph peek）を下げる。
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// graph peek（スクロールで外れたカードの図を、値を触っている間だけ上に見せる）の持ち物。
+    /// **観測しない箱。**指の点・図の矩形・出し入れの時計は触るたびに変わるが、描き直しは要らない。
+    @State private var peekBox = ETPeekCardBox()
+    /// いま図の複写を出したいか（`peekBox.gate.wantsPeek` の写し）。**描き直すのはこれが変わるときだけ。**
+    @State private var peekWants = false
 
     var body: some View {
         if node.isSection {
@@ -161,6 +169,17 @@ struct EffectCardView: View {
         .onChange(of: showsTimeline) { _, now in
             if !now { popoverPosition = nil }
         }
+        // 畳む・シートが開く・アプリが前から外れる・カードが外れるときは、図の複写をすぐ下げる（graph peek）。
+        .onChange(of: isExpanded) { _, now in
+            if !now { peekMutate { $0.suppress() } }
+        }
+        .onChange(of: sheet) { _, now in
+            if now != nil { peekMutate { $0.suppress() } }
+        }
+        .onChange(of: scenePhase) { _, now in
+            if now != .active { peekMutate { $0.suppress() } }
+        }
+        .onDisappear { peekBox.task?.cancel() }
         .sheet(item: $sheet) { which in
             switch which {
             case .routing: EffectRoutingSheet(index: index, node: node, dsp: dsp)
@@ -181,7 +200,10 @@ struct EffectCardView: View {
     /// `graphOnly` は本文を図だけにする（PEQ の Smooth の間）。
     private func card(_ shown: EffeTuneDSP.Node, address: Int, editable: Bool = true,
                       graphOnly: Bool = false, companion: [Float]? = nil) -> some View {
-        Card(block: block) {
+        // graph peek の対象か（下の peekReady）。合図の口は対象のカードだけに渡す。
+        let ready = peekReady(editable: editable, graphOnly: graphOnly)
+        let pulse: (() -> Void)? = ready ? { peekPulseFired() } : nil
+        return Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
                 // キーフレームの帯。菱形を押して選ぶ・横へ引いて動かす・右の「+」で足す・選んだ菱形の押し直しか長押しで吹き出し。
@@ -200,11 +222,7 @@ struct EffectCardView: View {
                     // 一度 150pt で切ってみたが、横軸の字まで落ちて壊れて見えた。
                     // 高さが要るのは図がそれだけの情報を持っているからで、
                     // 畳んだ状態でも見たいものはそこにある。
-                    ETEffectViews.view(index: address, node: shown, dsp: dsp)
-                        .id(node.resetCount)
-                        .environment(\.etGraphOnly, true)
-                        .environment(\.etPEQCompanionValues, companion)
-                        .environment(\.etGraphMaxHeight, Self.collapsedGraphHeight)
+                    graphOnlyFigure(shown, address: address, companion: companion)
                         .padding(.horizontal, ETMetrics.cardPadding)
                         .padding(.bottom, ETMetrics.cardPadding)
                         .allowsHitTesting(false)
@@ -231,17 +249,138 @@ struct EffectCardView: View {
                     .disabled(!editable)
                     .allowsHitTesting(editable)
                     .environment(\.etPEQCompanionValues, companion)
+                    // graph peek: 図に自分のカードを教え（矩形を報せる）、指が無くても値が変わる所に合図の口を渡す。
+                    .environment(\.etGraphPeekCard, ready ? node.id : nil)
+                    .environment(\.etGraphPeekPulse, pulse)
+                    // 開いた直後 0.6 秒は、onAppear が値を書く図があるので出さない。
+                    .onAppear { peekMutate { $0.appeared(now: ETPeekClock.now) } }
                     .padding(ETMetrics.cardPadding)
                 }
             }
         }
         // 通常の薄さは 0.55 のまま。コントラストを上げる設定のときだけ弱める（名前と要約が読めなくなるため）。
-        .opacity(node.isMuted ? (contrast == .increased ? 0.8 : 0.55) : 1)
+        .opacity(mutedOpacity)
         // PoC: PC の鎖を編集しているあいだ、PC の測定値を映していない Analyzer の図を沈める
         // （Views/RemoteScannerView.swift）。
         .modifier(ETRemoteMeasurementDim(applies: node.spec.isAnalyzer, tap: node.tapId))
         // PoC: PC の EffeTune が持っていない効果の段に、送れないことを出す。
         .modifier(ETRemoteUnsupportedMark(effect: node.spec.name))
+        // graph peek。**図の矩形はカードの座標で箱へ写す**（触りが図の上で始まったかを、触った瞬間に引くため）。
+        .backgroundPreferenceValue(ETGraphPeekKey.self) { items in
+            ETPeekRectsReader(items: items, box: peekBox)
+        }
+        // 触っている間を見る（何も止めない。並べ替えの浮いた複写には付けない）。
+        .background {
+            if !isDragPreview {
+                ETTouchWatch { peekTouch($0, ready: ready) }
+            }
+        }
+        // 出したい間だけ、図の複写・カードの矩形・指の高さを PipelineView の重ねる面へ送る。
+        .anchorPreference(key: ETGraphPeekKey.self, value: .bounds) { anchor in
+            guard ready, peekWants else { return [] }
+            return [.card(id: node.id, anchor: anchor,
+                          touchY: peekBox.touch.touchY(now: ETPeekClock.now),
+                          armedAt: peekBox.armedAt,
+                          content: peekContent(shown, address: address, companion: companion),
+                          suppress: { peekMutate { $0.suppress() } })]
+        }
+        // 値か表示が変わった。指が置かれている間と離した直後なら、出す。
+        .onChange(of: shown.values) { _, _ in peekValuesChanged(ready: ready) }
+        .onChange(of: shown.display) { _, _ in peekValuesChanged(ready: ready) }
+        .onChange(of: ready) { _, now in
+            if !now { peekMutate { $0.suppress() } }
+        }
+    }
+
+    /// 通常の薄さは 0.55 のまま。コントラストを上げる設定のときだけ弱める（名前と要約が読めなくなるため）。
+    private var mutedOpacity: Double {
+        node.isMuted ? (contrast == .increased ? 0.8 : 0.55) : 1
+    }
+
+    /// 畳んだときの図だけの形。graph peek の複写も同じ形を使う（`etGraphOnly` と高さの上限を揃える）。
+    private func graphOnlyFigure(_ shown: EffeTuneDSP.Node, address: Int,
+                                 companion: [Float]?) -> some View {
+        ETEffectViews.view(index: address, node: shown, dsp: dsp)
+            .id(node.resetCount)
+            .environment(\.etGraphOnly, true)
+            .environment(\.etPEQCompanionValues, companion)
+            .environment(\.etGraphMaxHeight, Self.collapsedGraphHeight)
+    }
+
+    // MARK: - graph peek
+
+    /// 図の複写を出してよいカードか。**開いていて、図があって、外のものでなく、触れて、図だけの状態でない**こと。
+    /// 図が値を取り合うもの（peekExcluded）は出さない。
+    private func peekReady(editable: Bool, graphOnly: Bool) -> Bool {
+        !isDragPreview && isExpanded && hasBody && showsCollapsedGraph && !node.isExternal
+            && editable && !graphOnly
+            && !ETGraphPeekGate.peekExcluded.contains(node.spec.type)
+    }
+
+    /// 重ねる面へ渡す図の複写。**表示だけ。**環境は重ねる面では引き継がれないので、要るものを明示する。
+    private func peekContent(_ shown: EffeTuneDSP.Node, address: Int, companion: [Float]?) -> AnyView {
+        AnyView(
+            Card(block: .alone) {
+                graphOnlyFigure(shown, address: address, companion: companion)
+                    .environment(\.etGraphLive, true)
+                    // 複写の図は自分の矩形を報せない（報せると、重ねる面が自分の中身を見て回る）。
+                    .environment(\.etGraphPeekCard, nil)
+                    .environment(\.etGraphPeekPulse, nil)
+                    .padding(ETMetrics.cardPadding)
+            }
+            .opacity(mutedOpacity)
+            .modifier(ETRemoteMeasurementDim(applies: node.spec.isAnalyzer, tap: node.tapId)))
+    }
+
+    /// gate を動かし、出したいかの写しと期限の待ちを合わせる。
+    private func peekMutate(_ change: (inout ETGraphPeekGate) -> Void) {
+        peekBox.gate.typeName = node.spec.type
+        change(&peekBox.gate)
+        peekSync()
+    }
+
+    private func peekSync() {
+        let gate = peekBox.gate
+        if peekWants != gate.wantsPeek {
+            // 出したい側へ変わった時刻。重ねる面が、いちばん新しく触ったカードを選ぶのに読む。
+            if gate.wantsPeek { peekBox.armedAt = ETPeekClock.now }
+            peekWants = gate.wantsPeek
+        }
+        peekBox.task?.cancel()
+        peekBox.task = nil
+        guard gate.wantsPeek, let deadline = gate.deadline else { return }
+        let wait = max(0, deadline - ETPeekClock.now)
+        peekBox.task = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            // 早く起きて期限に届いていなければ、tick は何もせず、peekSync が待ち直す。
+            peekMutate { $0.tick(now: ETPeekClock.now) }
+        }
+    }
+
+    /// 触りの見張りの知らせ。
+    private func peekTouch(_ event: ETTouchWatchEvent, ready: Bool) {
+        guard ready else { return }
+        let now = ETPeekClock.now
+        switch event.phase {
+        case .down:
+            let inGraph = ETGraphPeekGate.point(event.local, inAny: peekBox.rects)
+            peekBox.touch.down(at: event.local)
+            peekMutate { $0.touchDown(point: event.local, inGraph: inGraph, touches: event.touches, now: now) }
+        case .up:
+            peekBox.touch.up(now: now)
+            peekMutate { $0.touchUp(now: now) }
+        }
+    }
+
+    private func peekValuesChanged(ready: Bool) {
+        guard ready else { return }
+        peekMutate { $0.valuesChanged(now: ETPeekClock.now) }
+    }
+
+    /// 指が無くても値が変わる所（メニュー・打ち込み・VoiceOver）が呼ぶ。1.2 秒出す。
+    private func peekPulseFired() {
+        peekMutate { $0.pulse(now: ETPeekClock.now) }
     }
 
     /// キーフレームの帯と、右の「+」（いまの音量の位置に足す）。

@@ -402,8 +402,12 @@ struct ETValueField: View {
     let commit: (Double) -> Void
 
     @State private var draft = ""
+    /// 打ち込みを始めたときの数。打った数が同じなら図を上に出さない。
+    @State private var startValue: Double?
     @State private var editing = false
     @FocusState private var focused: Bool
+    /// 打ち込みで確定したとき、カードの図を上に見せる（指は離れている）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
 
     var body: some View {
         TextField(label, text: Binding(
@@ -423,6 +427,7 @@ struct ETValueField: View {
             .onChange(of: focused) { _, now in
                 if now {
                     draft = editText()
+                    startValue = Double(draft.trimmingCharacters(in: .whitespaces))
                     editing = true
                 } else if editing {
                     // 他を触ってキーボードが引っ込んだときも確定させる。
@@ -441,6 +446,8 @@ struct ETValueField: View {
         focused = false
         guard let typed = Double(draft.trimmingCharacters(in: .whitespaces)) else { return }
         commit(typed)
+        // 触って外しただけ（打った数が始めの数と同じ）では、図を出さない。
+        if typed != startValue { peekPulse?() }
     }
 }
 
@@ -615,6 +622,19 @@ extension View {
             }
             .onChange(of: value.wrappedValue) { _, v in
                 ETCardSelection.shared.set(String(v), key: key, for: id)
+            }
+    }
+
+    /// 選んでいない（nil）ことも覚える。空の文字で持つので、中身が空の文字の選びは持てない。
+    func etRemembers(_ value: Binding<String?>, key: String, node id: UUID) -> some View {
+        self
+            .onAppear {
+                if let s = ETCardSelection.shared.raw(key, for: id) {
+                    value.wrappedValue = s.isEmpty ? nil : s
+                }
+            }
+            .onChange(of: value.wrappedValue) { _, v in
+                ETCardSelection.shared.set(v ?? "", key: key, for: id)
             }
     }
 
@@ -1059,16 +1079,22 @@ extension EnvironmentValues {
     /// これを呼ぶのは **指が無くても値が変わる所**（メニュー・打ち込み・VoiceOver）だけ。
     @Entry var etGraphPeekPulse: (() -> Void)? = nil
 
-    /// 図の矩形を報せる相手のカード。**指を置いている間かパルスの間だけ入る。**
-    /// nil のあいだ `etPeekGraphAnchor()` は何も報せない（触っていないときの preference は空）。
+    /// 図の矩形を報せる相手のカード。**開いていて図の複写を出せるあいだ（peekReady）入る。**
+    /// 触っていなくても矩形は報せる（触り始めた瞬間に、図の上かを引くため）。
+    /// nil のあいだ（畳んだ・図が無い・出さない種類）`etPeekGraphAnchor()` は何も報せない。
     @Entry var etGraphPeekCard: UUID? = nil
 }
 
 /// graph peek が PipelineView の重ねる面へ届ける preference。
 /// カードごとに `.card`（出す図の中身・カードの矩形・指の高さ）と、`.graph`（図ごとの矩形）が入る。
-/// 重ねる面は `.graph` で「図が見えているか」を決め、最後の `.card` を出す。
+/// 重ねる面は `.graph` で「図が見えているか」を決め、`armedAt` がいちばん新しい `.card` を出す。
+/// `.card` は出したい間だけ載る。`.graph` は開いている間ずっと載る。
 enum ETGraphPeekItem {
-    case card(id: UUID, anchor: Anchor<CGRect>, touchY: CGFloat?, content: AnyView)
+    /// `touchY` はカードの上端からの指の高さ（置かれている間と離した直後だけ。パルスだけなら nil で上に出る）。
+    /// `armedAt` は出したい側に変わった時刻（複数のカードが残っているとき、新しいほうを出す）。
+    /// `suppress` はカードの出す待ちを今すぐ止める（重ねる面が、スクロール・掴み・シートで隠すとき呼ぶ）。
+    case card(id: UUID, anchor: Anchor<CGRect>, touchY: CGFloat?, armedAt: TimeInterval,
+              content: AnyView, suppress: @MainActor () -> Void)
     case graph(id: UUID, anchor: Anchor<CGRect>)
 }
 
@@ -1077,6 +1103,13 @@ struct ETGraphPeekKey: PreferenceKey {
 
     static func reduce(value: inout [ETGraphPeekItem], nextValue: () -> [ETGraphPeekItem]) {
         value.append(contentsOf: nextValue())
+    }
+}
+
+extension Binding {
+    /// 書いたあとに graph peek の合図（etGraphPeekPulse）も出す。メニューで選んだときのように、指が離れたあとで値が変わる所に付ける。
+    func etPulsing(_ pulse: (() -> Void)?) -> Binding<Value> {
+        Binding(get: { wrappedValue }, set: { wrappedValue = $0; pulse?() })
     }
 }
 

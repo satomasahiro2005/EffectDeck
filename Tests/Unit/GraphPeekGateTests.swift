@@ -304,6 +304,22 @@ final class GraphPeekGateTests: XCTestCase {
                                                topInset: 100, bottomInset: 34, peekHeight: 160, touchY: nil))
     }
 
+    /// 図を何枚も持つカード（マルチバンドなど）の複写は 400pt 前後。**実寸で決めないと指を隠す。**
+    func testTallPeekFlipsAndHasNoRoomWhereTheOldEstimateDidNot() {
+        let size = CGSize(width: 390, height: 1100)
+        // 見積もり 177 なら上（350 < 100 + 177 + 24 = 301 でない）。実寸 400 なら下（350 < 524）。
+        XCTAssertEqual(ETGraphPeekGate.placement(viewport: size, topInset: 100, bottomInset: 34,
+                                                 peekHeight: 177, touchY: 350), .top)
+        XCTAssertEqual(ETGraphPeekGate.placement(viewport: size, topInset: 100, bottomInset: 34,
+                                                 peekHeight: 400, touchY: 350), .bottom)
+        // 使える高さ 710 は、177 なら足りる（402）が、400 では足りない（848）。
+        let phone = CGSize(width: 390, height: 844)
+        XCTAssertNotNil(ETGraphPeekGate.placement(viewport: phone, topInset: 100, bottomInset: 34,
+                                                  peekHeight: 177, touchY: nil))
+        XCTAssertNil(ETGraphPeekGate.placement(viewport: phone, topInset: 100, bottomInset: 34,
+                                               peekHeight: 400, touchY: nil))
+    }
+
     // MARK: - 見えているか
 
     func testGraphVisibleThresholdSplitsAt60Percent() {
@@ -340,5 +356,53 @@ final class GraphPeekGateTests: XCTestCase {
         XCTAssertTrue(ETGraphPeekGate.point(CGPoint(x: 50, y: 250), inAny: rects))
         XCTAssertFalse(ETGraphPeekGate.point(CGPoint(x: 50, y: 150), inAny: rects))
         XCTAssertFalse(ETGraphPeekGate.point(CGPoint(x: 50, y: 150), inAny: []))
+    }
+
+    // MARK: - 指の状態
+
+    func testTouchYWhileHolding() {
+        var t = ETGraphPeekTouchState()
+        XCTAssertNil(t.touchY(now: 0), "触っていなければ nil（パルスは上）")
+        t.down(at: CGPoint(x: 10, y: 120))
+        XCTAssertEqual(t.touchY(now: 100), 120, "置かれている間はいつでも")
+    }
+
+    func testTouchYJustAfterLiftOnly() {
+        var t = ETGraphPeekTouchState()
+        t.down(at: CGPoint(x: 10, y: 120))
+        t.up(now: 5)
+        XCTAssertEqual(t.touchY(now: 5.3), 120, "猶予の間は指があったものとして置く")
+        XCTAssertEqual(t.touchY(now: 5.4), 120, "猶予 + 0.1 秒まで")
+        XCTAssertNil(t.touchY(now: 5.5), "離して時間が経ったパルスは上")
+        t.down(at: CGPoint(x: 10, y: 40))
+        XCTAssertEqual(t.touchY(now: 9), 40, "置き直せば新しい点")
+    }
+
+    // MARK: - 置き場所の固定
+
+    func testStickyDecidesOnceForTheSameCard() {
+        var s = ETGraphPeekSticky()
+        let a = UUID()
+        var calls = 0
+        XCTAssertEqual(s.resolve(for: a) { calls += 1; return .bottom }, .bottom)
+        XCTAssertEqual(s.resolve(for: a) { calls += 1; return .top }, .bottom, "出している間は動かさない")
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testStickyDecidesAgainForAnotherCardOrAfterReset() {
+        var s = ETGraphPeekSticky()
+        let a = UUID(), b = UUID()
+        XCTAssertEqual(s.resolve(for: a) { .bottom }, .bottom)
+        XCTAssertEqual(s.resolve(for: b) { .top }, .top, "別のカードは決め直す")
+        s.reset()
+        XCTAssertEqual(s.resolve(for: b) { .bottom }, .bottom, "隠したあとに出すときは決め直す")
+    }
+
+    func testStickyForgetsWhenItCannotBeShown() {
+        var s = ETGraphPeekSticky()
+        let a = UUID()
+        XCTAssertEqual(s.resolve(for: a) { .bottom }, .bottom)
+        XCTAssertNil(s.resolve(for: UUID()) { nil }, "出せない（キーボードや横向き）なら nil")
+        XCTAssertEqual(s.resolve(for: a) { .top }, .top, "出せなくなったら前の決定は捨てる")
     }
 }

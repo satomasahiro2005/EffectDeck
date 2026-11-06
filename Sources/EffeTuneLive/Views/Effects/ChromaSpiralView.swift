@@ -101,6 +101,8 @@ struct ChromaSpiralView: View {
 
     @Environment(\.etGraphOnly) private var graphOnly
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// メニューで選んだとき、図を上に見せる（graph peek）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
     @State private var settings = ETChromaSpiralSettings()
 
     var body: some View {
@@ -170,7 +172,7 @@ struct ChromaSpiralView: View {
             if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
             Picker("Color", selection: Binding(
                 get: { settings.color },
-                set: { settings.mode = Double($0.rawValue) })
+                set: { settings.mode = Double($0.rawValue); peekPulse?() })
             ) {
                 ForEach(ETChromaColor.allCases) { option in
                     Text(option.label).tag(option)

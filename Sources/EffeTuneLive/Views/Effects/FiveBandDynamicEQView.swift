@@ -362,6 +362,8 @@ struct DynamicEQParameterRow: View {
     let values: [Float]
 
     @ObservedObject var dsp: EffeTuneDSP
+    /// 種類のメニューで選んだとき、図を上に見せる（graph peek）。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
 
     private static let filterTypeNames = ["pk": "Peak", "ls": "Low Shelf", "hs": "High Shelf"]
 
@@ -387,7 +389,7 @@ struct DynamicEQParameterRow: View {
                     if !stacked { Spacer(minLength: 8) }
                     Picker("", selection: Binding(
                         get: { min(max(Int(value.rounded()), 0), max(options.count - 1, 0)) },
-                        set: { set(Float($0)) })
+                        set: { set(Float($0)); peekPulse?() })
                     ) {
                         ForEach(Array(options.enumerated()), id: \.offset) { i, name in
                             Text(Self.filterTypeNames[name] ?? name).tag(i)

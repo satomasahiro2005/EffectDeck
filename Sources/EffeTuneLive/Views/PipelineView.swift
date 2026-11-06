@@ -173,6 +173,9 @@ struct PipelineView: View {
     @State private var columns: NavigationSplitViewVisibility = .all
     /// 右と左を繋ぐもの（ChainViewport.swift）。
     @State private var viewport = ETChainViewport()
+    /// graph peek（スクロールで外れたカードの図を、値を触っている間だけ上に見せる）が読むスクロールの状態。
+    /// **重ねる面の中だけが読む**ので、ここへ書いても PipelineView の body は走らない。
+    @State private var peekHost = ETGraphPeekHost()
     /// 行の矩形（ChainViewport.swift）。観測しない。
     @State private var geometry = ETRowGeometry()
     /// 左の一覧で押したときに、慣性で流れている右を止めてから飛ぶ。
@@ -1266,6 +1269,9 @@ struct PipelineView: View {
         // 触れたら戻す先の覚えを外す。そこから先は人が読む位置を決める。
         .onScrollPhaseChange { _, phase in
             if phase == .tracking || phase == .interacting { viewport.anchor = nil }
+            // 指で動かしている間と流れている間は、図の複写を出さない（動く図の上に複写が居ると読みにくい）。
+            let moving = phase == .interacting || phase == .decelerating
+            if peekHost.scrolling != moving { peekHost.scrolling = moving }
             // 止まったところで、読んでいるカードを選び直す（2列だけ）。
             if split, phase == .idle { followReading() }
         }
@@ -1338,6 +1344,13 @@ struct PipelineView: View {
                 .modifier(ETDragFloat(offset: dragOffset, origin: anchorRect.origin))
                 .allowsHitTesting(false)
             }
+        }
+        // **値を触っているカードの図が画面から外れているとき、その複写を上（か下）に見せる**（graph peek）。
+        // 判断はカードの側（GraphPeekGate）、見えているかと置き場所はこの面（GraphPeekOverlay）。
+        // 掴んで並べ替えている間とシートが出ている間は何も出さない。
+        .overlayPreferenceValue(ETGraphPeekKey.self) { items in
+            ETGraphPeekOverlay(items: items, host: peekHost,
+                               dragging: dragging != nil, blocked: sheet != nil)
         }
         // 右の幅が変わった（回した、左の一覧を出し入れした）。読んでいたカードを上端に保つ。
         // 1列（iPhone）では何もしない。

@@ -96,6 +96,8 @@ struct ETDisplayChoiceRow<Value: Hashable>: View {
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
     var style: Style = .segmented
+    /// メニューで選んだとき、図を上に見せる（graph peek）。分割の札は押した指の保持が拾う。
+    @Environment(\.etGraphPeekPulse) private var peekPulse
 
     var body: some View {
         switch style {
@@ -119,7 +121,7 @@ struct ETDisplayChoiceRow<Value: Hashable>: View {
     }
 
     private var picker: some View {
-        Picker(title, selection: $selection) {
+        Picker(title, selection: style == .menu ? $selection.etPulsing(peekPulse) : $selection) {
             ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                 Text(option.label).tag(option.value)
             }

@@ -378,6 +378,9 @@ struct TubeSimulatorView: View {
                              inputReferenceVpk: value("iv"),
                              inputVolumeDb: value("dr"))
         }
+        // 畳むとこの View ごと消える。graph peek の複写も同じタブと面を描くので、外に覚えておく（アプリを終うと消える）。
+        .etRemembers($tab, key: "tab", node: node.id)
+        .etRemembers($panelID, key: "panel", node: node.id)
     }
 
     // MARK: パラメータ
