@@ -6,6 +6,7 @@
 //    ETSFZPreparedCache      直前に読んだバンクを (バンクの鍵, 束ねの sha) で覚える
 //    ETSFZBundleIdentity     同梱の JS（effetune-sfz.js）の頭の行から sha を取る
 //    ETSFZAudioSniff         音のファイルの頭のバイトから拡張子を決める（AVAudioFile は拡張子を手がかりにする）
+//    ETSFZPreparedCheck      送る前に、この版が扱えない音源・欠けのある音源を断る（上流の validatePreparedSfzBank）
 //    ETSFZAssetWatch         commit の後に et_instance_asset_state を読んで、失敗を段の状態にする
 //    ETSFZScriptBackendAdapter  置き場（ETSFZLibraryBackend）を JS の 6 つの操作にそろえる
 
@@ -146,6 +147,31 @@ enum ETSFZAudioSniff {
         if tag(0, "ID3") || (head.count >= 2 && head[0] == 0xFF && head[1] & 0xE0 == 0xE0) { return "mp3" }
         return "wav"
     }
+}
+
+// MARK: - 送る前の確かめ
+
+enum ETSFZPreparedCheck {
+
+    /// 上流の sfz-instrument.js（validatePreparedSfzBank と requireSfzRuntimeSupport）と同じ条件。
+    /// 未対応の opcode・欠けのある音源（SF2 は無効な領域や欠けた標本）・この版が持たない機能は unsupportedRuntime で断る。
+    static func requireComplete(unsupportedOpcodes: [String], unsupportedRuntime: [String], incomplete: Bool) throws {
+        guard unsupportedRuntime.isEmpty, unsupportedOpcodes.isEmpty, !incomplete else {
+            throw ETSFZError(code: .unsupportedRuntime, message: ETSFZMessages.error(ETSFZErrorCode.unsupportedRuntime.rawValue))
+        }
+    }
+
+    /// 流し込みの資産（tableVersion 8・9・10）。標本の表（soundFont）が作れないものは、流しを繋げず鳴らせないので断る。
+    static func requireStreamSources(tableVersion: Int, hasSources: Bool) throws {
+        guard !streamedVersions.contains(tableVersion) || hasSources else {
+            throw ETSFZError.prepare(preparationFailedMessage)
+        }
+    }
+
+    static let streamedVersions: Set<Int> = [8, 9, 10]
+
+    /// 上流の `failure('sample-*')` が出す文（js/sfz/sample-page-provider.js）。ETSFZStream も同じ文を使う。
+    static let preparationFailedMessage = "The instrument samples could not be prepared. Reload the instrument."
 }
 
 // MARK: - commit の後の見張り

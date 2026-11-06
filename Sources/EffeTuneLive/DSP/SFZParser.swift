@@ -19,6 +19,10 @@ enum ETSFZErrorCode: String {
     case noRegions = "no-regions"
     case storage
     case cancelled
+    /// 流し込みの標本を読めなかった（SoundFont。供給が失敗した）。上流の sample-read。
+    case sampleRead = "sample-read"
+    /// この版が扱えない機能を使う、または欠けのある音源（上流の unsupported-runtime）。
+    case unsupportedRuntime = "unsupported-runtime"
 }
 
 struct ETSFZError: Error, Equatable, LocalizedError {

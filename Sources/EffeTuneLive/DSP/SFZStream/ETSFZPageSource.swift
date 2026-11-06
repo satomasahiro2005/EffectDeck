@@ -27,7 +27,7 @@ import AVFoundation
 enum ETSFZStream {
 
     /// 上流の `failure('sample-*')` が出す文（js/sfz/sample-page-provider.js）。
-    static let preparationFailedMessage = "The instrument samples could not be prepared. Reload the instrument."
+    static let preparationFailedMessage = ETSFZPreparedCheck.preparationFailedMessage
 
     /// 画面や診断が読む状態（ETStreamStatus の写し）。
     struct Status: Equatable {

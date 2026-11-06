@@ -160,6 +160,8 @@ struct ETSFZScriptPrepared {
     var nativePreparationBytes: Int?
     var processingChannels: Int
     var presentation: ETSFZScriptPresentation?
+    /// SoundFont のときだけ。Preset の一覧と、流し込みの標本の置き場所（tableVersion 9）。
+    var soundFont: ETSFZSoundFontInfo?
 }
 
 /// 取り消しの旗。Swift の Task の取り消しと、呼び手が渡す旗の両方がここへ集まる。JS は isCurrent で見る。
@@ -364,7 +366,8 @@ final class ETSFZScriptService: @unchecked Sendable {
         }
     }
 
-    /// フォルダの中の SFZ の道（正規化・並べ替え済み）。SoundFont は D2 まで一覧に出さない。
+    /// フォルダの中の SFZ と SoundFont の道（正規化・並べ替え済み）。SF3 は Vorbis を読む段（D4）まで一覧に出さない
+    /// （ETSFZSoundFormats）。
     func listInstruments(in files: [ETSFZScriptFile], cancel: ETSFZCancelToken? = nil) async throws -> [String] {
         try await job(cancel) { context, state in
             let json = try Self.fileList(files, state)
@@ -372,14 +375,15 @@ final class ETSFZScriptService: @unchecked Sendable {
             guard let data = text.data(using: .utf8), let list = try JSONSerialization.jsonObject(with: data) as? [String] else {
                 throw ETSFZError(code: .prepare, message: "The SFZ folder could not be read.")
             }
-            return list.filter { $0.lowercased().hasSuffix(".sfz") }
+            return list.filter { ETSFZSoundFormats.isInstrument(path: $0) }
         }
     }
 
     /// フォルダの SFZ 1 本を取り込む（置き場へ書き、一覧に足す）。PCM は運ばない（読み直しは prepare）。
     func importFolder(files: [ETSFZScriptFile], selectedPath: String, cancel: ETSFZCancelToken? = nil) async throws -> ETSFZScriptEntry {
-        guard !selectedPath.lowercased().hasSuffix(".sf2"), !selectedPath.lowercased().hasSuffix(".sf3") else {
-            throw ETSFZError(code: .prepare, message: "SoundFont playback is unavailable. Reload the app and try again.")
+        // SF3 は圧縮標本を鳴らせるまで取り込まない（大きな入れ物を書いてから断ることになる）。
+        guard !ETSFZSoundFormats.isSoundFont(path: selectedPath) || ETSFZSoundFormats.isInstrument(path: selectedPath) else {
+            throw ETSFZError(code: .prepare, message: ETSFZSoundFontInfo.compressedMessage)
         }
         return try await job(cancel) { context, state in
             let json = try Self.fileList(files, state)
@@ -565,7 +569,8 @@ final class ETSFZScriptService: @unchecked Sendable {
             incomplete: (object["incomplete"] as? Bool) ?? false,
             tailSeconds: (object["tailSeconds"] as? NSNumber)?.doubleValue, warmupSamples: int(object["warmupSamples"]),
             footprintBytes: int(object["footprintBytes"]), nativePreparationBytes: int(object["nativePreparationBytes"]),
-            processingChannels: int(object["processingChannels"]) ?? 1, presentation: presentation)
+            processingChannels: int(object["processingChannels"]) ?? 1, presentation: presentation,
+            soundFont: ETSFZSoundFontInfo.parse(object["soundFont"]))
     }
 }
 
@@ -842,11 +847,31 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
           onDiagnostic: detail => H.log('warn', 'SFZ: ' + safe(detail)) }).open();
         return service;
       }
+      // SoundFont の標本の置き場所。上流の prepareSoundFontBank の呼びで受け取る（options.source は openSf2Source の戻り）。
+      // 標本の番号は payload の標本の表と同じ並び（使われる標本の path を整列したもの。asset.js の samplePaths）。
+      // dataOffset・lowByteOffset は SF2 ファイルの中、base は .sfzbank の中の SF2 ファイルの位置（reader.rangeSource.offset）。
+      let soundFontSamples = null;
+      const prepareSoundFontBank = async options => {
+        const result = await API.prepareSoundFontBank(options, { persistentCache: null });
+        const paths = [...new Set(API.sf2SamplerRegions(options.source).map(region => region.sample))].sort();
+        soundFontSamples = paths.map(path => {
+          const reader = options.source.createSampleReader(path), pcm = reader.pcm;
+          if (!reader.rangeSource || !Number.isSafeInteger(reader.rangeSource.offset)) {
+            const error = new Error('The SoundFont collection could not be prepared.');
+            error.code = 'prepare';
+            throw error;
+          }
+          return { base: reader.rangeSource.offset, dataOffset: pcm.dataOffset ?? 0, lowByteOffset: pcm.lowByteOffset ?? null,
+            frames: pcm.frames, sampleRate: pcm.sampleRate, compressed: pcm.format !== 'sf2-pcm' };
+        });
+        return result;
+      };
       async function prepare(id, geometryJson) {
         const library = await ensure();
         // 上流の cache に当たると書き手が呼ばれない。いつも作り直す（呼び手が cache を持つ）
         library.prepared = null;
-        const options = { decode, isCurrent, persistentCache: null };
+        soundFontSamples = null;
+        const options = { decode, isCurrent, persistentCache: null, prepareSoundFontBank };
         if (geometryJson) {
           options.preparationContext = API.sfzPreparationContext(JSON.parse(geometryJson));
           options.estimateEffectBytes = estimate;
@@ -869,7 +894,10 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
           incomplete: d.incomplete ?? false, tailSeconds: d.tailSeconds ?? null, warmupSamples: d.warmupSamples ?? null,
           footprintBytes: d.footprintBytes ?? null, nativePreparationBytes: d.nativePreparationBytes ?? null,
           processingChannels: d.processingChannels ?? 1,
-          presentation: value.presentation ? { ...value.presentation, imageBlob: undefined, imageBytes } : null });
+          presentation: value.presentation ? { ...value.presentation, imageBlob: undefined, imageBytes } : null,
+          soundFont: soundFontSamples && ['sf2', 'sf3'].includes(value.format)
+            ? { format: value.format, presets: (value.presets ?? []).map(preset => ({ bank: preset.bank, program: preset.program, name: preset.name })),
+                samples: soundFontSamples } : null });
       }
       Object.defineProperty(G, '__etSfz', { value: Object.freeze({
         configure(maxBytes, fullPayload) { config.maxBytes = maxBytes; config.fullPayload = fullPayload; service = null; },
@@ -878,7 +906,8 @@ private final class ETSFZScriptEnvironment: @unchecked Sendable {
         async listInstruments(json) { return safe(API.listSfzFolderFiles(hostFiles(json))); },
         async importFolder(json, selectedPath) {
           const library = await ensure();
-          const entry = await library.importFolderFiles(hostFiles(json), selectedPath, { decode, isCurrent, persistentCache: null });
+          const entry = await library.importFolderFiles(hostFiles(json), selectedPath,
+            { decode, isCurrent, persistentCache: null, prepareSoundFontBank });
           library.prepared = null;
           return safe(entry);
         },

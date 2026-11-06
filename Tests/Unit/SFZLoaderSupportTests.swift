@@ -421,4 +421,33 @@ final class SFZLoaderSupportTests: XCTestCase {
                                      isCurrent: { true })
         XCTAssertEqual(try adapter.read(idA + ".sfzbank"), head + body[100..<3100] + Data([9]))
     }
+
+    // MARK: 送る前の確かめ（上流の validatePreparedSfzBank）
+
+    func testRequireCompleteAcceptsCleanBank() throws {
+        try ETSFZPreparedCheck.requireComplete(unsupportedOpcodes: [], unsupportedRuntime: [], incomplete: false)
+    }
+
+    func testRequireCompleteRejectsUnsupportedOrIncompleteBank() {
+        let cases: [([String], [String], Bool)] = [(["foo"], [], false), ([], ["effects"], false), ([], [], true)]
+        for (opcodes, runtime, incomplete) in cases {
+            XCTAssertThrowsError(try ETSFZPreparedCheck.requireComplete(
+                unsupportedOpcodes: opcodes, unsupportedRuntime: runtime, incomplete: incomplete)) { error in
+                let known = error as? ETSFZError
+                XCTAssertEqual(known?.code, .unsupportedRuntime)
+                XCTAssertEqual(known?.message, ETSFZMessages.error("unsupported-runtime"))
+            }
+        }
+    }
+
+    func testStreamedPayloadNeedsSampleSources() throws {
+        for version in [8, 9, 10] {
+            XCTAssertThrowsError(try ETSFZPreparedCheck.requireStreamSources(tableVersion: version, hasSources: false)) { error in
+                XCTAssertEqual((error as? ETSFZError)?.message, ETSFZPreparedCheck.preparationFailedMessage)
+            }
+            try ETSFZPreparedCheck.requireStreamSources(tableVersion: version, hasSources: true)
+        }
+        // 常駐の資産（v6・v7）は標本の表が無くてよい
+        for version in [6, 7] { try ETSFZPreparedCheck.requireStreamSources(tableVersion: version, hasSources: false) }
+    }
 }

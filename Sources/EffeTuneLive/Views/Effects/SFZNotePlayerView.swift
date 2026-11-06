@@ -4,6 +4,7 @@
 //  上流 plugins/others/sfz_note_player.js（2.17.0）の createUI。並びは
 //    SoundFont: [SoundFont Library…] 選んでいる名前 [Clear]
 //    赤い状態行
+//    Preset（SoundFont を読めたときだけ）
 //    Detection（Classic / Event）
 //    Color（Normal / Note Colors）
 //    Highest / Middle / Lowest（音域の帯）→ Threshold → Retrigger Drop → Note Hold → Velocity 1 Level →
@@ -11,8 +12,9 @@
 //    Lowest Note → Highest Note
 //    声の図（SFZVoiceGraph。触ると鳴る）
 //  つまみは汎用の ParameterRow、Lowest / Highest Note だけ音名で読ませる（Note Spectrogram と同じ ETNoteRangeRow）。
-//  Preset（sp0）は数の行にしない（生の bank × 128 + program が見える）。音源の持つ Preset の一覧から選ぶ欄は SF2 を読めるようにする段で足す。
-//  それまで sp0 は保存と PC への写しだけで、画面からは動かさない。
+//  Preset（sp0）は数の行にしない（生の bank × 128 + program が見える）。SoundFont を読めたときだけ、音源の持つ Preset の
+//  一覧から選ぶ欄を出す（既存のメニューの行 ETDisplayChoiceRow。Default = -1、続きは Bank b · p+1. 名前。SFZ のバンクでは
+//  欄ごと隠す。一覧の組み立ては ETSFZPresetMenu）。sp0 は読み込みのたびに一覧に照らして直す（SFZLoader）。
 //  Detection（dt）は音の拾い方。Event は PC 側の値なので etLocalAudioOnly にしない。Event の間は
 //  Threshold と Retrigger Drop を止める（ETParamGate。値は残す）。Event は約 140 ms 遅れる。
 //  試し弾きの Preview Midi / Velocity は保存しない値なので行を出さない（runtimeOnly）。
@@ -69,6 +71,7 @@ struct SFZNotePlayerView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                presetRow.etLocalAudioOnly()
                 detectionRow
                 ETDisplayChoiceRow(title: "Color",
                                    options: [("Normal", "Normal"), ("Rainbow", "Note Colors")],
@@ -103,6 +106,30 @@ struct SFZNotePlayerView: View {
 
     private func graph(canPreview: Bool) -> some View {
         SFZVoiceGraph(index: index, node: node, dsp: dsp, canPreview: canPreview)
+    }
+
+    // MARK: Preset
+
+    private var presetParam: ETParam? { node.spec.params.first { $0.key == "sp0" } }
+
+    /// 上流の createSelectControl('Preset', …)。選べる Preset が無ければ欄ごと出さない。読み込み中は触れない（上流の pending）。
+    @ViewBuilder
+    private var presetRow: some View {
+        let list = loader.presets(of: node.id)
+        let items = ETSFZPresetMenu.items(list)
+        if let sp0 = presetParam, !items.isEmpty {
+            ETDisplayChoiceRow(
+                title: "Preset",
+                options: items.map { (value: $0.key, label: $0.label) },
+                selection: Binding(
+                    get: {
+                        guard node.values.indices.contains(sp0.offset) else { return ETSFZPresetMenu.defaultKey }
+                        return Int(ETSFZPresetMenu.validatedSelection(current: node.values[sp0.offset], presets: list))
+                    },
+                    set: { dsp.setValue(Float($0), at: index, offset: sp0.offset) }),
+                style: .menu)
+            .disabled(loading)
+        }
     }
 
     // MARK: Detection

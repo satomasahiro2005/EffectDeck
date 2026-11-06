@@ -75,19 +75,22 @@ extension AssetUpload {
                      formatTag: UInt32 = AssetUpload.formatTagF32MultiChannel,
                      capacity: Int = AssetUpload.capacityBytes) throws {
         try send(engine: engine, instance: instance, slot: slot, header: payload, byteCount: payload.count,
-                 info: info, formatTag: formatTag, capacity: capacity) { staging in
+                 info: info, formatTag: formatTag, capacity: capacity, fill: { staging in
             payload.withUnsafeBytes { source in
                 if let base = source.baseAddress {
                     staging.baseAddress?.copyMemory(from: base, byteCount: payload.count)
                 }
             }
-        }
+        })
     }
 
     /// 本体を配列で持たず、staging へ**直に書く**版（SFZ・SoundFont。PCM が数百 MiB になるので、
     /// 配列を作ってから写すと同じ量がもう 1 つ要る）。
     /// - header: payload の頭 32 バイト以上（begin の引数を頭から読むため）
     /// - byteCount: payload 全体の長さ（begin のサイズ）
+    /// - afterCommit: commit が通った直後、**まだ音のスレッドを締め出している間に**呼ぶ（流し込みの bank が
+    ///   et_instance_stream_configure と resident ページの publish をここでする。configure は PREPARING か ACTIVE の
+    ///   bank にだけ通る）。投げたら資産を手放して（abort）そのまま投げ直す。
     /// - fill: staging（byteCount バイト）を書き切る。投げたら staging を手放して（abort）そのまま投げ直す。
     ///   **音のスレッドを締め出している間に呼ばれる**ので、重い計算はここに入れない（写すだけ）。
     @MainActor
@@ -99,6 +102,7 @@ extension AssetUpload {
                      info: BeginInfo,
                      formatTag: UInt32 = AssetUpload.formatTagF32MultiChannel,
                      capacity: Int = AssetUpload.capacityBytes,
+                     afterCommit: (() throws -> Void)? = nil,
                      fill: (UnsafeMutableRawBufferPointer) throws -> Void) throws {
         // capacity は 1 枠の上限。FIR 系の 7 種は 32MiB、SFZ Note Player は 1GiB（sfz_note_player/bank.h の kCapacity）。
         let request = try beginRequest(engine: engine,
@@ -139,6 +143,13 @@ extension AssetUpload {
                     // 失敗したら staging を握ったままにしない。
                     et_instance_asset_abort(engine, instance, slot)
                     throw ETAssetUploadError.commitFailed(status: Int32(status))
+                }
+                if let afterCommit {
+                    do { try afterCommit() } catch {
+                        // 流しを繋げなかった資産は鳴らせない（ページが来ず、音が欠け続ける）。外して投げ直す。
+                        et_instance_asset_abort(engine, instance, slot)
+                        throw error
+                    }
                 }
             } catch {
                 thrown = error

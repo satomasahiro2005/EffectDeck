@@ -4,11 +4,13 @@
 //  上流は 2.14.0 で、SFZ Note Player のカードにあった選択欄・Import Folder…・Remove を、この一覧 1 枚に
 //  まとめた。カードには SoundFont Library… と選んでいる名前と Clear だけが残る（SFZNotePlayerView.swift）。
 //
-//  - 取り込みはフォルダを選ぶと**中の SFZ を全部**置き場へ入れる（上流の importFiles と同じ。段には入れない）
+//  - 取り込みはフォルダを選ぶと**中の SFZ と SoundFont（SF2）を全部**置き場へ入れる（上流の importFiles と同じ。段には入れない）。
+//    SoundFont はファイル 1 本を選んでもよい（ファイル選択は .folder と SF2 の型。SF3 は Vorbis を読める段で足す）
 //  - 名前で探す・名前順と新しい順で並べる（上流の list の query と sort）
 //  - 押すとその段のバンクにして閉じる
 //  - 消すのはどの段も使っていないものだけ（上流の status.inUse）
-//  - 行の小さい字は 大きさ · Files · Regions（上流の formatBadge。ETSFZMessages.libraryBadge）。2.13.0 で入れたものは Regions だけ
+//  - 行の小さい字は 大きさ · SF2 · Files · Regions（上流の formatBadge。ETSFZMessages.libraryBadge。SF2・SF3 は SoundFont のときだけ）。
+//    2.13.0 で入れたものは Regions だけ
 //  - 文面は ETSFZMessages（上流の sfzLibrary.*）
 
 import SwiftUI
@@ -111,9 +113,9 @@ struct SFZLibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
+            .fileImporter(isPresented: $picking, allowedContentTypes: Self.importTypes) { result in
                 guard case .success(let url) = result else { return }
-                Task { report = await loader.importToLibrary(folder: url) }
+                Task { report = await loader.importToLibrary(picked: url) }
             }
             .confirmationDialog(ETSFZMessages.libraryConfirmDelete(pendingDelete?.name ?? ""),
                                 isPresented: Binding(get: { pendingDelete != nil },
@@ -144,8 +146,14 @@ struct SFZLibraryView: View {
         }
     }
 
-    /// 大きさ · Files: n · Regions: n（上流の formatBadge）。
+    /// 選べるもの。フォルダと、SoundFont のファイル（拡張子から作る型。システムが知らない拡張子でも選べる）。
+    private static var importTypes: [UTType] {
+        [.folder] + ETSFZSoundFormats.soundFontExtensions.compactMap { UTType(filenameExtension: $0) }
+    }
+
+    /// 大きさ · SF2 · Files: n · Regions: n（上流の formatBadge）。
     private func badge(_ entry: ETSFZLibraryEntry) -> String {
-        ETSFZMessages.libraryBadge(size: entry.size, fileCount: entry.fileCount, regionCount: entry.regionCount)
+        ETSFZMessages.libraryBadge(size: entry.size, format: entry.format, fileCount: entry.fileCount,
+                                   regionCount: entry.regionCount)
     }
 }

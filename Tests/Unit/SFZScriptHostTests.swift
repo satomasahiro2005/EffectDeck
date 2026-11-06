@@ -45,7 +45,7 @@ final class SFZScriptValueTests: XCTestCase {
     func testErrorMappingKeepsKnownUpstreamCodes() {
         let codes: [(String, ETSFZErrorCode)] = [
             ("prepare", .prepare), ("too-large", .tooLarge), ("no-regions", .noRegions),
-            ("storage", .storage), ("cancelled", .cancelled),
+            ("storage", .storage), ("cancelled", .cancelled), ("unsupported-runtime", .unsupportedRuntime),
         ]
         for (raw, expected) in codes {
             let error = ETSFZScriptErrors.map(code: raw, message: "上流の文 \(raw)", cancelled: false)

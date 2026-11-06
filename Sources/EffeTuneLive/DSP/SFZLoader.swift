@@ -9,6 +9,9 @@
 //    - 幾何（レート・処理チャンネル・maxFrames）を決め、見積りと begin に**同じ値**を渡す
 //    - PCM を staging へ直に書いて送る（AssetUpload.send の fill。JS にも Swift の配列にも PCM を二重に持たない）
 //    - commit の後で資産の状態を読み、ERROR を段の状態（.failed）にする
+//    - SoundFont（v9。PCM は payload に無い）は、commit の直後（音のスレッドを締め出している間）に流しを繋ぎ
+//      （ETSFZStream.attach）、ページを作る供給（ETSFZPageSource）を回す。供給が失敗したら資産を外して .failed にする
+//    - SoundFont の Preset の一覧を段ごとに持つ（カードの Preset の欄。sp0 は読み込みのたびに一覧へ照らして直す）
 //    - 段ごとの状態（読み込み中・入っている・見つからない・失敗）をカードへ知らせる
 //  を持つ。IR Reverb の ETIRLoader と同じ位置づけ。
 //
@@ -127,7 +130,7 @@ final class SFZLibrary: ObservableObject {
         let index = (try? backend.readIndex()) ?? ETSFZLibraryIndex()
         entries = index.entries.map {
             ETSFZLibraryEntry(id: $0.id, name: $0.name, regionCount: $0.regionCount, size: $0.size,
-                              fileCount: $0.fileCount, importedAt: $0.importedAt)
+                              fileCount: $0.fileCount, importedAt: $0.importedAt, format: $0.format)
         }
     }
 
@@ -185,6 +188,13 @@ enum SFZNodeState: Equatable {
     case failed(ETSFZErrorCode)
 }
 
+/// 段ごとの、いま回っている流し込みの供給（SoundFont）。
+private struct SFZActiveStream {
+    let source: ETSFZPageSource
+    let engine: UInt32
+    let instance: UInt32
+}
+
 @MainActor
 final class SFZLoader: ObservableObject {
 
@@ -204,6 +214,10 @@ final class SFZLoader: ObservableObject {
     private var tokens: [UUID: ETSFZCancelToken] = [:]
     /// commit の後で資産の状態を見張る仕事（段ごとに 1 つ）。
     private var watchers: [UUID: Task<Void, Never>] = [:]
+    /// 段ごとの流し込みの供給（SoundFont のとき）。資産を替える・外すとき止める。
+    private var streams: [UUID: SFZActiveStream] = [:]
+    /// 段ごとの、読み込んだ SoundFont の Preset の一覧（カードの Preset の欄）。SFZ のバンクや、読み込み中・失敗の段には無い。
+    @Published private(set) var presetLists: [UUID: [ETSFZPreset]] = [:]
     /// 直前に読んだバンク（小さいときだけ）。出力先の切り替えなどで instance が作り直されるたびに
     /// 読み直さないため。256MiB 級のバンクは持たない（メモリを食う）。
     private var recent = ETSFZPreparedCache()
@@ -224,7 +238,15 @@ final class SFZLoader: ObservableObject {
 
     private func set(_ state: SFZNodeState, for id: UUID) {
         if states[id] != state { states[id] = state }
+        // Preset の一覧は読み込めた段のものだけ（読み込み中は前の一覧を残す。欄が点滅しないように）。
+        switch state {
+        case .ready, .loading: break
+        default: if presetLists[id] != nil { presetLists[id] = nil }
+        }
     }
+
+    /// 段の Preset の一覧。SoundFont でなければ空（欄を出さない）。
+    func presets(of id: UUID) -> [ETSFZPreset] { presetLists[id] ?? [] }
 
     /// 新しい読み込みを始める。**前の読み込みの結果は捨て、JS の仕事は取り消し、見張りも止める。**
     private func nextGeneration(_ id: UUID) -> Int {
@@ -281,6 +303,7 @@ final class SFZLoader: ObservableObject {
     @discardableResult
     private func start(nodeID: UUID, bankID: String, dsp: EffeTuneDSP, announce: Bool) -> Bool {
         let number = nextGeneration(nodeID)
+        pruneRemovedNodes(dsp: dsp)
         guard SFZLibrary.shared.entry(id: bankID) != nil else {
             set(.missing, for: nodeID)
             return false
@@ -339,8 +362,10 @@ final class SFZLoader: ObservableObject {
                 return
             }
             do {
-                try send(prepared, to: node, dsp: dsp)
+                try send(prepared, to: node, dsp: dsp, number: number)
                 recent.store(prepared, for: cacheKey(bankID))
+                presetLists[nodeID] = prepared.soundFont.map(\.presets)
+                reconcilePreset(prepared, nodeID: nodeID, dsp: dsp)
                 set(.ready(name: prepared.name, regions: prepared.regionCount), for: nodeID)
                 if announce, let text = ETSFZMessages.warning(prepared.warnings.map(\.code)) { notice = text }
                 watch(nodeID: nodeID, number: number, instance: node.instance, dsp: dsp)
@@ -362,7 +387,15 @@ final class SFZLoader: ObservableObject {
     /// 資産をカーネルへ。begin の引数は SFZ 専用（channels 1・frames は payload の頭の値・topology 0・head 128・
     /// rate_divider 1・processing_channels は幾何と同じ）。**footprint は send のたびにエンジンへ聞き直す**
     /// （payload + 追加分。出力先・レート・幅が変わると変わる）。
-    private func send(_ prepared: ETSFZScriptPrepared, to node: EffeTuneDSP.Node, dsp: EffeTuneDSP) throws {
+    /// SoundFont（v9）は PCM が payload に無い。commit の直後（音のスレッドを締め出している間）に流しを繋ぎ（configure）、
+    /// 送れたらページを作る供給を回す。SFZ（v6・v7 の常駐）は流しを持たないので、前の供給があれば止める。
+    private func send(_ prepared: ETSFZScriptPrepared, to node: EffeTuneDSP.Node, dsp: EffeTuneDSP, number: Int) throws {
+        // この版が扱えない音源・欠けのある音源は上流と同じく断る。標本の表が作れない流し込みの資産も断る
+        // （流しを繋げないと、ページが来ず音が欠け続ける）。
+        try ETSFZPreparedCheck.requireComplete(unsupportedOpcodes: prepared.unsupportedOpcodes,
+                                               unsupportedRuntime: prepared.unsupportedRuntime,
+                                               incomplete: prepared.incomplete)
+        try ETSFZPreparedCheck.requireStreamSources(tableVersion: prepared.tableVersion, hasSources: prepared.soundFont != nil)
         let geometry = try Self.geometry(of: node, dsp: dsp)
         let control = [UInt8](prepared.control)
         let formatTag = UInt32(clamping: prepared.formatTag)
@@ -373,14 +406,99 @@ final class SFZLoader: ObservableObject {
                                          headBlock: 128, rateDivider: 1, pathCount: 0, inputCount: 0,
                                          processingChannels: UInt32(geometry.processingChannels),
                                          footprintBytes: footprint)
+        // 流し込み（SoundFont）の用意。標本の表は置き場の入れ物から作る（SF2 はその中に入っている）。
+        var attached: (generation: UInt64, slot: UInt32)?
+        var sources: [ETSFZSampleSource] = []
+        var connect: (() throws -> Void)?
+        if let soundFont = prepared.soundFont {
+            guard prepared.tableVersion == 9,
+                  let bank = try? SFZLibrary.shared.backend.readSfzBankFile("\(prepared.id).sfzbank")
+            else { throw ETSFZError.prepare(ETSFZStream.preparationFailedMessage) }
+            sources = try soundFont.sources(bank: bank.url, bankBytes: bank.size)
+            let generation = ETSFZStream.nextGeneration()
+            let engine = dsp.engine, instance = node.instance, rate = dsp.sampleRate
+            let forecast = geometry.playerKind == .note
+            connect = {
+                let slot = try ETSFZStream.attach(engine: engine, instance: instance, generation: generation,
+                                                  sampleRate: rate, forecast: forecast)
+                attached = (generation, slot)
+            }
+        } else {
+            // 流しを持たない資産（SFZ）に替わるときは、前の流しの畳みも commit の直後（締め出している間）に済ませる。
+            let engine = dsp.engine, instance = node.instance
+            connect = { ETSFZStream.detach(engine: engine, instance: instance) }
+        }
         try AssetUpload.send(engine: dsp.engine, instance: node.instance, slot: 0,
                              header: Array(control.prefix(ETSFZPoolFill.outerHeaderBytes)),
                              byteCount: prepared.payloadByteCount, info: info, formatTag: formatTag,
-                             capacity: ETSFZ.maxSupportedBytes) { staging in
+                             capacity: ETSFZ.maxSupportedBytes, afterCommit: connect) { staging in
             try ETSFZPayloadFill.fill(staging: staging, control: prepared.control, pool: prepared.poolEntries)
         }
+        replaceStream(for: node.id, detach: false, with: attached.map { attachment -> SFZActiveStream in
+            let source = ETSFZPageSource(slot: attachment.slot, generation: attachment.generation, samples: sources)
+            let id = node.id, engine = dsp.engine, instance = node.instance
+            source.onFailure { [weak self] in
+                Task { @MainActor in self?.streamFailed(nodeID: id, number: number, engine: engine, instance: instance) }
+            }
+            source.start()
+            return SFZActiveStream(source: source, engine: engine, instance: instance)
+        }, engine: dsp.engine, instance: node.instance)
         // 送ると遅れが変わる。鎖を出し直して合わせる。
         dsp.republish()
+    }
+
+    /// 段が消えた供給と Preset の一覧を片づける。段の削除を知らせる口が無いので、次の読み込みの頭で見る
+    /// （instance は ETPipeline_DestroyInstances が流しごと畳むので、止めるのは供給の thread だけ）。
+    private func pruneRemovedNodes(dsp: EffeTuneDSP) {
+        for id in Array(streams.keys) where dsp.slot(of: id) == nil {
+            if let removed = streams.removeValue(forKey: id) {
+                DispatchQueue.global(qos: .utility).async { removed.source.stop() }
+            }
+        }
+        for id in Array(presetLists.keys) where dsp.slot(of: id) == nil { presetLists[id] = nil }
+    }
+
+    /// 段の供給を差し替える。前の供給は止める（待ちが最大 1 秒あるので UI のスレッドでは止めない）。
+    /// 流しを持たない資産（SFZ）に替わるときは、engine 側の流しも畳む。
+    /// detach: false は、流しの畳みを呼び手が commit の直後に済ませたとき（send）。
+    private func replaceStream(for id: UUID, detach: Bool = true, with next: SFZActiveStream?, engine: UInt32, instance: UInt32) {
+        let previous = streams.removeValue(forKey: id)
+        if let next {
+            streams[id] = next
+        } else if detach {
+            ETSFZStream.detach(engine: engine, instance: instance)
+        }
+        guard let previous else { return }
+        DispatchQueue.global(qos: .utility).async { previous.source.stop() }
+    }
+
+    /// 資産を外し、流しと供給も畳む（鍵を外した・段の素材を戻した・供給が失敗した）。
+    private func clearAsset(for id: UUID, engine: UInt32, instance: UInt32) {
+        AssetUpload.clear(engine: engine, instance: instance)
+        replaceStream(for: id, with: nil, engine: engine, instance: instance)
+    }
+
+    /// 供給が標本を読めなかった（置き場のファイルが消えた・差し替わった）。上流の sfzStreamFailed と同じく資産を外して
+    /// 赤い状態行に出す。読み直すまでそのページは欠け続けるので、鳴らし続けない。
+    private func streamFailed(nodeID: UUID, number: Int, engine: UInt32, instance: UInt32) {
+        guard current(nodeID, number), streams[nodeID] != nil else { return }
+        log.error("SFZ 流し込みが失敗（標本を読めない）")
+        watchers[nodeID]?.cancel()
+        watchers[nodeID] = nil
+        clearAsset(for: nodeID, engine: engine, instance: instance)
+        set(.failed(.sampleRead), for: nodeID)
+        EffeTuneDSP.shared.republish(reason: "SFZ の流し込みが失敗")
+    }
+
+    /// 読み込んだ後の Preset（sp0）を、音源の Preset の一覧に照らして直す（上流の validatePreparedSfzBank）。
+    /// 一覧に無い値（別の SoundFont の番号・SFZ のバンク）は -1（音源の先頭）へ戻す。
+    private func reconcilePreset(_ prepared: ETSFZScriptPrepared, nodeID: UUID, dsp: EffeTuneDSP) {
+        guard let slot = dsp.slot(of: nodeID), let node = dsp.node(at: slot),
+              let preset = node.spec.params.first(where: { $0.key == "sp0" }),
+              node.values.indices.contains(preset.offset) else { return }
+        let current = node.values[preset.offset]
+        let next = ETSFZPresetMenu.validatedSelection(current: current, presets: prepared.soundFont?.presets ?? [])
+        if next != current { dsp.setValue(next, at: slot, offset: preset.offset) }
     }
 
     /// commit の後、資産の状態を読む。ERROR なら段の状態を .failed にする。ACTIVE か、資産が外れたら止める。
@@ -440,18 +558,47 @@ final class SFZLoader: ObservableObject {
         return out
     }
 
-    /// 選んだフォルダの SFZ を全部、置き場に入れる（SoundFont Library の取り込み。段には入れない）。
+    /// SoundFont のファイル 1 本の入り口（道はファイル名だけ。選んだフォルダが無いので、親は付けない）。
+    nonisolated static func describe(file url: URL) throws -> [ETSFZScriptFile] {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
+        guard let values = try? url.resourceValues(forKeys: keys), let size = values.fileSize else {
+            throw ETSFZError.prepare("The SFZ folder could not be read.")
+        }
+        let modified = values.contentModificationDate?.timeIntervalSince1970 ?? 0
+        return [ETSFZScriptFile(path: url.lastPathComponent, url: url, size: size, lastModified: (modified * 1000).rounded(.down))]
+    }
+
+    /// 選んだもの（フォルダか、SoundFont のファイル 1 本）を置き場に入れる。ファイル選択（.fileImporter）の戻りをそのまま渡す。
+    func importToLibrary(picked url: URL) async -> String {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        return isDirectory ? await importToLibrary(folder: url) : await importToLibrary(file: url)
+    }
+
+    /// 選んだフォルダの SFZ・SoundFont を全部、置き場に入れる（SoundFont Library の取り込み。段には入れない）。
+    func importToLibrary(folder: URL) async -> String {
+        await importToLibrary(scoped: folder) { try SFZLoader.enumerate(folder: folder) }
+    }
+
+    /// 選んだ SoundFont のファイル 1 本を、置き場に入れる。
+    func importToLibrary(file: URL) async -> String {
+        await importToLibrary(scoped: file) { try SFZLoader.describe(file: file) }
+    }
+
     /// 上流の browser.js の importFiles と同じく 1 つずつ順に取り込み、失敗したものは数えて先へ進む。
     /// 戻りは結果の 1 文（上流の irLibrary.status.importResult に寄せた形）。
-    func importToLibrary(folder: URL) async -> String {
+    private func importToLibrary(scoped root: URL, listing: @escaping @Sendable () throws -> [ETSFZScriptFile]) async -> String {
         let library = SFZLibrary.shared
-        let scoped = folder.startAccessingSecurityScopedResource()
-        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        let scoped = root.startAccessingSecurityScopedResource()
+        defer { if scoped { root.stopAccessingSecurityScopedResource() } }
         var service = await library.scriptService()
         let files: [ETSFZScriptFile]
         let paths: [String]
         do {
-            files = try await Task.detached(priority: .userInitiated) { try SFZLoader.enumerate(folder: folder) }.value
+            files = try await Task.detached(priority: .userInitiated) { try listing() }.value
             paths = try await service.listInstruments(in: files)
         } catch {
             return ETSFZMessages.error(((error as? ETSFZError)?.code ?? .prepare).rawValue)
@@ -491,6 +638,8 @@ final class SFZLoader: ObservableObject {
     func forget(nodeID: UUID) {
         _ = nextGeneration(nodeID)
         set(.idle, for: nodeID)
+        // 呼び手（Reset）が資産を外している。流しの供給も畳む。
+        if let active = streams[nodeID] { replaceStream(for: nodeID, with: nil, engine: active.engine, instance: active.instance) }
     }
 
     /// 段の鍵を替える。**鍵が変わるときだけ Preset（sp0）を -1（既定）へ戻す**（上流は sf を変えると sp0 も戻す。
@@ -507,11 +656,13 @@ final class SFZLoader: ObservableObject {
     /// 置き場にあるバンクを選んだ（選択欄から）。
     func choose(bankID: String, for nodeID: UUID, dsp: EffeTuneDSP) {
         guard let slot = dsp.slot(of: nodeID) else { return }
+        // 別のバンクの Preset の一覧は出さない（読み込めたら入れ直す）。
+        if dsp.node(at: slot)?.irId != bankID { presetLists[nodeID] = nil }
         select(bankID: bankID, at: slot, nodeID: nodeID, dsp: dsp)
         if bankID.isEmpty {
             _ = nextGeneration(nodeID)
             set(.idle, for: nodeID)
-            AssetUpload.clear(engine: dsp.engine, instance: dsp.node(at: slot)?.instance ?? 0)
+            clearAsset(for: nodeID, engine: dsp.engine, instance: dsp.node(at: slot)?.instance ?? 0)
             dsp.republish(reason: "SFZ を外した")
             return
         }

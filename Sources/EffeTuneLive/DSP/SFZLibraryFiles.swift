@@ -19,6 +19,8 @@ struct ETSFZLibraryEntry: Equatable, Identifiable {
     var size: Int? = nil
     var fileCount: Int? = nil
     var importedAt: String? = nil
+    /// "sf2" / "sf3"（SoundFont のとき。SFZ は nil）。一覧の行に SF2・SF3 と出す（上流の formatBadge）。
+    var format: String? = nil
 }
 
 /// 読み込んで、カーネルへ送るだけになったバンク。
