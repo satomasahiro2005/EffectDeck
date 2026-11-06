@@ -427,7 +427,7 @@ struct NoteSpectrogramView: View {
     @ViewBuilder
     private func parameterRow(_ param: ETParam) -> some View {
         if param.name == "minimumMidi" || param.name == "maximumMidi" {
-            // 値の綴りは全体の調に従う（2.16.0）。帯ではなく notation だけを観測する。
+            // 値の綴りは局所の調に従う（2.17.0。2.16.0 は全体の調）。帯ではなく notation だけを観測する。
             ETNoteKeyedRangeRow(param: param, nodeIndex: index, values: node.values, dsp: dsp,
                                 notation: band.notation)
         } else {
@@ -513,7 +513,7 @@ struct ETNoteRangeRow: View {
 
     @ObservedObject var dsp: EffeTuneDSP
     @Environment(\.etGraphOnly) private var graphOnly
-    /// 音名の表（2.16.0。Chords & Key の全体の調で綴りが変わる）。SFZ は既定の # のまま。
+    /// 音名の表（Chords & Key の局所の調で綴りが変わる。2.17.0 で全体の調から変わった）。SFZ は既定の # のまま。
     var names: [String] = ETNoteChordKey.sharpNames
 
     var body: some View {
@@ -559,7 +559,7 @@ struct ETNoteRangeRow: View {
     }
 }
 
-/// 音域の行に全体の調の綴りを渡す。ETNoteNotation だけを観測する（帯は 30Hz で流れるので観測しない）。
+/// 音域の行に局所の調の綴りを渡す。ETNoteNotation だけを観測する（帯は 30Hz で流れるので観測しない）。
 private struct ETNoteKeyedRangeRow: View {
     let param: ETParam
     let nodeIndex: Int
@@ -1361,7 +1361,7 @@ struct ETNoteProbe {
 
 // MARK: - 横に流す帯
 
-/// 音名の綴りを決める調（全体の調）。Lowest / Highest Note の行だけが見る。
+/// 音名の綴りを決める調（局所の調）。Lowest / Highest Note の行だけが見る。
 /// 帯は 30Hz で流れるので、行が帯を観測するとカードごと作り直されてボタンが固まる。
 /// 綴りの表が変わったときだけ流すので、こちらは滅多に動かない。
 final class ETNoteNotation: ObservableObject {
@@ -1488,9 +1488,9 @@ final class ETNoteBand: ObservableObject {
 
     // MARK: 和音と調（2.16.0）
 
-    /// 列ごとの確定した和音と、局所・全体の調。Foundation だけの ETNoteChordTrack が持つ。
+    /// 列ごとの確定した和音と、局所・全体の調。Foundation だけの ETNoteChordTrack が持つ。綴りは局所の調（2.17.0）。
     private var chordTrack = ETNoteChordTrack(columns: ETNoteBand.columns)
-    /// 音名の綴り（全体の調）。Lowest / Highest Note の行が、帯を観測せずにこれだけを見る。
+    /// 音名の綴り（局所の調）。Lowest / Highest Note の行が、帯を観測せずにこれだけを見る。
     let notation = ETNoteNotation()
     /// ck。切り替えたら和音と調を捨てる（上流 setParameters）。
     var chordKeyEnabled = false {
@@ -1502,8 +1502,8 @@ final class ETNoteBand: ObservableObject {
     }
     var localKey: Int? { chordTrack.localKey }
     var overallKey: Int? { chordTrack.overallKey }
-    /// いまの音名の表（全体の調に従う）。
-    var notationNames: [String] { ETNoteChordKey.noteNames(forKey: chordTrack.overallKey) }
+    /// いまの音名の表（局所の調に従う）。
+    var notationNames: [String] { chordTrack.notationNames }
 
     /// 音量の目盛り。幅と床は上流の既定のまま（lr 24 / df -60）。
     private var levelReference = ETLevelReference()
@@ -1815,7 +1815,7 @@ final class ETNoteBand: ObservableObject {
                                 head: head, count: count) {
                 changed = true
             }
-            setNotation(key: chordTrack.overallKey)
+            setNotation(key: chordTrack.notationKey)
         }
         if changed { revision &+= 1 }
     }

@@ -457,6 +457,11 @@ struct ETNoteChordTrack {
         chords = [String?](repeating: nil, count: columns)
     }
 
+    /// 音名の綴りを決める調。**2.17.0 から局所の調**（2.16.0 は全体の調だった。上流 _setNotationKey(localKey)）。
+    /// nil（まだ）と 24（調なし）は # の綴り。全体の調は綴りに使わない。
+    var notationKey: Int? { localKey }
+    var notationNames: [String] { ETNoteChordKey.noteNames(forKey: localKey) }
+
     /// 上流 clearChordKeyHistory。
     mutating func clear() {
         for i in chords.indices { chords[i] = nil }
