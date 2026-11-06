@@ -34,7 +34,8 @@ final class ETPeekCardBox {
     /// 図の複写を出したい側に変わった時刻。重ねる面が「いちばん新しく触ったカード」を選ぶのに使う。
     var armedAt: TimeInterval = 0
 
-    deinit { task?.cancel() }
+    // deinit は置かない。@MainActor の持ち物を非隔離の deinit から触ると言語版によって通らない
+    // （BandFIRPEQDesigner と同じ）。待ちはカードの onDisappear で止める。
 
     /// 図の矩形を置き直す。送るのは `.graph` だけ。
     func record(_ items: [ETGraphPeekItem], in geo: GeometryProxy) {
@@ -122,6 +123,18 @@ struct ETGraphPeekOverlay: View {
         return best
     }
 
+    /// そのカードの `.card`。
+    private func entry(for id: UUID) -> Entry? {
+        for item in items {
+            if case .card(let cid, let anchor, let touchY, let armedAt, let content, let suppress) = item,
+               cid == id {
+                return Entry(id: cid, anchor: anchor, touchY: touchY, armedAt: armedAt,
+                             content: content, suppress: suppress)
+            }
+        }
+        return nil
+    }
+
     private struct Shown {
         var card: Entry
         var rect: CGRect
@@ -186,6 +199,12 @@ struct ETGraphPeekOverlay: View {
         .onChange(of: scrolling) { _, now in if now { latest?.suppress() } }
         .onChange(of: dragging) { _, now in if now { latest?.suppress() } }
         .onChange(of: blocked) { _, now in if now { latest?.suppress() } }
+        // 別のカードを触り始めたら、前のカードの残りを止める（同時に出すのは 1 つ。
+        // 新しいほうが図が見えていて下がったとき、前のカードが戻って出てこないように）。
+        .onChange(of: latest?.id) { old, new in
+            guard let old, let new, old != new else { return }
+            entry(for: old)?.suppress()
+        }
     }
 
     /// 出すかどうかと、出す場所。出さないなら shown が nil。

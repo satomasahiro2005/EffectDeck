@@ -127,6 +127,9 @@ struct ETTouchWatch: UIViewRepresentable {
         func detach() {
             guard let g = recognizer else { return }
             // 指が下りたまま外れるなら、離したと知らせておく（保持が残らないように）。
+            // **知らせは次の回へ回す。**ここは View の組み直しの最中で、受け手はカードの @State を書く。
+            let forward = g.onEvent
+            g.onEvent = { event in DispatchQueue.main.async { forward?(event) } }
             g.finishIfActive()
             g.view?.removeGestureRecognizer(g)
             recognizer = nil

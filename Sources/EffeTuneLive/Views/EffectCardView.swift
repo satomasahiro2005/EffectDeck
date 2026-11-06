@@ -203,6 +203,11 @@ struct EffectCardView: View {
         // graph peek の対象か（下の peekReady）。合図の口は対象のカードだけに渡す。
         let ready = peekReady(editable: editable, graphOnly: graphOnly)
         let pulse: (() -> Void)? = ready ? { peekPulseFired() } : nil
+        // **出したいかは body で読む。**preference の閉包の中だけで読むと、@State が変わっても
+        // body が走り直さず、期限で下げても複写が残る（消えない）。指の高さも同じ回に引いておく。
+        let wants = ready && peekWants
+        let touchY = wants ? peekBox.touch.touchY(now: ETPeekClock.now) : nil
+        let armedAt = peekBox.armedAt
         return Card(block: block) {
             VStack(alignment: .leading, spacing: 0) {
                 header(shown, address: address)
@@ -279,10 +284,10 @@ struct EffectCardView: View {
         // **中の図の `.graph` に足す（transform）。**anchorPreference で置くと中の `.graph` が消え、
         // 重ねる面が「図が見えているか」を引けなくなる（いつも画面の外とみなして出てしまう）。
         .transformAnchorPreference(key: ETGraphPeekKey.self, value: .bounds) { items, anchor in
-            guard ready, peekWants else { return }
+            guard wants else { return }
             items.append(.card(id: node.id, anchor: anchor,
-                               touchY: peekBox.touch.touchY(now: ETPeekClock.now),
-                               armedAt: peekBox.armedAt,
+                               touchY: touchY,
+                               armedAt: armedAt,
                                content: peekContent(shown, address: address, companion: companion),
                                suppress: { peekMutate { $0.suppress() } }))
         }
