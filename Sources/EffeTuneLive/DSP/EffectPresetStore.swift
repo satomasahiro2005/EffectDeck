@@ -48,6 +48,8 @@ final class EffectPresetStore: ObservableObject {
 
     /// 入れ物を読み直す。init と、全部消したあと（ETFactoryReset）。
     func reload() {
+        // 旧い表示名の入れ物があれば、先にいまの名前へ寄せる（EffectPresetStoreCore.migrateLegacyNames）。
+        core.migrateLegacyNames()
         saved = core.saved
     }
 

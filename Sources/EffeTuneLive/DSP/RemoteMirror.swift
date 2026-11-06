@@ -833,7 +833,7 @@ final class RemoteMirror: ObservableObject {
         var entries: [Int: [String: Any]] = [:]
         for index in pending {
             guard chain.indices.contains(index), sentMap[index] != nil,
-                  let entry = ETRemoteProjection.entry(for: PipelineStore.Loaded(chain[index])) else { continue }
+                  let entry = ETRemoteProjection.entry(for: PipelineStore.Loaded(chain[index]), host: host) else { continue }
             entries[index] = entry
             if let remote = sentMap[index], sentForm?.indices.contains(remote) == true,
                !ETRemoteProjection.removedKeys(sent: sentForm?[remote], now: entry).isEmpty {

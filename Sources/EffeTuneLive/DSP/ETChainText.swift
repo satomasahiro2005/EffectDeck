@@ -436,6 +436,12 @@ enum ETChainText {
                     table[ETChainText.fold(t)] = e
                 }
             }
+            // 旧い表示名（ETEffectAliases）。表示名・型名のどれとも重ならないので最後に入れる。
+            for rename in ETEffectAliases.renames where table[ETChainText.fold(rename.legacyName)] == nil {
+                if let e = catalog.first(where: { $0.type == rename.type }) {
+                    table[ETChainText.fold(rename.legacyName)] = e
+                }
+            }
             loose = table
         }
 

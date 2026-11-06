@@ -64,7 +64,7 @@ enum ETRemoteProjection {
         for item in items {
             if item.externalID.isEmpty, host?.lacks(item.spec.name) == true {
                 map.append(nil)
-            } else if let entry = entry(for: item) {
+            } else if let entry = entry(for: item, host: host) {
                 map.append(pipeline.count)
                 pipeline.append(entry)
             } else {
@@ -75,7 +75,8 @@ enum ETRemoteProjection {
     }
 
     /// 1 段を上流の形へ。落とす段は nil。
-    static func entry(for item: PipelineStore.Loaded) -> [String: Any]? {
+    /// host を渡すと、改名した効果の名前を PC が知っている綴りで書く（ETEffectAliases.wireName）。
+    static func entry(for item: PipelineStore.Loaded, host: ETRemoteHostInfo? = nil) -> [String: Any]? {
         guard item.externalID.isEmpty else {
             // 同じバスの中なら、切ることは消すことと同じ。
             guard item.inputBus != item.outputBus else { return nil }
@@ -87,7 +88,8 @@ enum ETRemoteProjection {
             return o
         }
         // 外部の段はここへ来ない。1 段だけ渡すので、ほかの段の状態は符号化されない。
-        guard let entry = PipelineStore.shortForm([item]).first else { return nil }
+        guard var entry = PipelineStore.shortForm([item]).first else { return nil }
+        if let host { entry["nm"] = host.wireName(of: item.spec) }
         // 終端の印（rr）は上流に無い綴りなので外す。
         return PipelineStore.upstreamEntry(entry)
     }
@@ -551,9 +553,17 @@ struct ETRemoteHostInfo: Equatable {
     func supports(_ feature: String) -> Bool { features.contains(feature) }
 
     /// この効果を PC が持っていない。**一覧を出さない PC では偽**（分からないものは断らない）。
+    /// 改名した効果は旧い名前で持っていてもよい（2.16.0 までの PC の SFZ Note Player）。
     func lacks(_ effect: String) -> Bool {
         guard let effects else { return false }
-        return !effects.contains(effect)
+        if effects.contains(effect) { return false }
+        if let legacy = ETEffectAliases.legacyName(forCurrentName: effect), effects.contains(legacy) { return false }
+        return true
+    }
+
+    /// この PC へ送る段の名前（ETEffectAliases.wireName）。
+    func wireName(of effect: ETEffect) -> String {
+        ETEffectAliases.wireName(of: effect, effects: effects, dsp: dsp)
     }
 
     /// 機能が無いときの一言。版が分からなければ版を省く。
@@ -579,8 +589,11 @@ struct ETRemoteHostInfo: Equatable {
         var missingOnHost: [String] = []
         var missingHere: [String] = []
         if let effects {
-            missingOnHost = Set(localEffects).subtracting(effects).sorted()
-            missingHere = effects.subtracting(localEffects).sorted()
+            // 旧い名前で出す PC は、旧い名前を新しい名前に寄せてから比べる（2.16.0 までの SFZ Note Player）。
+            let host = ETEffectAliases.normalized(effects)
+            let local = ETEffectAliases.normalized(localEffects)
+            missingOnHost = local.subtracting(host).sorted()
+            missingHere = host.subtracting(local).sorted()
         }
         guard dspDiffers || appDiffers || !missingOnHost.isEmpty || !missingHere.isEmpty else { return nil }
         return ETRemoteMismatch(hostDSP: dsp, localDSP: localDSP,

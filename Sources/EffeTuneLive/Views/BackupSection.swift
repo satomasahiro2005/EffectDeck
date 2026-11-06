@@ -196,7 +196,8 @@ struct ETBackupSection: View {
         // 突き合わせる側も同じ形にしてから引く。
         let saved = EffectPresetStore.shared.saved
         for (effect, presets) in contents.effectPresets {
-            let here = Set(saved[trimmed(effect)] ?? [])
+            // 旧い表示名は merge がいまの名前の入れ物へ入れるので、引くのもいまの名前。
+            let here = Set(saved[ETEffectAliases.current(trimmed(effect))] ?? [])
             n += presets.keys.filter { here.contains(trimmed($0)) }.count
         }
         return n

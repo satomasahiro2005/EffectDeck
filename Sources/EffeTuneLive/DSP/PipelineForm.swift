@@ -219,7 +219,8 @@ enum PipelineStore {
                 continue
             }
 
-            guard let spec = byName[name] else {
+            // 旧い表示名（2.16.0 までの SFZ Note Player）も同じ効果として読む（ETEffectAliases）。
+            guard let spec = byName[name] ?? ETEffectAliases.effect(forLegacyName: name, in: catalog) else {
                 log.notice("知らないエフェクト \(name, privacy: .public)")
                 continue
             }

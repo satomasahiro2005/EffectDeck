@@ -127,13 +127,22 @@ final class EffectPresetStoreCore {
         var all = dict()
         var count = 0
         var touched: [(String, String, [String: Any])] = []
-        for (effect, presets) in incoming {
+        // 旧い表示名の鍵を先に処理する（同じ名前が両方に在るときは、いまの名前の側が勝つ。
+        // 辞書の並びで勝ち負けが変わらないように）。
+        let ordered = incoming.sorted { a, b in
+            let la = ETEffectAliases.current(Self.normalize(a.key)) != Self.normalize(a.key)
+            let lb = ETEffectAliases.current(Self.normalize(b.key)) != Self.normalize(b.key)
+            if la != lb { return la }
+            return a.key < b.key
+        }
+        for (effect, presets) in ordered {
             // **エフェクトの名前も normalize に通す。**上流は外側の鍵にも
             // normalizeName を掛けている（plugin-preset-store.js:94 の
             // `const pluginKey = normalizeName(pluginName);`）。プリセット名だけ
             // 通していると、ファイル由来の `__proto__` が外側の鍵として入り、
             // save() が絶対に作らない形が入れ物に残る（上の reserved の方針に反する）。
-            let key = Self.normalize(effect)
+            // 旧い表示名（2.16.0 までの SFZ Note Player）はいまの名前の入れ物へ入れる。
+            let key = ETEffectAliases.current(Self.normalize(effect))
             // Section は上流も preset の UI を出さない（save の注記）。
             guard !key.isEmpty, key != ETSection.name else { continue }
             var mine = all[key] as? [String: Any] ?? [:]
@@ -154,6 +163,37 @@ final class EffectPresetStoreCore {
             patch(Self.key, [CloudChange(path: [effect, name], value: params)])
         }
         return count
+    }
+
+    /// 旧い表示名の入れ物を、いまの表示名の入れ物へ寄せる（2.17.0 の SFZ Note Player → SoundFont Note Player）。
+    /// **旧い鍵が無ければ何もしない**ので、何度呼んでもよい（一度きりの移し替えと同じ）。
+    ///
+    /// プリセット名が両方に在るときは**いまの名前の側を残す**（改名後に保存したほうが新しい。
+    /// プリセットに日時は無いので、鍵の側で決める）。iCloud へは旧い鍵の削除と移した分を**1 回の patch**で当てる。
+    /// 返すのは移した本数。
+    @discardableResult
+    func migrateLegacyNames() -> Int {
+        var all = dict()
+        var moved = 0
+        var changes: [CloudChange] = []
+        for rename in ETEffectAliases.renames {
+            guard let old = all[rename.legacyName] else { continue }
+            let key = ETEffectAliases.current(rename.legacyName)
+            guard key != rename.legacyName else { continue }
+            var mine = all[key] as? [String: Any] ?? [:]
+            for (name, params) in (old as? [String: Any]) ?? [:] where mine[name] == nil {
+                mine[name] = params
+                changes.append(CloudChange(path: [key, name], value: params))
+                moved += 1
+            }
+            all.removeValue(forKey: rename.legacyName)
+            if !mine.isEmpty { all[key] = mine }
+            changes.append(CloudChange(path: [rename.legacyName], value: nil))
+        }
+        guard !changes.isEmpty else { return 0 }
+        write(all)
+        patch(Self.key, changes)
+        return moved
     }
 
     /// 名前を整える。空白を落とし、上流が弾く名前は空を返す。

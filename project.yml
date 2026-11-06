@@ -344,6 +344,9 @@ targets:
       # 貼られた鎖の下ごしらえ（ChainTextTests）。Foundationだけ。
       # Sectionの綴り・表示の鍵・チャンネルの綴り・同梱の鎖・DSPの版を引くので、その5本も入れる。
       - path: Sources/EffeTuneLive/DSP/ETChainText.swift
+      # 効果の旧名・別名の読み替え（EffectAliasTests）。Foundationだけ。PipelineForm・ETChainText・
+      # EffectPresetStoreCore・RemoteProtocolが引く。
+      - path: Sources/EffeTuneLive/DSP/ETEffectAliases.swift
       - path: Sources/EffeTuneLive/DSP/SectionSupport.swift
       - path: Sources/EffeTuneLive/DSP/DisplayParams.swift
       # 2.12.0 の解析 3 種（Analog Meter・Tonal Balance EQ・Rhythm Analyzer）の枠の読みと計算。
