@@ -100,6 +100,8 @@ struct SFZNotePlayerView: View {
 
     private func graph(canPreview: Bool) -> some View {
         SFZVoiceGraph(index: index, node: node, dsp: dsp, canPreview: canPreview)
+            // GraphCanvas を通らない図なので、graph peek への報せは自分で付ける。
+            .etPeekGraphAnchor()
     }
 
     // MARK: Detection

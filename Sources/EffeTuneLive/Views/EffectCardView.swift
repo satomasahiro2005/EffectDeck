@@ -276,13 +276,15 @@ struct EffectCardView: View {
             }
         }
         // 出したい間だけ、図の複写・カードの矩形・指の高さを PipelineView の重ねる面へ送る。
-        .anchorPreference(key: ETGraphPeekKey.self, value: .bounds) { anchor in
-            guard ready, peekWants else { return [] }
-            return [.card(id: node.id, anchor: anchor,
-                          touchY: peekBox.touch.touchY(now: ETPeekClock.now),
-                          armedAt: peekBox.armedAt,
-                          content: peekContent(shown, address: address, companion: companion),
-                          suppress: { peekMutate { $0.suppress() } })]
+        // **中の図の `.graph` に足す（transform）。**anchorPreference で置くと中の `.graph` が消え、
+        // 重ねる面が「図が見えているか」を引けなくなる（いつも画面の外とみなして出てしまう）。
+        .transformAnchorPreference(key: ETGraphPeekKey.self, value: .bounds) { items, anchor in
+            guard ready, peekWants else { return }
+            items.append(.card(id: node.id, anchor: anchor,
+                               touchY: peekBox.touch.touchY(now: ETPeekClock.now),
+                               armedAt: peekBox.armedAt,
+                               content: peekContent(shown, address: address, companion: companion),
+                               suppress: { peekMutate { $0.suppress() } }))
         }
         // 値か表示が変わった。指が置かれている間と離した直後なら、出す。
         .onChange(of: shown.values) { _, _ in peekValuesChanged(ready: ready) }

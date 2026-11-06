@@ -1127,9 +1127,10 @@ private struct ETPeekGraphAnchor: ViewModifier {
     @Environment(\.etGraphPeekCard) private var card
 
     func body(content: Content) -> some View {
-        content.anchorPreference(key: ETGraphPeekKey.self, value: .bounds) { [card] anchor in
-            guard let card else { return [] }
-            return [.graph(id: card, anchor: anchor)]
+        // 中に別の図があっても消さないよう、足す（transform）。
+        content.transformAnchorPreference(key: ETGraphPeekKey.self, value: .bounds) { [card] items, anchor in
+            guard let card else { return }
+            items.append(.graph(id: card, anchor: anchor))
         }
     }
 }
