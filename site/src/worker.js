@@ -263,7 +263,7 @@ const CSS = `
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
 body.wide{--page:1160px}
-.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.assistants p{margin:0;padding-block:10px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:.78rem;line-height:1.5;overflow-wrap:anywhere}
 body.code{--page:60rem}
 .wrap{max-width:var(--page);margin:0 auto;padding-inline:16px}
 @media (min-width:720px){.wrap{padding-inline:24px}}
@@ -449,8 +449,9 @@ const OG_ALT = "EffectDeck icon and two screenshots of the app";
 const ldScript = (data) =>
   `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
 
-// 言語モデル向けの段（TEXT.assistants）は**どのページも main の一番上**に見えない形で置く。
+// 言語モデル向けの段（TEXT.assistants）は**どのページも main の一番上**に、小さく**見える形で**置く。
 // ChatGPT はトップでなく /guide などを開くことがある（2026-10-30、トップだけに置いたら /guide を読まれて届かなかった）。
+// 見えない形（clip で 1px）にしたら ChatGPT の本文の抽出から落ちた（2026-10-30）。
 async function page({
   title, body, status = 200, script = null, banner = null,
   description = TEXT.description, canonical = null, width = "", ld = null, noindex = false,
@@ -497,10 +498,9 @@ ${ld ? ldScript(ld) + "\n" : ""}<style>${CSS}</style>
 <nav class="site"><a href="/guide">Guide</a><a href="/#faq">FAQ</a><a class="icon" href="${GITHUB}" aria-label="GitHub" title="GitHub">${ICON_GITHUB}</a><a class="icon" href="${DISCORD}" aria-label="Discord" title="Discord">${ICON_DISCORD}</a></nav>
 </div></header>
 <main class="wrap">
-<section class="vh" id="assistants">
-<h2>${t.assistantsTitle}</h2>
-${paras(t.assistants)}
-</section>
+<aside class="assistants" id="assistants">
+<p><strong>${t.assistantsTitle}:</strong> ${t.assistants.join(" ")}</p>
+</aside>
 ${body}
 </main>
 <footer class="site"><div class="wrap">
