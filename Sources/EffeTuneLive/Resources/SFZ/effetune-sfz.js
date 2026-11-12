@@ -1,9 +1,9 @@
 // effetune-sfz.js: 生成物。Tools/sfzjs/build.mjs が作る。手で直さない。
-// pin: 5ffca1b31e8a74ada7140aefd0c9c9fe4b7740da
+// pin: 738a3eab7f2e4ff02086805d04ae00a9dcaf5065
 // esbuild: 0.28.2
 // patch: effetune-js-sfz-pool-writer.diff sha256=7eb3d033f4255212b6ee31d9251ea13221fcfe2a8c912796407e38cef1baa157
-// patch: effetune-js-sfz-stream-table.diff sha256=68b0c0d2d02125e5dcfa8b20861b6b9ca8f224084914f237ea2a6378dc8c54c7
-// sha256: 4160568cbe5e102009a6dd2fb37445fb04ec95c7b262f67330d3340bde81586b
+// patch: effetune-js-sfz-stream-table.diff sha256=8621db54b9a534a7c462959f068d3862cc0581d9d235b697b7f519a13ae6a179
+// sha256: 50cfc42f17184236c73feee986311b9ade42409383a3b482bd6b6729135a79aa
 var ETSFZ = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -735,8 +735,13 @@ var ETSFZ = (() => {
     return (Number(match[3]) + 1) * 12 + pitch + (match[2] === "#" ? 1 : match[2] === "b" ? -1 : 0);
   }
   function sfzControllerOpcode(key) {
-    const match = /^(.*?)([0-9]{1,3})$/.exec(key);
-    return match && Object.hasOwn(SFZ_CONTROLLER_FAMILIES, match[1]) && Number(match[2]) < 128 ? { family: match[1], controller: Number(match[2]) } : null;
+    let route = controllerOpcodes.get(key);
+    if (route === void 0) {
+      const match = /^(.*?)([0-9]{1,3})$/.exec(key);
+      route = match && Object.hasOwn(SFZ_CONTROLLER_FAMILIES, match[1]) && Number(match[2]) < 128 ? Object.freeze({ family: match[1], controller: Number(match[2]) }) : null;
+      if (controllerOpcodes.size < 65536) controllerOpcodes.set(key, route);
+    }
+    return route;
   }
   function sfzControllerValue(region, family, controller) {
     return region[family + controller] ?? SFZ_CONTROLLER_FAMILIES[family];
@@ -765,7 +770,7 @@ var ETSFZ = (() => {
     const controller = sfzControllerOpcode(canonical);
     return controller ? `${controller.family}${controller.controller}` : canonical;
   }
-  var SFZ_EXTRA_DEFAULTS, SFZ_CONTROLLER_FAMILIES, SFZ_MODULATION_TARGETS, SFZ_MODULATION_DEPTH_RANGES, SFZ_EXTRA_FIELDS, SFZ_ENUMS, SFZ_ALIASES;
+  var SFZ_EXTRA_DEFAULTS, SFZ_CONTROLLER_FAMILIES, SFZ_MODULATION_TARGETS, SFZ_MODULATION_DEPTH_RANGES, SFZ_EXTRA_FIELDS, SFZ_ENUMS, SFZ_ALIASES, controllerOpcodes;
   var init_schema = __esm({
     "js/sfz/schema.js"() {
       init_modulation_schema();
@@ -938,6 +943,7 @@ var ETSFZ = (() => {
         pitch_release: "pitcheg_release",
         pitch_sustain: "pitcheg_sustain"
       });
+      controllerOpcodes = /* @__PURE__ */ new Map();
     }
   });
 
@@ -954,12 +960,13 @@ var ETSFZ = (() => {
     }
     return value;
   }
-  var SFZ_SIZE_LIMIT_MIB_OPTIONS, SFZ_DEFAULT_MAX_BYTES, SFZ_MAX_SUPPORTED_BYTES;
+  var SFZ_SIZE_LIMIT_MIB_OPTIONS, SFZ_DEFAULT_MAX_BYTES, SFZ_MAX_SUPPORTED_BYTES, SFZ_MAX_SAMPLES;
   var init_limits = __esm({
     "js/sfz/limits.js"() {
       SFZ_SIZE_LIMIT_MIB_OPTIONS = Object.freeze([64, 128, 256, 512, 1024]);
       SFZ_DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
       SFZ_MAX_SUPPORTED_BYTES = 1024 * 1024 * 1024;
+      SFZ_MAX_SAMPLES = 65536;
     }
   });
 
@@ -2918,7 +2925,7 @@ var ETSFZ = (() => {
   function packSf2Modulation(compiled) {
     const regionCount = compiled.regions.length;
     const routeCount = compiled.regions.reduce((count, region) => count + region.modulators.length, 0);
-    if (routeCount > 1048576) throw sf2Error("Too many SoundFont modulation routes");
+    if (routeCount > SF2_MAX_ROUTES) throw sf2Error("Too many SoundFont modulation routes");
     const directoryOffset = HEADER_WORDS, routeOffset = directoryOffset + regionCount * DIRECTORY_WORDS;
     const generatorOffset = routeOffset + routeCount * ROUTE_WORDS;
     const buffer = new ArrayBuffer((generatorOffset + regionCount * GENERATOR_WORDS) * 4);
@@ -2969,11 +2976,12 @@ var ETSFZ = (() => {
     }
     return new Uint8Array(buffer);
   }
-  var SF2_MODULATION_SECTION_VERSION, HEADER_WORDS, DIRECTORY_WORDS, ROUTE_WORDS, GENERATOR_WORDS;
+  var SF2_MODULATION_SECTION_VERSION, SF2_MAX_ROUTES, HEADER_WORDS, DIRECTORY_WORDS, ROUTE_WORDS, GENERATOR_WORDS;
   var init_modulation2 = __esm({
     "js/sf2/modulation.js"() {
       init_parser2();
       SF2_MODULATION_SECTION_VERSION = 2;
+      SF2_MAX_ROUTES = 4194304;
       HEADER_WORDS = 10;
       DIRECTORY_WORDS = 4;
       ROUTE_WORDS = 10;
@@ -3046,7 +3054,7 @@ var ETSFZ = (() => {
     return tailSeconds;
   }
   function sfzSampleCacheFootprint(sampleCount, cacheSlots, channels = 2, storage = null) {
-    if (!Number.isInteger(sampleCount) || sampleCount < 1 || sampleCount > 1e4 || !Number.isInteger(cacheSlots) || cacheSlots < 1 || cacheSlots > 32768 || channels !== 1 && channels !== 2 || storage && (!Number.isInteger(storage.slots16) || storage.slots16 < 0 || storage.slots16 > cacheSlots)) throw sfzError("prepare", "Invalid SFZ sample cache capacity.");
+    if (!Number.isInteger(sampleCount) || sampleCount < 1 || sampleCount > SFZ_MAX_SAMPLES || !Number.isInteger(cacheSlots) || cacheSlots < 1 || cacheSlots > 32768 || channels !== 1 && channels !== 2 || storage && (!Number.isInteger(storage.slots16) || storage.slots16 < 0 || storage.slots16 > cacheSlots)) throw sfzError("prepare", "Invalid SFZ sample cache capacity.");
     let buckets = 1;
     while (buckets < cacheSlots * SFZ_MOD_STORAGE.CacheHashLoad) buckets *= 2;
     const slots16 = storage?.slots16 ?? 0;
@@ -3107,6 +3115,8 @@ var ETSFZ = (() => {
     }
     const playable = [];
     const playableIndices = [];
+    const rows = [];
+    const controls = [];
     const invalidRegions = [];
     let firstInvalid;
     let ignoredLoopPoints = 0;
@@ -3125,17 +3135,21 @@ var ETSFZ = (() => {
           normalized.loop_start = 0;
           normalized.loop_end = end;
         } else if (invalidLoop) throw sfzError("prepare", "SFZ loop points exceed the sample.");
-        for (const key of SFZ_REGION_FIELDS) {
-          if (key === "sampleOffset") continue;
-          const value = normalized[key];
+        const row = new Float64Array(SFZ_REGION_FIELDS.length);
+        for (let field = 0; field < SFZ_REGION_FIELDS.length; field++) {
+          if (field === SAMPLE_OFFSET_LANE) continue;
+          const value = normalized[SFZ_REGION_FIELDS[field]];
           if (!Number.isFinite(value)) throw sfzError("prepare", "SFZ region has invalid values.");
-          if (INDEX_FIELDS.has(key) && (!Number.isSafeInteger(value) || value < 0 || value > 4294967295)) {
+          if (INDEX_FIELD_LANES[field] && (!Number.isSafeInteger(value) || value < 0 || value > 4294967295)) {
             throw sfzError("prepare", "SFZ sample positions must be non-negative integers.");
           }
+          row[field] = value;
         }
         if (invalidLoop) ignoredLoopPoints++;
         playable.push(normalized);
         playableIndices.push(regionIndex);
+        rows.push(row);
+        controls.push(region);
       } catch (error2) {
         if (error2?.code !== "prepare") throw error2;
         firstInvalid ??= error2;
@@ -3150,7 +3164,10 @@ var ETSFZ = (() => {
       const ids = [...new Set(regions.flatMap((region) => [region.group, region.off_by]).filter((id) => id !== 0))].sort((a, b2) => a - b2);
       if (ids.length > 16777216) throw sfzError("too-large", "The instrument has too many exclusive groups.");
       const tokens = new Map(ids.map((id, index) => [id, index + 1]));
-      regions = regions.map((region) => ({ ...region, group: tokens.get(region.group) ?? 0, off_by: tokens.get(region.off_by) ?? 0 }));
+      for (const [index, region] of regions.entries()) {
+        rows[index][GROUP_LANE] = tokens.get(region.group) ?? 0;
+        rows[index][OFF_BY_LANE] = tokens.get(region.off_by) ?? 0;
+      }
     }
     if (!stream) samplePaths = [.../* @__PURE__ */ new Set([...regions.map((region) => region.sample), ...impulsePaths])].sort();
     for (const [sampleIndex, path] of samplePaths.entries()) {
@@ -3161,17 +3178,18 @@ var ETSFZ = (() => {
     const groupIds = [...new Set(regions.map((region) => region.seqGroup))].sort((a, b2) => a - b2);
     const groupCount = groupIds.length;
     const groups = new Map(groupIds.map((id, index) => [id, index]));
-    const controls = regions.map((region) => {
+    for (const [index, region] of controls.entries()) {
       const entries = [];
-      for (const [key, value] of Object.entries(region)) {
+      for (const key in region) {
+        const value = region[key];
         const route = sfzControllerOpcode(key);
         if (!route || value === SFZ_CONTROLLER_FAMILIES[route.family]) continue;
         if (genericModulation && !["locc", "hicc", "set_cc", "on_locc", "on_hicc"].includes(route.family)) continue;
         if (!Number.isFinite(value)) throw sfzError("prepare", "SFZ controller has an invalid value.");
         entries.push([CONTROLLER_IDS.get(route.family) * 512 + route.controller, value]);
       }
-      return entries.sort((a, b2) => a[0] - b2[0]);
-    });
+      controls[index] = entries.sort((a, b2) => a[0] - b2[0]);
+    }
     const controlWords = controls.reduce((sum, entries) => sum + 2 * entries.length, 0);
     const controlOffset = headerWords + SFZ_REGION_FIELDS.length * regions.length;
     const scriptOffset = controlOffset + controlWords;
@@ -3251,22 +3269,19 @@ var ETSFZ = (() => {
     new Uint8Array(payload, 32 + modulationOffset * 4, modulationBytes.byteLength).set(modulationBytes);
     let nextControl = controlOffset;
     for (const [index, region] of regions.entries()) {
-      const info = sampleInfo.get(region.sample);
-      const normalized = {
-        ...region,
-        ...info,
-        seqGroup: groups.get(region.seqGroup),
-        controlOffset: nextControl,
-        controlCount: controls[index].length
-      };
+      const row = rows[index];
+      row[SAMPLE_OFFSET_LANE] = sampleInfo.get(region.sample).sampleOffset;
+      row[SEQ_GROUP_LANE] = groups.get(region.seqGroup);
+      row[CONTROL_OFFSET_LANE] = nextControl;
+      row[CONTROL_COUNT_LANE] = controls[index].length;
       for (const [id, value] of controls[index]) {
         integers[nextControl++] = id;
         packed[nextControl++] = value;
       }
-      for (const [field, key] of SFZ_REGION_FIELDS.entries()) {
-        const offset = headerWords + index * SFZ_REGION_FIELDS.length + field;
-        if (INDEX_FIELDS.has(key)) integers[offset] = normalized[key];
-        else packed[offset] = normalized[key];
+      let offset = headerWords + index * SFZ_REGION_FIELDS.length;
+      for (let field = 0; field < SFZ_REGION_FIELDS.length; field++, offset++) {
+        if (INDEX_FIELD_LANES[field]) integers[offset] = row[field];
+        else packed[offset] = row[field];
       }
     }
     let residentCursor = 0;
@@ -3326,7 +3341,7 @@ var ETSFZ = (() => {
       ...preparationContext && { preparationContext }
     };
   }
-  var SFZ_TABLE_VERSION, SFZ_MODULATION_TABLE_VERSION, SFZ_TABLE_HEADER_WORDS, SFZ_STREAM_TABLE_VERSION, SFZ_STREAM_TABLE_HEADER_WORDS, SFZ_STORAGE_TABLE_VERSION, SFZ_STORAGE_TABLE_HEADER_WORDS, SF2_TABLE_VERSION, SF2_TABLE_HEADER_WORDS, HEADER_WORDS2, SFZ_REGION_FIELDS, INDEX_FIELDS, CONTROLLER_IDS;
+  var SFZ_TABLE_VERSION, SFZ_MODULATION_TABLE_VERSION, SFZ_TABLE_HEADER_WORDS, SFZ_STREAM_TABLE_VERSION, SFZ_STREAM_TABLE_HEADER_WORDS, SFZ_STORAGE_TABLE_VERSION, SFZ_STORAGE_TABLE_HEADER_WORDS, SF2_TABLE_VERSION, SF2_TABLE_HEADER_WORDS, HEADER_WORDS2, SFZ_REGION_FIELDS, INDEX_FIELDS, INDEX_FIELD_LANES, SAMPLE_OFFSET_LANE, SEQ_GROUP_LANE, GROUP_LANE, OFF_BY_LANE, CONTROL_OFFSET_LANE, CONTROL_COUNT_LANE, CONTROLLER_IDS;
   var init_asset = __esm({
     "js/sfz/asset.js"() {
       init_modulation_schema();
@@ -3384,6 +3399,8 @@ var ETSFZ = (() => {
         "controlCount"
       ]);
       INDEX_FIELDS = /* @__PURE__ */ new Set(["sampleOffset", "sampleFrames", "offset", "end", "loop_start", "loop_end", "controlOffset", "controlCount"]);
+      INDEX_FIELD_LANES = SFZ_REGION_FIELDS.map((key) => INDEX_FIELDS.has(key));
+      [SAMPLE_OFFSET_LANE, SEQ_GROUP_LANE, GROUP_LANE, OFF_BY_LANE, CONTROL_OFFSET_LANE, CONTROL_COUNT_LANE] = ["sampleOffset", "seqGroup", "group", "off_by", "controlOffset", "controlCount"].map((key) => SFZ_REGION_FIELDS.indexOf(key));
       CONTROLLER_IDS = new Map(Object.keys(SFZ_CONTROLLER_FAMILIES).map((family, index) => [family, index]));
     }
   });
@@ -5814,30 +5831,34 @@ var ETSFZ = (() => {
           const velocityRange = intersect(instrument.generators.get(44) ?? 32512, presetZone.generators.get(44) ?? 32512);
           if (keyRange[0] > keyRange[1] || velocityRange[0] > velocityRange[1]) continue;
           if (keyRange[1] > 127 || velocityRange[1] > 127) throw sf2Error("Invalid MIDI zone range");
-          const generators = Float64Array.from(SF2_GENERATOR_DEFAULTS);
+          const generators = new Float64Array(SF2_GENERATOR_DEFAULTS);
           for (const [id, amount] of instrument.generators) generators[id] = amount;
           for (const [id, amount] of presetZone.generators) if (![41, 43, 44].includes(id)) generators[id] += amount;
           const start = sample.start + generators[0] + 32768 * generators[4];
           const end = sample.end + generators[1] + 32768 * generators[12];
+          if (sample.sampleType & 32768 || sample.sampleRate < 1 || sample.sampleRate > 768e3 || start < 0 || end <= start || end > (sample.compressed?.frames ?? parsed.sampleFrames)) {
+            diagnostics.ignoredZones++;
+            continue;
+          }
           const requestedLoopStart = sample.loopStart + generators[2] + 32768 * generators[45];
           const requestedLoopEnd = sample.loopEnd + generators[3] + 32768 * generators[50];
           let loopStart = Math.max(start, Math.min(end, requestedLoopStart));
           let loopEnd = Math.max(start, Math.min(end, requestedLoopEnd));
-          if (generators[54] & 1 && loopEnd <= loopStart) {
+          const looped = generators[54] & 1;
+          if (looped && loopEnd <= loopStart) {
             loopStart = Math.max(start, sample.loopStart);
             loopEnd = Math.min(end, sample.loopEnd);
+            if (loopEnd <= loopStart) generators[54] = 0;
           }
-          if (generators[54] & 1 && (loopStart !== requestedLoopStart || loopEnd !== requestedLoopEnd)) diagnostics.adjustedLoops++;
-          if (sample.sampleType & 32768) throw sf2Error("The preset requires external ROM samples");
-          const sampleType = sample.sampleType & ~16;
-          if (![1, 2, 4, 8].includes(sampleType) || sampleType !== 1 && sample.sampleLink >= tables.shdr.length - 1 || start < 0 || end <= start || end > (sample.compressed?.frames ?? parsed.sampleFrames) || sample.sampleRate < 1 || sample.sampleRate > 768e3 || generators[54] & 1 && (loopStart < start || loopEnd > end || loopEnd <= loopStart)) {
-            throw sf2Error(`Invalid sample geometry: ${JSON.stringify({ sampleId, start, end, loopStart, loopEnd, modes: generators[54], sample })}`);
+          if (looped && (!(generators[54] & 1) || loopStart !== requestedLoopStart || loopEnd !== requestedLoopEnd)) diagnostics.adjustedLoops++;
+          if ([2, 4, 8].includes(sample.sampleType & ~16) && sample.sampleLink >= tables.shdr.length - 1) {
+            throw sf2Error(`Invalid sample link: ${JSON.stringify({ sampleId, sample })}`);
           }
           const mods = new Map([...defaultMods, ...instrument.modulators]);
           for (const [key, mod] of presetZone.modulators) mods.set(key, { ...mod, amount: mod.amount + (mods.get(key)?.amount ?? 0) });
           const selected = [...mods.values()], indices = new Map(selected.map((mod, index) => [mod.key, index]));
           routeCount += selected.length;
-          if (selected.length > 65536 || routeCount > 1048576) throw sf2Error("Too many compiled SoundFont modulation routes");
+          if (selected.length > 65536 || routeCount > SF2_MAX_ROUTES) throw sf2Error("Too many compiled SoundFont modulation routes");
           const compiledMods = selected.map(({ key: _key, link, ...mod }) => ({ ...mod, link: link === null ? -1 : indices.get(link) ?? -1 }));
           regions.push({
             presetIndex: preset.index,
@@ -5857,7 +5878,7 @@ var ETSFZ = (() => {
               originalPitch: sample.originalPitch > 127 ? 60 : sample.originalPitch
             }
           });
-          if (regions.length > 65536) throw sf2Error("Too many compiled SoundFont zones");
+          if (regions.length > 262144) throw sf2Error("Too many compiled SoundFont zones");
         }
       }
       presets.push({ ...preset, firstRegion, regionCount: regions.length - firstRegion });
@@ -5868,6 +5889,7 @@ var ETSFZ = (() => {
   var init_compiler = __esm({
     "js/sf2/compiler.js"() {
       init_parser2();
+      init_modulation2();
       SF2_INITIAL_PITCH = 60;
       SF2_GENERATOR_DEFAULTS = Object.freeze(Array.from({ length: 61 }, (_2, id) => id === 8 ? 13500 : [21, 23, 25, 26, 27, 28, 30, 33, 34, 35, 36, 38].includes(id) ? -12e3 : [46, 47, 58].includes(id) ? -1 : id === 56 ? 100 : [43, 44].includes(id) ? 32512 : 0));
       RESERVED = /* @__PURE__ */ new Set([14, 18, 19, 20, 42, 49, 55, 59, 60]);
@@ -11444,7 +11466,7 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
         try {
           let result;
           if (data.type === "open") {
-            if (!Number.isInteger(data.sample) || data.sample < 0 || data.sample >= 1e4 || streams.has(data.sample)) throw failure4("sample-range");
+            if (!Number.isInteger(data.sample) || data.sample < 0 || data.sample >= SFZ_MAX_SAMPLES || streams.has(data.sample)) throw failure4("sample-range");
             const stream = await SfzSampleStream.open((offset, length) => read(data.sample, offset, length), data.size, data.pcm);
             const bytes = 512 + (stream.metadata.seekPoints?.length || 0) * 24;
             if (metadataBytes + bytes > 16 * 1024 * 1024) throw failure4("sample-capacity");
@@ -11531,6 +11553,7 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
     "js/sfz/sample-stream-worker.js"() {
       init_sample_stream();
       init_sample_supply_port();
+      init_limits();
       import_meta2 = {};
       failure4 = (code) => Object.assign(new Error("The instrument sample could not be prepared."), { code });
       SfzSampleStreamWorker = class {
@@ -11585,7 +11608,7 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
           });
         }
         async open(sample, reader) {
-          if (!Number.isInteger(sample) || sample < 0 || sample >= 1e4 || this.readers.has(sample) || !reader || !Number.isSafeInteger(reader.size) || typeof reader.readRange !== "function") throw failure4("sample-range");
+          if (!Number.isInteger(sample) || sample < 0 || sample >= SFZ_MAX_SAMPLES || this.readers.has(sample) || !reader || !Number.isSafeInteger(reader.size) || typeof reader.readRange !== "function") throw failure4("sample-range");
           this.readers.set(sample, reader);
           try {
             const metadata = await this.call("open", { sample, size: reader.size, pcm: reader.pcm });
@@ -11696,6 +11719,7 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
       init_sample_stream_worker();
       init_sample_stream();
       init_sample_supply_port();
+      init_limits();
       failure5 = (code) => Object.assign(new Error("The instrument samples could not be prepared. Reload the instrument."), { code });
       MAX_PUBLISH_IN_FLIGHT = 4;
       pageKey = (sample, pageIndex, resident = false) => `${sample}:${pageIndex}:${resident ? 1 : 0}`;
@@ -11739,7 +11763,7 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
         }
         async prepare(paths, knownPcm = null) {
           if (this.closed) throw failure5("sample-cancelled");
-          if (this.preparing || !Array.isArray(paths) || !paths.length || paths.length > 1e4 || paths.some((path) => typeof path !== "string") || new Set(paths).size !== paths.length) throw failure5("sample-range");
+          if (this.preparing || !Array.isArray(paths) || !paths.length || paths.length > SFZ_MAX_SAMPLES || paths.some((path) => typeof path !== "string") || new Set(paths).size !== paths.length) throw failure5("sample-range");
           if (this.paths && (this.paths.length !== paths.length || paths.some((path, index) => path !== this.paths[index]))) throw failure5("sample-generation");
           this.paths ??= [...paths];
           this.preparing = true;
@@ -11822,7 +11846,8 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
             const unique = new Set(requests.map((request) => pageKey(request.sample, request.pageIndex, request.resident)));
             const newCount = [...unique].filter((key) => !this.pending.has(key)).length;
             if (this.pending.size + newCount > 4096) throw failure5("sample-capacity");
-            const pending = requests.map((request) => this.enqueue(request));
+            const ordered = [...requests].sort((a, b2) => a.sample - b2.sample || a.pageIndex - b2.pageIndex);
+            const pending = ordered.map((request) => this.enqueue(request));
             if (!this.pumping) void this.pump();
             return Promise.all(pending);
           } catch (error2) {
@@ -12598,6 +12623,7 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
       }
       globalThis.__effectdeckSfzSampleTable(table);
     }
+    let sf2Image = null;
     const build = async (context, budget = maxBytes, estimate = estimateEffectBytes, previous = null) => {
       const warnings2 = [];
       const options = {
@@ -12624,11 +12650,20 @@ Mediabunny was loaded twice. This will likely cause Mediabunny not to work corre
       const cacheChannels = factory.samples.some((sample) => sample.channels === 2) ? 2 : 1;
       const plan = (slots) => storage ? sfzStorageSlots(slots, samples, ranges) : null;
       const cacheBytes = (slots) => sfzSampleCacheFootprint(samples.size, slots, cacheChannels, plan(slots));
-      const provisional = packStreamedSfzAsset(
+      let provisional;
+      if (storage) provisional = packStreamedSfzAsset(
         parsed.regions,
         samples,
         { ...options, cacheSlots: minimum, storagePlan: plan(minimum) }
       );
+      else if (!sf2Image) {
+        provisional = packStreamedSfzAsset(parsed.regions, samples, { ...options, cacheSlots: minimum });
+        sf2Image = { ...provisional };
+      } else {
+        if (sf2Image.payload.byteLength > budget) throw sfzError("too-large", "The SFZ samples are too large to load.");
+        provisional = { ...sf2Image, payload: sf2Image.payload.slice(0) };
+        new Uint32Array(provisional.payload, 32)[14] = minimum;
+      }
       let descriptor2 = provisional;
       if (context) {
         const materialized = await materializeSfzAsset(provisional, context, budget, estimate);
