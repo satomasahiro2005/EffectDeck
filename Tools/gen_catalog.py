@@ -174,6 +174,9 @@ CHAIN_UNSUPPORTED = {
     "FIRCrossoverPlugin": "its crossover is designed in the app, not from the keys listed here",
     "SFZNotePlayerPlugin": "it needs a SoundFont or SFZ instrument that the user imports",
     "SoundFontPlayerPlugin": "it plays MIDI songs, which a chain cannot carry",
+    # 2.18.0。EffeTune どうしで音を送り合う位置の印。カーネルは素通しで、送り合う仕組みはこのアプリに無い。
+    "NetworkReceivePlugin": "it marks where live audio from another EffeTune enters, which this app does not receive",
+    "NetworkSendPlugin": "it marks where live audio is sent to another EffeTune, which this app does not send",
 }
 
 # params.json の default と上流の JS の既定値が違うもの。(type, メンバ名) -> 既定値。

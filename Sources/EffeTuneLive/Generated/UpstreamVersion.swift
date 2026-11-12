@@ -9,5 +9,5 @@
 //  公式の PC は hello の返事に dsp の版を出さず、この版だけを出す。食い違いの表示にだけ使う。
 //  読めなければ空。
 
-let ETUpstreamVersion = "0.17.0"
-let ETUpstreamAppVersion = "2.17.0"
+let ETUpstreamVersion = "0.18.0"
+let ETUpstreamAppVersion = "2.18.0"

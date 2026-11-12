@@ -1,5 +1,5 @@
 diff --git a/js/sfz/streamed-bank.js b/js/sfz/streamed-bank.js
-index 72f76a6..e9ec3df 100644
+index 28aaec3a..4d2e30bf 100644
 --- a/js/sfz/streamed-bank.js
 +++ b/js/sfz/streamed-bank.js
 @@ -67,6 +67,17 @@ export async function prepareStreamedSfzBank({ id, parsed, maxBytes, createSampl
@@ -17,6 +17,6 @@ index 72f76a6..e9ec3df 100644
 +    }
 +    globalThis.__effectdeckSfzSampleTable(table);
 +  }
+   let sf2Image = null;
    const build = async (context, budget = maxBytes, estimate = estimateEffectBytes, previous = null) => {
      const warnings = [];
-     const options = { maxBytes: budget, script, modulation: parsed.modulation, effects: parsed.effects,

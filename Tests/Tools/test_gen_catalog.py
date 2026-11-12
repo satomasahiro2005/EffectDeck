@@ -388,6 +388,11 @@ class MainTests(unittest.TestCase):
                          "it plays MIDI songs, which a chain cannot carry")
         self.assertEqual(self.gc.DEFAULT_OVERRIDES, {("SoundFontPlayerPlugin", "sampleQuality"): 1})
 
+    def test_real_tables_for_2_18_0(self):
+        # Live Audio Receive / Send（2.18.0）は音を送り合う位置の印。こちらには送り合う仕組みが無い。
+        for t in ("NetworkReceivePlugin", "NetworkSendPlugin"):
+            self.assertIn("another EffeTune", self.gc.CHAIN_UNSUPPORTED[t])
+
     def test_default_override_wins_over_params_json(self):
         # 上書きは (型, メンバ名)。Swift の defaults・ETParam.defaultValue・鎖の語彙の default が揃って変わる。
         with TempDir() as tmp:

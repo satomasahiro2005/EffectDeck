@@ -278,6 +278,28 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "volume", key: "vl", label: "Volume", kind: .number(min: -60.0, max: 24.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 0, count: 1)
       ]),
     ETEffect(
+      type: "NetworkReceivePlugin",
+      name: "Live Audio Receive",
+      about: "Insert incoming live audio at this position",
+      category: "control",
+      paramsHash: 0x811c9dc5,
+      floatCount: 0,
+      defaults: [],
+      params: [
+
+      ]),
+    ETEffect(
+      type: "NetworkSendPlugin",
+      name: "Live Audio Send",
+      about: "Send live audio from this position",
+      category: "control",
+      paramsHash: 0x811c9dc5,
+      floatCount: 0,
+      defaults: [],
+      params: [
+
+      ]),
+    ETEffect(
       type: "DelayPlugin",
       name: "Delay",
       about: "Feedback delay with damping controls",
@@ -1367,14 +1389,18 @@ let ETCatalog: [ETEffect] = [
       name: "SoundFont Player",
       about: "Plays MIDI songs through SoundFont and SFZ instruments",
       category: "others",
-      paramsHash: 0x844a0998,
-      floatCount: 4,
-      defaults: [0.0, 64.0, 0.0, 1.0],
+      paramsHash: 0xf271de51,
+      floatCount: 8,
+      defaults: [0.0, 256.0, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0],
       params: [
         ETParam(name: "midiChannel", key: "mc", label: "MIDI Channel", kind: .number(min: 0.0, max: 16.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 0, count: 1),
-        ETParam(name: "maxVoices", key: "pl", label: "Max Voices", kind: .number(min: 1.0, max: 1024.0, step: 0.0, unit: "", isInteger: true), defaultValue: 64.0, offset: 1, count: 1),
+        ETParam(name: "maxVoices", key: "pl", label: "Max Voices", kind: .number(min: 1.0, max: 1024.0, step: 0.0, unit: "", isInteger: true), defaultValue: 256.0, offset: 1, count: 1),
         ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -60.0, max: 12.0, step: 0.1, unit: "", isInteger: false), defaultValue: 0.0, offset: 2, count: 1),
-        ETParam(name: "sampleQuality", key: "sq", label: "Interpolation", kind: .number(min: 0.0, max: 2.0, step: 0.0, unit: "", isInteger: true), defaultValue: 1.0, offset: 3, count: 1)
+        ETParam(name: "automaticFallback", key: "af", label: "Automatic Fallback", kind: .toggle, defaultValue: 1.0, offset: 4, count: 1),
+        ETParam(name: "previewMidi", key: "pm", label: "Preview Midi", kind: .number(min: -1.0, max: 127.0, step: 0.0, unit: "", isInteger: true), defaultValue: -1.0, offset: 5, count: 1),
+        ETParam(name: "previewChannel", key: "pc", label: "Preview Channel", kind: .number(min: 0.0, max: 15.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 6, count: 1),
+        ETParam(name: "sampleQuality", key: "sq", label: "Interpolation", kind: .number(min: 0.0, max: 2.0, step: 0.0, unit: "", isInteger: true), defaultValue: 1.0, offset: 3, count: 1),
+        ETParam(name: "sf2Compatibility", key: "sc", label: "SF2 Compatibility", kind: .number(min: 0.0, max: 1.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 7, count: 1)
       ]),
     ETEffect(
       type: "AdaptivePredictionEffectPlugin",

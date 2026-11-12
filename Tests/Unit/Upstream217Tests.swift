@@ -18,15 +18,6 @@ final class Upstream217Tests: XCTestCase {
         try XCTUnwrap(ETCatalog.first { $0.type == type }, "\(type) が目録に無い")
     }
 
-    // MARK: 版と目録
-
-    func testUpstreamVersionIs0_17_0() {
-        XCTAssertEqual(ETUpstreamVersion, "0.17.0")
-        XCTAssertEqual(ETUpstreamAppVersion, "2.17.0", "package.json の版。公式の PC との食い違いの表示に使う")
-        XCTAssertEqual(ETCatalog.count, 113)
-        XCTAssertEqual(ETCatalog.reduce(0) { $0 + $1.params.count }, 726)
-    }
-
     // MARK: SoundFont Note Player の Preset
 
     func testNotePlayerPresetParameter() throws {
@@ -66,9 +57,8 @@ final class Upstream217Tests: XCTestCase {
         let s = try spec("SoundFontPlayerPlugin")
         XCTAssertEqual(s.name, "SoundFont Player")
         XCTAssertEqual(s.category, "others")
-        XCTAssertEqual(s.paramsHash, 0x844a0998)
-        XCTAssertEqual(s.floatCount, 4)
-        XCTAssertEqual(s.params.sorted { $0.offset < $1.offset }.map(\.key), ["mc", "pl", "og", "sq"])
+        // 2.18.0 で af・pm・pc・sc が増えた（Upstream218Tests）。一覧に出さない型なので、ここは居ることだけを見る。
+        XCTAssertEqual(Array(s.params.sorted { $0.offset < $1.offset }.map(\.key).prefix(4)), ["mc", "pl", "og", "sq"])
     }
 
     func testSoundFontPlayerInterpolationDefaultsToFIR32() throws {
@@ -77,7 +67,7 @@ final class Upstream217Tests: XCTestCase {
         let sq = try XCTUnwrap(s.params.first { $0.key == "sq" })
         XCTAssertEqual(sq.offset, 3)
         XCTAssertEqual(sq.defaultValue, 1)
-        XCTAssertEqual(s.defaults, [0, 64, 0, 1])
+        XCTAssertEqual(Array(s.defaults.prefix(4)), [0, 256, 0, 1], "Max Voices の既定は 2.18.0 で 64 から 256")
         guard case .number(let lo, let hi, _, _, let isInteger) = sq.kind else { return XCTFail("sq は数") }
         XCTAssertEqual([lo, hi], [0, 2])
         XCTAssertTrue(isInteger)

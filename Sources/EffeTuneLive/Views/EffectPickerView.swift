@@ -143,7 +143,9 @@ struct EffectPickerView: View {
     /// PC から届いた鎖が名指すと読めなくなる）。ここで一覧に出さないだけ。
     /// SoundFont Player（2.17.0）は MIDI の曲を鳴らす型で、曲を渡す入口がまだ無いので出さない。
     /// SoundFont Note Player（SFZNotePlayerPlugin）は 2.13.0 の取り込みを入れたので出す。
-    static let hiddenTypes: Set<String> = ["SoundFontPlayerPlugin"]
+    /// Live Audio Receive / Send（2.18.0）は EffeTune どうしで音を送り合う位置の印で、カーネルは何もしない。
+    /// 送り合う仕組み（Network Output）がこちらに無いので出さない。鎖に居ても音は素通しする。
+    static let hiddenTypes: Set<String> = ["SoundFontPlayerPlugin", "NetworkReceivePlugin", "NetworkSendPlugin"]
 
     /// 効果のカテゴリ。**Section の居る control も上流と同じく「Control」で並べる。**
     /// 一度「Grouping」と呼び替えて末尾に分けたが、EffeTune に慣れた人は Control の中を探す。
