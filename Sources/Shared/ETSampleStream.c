@@ -73,6 +73,8 @@ typedef struct {
     uint32_t goalNativeGeneration;
     int limited;
     uint64_t nextForecast;
+    // 前回の予測までに取り出した要求の数（上流の「前回の poll で渡した分」）。返し終えるまで次の予測へ進まない。
+    uint64_t pollMark;
 } Slot;
 
 static Slot gSlots[ET_STREAM_MAX_SLOTS];
@@ -385,6 +387,7 @@ int32_t ETSampleStream_Attach(uint32_t engine, uint32_t instance, uint64_t gener
     s->goalNativeGeneration = 0;
     s->limited = 0;
     s->nextForecast = 0;
+    s->pollMark = 0;
     atomic_store_explicit(&s->generation, generation, memory_order_relaxed);
     atomic_store_explicit(&s->state, SLOT_ACTIVE, memory_order_release);
     if (slotOut != NULL) *slotOut = (uint32_t)(s - gSlots);
@@ -645,7 +648,8 @@ static void forecastAdvance(Slot *s)
     int refill = 0;
     if (f->valid && f->ready) {
         refill = f->nativeScope == ET_STREAM_SCOPE_KNOWN_MIDI
-            ? snapshot.ready_ahead_frames <= ceilFrames(s->rate, 0.5)
+            // 上流 0.18.0: 窓の半分が残っているうちに継ぎ足す（前は 0.5 秒）。
+            ? snapshot.ready_ahead_frames <= (f->windowFrames + 1) / 2
             // 鳴っている声（ET_MIDI_STATE_VOICES|CALLBACKS|GENERATED）があるあいだだけ更新する。
             : (et_instance_midi_state(s->engine, s->instance) & 7u) != 0 && gClock >= f->refreshFrame;
     }
@@ -676,17 +680,18 @@ void ETSampleStream_AfterProcess(uint32_t frames)
     for (unsigned i = 0; i < ET_STREAM_MAX_SLOTS; i++) {
         Slot *s = &gSlots[i];
         if (atomic_load_explicit(&s->state, memory_order_acquire) != SLOT_ACTIVE) continue;
-        uint32_t count = takeRequests(s);
-        if ((s->flags & ET_STREAM_ATTACH_FORECAST) && count == 0 && gClock >= s->nextForecast) {
-            // 要求していないページが渡された（作り直しの再送など）ときに引き算が回り込まないよう、下は 0 で止める。
-            const uint64_t taken = atomic_load_explicit(&s->taken, memory_order_relaxed);
-            const uint64_t settled = settledCount(s);
-            const uint64_t outstanding = taken > settled ? taken - settled : 0;
-            // 上流は「前回の要求を全部返し終えてから」次の予測へ進む。
-            if (outstanding == 0) {
+        takeRequests(s);
+        if ((s->flags & ET_STREAM_ATTACH_FORECAST) && gClock >= s->nextForecast) {
+            // 上流は前回の poll で渡した要求を全部返し終えてから次の poll をし、poll のたびに予測を進める。
+            // **0.18.0 から、その poll で新しい要求が出ていても進める**（読みが遅いと列が空にならず、予測が
+            // 止まったまま全部の声が 1 ページずつの読みになるため）。ここでは要求を毎ブロック取り出すので、
+            // 「前回の poll で渡した分」を前回の予測までに取り出した数（pollMark）で数える。
+            // 要求していないページ（作り直しの再送など）で settled が先へ出ても、比べるだけなので回り込まない。
+            if (settledCount(s) >= s->pollMark) {
                 s->nextForecast = gClock + ceilFrames(s->rate, 0.01);
                 forecastAdvance(s);
                 takeRequests(s);
+                s->pollMark = atomic_load_explicit(&s->taken, memory_order_relaxed);
             }
         }
     }

@@ -40,8 +40,8 @@ enum ETSFZStreamTable {
     static let storageVersion = 10
     /// preload の上限（上流 SfzSamplePageProvider.preload の 32768）。
     static let maxResidentPages = 32768
-    /// 標本の数の上限（上流 paths.length の 10000）。
-    static let maxSamples = 10000
+    /// 標本の数の上限（上流 SFZ_MAX_SAMPLES。0.18.0 で 10000 から 65536 になった）。
+    static let maxSamples = 65536
 
     /// 標本の表の 1 行（payload から読んだもの）。
     struct Row: Equatable {

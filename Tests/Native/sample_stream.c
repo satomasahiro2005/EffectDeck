@@ -603,7 +603,8 @@ ET_CASE(fake_forecast_commit_waits_for_pages)
     fakeTeardown();
 }
 
-// 前回の要求を返し終えるまで次の予測へ進まない。供給が諦めた分（Abandon）は数えて先へ進む。
+// 要求が出ているブロックでも予測は進める（上流 0.18.0）。その次は、そこまでに取り出した要求を返し終えるまで
+// 進まない。供給が諦めた分（Abandon）は数えて先へ進む。
 ET_CASE(fake_forecast_waits_for_outstanding_requests)
 {
     fakeSetup();
@@ -613,18 +614,21 @@ ET_CASE(fake_forecast_waits_for_outstanding_requests)
     atomic_store(&fake_request_count, 2);
     const uint32_t slot = attach(5, ET_STREAM_ATTACH_FORECAST);
     for (int i = 0; i < 4; i++) process(1024);
-    ET_CHECK(atomic_load(&fake_prefetch_count) == 0);
     ETStreamStatus st;
     ET_CHECK(ETSampleStream_Snapshot(slot, &st) == 1 && st.outstanding == 2);
+    // 最初のブロックで 1 回だけ進んだ（begin と commit）。2 件が残っているあいだは止まっている。
+    ET_CHECK_MSG(st.forecastRuns == 1 && atomic_load(&fake_prefetch_count) == 2, "runs=%llu prefetch=%d",
+                 (unsigned long long)st.forecastRuns, atomic_load(&fake_prefetch_count));
     ETStreamRequest out[4];
     ET_CHECK(ETSampleStream_TakeRequests(slot, 5, out, 4) == 2);
     ETSampleStream_Abandon(slot, 5, 1);
     process(1024);
-    ET_CHECK(atomic_load(&fake_prefetch_count) == 0);   // まだ 1 件残っている
+    ET_CHECK(ETSampleStream_Snapshot(slot, &st) == 1 && st.forecastRuns == 1);   // まだ 1 件残っている
     ET_CHECK(submitOne(slot, 5, 1, 1, 1.0f) == 1);
     process(1024);                                       // 渡して 0 件になる
     process(1024);
-    ET_CHECK_MSG(atomic_load(&fake_prefetch_count) == 2, "prefetch=%d", atomic_load(&fake_prefetch_count));
+    ET_CHECK_MSG(ETSampleStream_Snapshot(slot, &st) == 1 && st.forecastRuns >= 2, "runs=%llu",
+                 (unsigned long long)st.forecastRuns);
     fakeTeardown();
 }
 
