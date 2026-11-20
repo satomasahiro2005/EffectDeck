@@ -11,8 +11,8 @@
 //  上流の規則（こちらもそのまま）:
 //    - **まず 15 本とも初期値に戻して切る**（:1307-1309）。
 //      setBand(i, BANDS[i].freq, 0, 1.0, 'pk', false)。使わなかったバンドはこのまま残る
-//    - '\n' で割って trim。'#' で始まる行・空行・'Preamp:' の行は飛ばす（:1311-1325）。
-//      **Preamp は読まない。** 音量は変えない
+//    - '\n' で割って trim。'#' で始まる行・空行は飛ばす。
+//      2.19.0 から Preamp を Master Gain（-20〜20dB）へ読む。
 //    - 'Filter' で始まる行だけ正規表現に掛ける（:1328-1329）。大文字小文字を区別し、
 //      'ON' でない行（OFF）は当たらない。**Filter の番号は使わない。**出てきた順に詰める
 //    - 型は LS/LSC→ls、PK→pk、HS/HSC→hs だけ。それ以外（LP/HP/NO/AP など）は
@@ -23,8 +23,8 @@
 //      型を先に入れてから Q を切る（:313-321）
 //
 //  上流と違うのは 2 点:
-//    - 使えるフィルタが 1 本も無かったとき、上流は全バンドを切った状態で終わる。
-//      こちらは imported == 0 を返し、画面側が何も書かずに知らせる。
+//    - フィルタも Preamp も無ければ imported == 0 / masterGain == nil を返し、
+//      画面側は何も書かずに知らせる。
 //    - 上流の EQ_FILTER_MAP は素の object なので、constructor・toString・__proto__ などの
 //      型名も当たり、関数をそのまま型に入れてバンドを点ける（:1339-1343）。
 //      **こちらは捨てて、バンドも消費しない。**
@@ -50,6 +50,7 @@ enum ETPEQTextImport {
         var bands: [Band]
         /// 実際に入ったフィルタの数。0 なら何も読めていない。
         var imported: Int
+        var masterGain: Double? = nil
     }
 
     static let bandCount = 15
@@ -89,13 +90,21 @@ enum ETPEQTextImport {
     static func parse(_ content: String) -> Result {
         var bands = (0..<bandCount).map(resetBand)
         var filterIndex = 0
+        var masterGain: Double?
 
         // **'\n' で割る。**Swift の Character だと "\r\n" が 1 字になって割れないので、
         // スカラーで割る。'\r' は trim が落とす（上流と同じ）。
         for raw in content.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = trimJS(raw)
             if line.isEmpty || line.starts(with: "#".unicodeScalars) { continue }
-            if line.starts(with: "Preamp:".unicodeScalars) { continue }
+            let preampText = String(Substring(line))
+            let preampNS = preampText as NSString
+            if let match = preampLine.firstMatch(in: preampText,
+                                                 range: NSRange(location: 0, length: preampNS.length)) {
+                let gain = number(preampNS.substring(with: match.range(at: 1)))
+                masterGain = max(-20, min(20, gain))
+                continue
+            }
             guard line.starts(with: "Filter".unicodeScalars) else { continue }
 
             let text = String(Substring(line))
@@ -111,7 +120,7 @@ enum ETPEQTextImport {
                                       typeID: mapped, enabled: true)
             filterIndex += 1
         }
-        return Result(bands: bands, imported: filterIndex)
+        return Result(bands: bands, imported: filterIndex, masterGain: masterGain)
     }
 
     // MARK: - 読み込み
@@ -159,6 +168,10 @@ enum ETPEQTextImport {
             + "Q" + s + num
         return try! NSRegularExpression(pattern: pattern)
     }()
+
+    private static let preampLine = try! NSRegularExpression(
+        pattern: "^Preamp:" + jsSpaceClass + "*([-+]?[0-9]+(?:\\.[0-9]+)?)" + jsSpaceClass + "*dB",
+        options: .caseInsensitive)
 
     private static func trimJS(_ s: Substring.UnicodeScalarView) -> Substring.UnicodeScalarView {
         var slice = s

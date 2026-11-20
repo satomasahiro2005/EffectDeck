@@ -158,6 +158,7 @@ final class RoomEQDesignTests: XCTestCase {
         config.highFrequency = golden.highFrequency
         config.maxBoostDb = golden.maxBoostDb
         config.correctionAmount = golden.correctionAmount
+        config.limitPeakGain = golden.limitPeakGain ?? false
         config.bands = try (golden.eqBands ?? []).map { band in
             RoomEQBand(enabled: band.enabled,
                        type: try XCTUnwrap(RoomEQBandType(rawValue: band.type)),
@@ -239,6 +240,7 @@ final class RoomEQDesignTests: XCTestCase {
                 guard let got, let want else { continue }
                 XCTAssertEqual(got.channel, channel, label)
                 XCTAssertEqual(got.frequencies.count, want.frequencyCount, label)
+                XCTAssertEqual(got.headroomDb, want.headroomDb ?? 0, accuracy: 1e-10, label)
 
                 for (name, a, b) in [("measuredDb", got.measuredDb, want.measuredDb),
                                      ("baseCorrectionDb", got.baseCorrectionDb, want.baseCorrectionDb),

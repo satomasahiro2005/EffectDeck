@@ -1301,16 +1301,21 @@ final class EffeTuneDSP: ObservableObject {
         persistSoon()
     }
 
-    /// designerで作る型の設計の材料を覚える。**音には伝えない。**
+    /// designerで作る型の設計の材料を覚える。
     ///
     /// 係数はdesignerが送り込んでいて、ここに書くのは「次に鎖を読んだときどう設計し直すか」の印
     /// （DSP/DesignParams.swift）。書き手はdesignerの置き場で、settingsが変わるたびに来る。
     /// 位置ではなくidで引くのは、置き場が段をidで持っていて、並べ替えを跨ぐため。
+    /// Headphone EQ と Distortion Correction はここを操作の入口にし、資産も更新する。
     func setDesign(_ design: [String: String], nodeID: UUID) {
         guard let index = slot(of: nodeID),
               self[slot: index].design != design else { return }
         self[slot: index].design = design
         persistSoon()
+        if [ETHeadphoneEQ.type, ETSpeakerCorrection.type].contains(self[slot: index].spec.type) {
+            ETAssetReattach.paramsChanged(self[slot: index])
+            if index < chain.count { RemoteMirror.shared.paramsChanged(at: index) }
+        }
     }
 
     /// IR Reverb の下ごしらえのつまみ（dc / co / dt / tr）を 1 つ変える。
@@ -2303,6 +2308,9 @@ final class EffeTuneDSP: ObservableObject {
         }
         stopDrive(node.instance)       // 追従をやめた PEQ に残った段取りを捨てる
         var v = soundingValues(of: node)
+        if node.spec.type == ETSpeakerCorrection.type {
+            v = ETSpeakerCorrection.routedValues(node, outputChannels: Int(maxChannels))
+        }
         if node.automation != nil {
             // 音量が動くたびに来るので、前に渡したものと同じなら渡さない。
             if onlyIfChanged, pushedAutomation[node.instance] == v { return }
@@ -2452,6 +2460,11 @@ final class EffeTuneDSP: ObservableObject {
         if let v = outputBus   { self[slot: index].outputBus = v }
         if let v = channelSpec { self[slot: index].channelSpec = v }
         if let v = sectionGate { self[slot: index].sectionGate = v }
+        // The kernel receives packed channels; the model uses physical speaker order.
+        // A pair-to-pair change needs new offsets even when its width is unchanged.
+        if self[slot: index].spec.type == ETSpeakerCorrection.type, channelSpec != nil {
+            pushParams(self[slot: index])
+        }
         publish()
         // 処理幅が変わると、幅を含めて設計する資産（FIR Crossover、Bass Management）は
         // 送り直しが要る。Routing は別の画面から変えるので、カードのビューが居るとは限らない。

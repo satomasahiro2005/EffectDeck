@@ -56,6 +56,7 @@ enum ETFactoryReset {
 
         // 4. 取り込んだファイル。
         IRLibrary.shared.eraseAll()
+        ETCorrectionAssets.shared.eraseAll()
         ETJSFXHost.shared.eraseImported()
         SFZLibrary.shared.eraseAll()
         if let inbox = ETShareInbox.root { try? FileManager.default.removeItem(at: inbox) }

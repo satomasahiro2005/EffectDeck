@@ -35,6 +35,7 @@ enum ETPEQBlend {
         let q: Int
         let type: Int
         let enabled: Int
+        let masterGain: Int?
 
         /// ETAutomation.peqTypes に無い・鍵が欠ける・並びが食い違うなら nil。
         init?(_ spec: ETEffect) {
@@ -52,12 +53,13 @@ enum ETPEQBlend {
             self.q = q.offset
             type = t.offset
             enabled = e.offset
+            masterGain = param("mg")?.offset
         }
 
         /// その帯の5つの位置が values に収まるか。
         func fits(_ v: [Float]) -> Bool {
             let end = [frequency, gain, q, type, enabled].max() ?? 0
-            return v.count >= end + bands
+            return v.count >= end + bands && (masterGain.map { v.indices.contains($0) } ?? true)
         }
     }
 
@@ -176,6 +178,7 @@ enum ETPEQBlend {
     static func values(_ v: Voice, in a: ETAutomation, layout l: Layout) -> [Float] {
         var out = a.keyframes[v.keyframe].values
         guard l.fits(out) else { return out }
+        if let mg = l.masterGain { out[mg] *= v.weight }
         for i in 0..<l.bands {
             if isGainless(out[l.type + i]) {
                 if !v.gainless { out[l.enabled + i] = 0 }
@@ -190,6 +193,7 @@ enum ETPEQBlend {
     static func silenced(_ values: [Float], layout l: Layout) -> [Float] {
         var out = values
         guard l.fits(out) else { return out }
+        if let mg = l.masterGain { out[mg] = 0 }
         for i in 0..<l.bands {
             if isGainless(out[l.type + i]) {
                 out[l.enabled + i] = 0
@@ -259,6 +263,7 @@ enum ETPEQBlend {
     /// 全帯が素通しか（付け替えてよい状態）。
     static func isSilent(_ v: [Float], layout l: Layout) -> Bool {
         guard l.fits(v) else { return true }
+        if let mg = l.masterGain, v[mg] != 0 { return false }
         for i in 0..<l.bands where !isIdentity(v, band: i, l) { return false }
         return true
     }

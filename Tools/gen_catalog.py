@@ -146,6 +146,8 @@ RUNTIME_ONLY = {
     # ときに立てて worklet へだけ渡す（note_spectrogram.js の getWorkletPluginData / noteEventsEnabled）。
     ("NoteSpectrogramPlugin", "timbreEnabled"),
     ("SFZNotePlayerPlugin", "previewVelocity"),
+    ("SpeakerDistortionCorrectionPlugin", "selectedFirst"),
+    ("SpeakerDistortionCorrectionPlugin", "selectedCount"),
 }
 
 
@@ -164,6 +166,8 @@ RUNTIME_ONLY = {
 # 依頼文で組ませると既定の設計にしかならない。「持てない」とは書かず「この一覧の鍵では
 # 設計しない」と書く。材料を持てなかった頃のビルドにも同じ版の語彙が渡りうるが、どちらにも正しい。
 CHAIN_UNSUPPORTED = {
+    "HeadphoneEQPlugin": "it needs headphone measurement and target curves imported or selected in the app",
+    "SpeakerDistortionCorrectionPlugin": "it needs a speaker distortion measurement imported from EffeTune",
     "MatrixPlugin": "its routing is set in the app and a chain cannot carry it",
     "IRReverbPlugin": "it needs an impulse response file that the user imports",
     "FiveBandFIRPEQPlugin": "its bands are designed in the app, not from the keys listed here",

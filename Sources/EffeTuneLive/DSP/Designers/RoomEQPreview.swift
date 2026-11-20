@@ -58,6 +58,7 @@ struct RoomEQPreview: Sendable {
     var channel: Int
     /// 帯域内の平均レベル（補正の狙い）。周波数特性の図はこれを 0 dB に合わせて描く。
     var referenceLevelDb: Double
+    var headroomDb: Double = 0
     /// 対数の格子（design-core.js:2498）。
     var frequencies: [Double]
     /// 測った特性を平滑化したもの（displaySmoothed）。

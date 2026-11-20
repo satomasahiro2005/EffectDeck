@@ -41,6 +41,8 @@ enum ETAssetReattach {
     /// 余分に呼んでも音は途切れない。
     static func one(_ node: EffeTuneDSP.Node) {
         switch node.spec.type {
+        case ETHeadphoneEQ.type, ETSpeakerCorrection.type:
+            ETCorrectionAssets.shared.sync(node)
         case "RoomEqPlugin":
             RoomEQStore.shared.resendIfGone(node: node)
         case "CrosstalkCancellationPlugin":
@@ -74,6 +76,8 @@ enum ETAssetReattach {
     static func paramsChanged(_ node: EffeTuneDSP.Node) {
         guard node.instance != 0 else { return }
         switch node.spec.type {
+        case ETHeadphoneEQ.type, ETSpeakerCorrection.type:
+            one(node)
         case ETDesignParam.fiveBandFIRPEQ:
             BandFIRPEQDesignerStore.shared.adopt(node: node)
         case ETDesignParam.groupDelayEQ:
@@ -92,7 +96,8 @@ enum ETAssetReattach {
     /// （持っていなければ各置き場のsyncが黙って戻る）。
     static func loaded(_ nodes: [EffeTuneDSP.Node]) {
         for node in nodes where node.instance != 0 {
-            if node.spec.type == BassManagementDesigners.type || !node.design.isEmpty
+            if node.spec.type == BassManagementDesigners.type || node.spec.type == ETHeadphoneEQ.type
+                || node.spec.type == ETSpeakerCorrection.type || !node.design.isEmpty
                 || BandFIRPEQDesignerStore.carriesDesign(node) {
                 one(node)
             }

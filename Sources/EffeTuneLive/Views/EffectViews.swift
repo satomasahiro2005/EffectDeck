@@ -15,6 +15,7 @@ enum ETEffectViews {
     /// 畳んだときに「図だけ」の段を作れないので、開く↔畳むの 2 つになる。
     /// 増えたらここに足す。
     private static let withoutGraph: Set<String> = [
+        "SpeakerDistortionCorrectionPlugin",
         "SpatialMapperPlugin",
         // （IRReverbPlugin は2026-10にここから外した。EDC のグラフを足したため。
         //  畳んだ形では IRReverbView がグラフだけを返す。IRReverbView.swift の冒頭を読むこと。）
@@ -46,6 +47,8 @@ enum ETEffectViews {
     static func has(_ type: String) -> Bool { types.contains(type) }
 
     private static let types: Set<String> = [
+        "HeadphoneEQPlugin",
+        "SpeakerDistortionCorrectionPlugin",
         "AdaptivePredictionEffectPlugin",
         "AnalogMeterPlugin",
         "PitchMeterPlugin",
@@ -103,6 +106,10 @@ enum ETEffectViews {
     static func view(index: Int, node: EffeTuneDSP.Node,
                      dsp: EffeTuneDSP) -> some View {
         switch node.spec.type {
+        case "HeadphoneEQPlugin":
+            HeadphoneEQView(index: index, node: node, dsp: dsp)
+        case "SpeakerDistortionCorrectionPlugin":
+            SpeakerCorrectionView(index: index, node: node, dsp: dsp)
         case "AdaptivePredictionEffectPlugin":
             AdaptivePredictionView(index: index, node: node, dsp: dsp)
         case "SFZNotePlayerPlugin":
