@@ -85,8 +85,9 @@ struct RoomEQConfig: Sendable, Equatable {
     var highFrequency: Double = 16000
     /// 持ち上げの上限 dB。0〜18。
     var maxBoostDb: Double = 6
-    /// 補正の効き。0〜1（room_eq.js は cr/100）。
+    /// 補正の効き。Headphone EQ は負で測定の偏りを再現する。
     var correctionAmount: Double = 1
+    var limitPeakGain: Bool = false
     /// 直接音の窓 ms。1〜50。full 専用だが正規化はしておく。
     var directWindowMs: Double = 6
     /// 位相補正の効き。0〜1。full 専用。
@@ -118,7 +119,7 @@ struct RoomEQConfig: Sendable, Equatable {
         result.lowFrequency = max(20, lowFrequency)
         result.highFrequency = min(20000, highFrequency)
         result.maxBoostDb = max(0, min(18, maxBoostDb))
-        result.correctionAmount = max(0, min(1, correctionAmount))
+        result.correctionAmount = max(-1, min(1, correctionAmount))
         result.phaseCorrectionAmount = max(0, min(1, phaseCorrectionAmount))
         result.reverbAmount = max(0, min(1, reverbAmount))
         result.reverbMaxFrequency = max(20, min(20000, reverbMaxFrequency))
@@ -382,7 +383,8 @@ enum RoomEQDesigner {
             for index in 0..<frequencies.count {
                 let frequency = frequencies[index]
                 automatic[index] = frequency > config.lowFrequency && frequency < effectiveHigh
-                    ? softLimitBoost(levelDb - unsmoothedMeasuredDb[index], maximum: config.maxBoostDb)
+                    ? softLimitBoost((config.correctionAmount < 0 ? -1 : 1)
+                                     * (levelDb - unsmoothedMeasuredDb[index]), maximum: config.maxBoostDb)
                     : 0
             }
             let smoothedAutomatic = smoothFrequencyResponse(frequencies: frequencies,
@@ -393,18 +395,20 @@ enum RoomEQDesigner {
             var correctionDb = [Double](repeating: 0, count: frequencies.count)
             var baseCorrectionDb = [Double](repeating: 0, count: frequencies.count)
             for index in 0..<frequencies.count {
-                baseCorrectionDb[index] = smoothedAutomatic[index] * config.correctionAmount
+                baseCorrectionDb[index] = smoothedAutomatic[index] * abs(config.correctionAmount)
                 correctionDb[index] = baseCorrectionDb[index] + eqDb[index]
             }
 
-            let synthesis = synthesizeFilter(correctionDb: correctionDb, config: config, plan: plan)
+            let headroomDb = config.limitPeakGain ? -max(0, correctionDb.max() ?? 0) : 0
+            let synthesis = synthesizeFilter(correctionDb: correctionDb.map { $0 + headroomDb },
+                                             config: config, plan: plan)
             // design-core.js:2777-2780。
             if synthesis.maximumMagnitudeErrorDb > 0.5 || synthesis.maximumPhaseErrorRadians > 0.05 {
                 addWarning(.filterAccuracy)
             }
             channels.append(synthesis.taps)
             referenceLevels.append(levelDb)
-            previews.append(preview(channel: previews.count,
+            var channelPreview = preview(channel: previews.count,
                                     config: config,
                                     frequencies: frequencies,
                                     levelDb: levelDb,
@@ -414,7 +418,9 @@ enum RoomEQDesigner {
                                     equalizerDb: eqDb,
                                     taps: synthesis.taps,
                                     referenceAnalysis: referenceAnalysis,
-                                    groupDelaySources: groupDelaySources))
+                                    groupDelaySources: groupDelaySources)
+            channelPreview.headroomDb = headroomDb
+            previews.append(channelPreview)
         }
 
         if requestedConfig.phase == .full && !supportsFullPhase {

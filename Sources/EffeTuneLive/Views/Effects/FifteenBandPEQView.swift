@@ -341,6 +341,9 @@ struct FifteenBandPEQView: View {
                 bandStrip
                 Divider()
                 bandPanel
+                if let param = node.spec.params.first(where: { $0.key == "mg" }) {
+                    ParameterRow(param: param, nodeIndex: index, values: node.values, dsp: dsp)
+                }
             }
         }
         // 畳むとこの View ごと消えるので、選んでいるバンドは外に覚えておく。
@@ -397,7 +400,7 @@ struct FifteenBandPEQView: View {
         }
         result.append(ETFrequencyCurve.sampled(id: "sum", count: 220) { hz in
             let w = hz * 2 * Double.pi / rate
-            var total = 0.0
+            var total = masterGain(node.values) + masterGain(companionValues ?? [])
             for entry in designed { total += PEQ15Math.magnitudeDB(entry.1, w: w) }
             for c in other { total += PEQ15Math.magnitudeDB(c, w: w) }
             return total
@@ -591,6 +594,9 @@ struct FifteenBandPEQView: View {
         for i in 0..<l.count {
             dsp.setValue(-value(l.gain + i), at: index, offset: l.gain + i)
         }
+        if let mg = node.spec.params.first(where: { $0.key == "mg" }) {
+            dsp.setValue(-value(mg.offset), at: index, offset: mg.offset)
+        }
     }
 
     /// web の Import（fifteen_band_peq.js:1279-1355）。読み方は ETPEQTextImport。
@@ -604,7 +610,7 @@ struct FifteenBandPEQView: View {
             return
         }
         let result = ETPEQTextImport.parse(ETPEQTextImport.decode(data))
-        guard result.imported > 0 else {
+        guard result.imported > 0 || result.masterGain != nil else {
             importFailure = "No filters found."
             return
         }
@@ -613,6 +619,9 @@ struct FifteenBandPEQView: View {
         // Inverse と同じ setValue。値の変わらない所は撃たない（1 回ごとに instance へ送るため）。
         func write(_ v: Float, _ offset: Int) {
             if value(offset) != v { dsp.setValue(v, at: index, offset: offset) }
+        }
+        if let mg = node.spec.params.first(where: { $0.key == "mg" }) {
+            write(Float(result.masterGain ?? 0), mg.offset)
         }
         for (i, b) in result.bands.prefix(l.count).enumerated() {
             write(Float(b.type), l.type + i)
@@ -624,6 +633,12 @@ struct FifteenBandPEQView: View {
     }
 
     // MARK: 値の出し入れ
+
+    private func masterGain(_ values: [Float]) -> Double {
+        guard let p = node.spec.params.first(where: { $0.key == "mg" }),
+              values.indices.contains(p.offset) else { return 0 }
+        return Double(values[p.offset])
+    }
 
     private var layout: PEQ15Layout { PEQ15Layout(node.spec) }
 

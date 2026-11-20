@@ -533,6 +533,15 @@ const roomEqDesigns = [
                 onsetIndex: 10, refScale: 1 }]
         }]
     }
+    , ...[-1, 0, 1].map(amount => ({
+        name: `headphone-${amount}-headroom`,
+        config: { sampleRate: 48000, taps: 8192, phase: amount < 0 ? 'lin' : 'min',
+            smoothing: 0.17, lowFrequency: 20, highFrequency: 10000, maxBoostDb: 6,
+            correctionAmount: amount, limitPeakGain: true,
+            eqBands: [{ enabled: true, type: 'ls', frequency: 100, gain: 3, q: 1 }] },
+        sources: [{ frequencyResponse: Array.from({ length: 241 }, (_, i) =>
+            [20 * 1000 ** (i / 240), 5 * Math.sin(i / 25) - 2 * Math.cos(i / 9)]) }]
+    }))
 ].map(entry => {
     const upstream = entry.sources.map((source, index) => {
         if (!source) return null;
@@ -576,6 +585,7 @@ const roomEqDesigns = [
             // 画面の曲線（Sources/EffeTuneLive/DSP/Designers/RoomEQPreview.swift が写したもの）。
             // 格子は Swift 側でも同じ式で作るので、長さだけ照らす（frequencyCount）。
             previews: result.previews.map(preview => preview ? {
+                headroomDb: preview.headroomDb,
                 frequencyCount: preview.frequencies.length,
                 measuredDb: f32(preview.measuredDb),
                 baseCorrectionDb: f32(preview.baseCorrectionDb),

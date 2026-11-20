@@ -500,6 +500,7 @@ struct ETAutomation: Equatable {
         "IRReverbPlugin", "FiveBandFIRPEQPlugin", "RoomEqPlugin", "GroupDelayEqPlugin",
         "GroupDelayPEQPlugin", "CrosstalkCancellationPlugin", "BassManagementPlugin",
         "SFZNotePlayerPlugin", "SoundFontPlayerPlugin", "MatrixPlugin", "FIRCrossoverPlugin",
+        "HeadphoneEQPlugin", "SpeakerDistortionCorrectionPlugin",
     ]
 
     /// Section・外部（AUv3 / JSFX）は floatCount が0なので入らない。

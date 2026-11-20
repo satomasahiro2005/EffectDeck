@@ -268,12 +268,12 @@ final class RemoteProtocolTests: XCTestCase {
 
     func testOfficial213HasNoMismatchAgainstTheLocalCatalog() {
         // 公式 2.13.0 の効果の一覧は 113 個（カタログの 112 と Section）。2.14.0・2.15.0・2.16.0 も同じ 112 種。
-        // 2.17.0 で SoundFont Player、2.18.0 で Live Audio Receive / Send が増えたので、いまの手元は 116（115 種と Section）。
-        XCTAssertEqual(ETRemoteHostInfo.localEffectNames.count, 116)
+        // 2.19.0 adds Headphone EQ and Distortion Correction: 117 kernels plus Section.
+        XCTAssertEqual(ETRemoteHostInfo.localEffectNames.count, 118)
         XCTAssertNil(official().mismatch(localDSP: ETUpstreamVersion,
                                          localEffects: ETRemoteHostInfo.localEffectNames,
                                          localApp: "2.13.0"))
-        XCTAssertEqual(ETUpstreamAppVersion, "2.18.0", "Vendor/effetune/package.json の版")
+        XCTAssertEqual(ETUpstreamAppVersion, "2.19.0", "Vendor/effetune/package.json の版")
     }
 
     func testOfficialHostOfAnotherAppVersionSaysSo() throws {

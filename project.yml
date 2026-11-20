@@ -434,6 +434,8 @@ targets:
       # 設定の型を引くので、下のDesigners/*Design.swiftも要る。PipelineForm・ETChainText・
       # EffectPresetStoreCoreが引く。
       - path: Sources/EffeTuneLive/DSP/DesignParams.swift
+      - path: Sources/EffeTuneLive/DSP/HeadphoneEQ.swift
+      - path: Sources/EffeTuneLive/DSP/SpeakerCorrection.swift
       # CHAIN.mdの見本と、積んでいる版の語彙（chain/v<版>/effects.json）を実行時に読む。
       # **chainはフォルダのまま入れる。**版ごとに同じ名前のeffects.jsonが並ぶので、
       # 平らに束ねると名前がぶつかる。
@@ -527,6 +529,8 @@ targets:
       - path: Tests/Fixtures/Designers/designers-a-golden.json
         buildPhase: resources
       - path: Tests/Fixtures/Designers/designers-b-golden.json
+        buildPhase: resources
+      - path: Tests/Fixtures/Upstream219/contracts.json
         buildPhase: resources
       # 共有の拡張が受けたものの扱い・Inboxの振り分け・IRの読み方と置き場の鍵
       # （ShareModelTests・InboxTests・IRDecodeTests・IRLibraryKeyTests・IRLibraryFilesTests）。

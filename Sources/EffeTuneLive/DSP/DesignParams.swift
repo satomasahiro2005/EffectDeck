@@ -37,6 +37,8 @@ enum ETDesignParam {
     static let groupDelayPEQ = "GroupDelayPEQPlugin"
     static let firCrossover = "FIRCrossoverPlugin"
     static let irReverb = "IRReverbPlugin"
+    static let headphoneEQ = "HeadphoneEQPlugin"
+    static let distortionCorrection = "SpeakerDistortionCorrectionPlugin"
 
     /// その型が持つ設計の材料。持たないものは空。
     static func table(for type: String) -> [String: Kind] {
@@ -59,6 +61,15 @@ enum ETDesignParam {
                 .merging(["pm": .text, "tp": .number]) { a, _ in a }
         case irReverb:
             return ["dc": .flag, "co": .number, "dt": .number, "tr": .number]
+        case headphoneEQ:
+            return indexed(["fa", "ga", "qa"], 0..<5, .number)
+                .merging(indexed(["ta"], 0..<5, .text)) { a, _ in a }
+                .merging(indexed(["ea"], 0..<5, .flag)) { a, _ in a }
+                .merging(["pm": .text, "tp": .number, "ca": .number, "uf": .number,
+                          "mb": .number, "sm": .number, "ah": .flag, "mn": .text, "tn": .text]) { a, _ in a }
+        case distortionCorrection:
+            return ["ms": .text, "mn": .text, "fl": .text, "cn": .number, "co": .number,
+                    "cn3": .number, "co3": .number, "dvs": .text, "dc": .number, "mr": .number]
         default:
             return [:]
         }
@@ -81,6 +92,11 @@ enum ETDesignParam {
             guard let raw = design[key] else { continue }
             o[key] = ETDisplayParam.encode(raw, kind: kind)
         }
+        if type == headphoneEQ {
+            for key in ["mr", "mt"] {
+                if let raw = design[key], let curve = ETHeadphoneEQ.curve(raw) { o[key] = curve }
+            }
+        }
     }
 
     /// 保存形式から読む。読めないものはnilにして、既定のままにする。
@@ -89,6 +105,13 @@ enum ETDesignParam {
         for (key, kind) in table(for: type) {
             guard let any = params[key], let raw = decode(any, kind: kind) else { continue }
             out[key] = raw
+        }
+        if type == headphoneEQ {
+            for key in ["mr", "mt"] {
+                if let curve = ETHeadphoneEQ.validCurve(params[key]) {
+                    out[key] = ETHeadphoneEQ.encodeCurve(curve)
+                }
+            }
         }
         return out
     }

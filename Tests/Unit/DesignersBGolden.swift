@@ -249,6 +249,7 @@ struct DesignersBGolden: Decodable {
         let highFrequency: Double
         let maxBoostDb: Double
         let correctionAmount: Double
+        let limitPeakGain: Bool?
         let eqBands: [RoomBand]?
     }
 
@@ -299,6 +300,7 @@ struct DesignersBGolden: Decodable {
             let after: Numbers
         }
         let frequencyCount: Int
+        let headroomDb: Double?
         let measuredDb: Numbers
         let baseCorrectionDb: Numbers
         let predictedBaseDb: Numbers

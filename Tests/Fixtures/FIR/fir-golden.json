@@ -91,7 +91,7 @@
   "js/fir-crossover/design-core.js": "905daa0eeb4e9dffa0e8464d036263de9cb439b5c1d71d22b1e0030916990242",
   "js/five-band-fir-peq/design-core.js": "2f1106c11c30419e0026c5a94fce68b760e9e90f441ecc87a1e492163231fa5a",
   "js/group-delay-eq/design-core.js": "8197e9d943bb907c6eac21e6830632e348a386610d99d12da969b8f0f4fab42b",
-  "js/room-eq/design-core.js": "17e25586a35d40f2fecfeef4266b4c1feb116b8cd70aa84d43c8eee180c4bb9e",
+  "js/room-eq/design-core.js": "40010e244a95a4576cbd19365b430377428e99206c129ca70e92fb77d6fc6421",
   "js/utils/measurement-dsp/fft.js": "e238864546f8b7ec3e6120538181c88ecf6a3dd6109be403742617b3f1ea97f0",
   "js/utils/measurement-dsp/resample.js": "a9728a4b2d3d31ccb4a047567894456455723db2db6a03e083dbd3364535abba"
  },

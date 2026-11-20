@@ -4,7 +4,7 @@
 //  期待値は上流 Vendor/effetune/plugins/eq/fifteen_band_peq.js の規則から手で出したもので、
 //  こちらの実装から出したものではない:
 //      取り込み前に全バンドを setBand(i, BANDS[i].freq, 0, 1.0, 'pk', false)   :1307-1309
-//      '#'・空行・'Preamp:' は飛ばす                                           :1316-1325
+//      '#'・空行は飛ばす。2.19.0 から Preamp は Master Gain に読む。
 //      /Filter\s+(\d+):\s+ON\s+(\w+)\s+Fc\s+(\d+(?:\.\d+)?)\s+Hz\s+Gain\s+
 //       ([-+]?\d+(?:\.\d+)?)\s+dB\s+Q\s+(\d+(?:\.\d+)?)/                      :1329
 //      LS/LSC→ls、PK→pk、HS/HSC→hs。他は捨てて番号も進めない。15 本まで        :34-40, :1341-1347
@@ -51,10 +51,11 @@ final class PEQTextImportTests: XCTestCase {
 
         """
 
-    /// 10 本がファイルの順に 1〜10 へ。残り 5 本は初期値で切。**Preamp は読まない。**
+    /// 10 本がファイルの順に 1〜10 へ。残り 5 本は初期値で切。Preamp は Master Gain。
     func testAutoEQAirPodsPro() {
         let r = ETPEQTextImport.parse(Self.airPodsPro)
         XCTAssertEqual(r.imported, 10)
+        XCTAssertEqual(r.masterGain, -6)
         var expected = Self.untouched
         expected[0] = on(105, 2.6, 0.70, Self.ls)
         expected[1] = on(514, -4.4, 0.68, Self.pk)

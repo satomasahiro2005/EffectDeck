@@ -529,15 +529,16 @@ let ETCatalog: [ETEffect] = [
       name: "15Band PEQ",
       about: "15-band parametric equalizer",
       category: "eq",
-      paramsHash: 0x6197cd46,
-      floatCount: 75,
-      defaults: [25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10000.0, 16000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+      paramsHash: 0x5b2fb687,
+      floatCount: 76,
+      defaults: [25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10000.0, 16000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
       params: [
         ETParam(name: "frequency", key: "f", label: "frequencies", kind: .number(min: 20.0, max: 20000.0, step: 1.0, unit: "Hz", isInteger: true), defaultValue: 25.0, offset: 0, count: 15),
         ETParam(name: "gain", key: "g", label: "gains", kind: .number(min: -20.0, max: 20.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 15, count: 15),
         ETParam(name: "q", key: "q", label: "qValues", kind: .number(min: 0.1, max: 10.0, step: 0.01, unit: "", isInteger: false), defaultValue: 1.0, offset: 30, count: 15),
         ETParam(name: "filterType", key: "t", label: "Filter Type", kind: .enumeration(["pk", "lp", "hp", "ls", "hs", "bp", "no", "ap"]), defaultValue: 0.0, offset: 45, count: 15),
-        ETParam(name: "bandEnabled", key: "e", label: "Band Enabled", kind: .toggle, defaultValue: 1.0, offset: 60, count: 15)
+        ETParam(name: "bandEnabled", key: "e", label: "Band Enabled", kind: .toggle, defaultValue: 1.0, offset: 60, count: 15),
+        ETParam(name: "masterGain", key: "mg", label: "Master Gain", kind: .number(min: -20.0, max: 20.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 75, count: 1)
       ]),
     ETEffect(
       type: "FiveBandDynamicEQ",
@@ -660,6 +661,18 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "filterDelaySamples", key: "fd", label: "Filter Delay Samples", kind: .number(min: 0.0, max: 65536.0, step: 0.0, unit: "", isInteger: true), defaultValue: 8192.0, offset: 1, count: 1)
       ]),
     ETEffect(
+      type: "HeadphoneEQPlugin",
+      name: "Headphone EQ",
+      about: "FIR headphone correction toward a target curve",
+      category: "eq",
+      paramsHash: 0xaf58b189,
+      floatCount: 2,
+      defaults: [1.0, 0.0],
+      params: [
+        ETParam(name: "latencyMode", key: "lt", label: "Latency Mode", kind: .enumeration(["0", "128", "256", "512", "1024"]), defaultValue: 1.0, offset: 0, count: 1),
+        ETParam(name: "filterDelaySamples", key: "fd", label: "Filter Delay Samples", kind: .number(min: 0.0, max: 65536.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 1, count: 1)
+      ]),
+    ETEffect(
       type: "HiPassFilterPlugin",
       name: "Hi Pass Filter",
       about: "High-pass filter with adjustable frequency and slope",
@@ -724,9 +737,9 @@ let ETCatalog: [ETEffect] = [
       floatCount: 4,
       defaults: [1.0, 16384.0, 0.0, 0.0],
       params: [
+        ETParam(name: "channelDelay", key: "dy", label: "-22", kind: .number(min: 0.0, max: 3840.0, step: 1.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 2, count: 1),
         ETParam(name: "latencyMode", key: "lt", label: "Latency", kind: .enumeration(["0", "128", "256", "512", "1024"]), defaultValue: 1.0, offset: 0, count: 1),
         ETParam(name: "filterDelaySamples", key: "fd", label: "Filter Delay Samples", kind: .number(min: 0.0, max: 65536.0, step: 0.0, unit: "", isInteger: true), defaultValue: 16384.0, offset: 1, count: 1),
-        ETParam(name: "channelDelay", key: "dy", label: "Channel Delay", kind: .number(min: 0.0, max: 3840.0, step: 1.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 2, count: 1),
         ETParam(name: "outputGain", key: "gn", label: "Gain", kind: .number(min: -12.0, max: 12.0, step: 0.1, unit: "dB", isInteger: false), defaultValue: 0.0, offset: 3, count: 1)
       ]),
     ETEffect(
@@ -1337,6 +1350,20 @@ let ETCatalog: [ETEffect] = [
         ETParam(name: "channelSync", key: "cs", label: "Ch Sync", kind: .number(min: 0.0, max: 100.0, step: 1.0, unit: "%", isInteger: true), defaultValue: 100.0, offset: 6, count: 1)
       ]),
     ETEffect(
+      type: "SpeakerDistortionCorrectionPlugin",
+      name: "Distortion Correction",
+      about: "Reduces the measured distortion of your speakers",
+      category: "others",
+      paramsHash: 0x25d6dbd8,
+      floatCount: 4,
+      defaults: [0.0, 0.0, 0.0, 0.0],
+      params: [
+        ETParam(name: "amplifierVolumeChange", key: "dv", label: "Amplifier Volume Change", kind: .number(min: -24.0, max: 0.0, step: 0.5, unit: "", isInteger: false), defaultValue: 0.0, offset: 0, count: 1),
+        ETParam(name: "mode", key: "md", label: "Mode", kind: .enumeration(["Reduce", "Add"]), defaultValue: 0.0, offset: 1, count: 1),
+        ETParam(name: "selectedFirst", key: "_scf", label: "Selected First", kind: .number(min: 0.0, max: 15.0, step: 1.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 2, count: 1, runtimeOnly: true),
+        ETParam(name: "selectedCount", key: "_scc", label: "Selected Count", kind: .number(min: 0.0, max: 16.0, step: 1.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 3, count: 1, runtimeOnly: true)
+      ]),
+    ETEffect(
       type: "OscillatorPlugin",
       name: "Oscillator",
       about: "Audio signal generator with multiple waveforms",
@@ -1389,18 +1416,23 @@ let ETCatalog: [ETEffect] = [
       name: "SoundFont Player",
       about: "Plays MIDI songs through SoundFont and SFZ instruments",
       category: "others",
-      paramsHash: 0xf271de51,
-      floatCount: 8,
-      defaults: [0.0, 256.0, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0],
+      paramsHash: 0x25427170,
+      floatCount: 13,
+      defaults: [0.0, 256.0, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0],
       params: [
-        ETParam(name: "midiChannel", key: "mc", label: "MIDI Channel", kind: .number(min: 0.0, max: 16.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 0, count: 1),
-        ETParam(name: "maxVoices", key: "pl", label: "Max Voices", kind: .number(min: 1.0, max: 1024.0, step: 0.0, unit: "", isInteger: true), defaultValue: 256.0, offset: 1, count: 1),
-        ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -60.0, max: 12.0, step: 0.1, unit: "", isInteger: false), defaultValue: 0.0, offset: 2, count: 1),
         ETParam(name: "automaticFallback", key: "af", label: "Automatic Fallback", kind: .toggle, defaultValue: 1.0, offset: 4, count: 1),
         ETParam(name: "previewMidi", key: "pm", label: "Preview Midi", kind: .number(min: -1.0, max: 127.0, step: 0.0, unit: "", isInteger: true), defaultValue: -1.0, offset: 5, count: 1),
         ETParam(name: "previewChannel", key: "pc", label: "Preview Channel", kind: .number(min: 0.0, max: 15.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 6, count: 1),
+        ETParam(name: "midiChannel", key: "mc", label: "Midi Channel", kind: .number(min: 0.0, max: 16.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 0, count: 1),
+        ETParam(name: "maxVoices", key: "pl", label: "Max Voices", kind: .number(min: 1.0, max: 1024.0, step: 0.0, unit: "", isInteger: true), defaultValue: 256.0, offset: 1, count: 1),
+        ETParam(name: "outputGain", key: "og", label: "Output Gain", kind: .number(min: -60.0, max: 12.0, step: 0.1, unit: "", isInteger: false), defaultValue: 0.0, offset: 2, count: 1),
         ETParam(name: "sampleQuality", key: "sq", label: "Interpolation", kind: .number(min: 0.0, max: 2.0, step: 0.0, unit: "", isInteger: true), defaultValue: 1.0, offset: 3, count: 1),
-        ETParam(name: "sf2Compatibility", key: "sc", label: "SF2 Compatibility", kind: .number(min: 0.0, max: 1.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 7, count: 1)
+        ETParam(name: "sf2Compatibility", key: "sc", label: "SF2 Compatibility", kind: .number(min: 0.0, max: 1.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 7, count: 1),
+        ETParam(name: "respondGm", key: "rg", label: "Respond Gm", kind: .toggle, defaultValue: 1.0, offset: 8, count: 1),
+        ETParam(name: "respondGs", key: "rs", label: "Respond Gs", kind: .toggle, defaultValue: 1.0, offset: 9, count: 1),
+        ETParam(name: "respondXg", key: "rx", label: "Respond Xg", kind: .toggle, defaultValue: 1.0, offset: 10, count: 1),
+        ETParam(name: "transpose", key: "tr", label: "Transpose", kind: .number(min: -12.0, max: 12.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 11, count: 1),
+        ETParam(name: "midiChannelsOff", key: "mco", label: "Midi Channels Off", kind: .number(min: 0.0, max: 65535.0, step: 0.0, unit: "", isInteger: true), defaultValue: 0.0, offset: 12, count: 1)
       ]),
     ETEffect(
       type: "AdaptivePredictionEffectPlugin",

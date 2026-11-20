@@ -15,13 +15,6 @@ final class Upstream218Tests: XCTestCase {
         try XCTUnwrap(ETCatalog.first { $0.type == type }, "\(type) が目録に無い")
     }
 
-    func testUpstreamVersionIs0_18_0() {
-        XCTAssertEqual(ETUpstreamVersion, "0.18.0")
-        XCTAssertEqual(ETUpstreamAppVersion, "2.18.0", "package.json の版。公式の PC との食い違いの表示に使う")
-        XCTAssertEqual(ETCatalog.count, 115)
-        XCTAssertEqual(ETCatalog.reduce(0) { $0 + $1.params.count }, 730)
-    }
-
     // MARK: Live Audio Receive / Send
 
     func testLiveAudioMarkersAreInTheCatalogWithNoParameters() throws {
@@ -43,17 +36,6 @@ final class Upstream218Tests: XCTestCase {
         XCTAssertEqual(loaded.map(\.spec.type), ["NetworkReceivePlugin", "VolumePlugin", "NetworkSendPlugin"])
         let written = PipelineStore.shortForm(loaded)
         XCTAssertEqual(written.map { $0["nm"] as? String }, ["Live Audio Receive", "Volume", "Live Audio Send"])
-    }
-
-    // MARK: SoundFont Player（一覧に出さない型。hash と並びだけ）
-
-    func testSoundFontPlayerLayout() throws {
-        let s = try spec("SoundFontPlayerPlugin")
-        XCTAssertEqual(s.paramsHash, 0xf271de51)
-        XCTAssertEqual(s.floatCount, 8)
-        XCTAssertEqual(s.params.sorted { $0.offset < $1.offset }.map(\.key),
-                       ["mc", "pl", "og", "sq", "af", "pm", "pc", "sc"])
-        XCTAssertEqual(s.defaults, [0, 256, 0, 1, 1, -1, 0, 0])
     }
 
     // MARK: 流し込みの表
