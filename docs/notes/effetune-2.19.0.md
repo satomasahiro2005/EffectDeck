@@ -42,8 +42,12 @@ Upstream: `v2.19.0` = `dsp-v0.19.0`, `0ffa5c709ed1` (2026-11-20). Previous pin: 
   measurement reference and name. Re-importing the same measurement replaces its local model. Factory reset
   clears the files. Like upstream's chain format, a shared chain does not embed its measurement: import the
   measurement separately on the receiving device. These files are not in the existing preset-only backup format.
+- Playback models are cached, so overload telemetry redraws do not decode a measurement from disk every frame.
+  Re-importing a measurement refreshes all cards referencing it, including collapsed cards.
 - Short / Long, Reduce / Add, amplifier volume change, and Auto / On / Off for even and odd correction per channel.
   Imports the last checked amplifier change when present. Playback uses the checked Auto decisions until overridden.
+- Selecting a measurement resets Reduce / Add and amplifier change to its own defaults / saved check, and selects
+  All channels for a surround model. Its saved check timestamp is carried with the measurement reference.
 - Packs the exact 16 × 1247-float upstream asset, including the odd weights and bounds. Invalid lengths, non-finite
   weights, weights at or outside ±1000, and non-positive bounds are rejected before staging.
 - `_scf` / `_scc` are derived from the physical channel selection every time parameters are pushed, including
@@ -65,17 +69,18 @@ Windows / WSL, 2026-11-20:
 
 - Python tool tests: 273, 0 failures, 9 platform-dependent skips.
 - Node tool / SFZ bundle tests: 221, 0 failures.
-- Linux Swift Logic suite: 1364 tests, 0 failures, 1 platform-dependent skip (before the final malformed-model test).
-- Final import / PEQ subset after that test: 21 tests, 0 failures.
+- Linux Swift Logic suite on the final source: 1366 tests, 0 failures, 1 platform-dependent skip.
 - Native host tests with the actual pinned, patched engine: 179, 0 failures.
 - Upstream Distortion Correction kernel tests, linked to that engine: passed.
 - New portable import / asset goldens: 6 headphone imports, 5 speaker settings / output-width combinations.
   Speaker payloads match upstream byte for byte.
 - Generated files regenerated from the clean pin; repository version / chain consistency checks pass.
+- macOS CI simulator app build passed for the initial integration (`8aa4a0e`), including the new SwiftUI screens.
+  [PR #18](https://github.com/satomasahiro2005/EffectDeck/pull/18) tracks CI for the final follow-up as well.
 - Whitespace check passes outside the generated SFZ bundle; its embedded WASM string contains significant trailing
   whitespace and is kept byte-for-byte as generated.
 
-**Not built in Xcode or run on an iPhone / iPad.** SwiftUI changes have only been syntax checked. Device checks still
-needed: AutoEQ search and file import at phone / accessibility sizes; correction after output-rate changes while
+**Not run on an iPhone / iPad.** Device checks still needed: AutoEQ search and file import at phone / accessibility
+sizes; correction after output-rate changes while
 collapsed; undo / reset while a design is pending; speaker-model playback with the measured speakers and amplifier
 settings, channel routing, mode / length changes, overload indication and latency compensation.

@@ -37,7 +37,24 @@ enum ETSpeakerCorrection {
         var name: String
         var recommendedLength: String
         var checkedVolume: Double?
+        var checkedAt: Double? = nil
         var channels: [Channel]
+
+        var selectionParameters: [String: Any] {
+            ["ms": id, "mn": name, "fl": recommendedLength == "long" ? "Long" : "Short",
+             "cn": 0, "co": 0, "cn3": 0, "co3": 0, "mr": 0,
+             "dc": checkedAt ?? 0, "dvs": checkedVolume == nil ? "" : "check"]
+        }
+
+        var usesSurround: Bool {
+            channels.contains { channel in
+                guard channel.index >= 2 else { return false }
+                let fitted = ["short", "long"].contains {
+                    channel.weights[$0] != nil && !["belowLimit", "noFit"].contains(channel.reason[$0] ?? "")
+                }
+                return fitted || (channel.odd?.fitReason == nil && channel.odd?.on["alone"] == true)
+            }
+        }
     }
 
     // The official measurement export wraps Float32Array bytes as {f32: base64}.
@@ -81,13 +98,15 @@ enum ETSpeakerCorrection {
         let safeID = !original.isEmpty && original.count <= 128
             && original.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_")).contains($0) }
         var checkedVolume: Double?
-        if let check = model["lastCheck"] as? [String: Any],
+        let check = model["lastCheck"] as? [String: Any]
+        let checkedAt = (check?["at"] as? Double).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        if let check,
            let outcome = check["outcome"] as? String, ["same", "lower", "louder"].contains(outcome),
            let volume = check["dv"] as? Double, volume.isFinite {
             checkedVolume = min(0, max(-24, (volume * 2).rounded() / 2))
         }
         return Model(id: safeID ? original : UUID().uuidString.lowercased(), name: name,
-                     recommendedLength: length, checkedVolume: checkedVolume, channels: decoded)
+                     recommendedLength: length, checkedVolume: checkedVolume, checkedAt: checkedAt, channels: decoded)
     }
 
     private static func unpack(_ value: Any, count: Int, bound: Bool) throws -> [Float] {
@@ -169,6 +188,16 @@ enum ETSpeakerCorrection {
         for (key, value) in [("_scf", selected.first), ("_scc", selected.count)] {
             if let p = node.spec.params.first(where: { $0.key == key }), values.indices.contains(p.offset) {
                 values[p.offset] = Float(value)
+            }
+        }
+        return values
+    }
+
+    static func selectionValues(_ node: ETChainNode, model: Model) -> [Float] {
+        var values = node.values
+        for (key, value) in [("dv", Float(model.checkedVolume ?? 0)), ("md", Float(0))] {
+            if let p = node.spec.params.first(where: { $0.key == key }), values.indices.contains(p.offset) {
+                values[p.offset] = value
             }
         }
         return values

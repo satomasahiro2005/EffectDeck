@@ -10,6 +10,7 @@ final class ETCorrectionAssets: ObservableObject {
     @Published private(set) var designs: [UUID: RoomEQDesign] = [:]
     private var signatures: [UUID: String] = [:]
     private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var models: [String: ETSpeakerCorrection.Model] = [:]
 
     private var folder: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -23,8 +24,11 @@ final class ETCorrectionAssets: ObservableObject {
     }
 
     func model(_ id: String) -> ETSpeakerCorrection.Model? {
+        if let cached = models[id] { return cached }
         guard let url = modelURL(id), let bytes = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(ETSpeakerCorrection.Model.self, from: bytes)
+        guard let decoded = try? JSONDecoder().decode(ETSpeakerCorrection.Model.self, from: bytes) else { return nil }
+        models[id] = decoded
+        return decoded
     }
 
     func importMeasurement(_ data: Data, nodeID: UUID) throws {
@@ -33,25 +37,26 @@ final class ETCorrectionAssets: ObservableObject {
               let node = EffeTuneDSP.shared.node(at: index), node.spec.type == ETSpeakerCorrection.type else { return }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try JSONEncoder().encode(measurement).write(to: url, options: .atomic)
-        var design = node.design
-        design["ms"] = measurement.id
-        design["mn"] = measurement.name
-        design["fl"] = measurement.recommendedLength == "long" ? "Long" : "Short"
-        // Importing a different measurement starts with its checked Auto decisions.
-        for key in ["cn", "co", "cn3", "co3"] { design[key] = "0" }
-        if let volume = measurement.checkedVolume,
-           let p = node.spec.params.first(where: { $0.key == "dv" }) {
-            EffeTuneDSP.shared.setValue(Float(volume), at: index, offset: p.offset)
-            design["dvs"] = "check"
-        }
+        models[measurement.id] = measurement
+        // Like upstream's selection parameters: a new measurement starts in
+        // Reduce at 0 dB, then adopts its saved amplifier check when present.
+        let values = ETSpeakerCorrection.selectionValues(node, model: measurement)
         signatures[nodeID] = nil
-        EffeTuneDSP.shared.setDesign(design, nodeID: nodeID)
-        if let current = EffeTuneDSP.shared.node(at: index) { sync(current) }
+        EffeTuneDSP.shared.setValues(values, at: index, design: measurement.selectionParameters)
+        if measurement.usesSurround { EffeTuneDSP.shared.setRouting(at: index, channelSpec: -2) }
+        // The same measurement can be used by several cards. Re-importing it
+        // refreshes every reference, including cards that are currently folded.
+        for other in EffeTuneDSP.shared.nodes where other.spec.type == ETSpeakerCorrection.type
+            && other.design["ms"] == measurement.id {
+            signatures[other.id] = nil
+            sync(other)
+        }
     }
 
     func eraseAll() {
         for task in tasks.values { task.cancel() }
         tasks.removeAll(); signatures.removeAll(); designs.removeAll(); status.removeAll()
+        models.removeAll()
         try? FileManager.default.removeItem(at: folder)
     }
 

@@ -87,6 +87,9 @@ final class Upstream219Tests: XCTestCase {
         let fixture = try contracts()
         let measurement = try XCTUnwrap(fixture["measurement"] as? [String: Any])
         let model = try ETSpeakerCorrection.importMeasurement(JSONSerialization.data(withJSONObject: measurement))
+        XCTAssertTrue(model.usesSurround)
+        XCTAssertEqual(model.selectionParameters["dvs"] as? String, "")
+        XCTAssertEqual(model.selectionParameters["dc"] as? Double, 0)
         let cases = try XCTUnwrap(fixture["speakerAssets"] as? [[String: Any]])
         for entry in cases {
             let settings = ETSpeakerCorrection.Settings(try XCTUnwrap(entry["settings"] as? [String: String]))
@@ -136,6 +139,28 @@ final class Upstream219Tests: XCTestCase {
         channels[0]["odd"] = odd
         model["channels"] = channels; measurement["speakerModel"] = model
         XCTAssertThrowsError(try ETSpeakerCorrection.importMeasurement(JSONSerialization.data(withJSONObject: measurement)))
+    }
+
+    func testSelectingMeasurementResetsModeAndAdoptsOnlyItsOwnAmplifierCheck() throws {
+        let fixture = try contracts()
+        var measurement = try XCTUnwrap(fixture["measurement"] as? [String: Any])
+        var model = try ETSpeakerCorrection.importMeasurement(JSONSerialization.data(withJSONObject: measurement))
+        let spec = try XCTUnwrap(ETCatalog.first { $0.type == ETSpeakerCorrection.type })
+        let dv = try XCTUnwrap(spec.params.first { $0.key == "dv" }).offset
+        let md = try XCTUnwrap(spec.params.first { $0.key == "md" }).offset
+        var node = ETChainNode(spec: spec, values: spec.defaults)
+        node.values[dv] = -12; node.values[md] = 1
+        var selected = ETSpeakerCorrection.selectionValues(node, model: model)
+        XCTAssertEqual(selected[dv], 0); XCTAssertEqual(selected[md], 0)
+
+        var raw = try XCTUnwrap(measurement["speakerModel"] as? [String: Any])
+        raw["lastCheck"] = ["at": 1234, "outcome": "lower", "dv": -6.0] as [String: Any]
+        measurement["speakerModel"] = raw
+        model = try ETSpeakerCorrection.importMeasurement(JSONSerialization.data(withJSONObject: measurement))
+        selected = ETSpeakerCorrection.selectionValues(node, model: model)
+        XCTAssertEqual(selected[dv], -6); XCTAssertEqual(selected[md], 0)
+        XCTAssertEqual(model.selectionParameters["dvs"] as? String, "check")
+        XCTAssertEqual(model.selectionParameters["dc"] as? Double, 1234)
     }
 
     func testPEQMasterGainIsWeightedOnceAcrossCompanions() throws {
